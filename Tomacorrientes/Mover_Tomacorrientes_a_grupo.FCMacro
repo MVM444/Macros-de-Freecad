@@ -1,0 +1,35 @@
+import FreeCAD
+import FreeCADGui
+
+def mover_tomacorrientes_a_grupo(nombre_grupo_base):
+    doc = FreeCAD.ActiveDocument
+    selection = FreeCADGui.Selection.getSelection()
+    
+    # Verificar si el grupo ya existe y encontrar un nombre consecutivo
+    grupo = None
+    grupo_nombre = nombre_grupo_base
+    contador = 1
+    while True:
+        grupo = None
+        for obj in doc.Objects:
+            if obj.TypeId == 'App::DocumentObjectGroup' and obj.Label == grupo_nombre:
+                grupo = obj
+                break
+        if grupo is None:
+            break
+        contador += 1
+        grupo_nombre = f"{nombre_grupo_base}_{contador}"
+    
+    # Crear el grupo
+    grupo = doc.addObject('App::DocumentObjectGroup', grupo_nombre)
+    grupo.Label = grupo_nombre
+    
+    # Mover los tomacorrientes seleccionados al grupo
+    for tomacorriente in selection:
+        grupo.addObject(tomacorriente)
+    
+    doc.recompute()
+    FreeCAD.Console.PrintMessage(f"{len(selection)} tomacorrientes movidos al grupo '{grupo_nombre}'.\n")
+
+# Ejecuta la función para mover tomacorrientes al grupo especificado
+mover_tomacorrientes_a_grupo("Circuito")  # Cambia "Circuito" por el nombre base de tu grupo

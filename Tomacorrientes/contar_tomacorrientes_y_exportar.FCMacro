@@ -1,0 +1,74 @@
+import FreeCAD
+import FreeCADGui
+
+def contar_tomacorrientes_y_exportar():
+    # Obtener el documento y los objetos seleccionados
+    doc = FreeCAD.ActiveDocument
+    selected_objects = FreeCADGui.Selection.getSelection()
+
+    # Verificar si se ha seleccionado algún objeto
+    if not selected_objects:
+        FreeCAD.Console.PrintError("No se ha seleccionado ningún objeto.\n")
+        return
+
+    # Verificar si el objeto seleccionado es un grupo
+    grupo_principal = selected_objects[0]
+    if grupo_principal.TypeId != 'App::DocumentObjectGroup':
+        FreeCAD.Console.PrintError("Debe seleccionar un grupo principal.\n")
+        return
+
+    FreeCAD.Console.PrintMessage(f"Grupo seleccionado: {grupo_principal.Label}\n")
+
+    # Crear o seleccionar la hoja de cálculo para los datos con el nombre del grupo principal
+    nombre_hoja = f"Hoja_{grupo_principal.Label}"
+    hoja = None
+    for obj in doc.Objects:
+        if obj.TypeId == 'Spreadsheet::Sheet' and obj.Name == nombre_hoja:
+            hoja = obj
+            break
+
+    if hoja is None:
+        hoja = doc.addObject('Spreadsheet::Sheet', nombre_hoja)
+    else:
+        # Borrar los datos existentes
+        hoja.clearAll()
+    
+    # Configurar encabezados en la hoja de cálculo
+    hoja.set("A1", "Circuito")
+    hoja.set("B1", "Cantidad de Tomacorrientes")
+
+    # Función recursiva para contar tomacorrientes en grupos y subgrupos
+    def contar_tomas_en_grupo(grupo):
+        conteo = 0
+        for obj in grupo.Group:
+            # Ignorar grupos de conexiones
+            if 'Conexiones' in obj.Label:
+                continue
+            # Si el objeto es un grupo, contar los tomacorrientes dentro de él
+            if obj.TypeId == 'App::DocumentObjectGroup':
+                conteo += contar_tomas_en_grupo(obj)
+            # Si el objeto no es un grupo, verificar si es un tomacorriente
+            elif obj.TypeId == 'Part::Feature':
+                conteo += 1
+        return conteo
+
+    # Crear un diccionario con el conteo de tomacorrientes por cada subgrupo (circuito)
+    datos_circuitos = {}
+    for obj in grupo_principal.Group:
+        if obj.TypeId == 'App::DocumentObjectGroup' and 'Conexiones' not in obj.Label:
+            conteo_tomas = contar_tomas_en_grupo(obj)
+            datos_circuitos[obj.Label] = conteo_tomas
+
+    # Llenar la hoja de cálculo con los datos recopilados
+    fila = 2
+    for circuito, cantidad in datos_circuitos.items():
+        hoja.set(f"A{fila}", circuito)
+        hoja.set(f"B{fila}", str(cantidad))
+        fila += 1
+
+    # Recomputa el documento para aplicar los cambios
+    doc.recompute()
+    FreeCAD.Console.PrintMessage("Datos exportados exitosamente a la hoja de cálculo.\n")
+
+# Ejecutar la función para contar los tomacorrientes y exportar los datos
+contar_tomacorrientes_y_exportar()

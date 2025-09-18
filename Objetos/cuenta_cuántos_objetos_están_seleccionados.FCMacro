@@ -1,0 +1,8 @@
+import FreeCADGui
+
+def contar_seleccion():
+    sel = FreeCADGui.Selection.getSelection()
+    cantidad = len(sel)
+    FreeCAD.Console.PrintMessage(f"Cantidad de objetos seleccionados: {cantidad}\n")
+
+contar_seleccion()

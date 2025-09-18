@@ -1,0 +1,108 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+# ============================================================================
+# Conmutador ModoVisual en lote para TomacorrienteHibrido
+# ============================================================================
+
+import FreeCAD as App
+import FreeCADGui as Gui
+
+LOG_TAG = "[TOMA23D]"
+
+def _info(m): App.Console.PrintMessage(f"{LOG_TAG}[INFO] {m}\n")
+def _warn(m): App.Console.PrintWarning(f"{LOG_TAG}[WARN] {m}\n")
+def _err(m): App.Console.PrintError(f"{LOG_TAG}[ERROR] {m}\n")
+
+
+def _is_tomacorriente_hibrido(obj):
+    try:
+        return getattr(obj, 'Categoria', '') == 'Tomacorriente' and hasattr(obj, 'ModoVisual')
+    except Exception:
+        return False
+
+def _parent_if_child(obj):
+    # climb to a parent that looks like a TomacorrienteHibrido
+    try:
+        for parent in obj.InList:
+            if _is_tomacorriente_hibrido(parent):
+                return parent
+    except Exception:
+        pass
+    return obj
+
+def _find_group_tomacorrientes(doc):
+    for o in doc.Objects:
+        if o.Label == 'electrico' and o.TypeId in ('App::DocumentObjectGroup','App::Part'):
+            for c in getattr(o, 'Group', []):
+                if c.Label == 'tomacorrientes' and c.TypeId in ('App::DocumentObjectGroup','App::Part'):
+                    return c
+    return None
+
+def aplicar_modo_visual_lote(modo):
+    doc = App.ActiveDocument
+    if not doc:
+        _err('No active document')
+        return
+
+    valid = ('Ambos','Solo2D','Solo3D')
+    if modo not in valid:
+        _err('Invalid modo. Use Ambos, Solo2D or Solo3D')
+        return
+
+    targets = []
+    if App.GuiUp and Gui.Selection.getSelection():
+        for o in Gui.Selection.getSelection():
+            p = _parent_if_child(o)
+            if _is_tomacorriente_hibrido(p):
+                targets.append(p)
+    else:
+        grp = _find_group_tomacorrientes(doc)
+        if grp:
+            for o in getattr(grp, 'Group', []):
+                if _is_tomacorriente_hibrido(o):
+                    targets.append(o)
+        else:
+            _warn('Group electrico/tomacorrientes not found')
+
+    targets = list(dict.fromkeys(targets))
+    changed = 0
+    skipped = 0
+    for t in targets:
+        try:
+            t.ModoVisual = modo
+            changed += 1
+        except Exception:
+            skipped += 1
+
+        # also adjust children visibility now
+        try:
+            rep2d = None
+            rep3d = None
+            for ch in getattr(t, 'Group', []):
+                if ch.Label == getattr(t, 'Rep2DName', 'Toma2D'):
+                    rep2d = ch
+                elif ch.Label == getattr(t, 'Rep3DName', 'Toma3D'):
+                    rep3d = ch
+            if rep2d: rep2d.ViewObject.Visibility = (modo in ('Ambos','Solo2D'))
+            if rep3d: rep3d.ViewObject.Visibility = (modo in ('Ambos','Solo3D'))
+        except Exception:
+            pass
+
+    if changed:
+        try:
+            doc.recompute()
+        except Exception:
+            pass
+
+    _info(f"ModoVisual applied to {changed} objects, skipped {skipped}")
+
+
+# quick helpers for toolbar mapping
+def ModoAmbos(): aplicar_modo_visual_lote('Ambos')
+def ModoSolo2D(): aplicar_modo_visual_lote('Solo2D')
+def ModoSolo3D(): aplicar_modo_visual_lote('Solo3D')
+
+
+# autorun example: set Ambos if launched by double click
+if __name__ == '__main__':
+    ModoAmbos()

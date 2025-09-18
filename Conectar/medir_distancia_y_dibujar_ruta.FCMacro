@@ -1,0 +1,333 @@
+# -*- coding: utf-8 -*-
+# ------------------------------------------------------------------------
+# NOMBRE MACRO: RutaCritica_WIRE.FCMacro
+# UBICACION: directorio de macros de FreeCAD
+#
+# DESCRIPCION:
+#   Traza un Draft WIRE ortogonal desde un objeto inicial hacia la toma
+#   mas lejana en cada subgrupo del grupo seleccionado. Registra datos
+#   en la hoja "ResultadosRutaCritica" SIN borrar filas existentes.
+#
+# INSTRUCCIONES:
+#   1) Seleccione primero el objeto inicial (con Placement).
+#   2) Seleccione despues el grupo que contiene las tomas (puede tener subgrupos).
+#   3) Ingrese la altura Z (mm) para rutear.
+#
+# NOTAS:
+#   - Sin tildes ni caracteres especiales en codigo y comentarios.
+#   - Depuracion en consola con prefijo [RUTA].
+#   - Se omiten grupos "Conexiones*" y objetos "Ruta Critica*".
+#   - E1 mantiene la proxima fila; esta corrida escribe en bloque y al final actualiza E1.
+# ------------------------------------------------------------------------
+
+import FreeCAD
+import FreeCADGui
+import Draft
+from PySide import QtGui
+from datetime import datetime
+
+TAG = "[RUTA]"
+
+def log_info(msg): FreeCAD.Console.PrintMessage(f"{TAG}[INFO] {msg}\n")
+def log_warn(msg): FreeCAD.Console.PrintWarning(f"{TAG}[WARN] {msg}\n")
+def log_err(msg):  FreeCAD.Console.PrintError(f"{TAG}[ERROR] {msg}\n")
+
+# ---------------------- Spreadsheet helpers -----------------------------
+
+def set_text(sheet, addr, text):
+    # texto entre comillas para evitar interpretacion como expresion
+    s = '"' + str(text).replace('"', '""') + '"'
+    sheet.set(addr, s)
+
+def set_number(sheet, addr, num, decimals=2):
+    # escribir numero como string simple (con decimales si aplica)
+    if isinstance(num, float):
+        s = f"{num:.{decimals}f}"
+    else:
+        s = str(num)
+    sheet.set(addr, s)
+
+def ensure_results_sheet(doc):
+    sheet = getattr(doc, "ResultadosRutaCritica", None)
+    if sheet is None:
+        sheet = doc.addObject("Spreadsheet::Sheet", "ResultadosRutaCritica")
+        set_text(sheet, "A1", "Circuito")
+        set_text(sheet, "B1", "Toma_mas_lejana")
+        set_text(sheet, "C1", "Distancia_mm")
+        set_text(sheet, "D1", "WireName")
+        sheet.set("E1", "2")  # proxima fila como texto simple
+        log_info("Hoja 'ResultadosRutaCritica' creada")
+    else:
+        try:
+            v = sheet.get("E1")
+            if v is None or str(v).strip() == "":
+                sheet.set("E1", "2")
+        except Exception:
+            sheet.set("E1", "2")
+        log_info("Hoja 'ResultadosRutaCritica' encontrada")
+    return sheet
+
+def _parse_e1_to_row(v):
+    # saneo de E1: sin comillas, >=2
+    if v is None:
+        return 2
+    s = str(v).strip()
+    if s.startswith('"') and s.endswith('"') and len(s) >= 2:
+        s = s[1:-1]
+    s = s.strip()
+    try:
+        r = int(float(s))
+    except Exception:
+        r = 2
+    if r < 2:
+        r = 2
+    return r
+
+def _cell_is_empty(sheet, row):
+    # fila vacia si A..D estan vacias; si hay error de lectura, asumimos vacia
+    for col in ("A","B","C","D"):
+        try:
+            val = sheet.get(f"{col}{row}")
+        except Exception:
+            return True
+        if val not in (None, "") and str(val).strip() != "":
+            return False
+    return True
+
+def find_block_start_row(sheet, start_row, max_scan=10000):
+    """
+    Busca UNA SOLA VEZ la primera fila realmente vacia a partir de start_row.
+    Limita el escaneo para evitar tiempos largos.
+    """
+    row = max(2, int(start_row))
+    if row > 100000:
+        log_warn(f"E1 demasiado grande ({row}); reseteo a 2")
+        row = 2
+    limit = row + max_scan
+    while row <= limit:
+        if _cell_is_empty(sheet, row):
+            return row
+        row += 1
+    log_warn("Scan limitado alcanzado; se usara ultima fila evaluada")
+    return limit
+
+def bump_e1(sheet, new_next_row):
+    try:
+        sheet.set("E1", str(int(new_next_row)))
+    except Exception as ex:
+        log_warn(f"No se pudo actualizar E1 a {new_next_row}: {ex}")
+
+# ------------------------ Group helpers ---------------------------------
+
+def is_conexiones_group(g):
+    label = getattr(g, "Label", "")
+    name  = getattr(g, "Name", "")
+    return (isinstance(label, str) and label.startswith("Conexiones")) or \
+           (isinstance(name, str)  and name.startswith("Conexiones"))
+
+def ensure_conexiones_group(doc, parent_group):
+    if hasattr(parent_group, "Group"):
+        for obj in parent_group.Group:
+            if obj.TypeId == "App::DocumentObjectGroup" and obj.Label == "Conexiones":
+                return obj
+        g = doc.addObject("App::DocumentObjectGroup", "Conexiones")
+        parent_group.addObject(g)
+        log_info(f"Subgrupo 'Conexiones' creado en '{parent_group.Label}'")
+        return g
+    else:
+        g = doc.addObject("App::DocumentObjectGroup", "Conexiones")
+        log_warn("Padre no es grupo; 'Conexiones' creado en raiz")
+        return g
+
+def collect_groups_to_evaluate(grupo):
+    if hasattr(grupo, "Group") and len(grupo.Group) > 0:
+        subs = [g for g in grupo.Group if hasattr(g, "Group") and not is_conexiones_group(g)]
+        if len(subs) > 0:
+            return subs
+    return [] if is_conexiones_group(grupo) else [grupo]
+
+# ------------------------- Geometry helpers -----------------------------
+
+def ortho_points_path(p_start, p_end, z_height):
+    pts = []
+    pts.append(p_start)
+    pts.append(FreeCAD.Vector(p_start.x, p_start.y, z_height))
+    pts.append(FreeCAD.Vector(p_end.x,   p_start.y, z_height))
+    pts.append(FreeCAD.Vector(p_end.x,   p_end.y,   z_height))
+    pts.append(p_end)
+    return pts
+
+def is_ruta_obj(obj):
+    lab = getattr(obj, "Label", "")
+    nam = getattr(obj, "Name", "")
+    return (isinstance(lab, str) and lab.startswith("Ruta Critica")) or \
+           (isinstance(nam, str) and nam.startswith("Ruta_Critica"))
+
+def get_candidate_tomas(group_like):
+    if not hasattr(group_like, "Group"):
+        return []
+    out = []
+    for o in group_like.Group:
+        if hasattr(o, "Placement") and not hasattr(o, "Group") and not is_ruta_obj(o):
+            out.append(o)
+    return out
+
+# ---------------------- Draft wire compatibility ------------------------
+
+def create_draft_wire(points_list):
+    maker = getattr(Draft, "make_wire", None)
+    if maker is None:
+        maker = getattr(Draft, "makeWire", None)
+    if maker is None:
+        raise RuntimeError("No se encontro Draft.make_wire ni Draft.makeWire")
+
+    attempts = [
+        lambda: maker(points_list, False, False, None),
+        lambda: maker(points_list, False, False),
+        lambda: maker(points_list, False),
+        lambda: maker(points_list)
+    ]
+    last_err = None
+    for i, attempt in enumerate(attempts, 1):
+        try:
+            w = attempt()
+            return w
+        except Exception as ex:
+            last_err = ex
+            log_warn(f"Intento firma makeWire #{i} fallo: {ex}")
+    raise TypeError(f"No fue posible crear el Wire con las firmas conocidas: {last_err}")
+
+# ----------------------------- Main -------------------------------------
+
+def medir_distancia_y_dibujar_ruta():
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_info(f"Inicio macro RutaCritica_WIRE - version {ts}")
+
+    doc = FreeCAD.ActiveDocument
+    if doc is None:
+        log_err("No hay documento activo")
+        return
+
+    sel = FreeCADGui.Selection.getSelection()
+    if len(sel) < 2:
+        log_err("Seleccione primero el objeto inicial y luego el grupo de tomas")
+        return
+
+    objeto_inicial = sel[0]
+    grupo_tomas   = sel[1]
+
+    if not hasattr(objeto_inicial, "Placement"):
+        log_err("El primer elemento seleccionado no tiene Placement")
+        return
+    if not hasattr(grupo_tomas, "Group"):
+        log_err("El segundo elemento seleccionado debe ser un grupo")
+        return
+
+    altura, ok = QtGui.QInputDialog.getDouble(
+        None, "Altura", "Ingrese altura Z de las rutas (mm):",
+        3000, -100000, 100000, 2
+    )
+    if not ok:
+        log_warn("Operacion cancelada por el usuario")
+        return
+
+    hoja = ensure_results_sheet(doc)
+    grupos = collect_groups_to_evaluate(grupo_tomas)
+    log_info(f"Grupos a evaluar: {len(grupos)}")
+
+    # calcular una sola vez la fila base para esta corrida
+    try:
+        e1_val = hoja.get("E1")
+    except Exception:
+        e1_val = None
+    start_row = _parse_e1_to_row(e1_val)
+    base_row  = find_block_start_row(hoja, start_row, max_scan=10000)
+    log_info(f"Fila base para esta corrida: {base_row}")
+
+    base0 = objeto_inicial.Placement.Base
+    wrote = 0  # contador de filas escritas en esta corrida
+
+    for subg in grupos:
+        g_label = getattr(subg, "Label", "Grupo")
+        tomas = get_candidate_tomas(subg if hasattr(subg, "Group") else grupo_tomas)
+        if len(tomas) == 0:
+            log_warn(f"Sin objetos candidatos en '{g_label}', se omite")
+            continue
+
+        # buscar toma mas lejana
+        max_d = -1.0
+        toma_far = None
+        for t in tomas:
+            try:
+                d = base0.distanceToPoint(t.Placement.Base)
+            except Exception as ex:
+                log_warn(f"Omitiendo '{t.Label}' por error al medir: {ex}")
+                continue
+            if d > max_d:
+                max_d = d
+                toma_far = t
+
+        if toma_far is None:
+            log_warn(f"No se encontro toma valida en '{g_label}'")
+            continue
+
+        row = base_row + wrote  # fila contigua dentro del bloque de esta corrida
+        log_info(f"Escribiendo fila {row} para '{g_label}'")
+
+        # escribir hoja
+        try:
+            set_text(hoja, f"A{row}", g_label)
+            set_text(hoja, f"B{row}", toma_far.Label)
+            set_number(hoja, f"C{row}", round(max_d, 2), decimals=2)
+        except Exception as ex:
+            log_err(f"Error escribiendo en fila {row}: {ex}")
+            # intentar una fila abajo
+            row = row + 1
+            try:
+                set_text(hoja, f"A{row}", g_label)
+                set_text(hoja, f"B{row}", toma_far.Label)
+                set_number(hoja, f"C{row}", round(max_d, 2), decimals=2)
+                log_warn(f"Escritura recuperada en fila {row}")
+            except Exception as ex2:
+                log_err(f"Fallo escritura de respaldo en fila {row}: {ex2}")
+                # no contamos esta iteracion
+                continue
+
+        # crear WIRE
+        pts = ortho_points_path(base0, toma_far.Placement.Base, altura)
+        try:
+            wire = create_draft_wire(pts)
+            wire.Label = f"Ruta Critica hacia {toma_far.Label}"
+            if hasattr(wire, "FilletRadius"):
+                try:
+                    wire.FilletRadius = 500.0
+                except Exception as exf:
+                    log_warn(f"No se pudo aplicar FilletRadius: {exf}")
+            # mover a Conexiones
+            g_con = ensure_conexiones_group(doc, subg if hasattr(subg, "Group") else grupo_tomas)
+            try:
+                g_con.addObject(wire)
+            except Exception as ex:
+                log_warn(f"No se pudo mover WIRE a 'Conexiones': {ex}")
+            set_text(hoja, f"D{row}", wire.Name)
+        except Exception as ex:
+            log_err(f"Error al crear WIRE: {ex}")
+            try:
+                set_text(hoja, f"D{row}", "WIRE_ERROR")
+            except Exception:
+                pass
+
+        wrote += 1  # solo si llegamos aqui, contamos la fila
+
+    # actualizar E1: siguiente fila libre despues del bloque
+    bump_e1(hoja, base_row + wrote)
+
+    try:
+        doc.recompute()
+        log_info("Documento recomputado")
+    except Exception as ex:
+        log_err(f"Error en recompute: {ex}")
+
+# Ejecutar macro
+if __name__ == "__main__":
+    medir_distancia_y_dibujar_ruta()

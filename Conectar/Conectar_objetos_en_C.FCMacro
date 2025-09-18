@@ -1,0 +1,162 @@
+# -*- coding: utf-8 -*-
+
+import FreeCAD
+import FreeCADGui
+import Part
+import Draft
+import math
+from PySide import QtGui, QtCore
+
+class DireccionSelector(QtGui.QDialog):
+    """
+    Ventana de seleccion de direccion con botones en forma de cruz.
+    """
+    def __init__(self):
+        super(DireccionSelector, self).__init__()
+        self.setWindowTitle("Seleccione la direccion")
+        self.setFixedSize(300, 200)  # Ajustar tamano de la ventana
+        
+        layout = QtGui.QGridLayout()
+        
+        self.selected_direction = None
+
+        # Botones de 30x30
+        self.btn_arriba = QtGui.QPushButton("Arriba")
+        self.btn_abajo = QtGui.QPushButton("Abajo")
+        self.btn_izquierda = QtGui.QPushButton("Izquierda")
+        self.btn_derecha = QtGui.QPushButton("Derecha")
+
+        btn_size = QtCore.QSize(60, 30)
+        for btn in [self.btn_arriba, self.btn_abajo, self.btn_izquierda, self.btn_derecha]:
+            btn.setFixedSize(btn_size)
+
+        # Conectar los botones con su direccion
+        self.btn_arriba.clicked.connect(lambda: self.set_direction("Arriba"))
+        self.btn_abajo.clicked.connect(lambda: self.set_direction("Abajo"))
+        self.btn_izquierda.clicked.connect(lambda: self.set_direction("Izquierda"))
+        self.btn_derecha.clicked.connect(lambda: self.set_direction("Derecha"))
+        
+        layout.addWidget(self.btn_arriba, 0, 1)
+        layout.addWidget(self.btn_izquierda, 1, 0)
+        layout.addWidget(self.btn_derecha, 1, 2)
+        layout.addWidget(self.btn_abajo, 2, 1)
+
+        self.setLayout(layout)
+
+    def set_direction(self, direction):
+        self.selected_direction = direction
+        self.accept()
+
+def seleccionar_direccion():
+    """
+    Muestra el cuadro de dialogo con los botones de direccion.
+    """
+    dialogo = DireccionSelector()
+    resultado = dialogo.exec_()
+    return dialogo.selected_direction if resultado == QtGui.QDialog.Accepted else None
+
+def conectar_objetos_en_C():
+    """
+    Conecta dos objetos seleccionados (vertices, aristas o caras) con una trayectoria en 'C'.
+    Se organiza en un grupo "Conexiones".
+    """
+    doc = FreeCAD.ActiveDocument
+    selected_objects = FreeCADGui.Selection.getSelectionEx()
+
+    if len(selected_objects) != 2:
+        FreeCAD.Console.PrintError("Debe seleccionar exactamente dos vertices, aristas o caras antes de ejecutar la macro.\n")
+        return
+
+    FreeCAD.Console.PrintMessage(f"Objetos seleccionados: {[obj.Object.Label for obj in selected_objects]}\n")
+
+    def obtener_punto_central(selection_detail):
+        """
+        Obtiene el punto central de una arista o cara seleccionada, o la posicion de un vertice.
+        """
+        if hasattr(selection_detail, "SubObjects") and selection_detail.SubObjects:
+            for sub_obj in selection_detail.SubObjects:
+                if isinstance(sub_obj, Part.Vertex):
+                    return sub_obj.Point
+                elif isinstance(sub_obj, Part.Edge):
+                    return sub_obj.CenterOfMass
+                elif isinstance(sub_obj, Part.Face):
+                    return sub_obj.CenterOfMass
+        return None
+
+    # Obtener puntos centrales de los objetos seleccionados
+    punto1 = obtener_punto_central(selected_objects[0])
+    punto2 = obtener_punto_central(selected_objects[1])
+
+    if punto1 is None or punto2 is None:
+        FreeCAD.Console.PrintError("Error al obtener los puntos centrales de los objetos seleccionados.\n")
+        return
+
+    # Seleccionar direccion con botones
+    direccion = seleccionar_direccion()
+    if direccion is None:
+        FreeCAD.Console.PrintError("No se selecciono una direccion valida.\n")
+        return
+
+    # Definir direccion en FreeCAD.Vector
+    direcciones = {
+        "Arriba": FreeCAD.Vector(0, 1, 0),
+        "Abajo": FreeCAD.Vector(0, -1, 0),
+        "Izquierda": FreeCAD.Vector(-1, 0, 0),
+        "Derecha": FreeCAD.Vector(1, 0, 0)
+    }
+
+    vector_direccion = direcciones.get(direccion)
+
+    # Solicitar distancia de conexion
+    distancia, ok = QtGui.QInputDialog.getDouble(None, "Distancia de la conexion", 
+                                                 "Ingrese la distancia en milimetros:", 
+                                                 200.0, 0.0, 10000.0, 2)
+    if not ok or distancia <= 0:
+        FreeCAD.Console.PrintError("No se ingreso una distancia valida.\n")
+        return
+
+    # Generar puntos intermedios ortogonales
+    punto_intermedio1 = punto1 + (vector_direccion * distancia)
+
+    # Corregir el punto intermedio 2 para garantizar ortogonalidad
+    if direccion in ["Arriba", "Abajo"]:
+        punto_intermedio2 = FreeCAD.Vector(punto2.x, punto_intermedio1.y, punto1.z)
+    else:
+        punto_intermedio2 = FreeCAD.Vector(punto_intermedio1.x, punto2.y, punto1.z)
+
+    # Calcular el radio del fillet
+    distancia_segunda_linea = (punto_intermedio2 - punto_intermedio1).Length
+    radio_fillet = max(10, min(0.5 * distancia, 1.5 * distancia_segunda_linea))
+
+    # Depuracion
+    FreeCAD.Console.PrintMessage("\nPuntos generados para la conexion:\n")
+    FreeCAD.Console.PrintMessage(f"  - Punto 1 (Inicio): {punto1}\n")
+    FreeCAD.Console.PrintMessage(f"  - Punto 2 (Intermedio 1): {punto_intermedio1}\n")
+    FreeCAD.Console.PrintMessage(f"  - Punto 3 (Intermedio 2): {punto_intermedio2}\n")
+    FreeCAD.Console.PrintMessage(f"  - Punto 4 (Final): {punto2}\n")
+    FreeCAD.Console.PrintMessage(f"  - Radio de Fillet: {radio_fillet}\n")
+
+    # Crear grupo "Conexiones"
+    grupo_conexiones = doc.getObject("Conexiones")
+    if not grupo_conexiones:
+        grupo_conexiones = doc.addObject("App::DocumentObjectGroup", "Conexiones")
+
+    # Crear la conexion con Draft Wire
+    puntos = [punto1, punto_intermedio1, punto_intermedio2, punto2]
+    wire = Draft.make_wire(puntos, closed=False)
+    wire.Label = f'Conexion_C_{selected_objects[0].Object.Label}_{selected_objects[1].Object.Label}'
+
+    # Aplicar Fillet correctamente
+    try:
+        wire.FilletRadius = radio_fillet
+    except Exception as e:
+        FreeCAD.Console.PrintError(f"Error al aplicar Fillet: {str(e)}\n")
+
+    # Agregar la conexion al grupo de Conexiones
+    grupo_conexiones.addObject(wire)
+
+    # Recalcular el documento
+    doc.recompute()
+
+# Ejecutar la funcion
+conectar_objetos_en_C()

@@ -1,0 +1,132 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+# ============================================================================
+# Adaptador: EnrollarEnTomacorriente
+# Crea contenedor TomacorrienteHibrido a partir de obj2D y obj3D existentes.
+# ============================================================================
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import uuid
+
+LOG_TAG = "[TOMA23D]"
+
+def _info(m): App.Console.PrintMessage(f"{LOG_TAG}[INFO] {m}\n")
+def _warn(m): App.Console.PrintWarning(f"{LOG_TAG}[WARN] {m}\n")
+def _err(m): App.Console.PrintError(f"{LOG_TAG}[ERROR] {m}\n")
+
+
+# reuse factory if available in session
+def _ensure_factory_loaded():
+    if 'InsertarTomacorriente' in globals():
+        return True
+    import os
+    try:
+        here = os.path.dirname(os.path.abspath(__file__))
+        path = os.path.join(here, 'Insertar_Tomacorriente_Fabrica.FCMacro')
+        if os.path.exists(path):
+            with open(path, 'r', encoding='utf-8') as f:
+                code = f.read()
+            exec(compile(code, path, 'exec'), globals())
+            return 'InsertarTomacorriente' in globals()
+    except Exception:
+        pass
+    return False
+
+
+def _parent_if_child(obj):
+    try:
+        for p in obj.InList:
+            if getattr(p, 'Categoria', '') == 'Tomacorriente':
+                return p
+    except Exception:
+        pass
+    return obj
+
+
+def EnrollarEnTomacorriente(obj2D=None, obj3D=None, meta=None):
+    doc = App.ActiveDocument
+    if not doc:
+        _err('No active document')
+        return None
+
+    # if no args, try selection
+    if obj2D is None and obj3D is None and App.GuiUp:
+        sel = Gui.Selection.getSelection()
+        if len(sel) >= 1:
+            obj2D = sel[0]
+        if len(sel) >= 2:
+            obj3D = sel[1]
+
+    meta = meta or {}
+    tipo = meta.get('Tipo', 'NEMA5-15_duplex')
+    etiqueta = meta.get('EtiquetaPlano', 'Toma')
+    circuito = meta.get('CircuitoID', '')
+
+    # ensure factory
+    if not _ensure_factory_loaded():
+        _err('Factory not available. Ensure Insertar_Tomacorriente_Fabrica.FCMacro exists in same folder.')
+        return None
+    # create empty parent through factory so contract is consistent
+    try:
+        parent = InsertarTomacorriente({'Tipo': tipo, 'EtiquetaPlano': etiqueta, 'CircuitoID': circuito})
+    except Exception as e:
+        _err(f'Factory call failed: {e}')
+        return None
+
+    # link or move children
+    created = {'2D': False, '3D': False}
+
+    if obj2D is not None:
+        try:
+            # prefer linking if supported
+            link2d = doc.addObject('App::Link', parent.Rep2DName)
+            link2d.LinkedObject = obj2D
+            try:
+                parent.addObject(link2d)
+            except Exception:
+                parent.Group = list(getattr(parent, 'Group', [])) + [link2d]
+            created['2D'] = True
+        except Exception:
+            _warn('App::Link not available, moving obj2D under parent')
+            try:
+                obj2D.Label = parent.Rep2DName
+                parent.addObject(obj2D)
+                created['2D'] = True
+            except Exception as e:
+                _err(f'Failed to wrap obj2D: {e}')
+
+    if obj3D is not None:
+        try:
+            link3d = doc.addObject('App::Link', parent.Rep3DName)
+            link3d.LinkedObject = obj3D
+            try:
+                parent.addObject(link3d)
+            except Exception:
+                parent.Group = list(getattr(parent, 'Group', [])) + [link3d]
+            created['3D'] = True
+        except Exception:
+            _warn('App::Link not available, moving obj3D under parent')
+            try:
+                obj3D.Label = parent.Rep3DName
+                parent.addObject(obj3D)
+                created['3D'] = True
+            except Exception as e:
+                _err(f'Failed to wrap obj3D: {e}')
+
+    if not created['2D']:
+        _warn('obj2D missing or failed to attach')
+    if not created['3D']:
+        _warn('obj3D missing or failed to attach')
+
+    try:
+        doc.recompute()
+    except Exception:
+        pass
+
+    _info(f"Enrolled into TomacorrienteHibrido uuid={parent.UUID} (2D={created['2D']} 3D={created['3D']})")
+    return parent
+
+
+if __name__ == '__main__':
+    EnrollarEnTomacorriente()

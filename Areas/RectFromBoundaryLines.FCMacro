@@ -1,0 +1,142 @@
+# Macro: RectFromBoundaryLines
+# Description: Crea un rectangulo de Draft usando 2 a N aristas seleccionadas.
+#   - Si hay >=2 orientaciones (>=2 clusters), calcula intersecciones entre pares de límites.
+#   - Si hay <2 orientaciones (solo 2 o 3 líneas paralelas), infiere líneas faltantes usando bounding box orientado por la dirección principal.
+#   - Siempre usa Draft.makeRectangle y refresca el documento sin cambiar la vista.
+# Date: 2025-07-05 16:00
+
+import FreeCAD
+import FreeCADGui
+import Draft
+import math
+from FreeCAD import Vector, Placement, Rotation
+
+
+def debug(msg):
+    FreeCAD.Console.PrintMessage(f"DEBUG: {msg}\n")
+
+
+def get_selected_edges():
+    sel = FreeCADGui.Selection.getSelectionEx()
+    edges = []
+    for entry in sel:
+        obj = entry.Object
+        for sub in entry.SubElementNames:
+            if sub.startswith("Edge"):
+                try:
+                    edges.append(obj.Shape.getElement(sub))
+                except Exception:
+                    pass
+    debug(f"Selected edges: {len(edges)}")
+    return edges
+
+
+def cluster_directions(edges):
+    dirs = []
+    for e in edges:
+        p1 = e.Vertexes[0].Point
+        p2 = e.Vertexes[-1].Point
+        v = Vector(p2.x-p1.x, p2.y-p1.y, 0)
+        if v.Length == 0:
+            continue
+        v_norm = v.normalize()
+        # Unify direction sign
+        if v_norm.x < 0 or (abs(v_norm.x)<1e-6 and v_norm.y < 0):
+            v_norm = -v_norm
+        dirs.append((v_norm, e))
+    clusters = []
+    for v_norm, e in dirs:
+        placed = False
+        for cl in clusters:
+            if abs(cl['dir'].dot(v_norm)) > 0.99:
+                cl['edges'].append((v_norm, e))
+                placed = True
+                break
+        if not placed:
+            clusters.append({'dir': v_norm, 'edges': [(v_norm, e)]})
+    clusters.sort(key=lambda c: len(c['edges']), reverse=True)
+    debug(f"Clusters: {len(clusters)} sizes {[len(c['edges']) for c in clusters]}")
+    return clusters
+
+
+def intersect(n1, c1, n2, c2):
+    det = n1.x * n2.y - n1.y * n2.x
+    if abs(det) < 1e-6:
+        return None
+    x = (c1 * n2.y - n1.y * c2) / det
+    y = (n1.x * c2 - c1 * n2.x) / det
+    return Vector(x, y, 0)
+
+
+def compute_boundaries(cluster):
+    v = cluster['dir']
+    # normal perpendicular
+    n = Vector(-v.y, v.x, 0).normalize()
+    cs = []
+    for v_norm, e in cluster['edges']:
+        p = e.Vertexes[0].Point
+        cs.append(n.dot(Vector(p.x, p.y, 0)))
+    return n, min(cs), max(cs)
+
+
+def RectFromBoundaryLines():
+    edges = get_selected_edges()
+    if len(edges) < 2:
+        FreeCAD.Console.PrintError("Seleccione al menos dos aristas lineales.\n")
+        return
+    clusters = cluster_directions(edges)
+
+    pts = []
+    if len(clusters) >= 2:
+        debug("Usando 2 orientaciones para calcular limites")
+        n1, c1min, c1max = compute_boundaries(clusters[0])
+        n2, c2min, c2max = compute_boundaries(clusters[1])
+        # cuatro intersecciones
+        for c1 in (c1min, c1max):
+            for c2 in (c2min, c2max):
+                p = intersect(n1, c1, n2, c2)
+                if p:
+                    pts.append(p)
+    else:
+        debug("Fallback orientado: infiriendo rectangulo de puntos extremos")
+        # one main direction
+        v_dir = clusters[0]['dir']
+        axis = v_dir
+        perp = Vector(-axis.y, axis.x, 0)
+        # gather all endpoints
+        for e in edges:
+            pts.append(e.Vertexes[0].Point)
+            pts.append(e.Vertexes[-1].Point)
+        # proyectar sobre ejes locales
+        ref = pts[0]
+        coords = [( (p-ref).dot(axis), (p-ref).dot(perp), p) for p in pts]
+        xs = [c[0] for c in coords]
+        ys = [c[1] for c in coords]
+        xMin, xMax = min(xs), max(xs)
+        yMin, yMax = min(ys), max(ys)
+        # reconstruir 4 vertices
+        pts = [ ref + axis*x + perp*y for x in (xMin, xMax) for y in (yMin, yMax) ]
+
+    if len(pts) != 4:
+        FreeCAD.Console.PrintError("ERROR: No se generan 4 vertices. vertices encontrados: %d\n" % len(pts))
+        return
+
+    # ordenar vertices
+    center = sum(pts, Vector(0,0,0)) * 0.25
+    pts.sort(key=lambda p: math.atan2(p.y-center.y, p.x-center.x))
+    debug(f"Vertices: {[tuple(p) for p in pts]}")
+
+    # calcular dimensiones y angulo
+    v0 = pts[1].sub(pts[0])
+    width = v0.Length
+    v3 = pts[3].sub(pts[0])
+    height = v3.Length
+    angle = math.degrees(math.atan2(v0.y, v0.x))
+    origin = pts[0]
+    debug(f"Origin={tuple(origin)}, width={width:.3f}, height={height:.3f}, angle={angle:.3f}")
+
+    placement = Placement(origin, Rotation(Vector(0,0,1), angle))
+    Draft.makeRectangle(width, height, placement)
+    FreeCAD.ActiveDocument.recompute()
+
+RectFromBoundaryLines()

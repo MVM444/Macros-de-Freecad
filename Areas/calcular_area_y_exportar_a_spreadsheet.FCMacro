@@ -1,0 +1,125 @@
+import FreeCAD
+import FreeCADGui
+import unicodedata
+
+def normalize_text(text):
+    """ Normaliza un texto eliminando caracteres especiales. """
+    try:
+        return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+    except Exception:
+        return "ERROR_CODIFICACION"
+
+def safe_str(value):
+    """ Convierte valores a cadena y maneja errores de codificacion. """
+    try:
+        return str(value)
+    except Exception:
+        return "ERROR_VALOR"
+
+def calcular_area_y_exportar_a_spreadsheet():
+    doc = FreeCAD.ActiveDocument
+    selected_objects = FreeCADGui.Selection.getSelection()
+
+    if not selected_objects:
+        FreeCAD.Console.PrintError("No se ha seleccionado ningun objeto.\n")
+        return
+
+    # Si se selecciona un objeto dentro de un grupo, seleccionar el grupo completo
+    if selected_objects[0].TypeId != 'App::DocumentObjectGroup':
+        for obj in doc.Objects:
+            if obj.TypeId == 'App::DocumentObjectGroup' and selected_objects[0] in obj.Group:
+                selected_objects = [obj]
+                FreeCAD.Console.PrintMessage("Seleccion detectada dentro de un grupo. Se selecciona el grupo completo.\n")
+                break
+
+    grupo = selected_objects[0]
+    if grupo.TypeId != 'App::DocumentObjectGroup':
+        FreeCAD.Console.PrintError("El objeto seleccionado no es un grupo.\n")
+        return
+
+    # Crear la hoja de calculo si no existe
+    hoja = None
+    for obj in doc.Objects:
+        if obj.TypeId == 'Spreadsheet::Sheet' and obj.Name == 'DatosRecintos':
+            hoja = obj
+            break
+    
+    if not hoja:
+        hoja = doc.addObject('Spreadsheet::Sheet', 'DatosRecintos')
+    
+    hoja.Visibility = True  # Asegura que la hoja de calculo sea visible
+
+    data_recintos = {}
+
+    # Contador de objetos procesados
+    objetos_procesados = 0
+
+    for obj in grupo.Group:
+        if hasattr(obj, 'Shape') and obj.Shape and (obj.Shape.Faces or obj.Shape.Edges):
+            try:
+                area = obj.Shape.Area / 1000000 if obj.Shape.Faces else 0  # Si no tiene Faces, el área será 0
+                if not obj.Shape.Faces:
+                    FreeCAD.Console.PrintWarning(f"El objeto {obj.Label} no tiene una cara definida. Se recomienda activar 'Make Face' en sus propiedades.\n")
+                
+                bounds = obj.Shape.BoundBox
+                largo = bounds.XLength / 1000  # mm a m
+                ancho = bounds.YLength / 1000  # mm a m
+                altura = bounds.ZLength / 1000  # mm a m
+                rows = getattr(obj, 'Rows', 0)
+                columns = getattr(obj, 'Columns', 0)
+
+                nombre_normalizado = normalize_text(obj.Label.rsplit('_', 1)[0])
+                data_recintos[nombre_normalizado] = {
+                    "Recinto": normalize_text(obj.Label),
+                    "Area": round(area, 2),
+                    "Largo": round(largo, 2),
+                    "Ancho": round(ancho, 2),
+                    "Altura": round(altura, 2),
+                    "Rows": safe_str(rows),
+                    "Columns": safe_str(columns)
+                }
+                objetos_procesados += 1
+                FreeCAD.Console.PrintMessage(f"Anadido: {obj.Label}\n")
+            except AttributeError:
+                FreeCAD.Console.PrintError(f"Error al obtener propiedades: {obj.Label}\n")
+        else:
+            FreeCAD.Console.PrintMessage(f"Objeto sin caras ni aristas procesables: {obj.Label}\n")
+
+    if objetos_procesados == 0:
+        FreeCAD.Console.PrintWarning("No se encontraron objetos validos para exportar.\n")
+        return
+
+    # Encabezados de la hoja de calculo
+    headers = ["Recinto", "Area (m^2)", "Largo (m)", "Ancho (m)", "Altura (m)", "Filas", "Columnas", "Descripcion"]
+    for col, header in enumerate(headers, start=1):
+        hoja.set(f"{chr(64 + col)}1", header)
+
+    # Llenar la hoja de calculo sin borrar la columna Descripcion existente
+    for fila, (key, value) in enumerate(data_recintos.items(), start=2):
+        try:
+            hoja.set(f"A{fila}", value["Recinto"])
+            hoja.set(f"B{fila}", safe_str(value["Area"]))
+            hoja.set(f"C{fila}", safe_str(value["Largo"]))
+            hoja.set(f"D{fila}", safe_str(value["Ancho"]))
+            hoja.set(f"E{fila}", safe_str(value["Altura"]))
+            hoja.set(f"F{fila}", value["Rows"])
+            hoja.set(f"G{fila}", value["Columns"])
+            # Verificar si la celda existe antes de acceder a ella
+            try:
+                existing_value = hoja.get(f"H{fila}")
+                if existing_value is None:
+                    hoja.set(f"H{fila}", "")
+            except Exception:
+                FreeCAD.Console.PrintWarning(f"No se pudo acceder a la celda H{fila}. Verifique la hoja de calculo.\n")
+        except Exception as e:
+            FreeCAD.Console.PrintError(f"Error al escribir datos en la fila {fila}: {e}\n")
+
+    # Forzar recomputo de la hoja de calculo
+    hoja.recompute()
+    
+    # Recomputa el documento para aplicar los cambios
+    doc.recompute()
+    FreeCAD.Console.PrintMessage(f"Datos exportados exitosamente a la hoja de calculo. ({objetos_procesados} objetos procesados)\n")
+
+# Ejecutar la funcion
+calcular_area_y_exportar_a_spreadsheet()

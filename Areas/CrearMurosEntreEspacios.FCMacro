@@ -1,0 +1,84 @@
+# -*- coding: utf-8 -*-
+# Macro: CrearLineasCentroBBoxUnidades
+# Fecha: 2025-07-08 14:15 (revisada y corregida)
+# Descripción:
+#   1. Limpia líneas previas con prefijo "Centro_".
+#   2. Recorre pares de objetos seleccionados.
+#   3. Usa únicamente el borde exterior (BoundBox) de cada objeto,
+#      ignorando filas/columnas internas definidas en los rectángulos.
+#   4. Calcula brechas entre BoundBoxes en mm y convierte a metros.
+#   5. Dibuja una línea central SOLO si la separación es > 0 y ≤ tol_espesor_m.
+#   6. Soporta brechas horizontales (líneas verticales) y verticales (líneas horizontales).
+#   7. Muestra claramente en la consola separaciones y posiciones.
+
+import FreeCAD, FreeCADGui, Draft
+from itertools import combinations
+from FreeCAD import Vector
+
+# Parámetros configurables
+tol_espesor_m = 0.30  # separación máxima en metros
+line_prefix = "Centro_"
+
+# Función principal
+def crear_lineas_centro():
+    doc = FreeCAD.ActiveDocument
+    FreeCAD.Console.PrintMessage("== Iniciando macro CrearLineasCentroBBoxUnidades ==\n")
+
+    # Limpiar líneas previas
+    for obj in list(doc.Objects):
+        if hasattr(obj, 'Label') and obj.Label.startswith(line_prefix):
+            doc.removeObject(obj.Name)
+
+    # Obtener objetos seleccionados
+    sel = FreeCADGui.Selection.getSelection()
+    if not sel:
+        FreeCAD.Console.PrintError("Error: no hay objetos seleccionados.\n")
+        return
+
+    # Analizar pares de objetos
+    for o1, o2 in combinations(sel, 2):
+        bb1, bb2 = o1.Shape.BoundBox, o2.Shape.BoundBox
+
+        # Cálculo solapamiento (mm)
+        overlap_x = min(bb1.XMax, bb2.XMax) - max(bb1.XMin, bb2.XMin)
+        overlap_y = min(bb1.YMax, bb2.YMax) - max(bb1.YMin, bb2.YMin)
+
+        # Cálculo separación (mm)
+        sep_y_mm = bb2.YMin - bb1.YMax if bb2.YMin >= bb1.YMax else bb1.YMin - bb2.YMax if bb1.YMin >= bb2.YMax else 0
+        sep_x_mm = bb2.XMin - bb1.XMax if bb2.XMin >= bb1.XMax else bb1.XMin - bb2.XMax if bb1.XMin >= bb2.XMax else 0
+
+        # Convertir separación a metros
+        sep_y = sep_y_mm / 1000.0
+        sep_x = sep_x_mm / 1000.0
+
+        # Brecha horizontal (línea vertical)
+        if overlap_y > 0 and 0 < sep_x <= tol_espesor_m:
+            x_c = (bb1.XMax + bb2.XMin) / 2.0 if bb2.XMin >= bb1.XMax else (bb2.XMax + bb1.XMin) / 2.0
+            y_start, y_end = max(bb1.YMin, bb2.YMin), min(bb1.YMax, bb2.YMax)
+            FreeCAD.Console.PrintMessage(
+                f"Línea vertical Centro {o1.Name}↔{o2.Name}: sep={sep_x:.3f} m en X={x_c:.1f} mm\n"
+            )
+            ln = Draft.makeLine(Vector(x_c, y_start, 0), Vector(x_c, y_end, 0))
+            ln.Label = f"Centro_{o1.Name}_{o2.Name}"
+
+        # Brecha vertical (línea horizontal)
+        elif overlap_x > 0 and 0 < sep_y <= tol_espesor_m:
+            y_c = (bb1.YMax + bb2.YMin) / 2.0 if bb2.YMin >= bb1.YMax else (bb2.YMax + bb1.YMin) / 2.0
+            x_start, x_end = max(bb1.XMin, bb2.XMin), min(bb1.XMax, bb2.XMax)
+            FreeCAD.Console.PrintMessage(
+                f"Línea horizontal Centro {o1.Name}↔{o2.Name}: sep={sep_y:.3f} m en Y={y_c:.1f} mm\n"
+            )
+            ln = Draft.makeLine(Vector(x_start, y_c, 0), Vector(x_end, y_c, 0))
+            ln.Label = f"Centro_{o1.Name}_{o2.Name}"
+
+        # No se dibuja línea si no hay separación positiva
+        else:
+            FreeCAD.Console.PrintMessage(
+                f"Sin línea {o1.Name}↔{o2.Name}: sin separación o fuera de tolerancia.\n"
+            )
+
+    doc.recompute()
+    FreeCAD.Console.PrintMessage("== Macro finalizada: detección completa ==\n")
+
+# Ejecutar directamente
+crear_lineas_centro()

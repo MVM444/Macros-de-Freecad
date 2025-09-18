@@ -1,0 +1,74 @@
+# Macro: RectFromSelection
+# Description: Crea un rectangulo en Draft a partir de una seleccion mixta.
+#   - Si la seleccion contiene al menos dos aristas, delega a RectFromLines.
+#   - Si no, usa todos los vertices/puntos para crear bounding box axis-aligned en XY.
+#   - Esquema modular: requiere RectFromLines.FCMacro en el mismo directorio de macros.
+# Date: 2025-07-05 12:20
+
+import os
+import FreeCAD
+import FreeCADGui
+import Draft
+from FreeCAD import Vector
+
+# Funcion de debug: siempre imprime en Report view
+def debug(msg):
+    FreeCAD.Console.PrintMessage(f"DEBUG: {msg}\n")
+
+# Macro principal
+
+def RectFromSelection():
+    # Obtener prefijo de macros
+    macro_path = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/Macro").GetString("MacroPath", "")
+    # Recoleccion de aristas y vertices
+    sel = FreeCADGui.Selection.getSelectionEx()
+    edges = []
+    verts = []
+    for entry in sel:
+        # subelementos aristas
+        for sub in entry.SubElementNames:
+            if sub.startswith("Edge"):
+                e = entry.Object.Shape.getElement(sub)
+                edges.append(e)
+        # vertices del objeto
+        for v in entry.Object.Shape.Vertexes:
+            verts.append(v.Point)
+    debug(f"Items seleccionados: {len(sel)}")
+    debug(f"Aristas detectadas: {len(edges)}, Vertices detectados: {len(verts)}")
+
+    # Caso 1: al menos dos aristas -> delegar a RectFromLines
+    if len(edges) >= 2:
+        debug(">=2 aristas: delegando a RectFromLines")
+        # Ubicar y ejecutar macro RectFromLines
+        file = os.path.join(macro_path, 'RectFromLines.FCMacro')
+        if os.path.exists(file):
+            try:
+                exec(open(file, 'r').read(), globals())
+                debug("RectFromLines ejecutada correctamente.")
+            except Exception as e:
+                debug(f"Error al ejecutar RectFromLines: {e}")
+        else:
+            debug(f"No se encontro RectFromLines.FCMacro en: {macro_path}")
+        return
+
+    # Caso 2: fallback bounding box axis-aligned XY
+    if len(verts) == 0:
+        debug("No hay vertices para calcular bounding box. Macro terminada.")
+        return
+    # Calcular xmin, xmax, ymin, ymax
+    xs = [p.x for p in verts]
+    ys = [p.y for p in verts]
+    xmin, xmax = min(xs), max(xs)
+    ymin, ymax = min(ys), max(ys)
+    length = xmax - xmin
+    height = ymax - ymin
+    origin = Vector(xmin, ymin, 0)
+    debug(f"Bounding box origin={origin}, length={length}, height={height}")
+    # Crear rectangulo
+    Draft.makeRectangle(length, height, placement=FreeCAD.Placement(origin, FreeCAD.Rotation()))
+    FreeCAD.ActiveDocument.recompute()
+    FreeCADGui.SendMsgToActiveView("ViewFit")
+
+# Ejecutar si se lanza macro directamente
+if __name__ == '__main__':
+    RectFromSelection()

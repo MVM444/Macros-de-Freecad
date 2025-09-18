@@ -1,0 +1,59 @@
+import FreeCAD
+import FreeCADGui
+from math import degrees
+
+def rotar_tomacorriente():
+    doc = FreeCAD.ActiveDocument
+    selected_objects = FreeCADGui.Selection.getSelection()
+
+    if not selected_objects:
+        FreeCAD.Console.PrintError("No se ha seleccionado ningun objeto.\n")
+        return
+
+    # Seleccionar el primer objeto
+    objeto = selected_objects[0]
+
+    # Obtener la orientacion actual del objeto
+    rotacion_actual = objeto.Placement.Rotation
+    angulos_euler = rotacion_actual.toEuler()
+    angulo_z = int(degrees(angulos_euler[2])) % 360
+
+    # Mostrar el angulo de rotacion actual
+    FreeCAD.Console.PrintMessage(f"Angulo Z actual: {angulo_z}°\n")
+
+    # Calcular el punto de rotacion basado en la orientacion actual
+    desplazamiento = 60  # Desplazamiento en mm
+    posicion_actual = objeto.Placement.Base
+
+    # Mostrar la posicion actual del objeto
+    FreeCAD.Console.PrintMessage(f"Posicion actual: {posicion_actual}\n")
+
+    if angulo_z == 0:
+        punto_rotacion = FreeCAD.Vector(posicion_actual.x, posicion_actual.y - desplazamiento, posicion_actual.z)
+    elif angulo_z == 90:
+        punto_rotacion = FreeCAD.Vector(posicion_actual.x - desplazamiento, posicion_actual.y, posicion_actual.z)
+    elif angulo_z == 180:
+        punto_rotacion = FreeCAD.Vector(posicion_actual.x, posicion_actual.y + desplazamiento, posicion_actual.z)
+    elif angulo_z == 270:
+        punto_rotacion = FreeCAD.Vector(posicion_actual.x + desplazamiento, posicion_actual.y, posicion_actual.z)
+    else:
+        FreeCAD.Console.PrintError("El angulo de rotacion no es estandar (0, 90, 180, 270).\n")
+        return
+
+    # Mostrar el punto de rotacion calculado
+    FreeCAD.Console.PrintMessage(f"Punto de rotacion: {punto_rotacion}\n")
+
+    # Crear una rotacion relativa de 90 grados alrededor del eje Z
+    nueva_rotacion = FreeCAD.Rotation(FreeCAD.Vector(0, 0, 1), 90)
+
+    # Mantener la posición del objeto fija mientras se rota
+    nueva_ubicacion = posicion_actual
+
+    # Aplicar el nuevo placement al objeto con la nueva rotacion
+    objeto.Placement = FreeCAD.Placement(nueva_ubicacion, nueva_rotacion.multiply(rotacion_actual))
+
+    # Recomputa el documento para aplicar los cambios
+    doc.recompute()
+
+# Ejecutar la funcion
+rotar_tomacorriente()

@@ -1,0 +1,35 @@
+import FreeCADGui
+
+def obtener_tipo_y_nombre(obj):
+    """Obtiene el tipo real y el nombre del objeto original si es Clone o Link."""
+    if hasattr(obj, "LinkedObject") and obj.LinkedObject:  # Si es un Clone o Link
+        return obtener_tipo_y_nombre(obj.LinkedObject)  # Buscar el tipo del objeto original
+    
+    if hasattr(obj, "Objects") and obj.Objects:  # Si tiene subobjetos (como un Body)
+        return obtener_tipo_y_nombre(obj.Objects[0])  # Tomar el primer objeto del contenedor
+
+    return obj.TypeId, obj.Label  # Devolver el tipo real y el nombre
+
+def contar_objetos_por_tipo():
+    sel = FreeCADGui.Selection.getSelection()
+    
+    if not sel:
+        FreeCAD.Console.PrintMessage("No hay objetos seleccionados.\n")
+        return
+    
+    conteo = {}
+
+    for obj in sel:
+        tipo_real, nombre_real = obtener_tipo_y_nombre(obj)  # Obtener tipo y nombre original
+        clave = f"{tipo_real} ({nombre_real})"  # Clave única para el conteo
+
+        if clave in conteo:
+            conteo[clave] += 1
+        else:
+            conteo[clave] = 1
+
+    FreeCAD.Console.PrintMessage("Conteo de objetos seleccionados:\n")
+    for clave, cantidad in conteo.items():
+        FreeCAD.Console.PrintMessage(f"{clave}: {cantidad}\n")
+
+contar_objetos_por_tipo()

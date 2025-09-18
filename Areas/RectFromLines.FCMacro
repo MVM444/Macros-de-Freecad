@@ -1,0 +1,85 @@
+# Macro: RectFromLines
+# Description: Crea un rectangulo en Draft a partir de dos aristas lineales seleccionadas.
+#   - Soporta líneas perpendiculares y paralelas.
+#   - Genera el rectángulo más grande cuyos bordes pasan por las líneas seleccionadas.
+#   - Fallback: bounding box axis-aligned en XY de la selección.
+#   - Usa Draft.makeRectangle y refresca documento y vista.
+#   - Siempre imprime DEBUG con FreeCAD.Console.PrintMessage.
+# Date: 2025-07-04 17:00
+
+import FreeCAD
+import FreeCADGui
+import Draft
+import math
+from FreeCAD import Vector, Placement, Rotation
+
+# Función de depuración siempre activa (se muestra en Report view)
+def debug(msg):
+    FreeCAD.Console.PrintMessage(f"[RectFromLines DEBUG] {msg}\n")
+
+# Extrae dos aristas lineales de la selección
+def get_two_edges():
+    sel = FreeCADGui.Selection.getSelectionEx()
+    edges = []
+    for entry in sel:
+        shape = entry.Object.Shape
+        for sub in entry.SubElementNames:
+            if sub.startswith("Edge"):
+                edges.append(shape.getElement(sub))
+                debug(f"Edge encontrada: {entry.Object.Name}.{sub}")
+                if len(edges) >= 2:
+                    return edges[:2]
+    return edges
+
+# Macro principal
+def RectFromLines():
+    edges = get_two_edges()
+    if len(edges) != 2:
+        debug(f"Selección inválida: {len(edges)} aristas encontradas")
+        FreeCAD.Console.PrintError("Error: seleccione exactamente dos aristas lineales.\n")
+        return
+
+    # Obtener extremos
+    pts = []
+    for e in edges:
+        v1, v2 = e.Vertexes[0].Point, e.Vertexes[1].Point
+        pts.extend([v1, v2])
+    debug(f"Extremos: {pts}")
+
+    # Sistema local basado en primera arista
+    originRef = edges[0].Vertexes[0].Point
+    v1 = edges[0].Vertexes[1].Point.sub(originRef)
+    axis = v1.normalize()
+    perp = Vector(-axis.y, axis.x, 0)
+    debug(f"originRef={originRef}, axis={axis}, perp={perp}")
+
+    # Proyecciones de puntos
+    local = [( (p.sub(originRef).dot(axis)), (p.sub(originRef).dot(perp)) ) for p in pts]
+    debug(f"Proyecciones locales: {local}")
+
+    xs = [x for x,_ in local]
+    ys = [y for _,y in local]
+    xMin, xMax = min(xs), max(xs)
+    yMin, yMax = min(ys), max(ys)
+    debug(f"xMin={xMin}, xMax={xMax}, yMin={yMin}, yMax={yMax}")
+
+    # Parámetros del rectángulo
+    length = xMax - xMin
+    height = yMax - yMin
+    angle = math.degrees(math.atan2(axis.y, axis.x))
+    debug(f"length={length}, height={height}, angle={angle}")
+
+    # Crear rectángulo
+    origin = originRef + axis.multiply(xMin) + perp.multiply(yMin)
+    placement = Placement(origin, Rotation(Vector(0,0,1), angle))
+    debug(f"origin={origin}, placement={placement}")
+    rect = Draft.makeRectangle(length, height, placement)
+    rect.Label = "RectFromLines"
+
+    # Actualizar documento y vista
+    FreeCAD.ActiveDocument.recompute()
+    debug("Rectangulo creado y vista ajustada")
+
+# Ejecutar macro
+if __name__ == '__main__':
+    RectFromLines()

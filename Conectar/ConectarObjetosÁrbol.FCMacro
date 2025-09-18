@@ -1,0 +1,85 @@
+import FreeCAD
+import FreeCADGui
+import Part
+from collections import defaultdict
+
+def conectar_objetos_arbol():
+    doc = FreeCAD.ActiveDocument
+
+    # Obtener el objeto seleccionado
+    selected_objects = FreeCADGui.Selection.getSelection()
+
+    if not selected_objects:
+        FreeCAD.Console.PrintError("No se ha seleccionado ningún objeto.\n")
+        return
+
+    # Verificar si el objeto seleccionado es un grupo
+    if selected_objects[0].TypeId == 'App::DocumentObjectGroup':
+        grupo = selected_objects[0]
+    else:
+        # Buscar el grupo al que pertenece el objeto seleccionado
+        for obj in doc.Objects:
+            if obj.TypeId == 'App::DocumentObjectGroup' and selected_objects[0] in obj.Group:
+                grupo = obj
+                break
+        else:
+            FreeCAD.Console.PrintError("El objeto seleccionado no pertenece a ningún grupo.\n")
+            return
+
+    FreeCAD.Console.PrintMessage(f"Grupo seleccionado: {grupo.Name}\n")
+
+    # Filtrar solo objetos que tienen la propiedad Placement
+    objetos_numerados = sorted(
+        [obj for obj in grupo.Group if hasattr(obj, 'Placement') and any(char.isdigit() for char in obj.Label)],
+        key=lambda x: int(''.join(filter(str.isdigit, x.Label))) if any(char.isdigit() for char in x.Label) else float('inf')
+    )
+
+    # Crear un nuevo grupo para las conexiones
+    conexiones_grupo = doc.addObject("App::DocumentObjectGroup", "Conexiones")
+    grupo.addObject(conexiones_grupo)
+
+    # Diccionario para rastrear conexiones
+    conexiones_realizadas = set()
+
+    # Función para dibujar conexiones ortogonales entre objetos adyacentes
+    def dibujar_conexiones_adyacentes():
+        for i in range(len(objetos_numerados) - 1):
+            objeto1 = objetos_numerados[i]
+            objeto2 = objetos_numerados[i + 1]
+
+            # Asegurar que la conexión solo se realiza entre objetos adyacentes
+            if (objeto1.Label, objeto2.Label) in conexiones_realizadas or (objeto2.Label, objeto1.Label) in conexiones_realizadas:
+                continue
+
+            # Mensajes de depuración
+            FreeCAD.Console.PrintMessage(f"Conectando: {objeto1.Label} -> {objeto2.Label}\n")
+            FreeCAD.Console.PrintMessage(f"Posición de {objeto1.Label}: {objeto1.Placement.Base}\n")
+            FreeCAD.Console.PrintMessage(f"Posición de {objeto2.Label}: {objeto2.Placement.Base}\n")
+
+            puntos = [objeto1.Placement.Base]
+
+            # Agregar puntos intermedios para mantener ángulos rectos
+            if objeto1.Placement.Base.x != objeto2.Placement.Base.x:
+                puntos.append(FreeCAD.Vector(objeto2.Placement.Base.x, objeto1.Placement.Base.y, objeto1.Placement.Base.z))
+            if objeto1.Placement.Base.y != objeto2.Placement.Base.y:
+                puntos.append(FreeCAD.Vector(objeto2.Placement.Base.x, objeto2.Placement.Base.y, objeto1.Placement.Base.z))
+
+            puntos.append(objeto2.Placement.Base)
+
+            # Crear y almacenar la línea en el grupo de conexiones
+            linea = Part.makePolygon(puntos)
+            linea_obj = doc.addObject("Part::Feature", f'Conexion_{objeto1.Label}_{objeto2.Label}')
+            linea_obj.Shape = linea
+            conexiones_grupo.addObject(linea_obj)
+            linea_obj.ViewObject.Visibility = True
+
+            # Añadir la conexión a la lista de conexiones realizadas
+            conexiones_realizadas.add((objeto1.Label, objeto2.Label))
+
+    # Iniciar el proceso de conexión
+    dibujar_conexiones_adyacentes()
+
+    doc.recompute()
+
+# Ejecutar la función para conectar objetos en el grupo seleccionado
+conectar_objetos_arbol()

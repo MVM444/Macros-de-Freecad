@@ -1,0 +1,94 @@
+import FreeCAD
+import FreeCADGui
+import Part
+import Draft
+import math
+
+def conectar_objetos_en_eSe():
+    """
+    Esta macro conecta dos objetos seleccionados (aristas o caras) con una conexión en forma de "S".
+    La primera línea siempre saldrá perpendicular a la cara o la arista seleccionada.
+    Se aplicará un fillet en los vértices con radios más pequeños para evitar problemas.
+    """
+    doc = FreeCAD.ActiveDocument
+    selected_objects = FreeCADGui.Selection.getSelectionEx()
+
+    if len(selected_objects) != 2:
+        FreeCAD.Console.PrintError("Debe seleccionar exactamente dos objetos (aristas o caras).\n")
+        return
+
+    FreeCAD.Console.PrintMessage(f"Objetos seleccionados: {selected_objects[0].Object.Name}, {selected_objects[1].Object.Name}\n")
+
+    def obtener_punto_y_direccion(selection_detail):
+        """
+        Obtiene el punto central de una arista o cara y su dirección perpendicular.
+        """
+        if selection_detail.HasSubObjects:
+            for sub_obj in selection_detail.SubObjects:
+                if isinstance(sub_obj, Part.Edge):
+                    punto_medio = sub_obj.CenterOfMass
+                    tangente = sub_obj.tangentAt(0.5).normalize()
+                    direccion_perpendicular = FreeCAD.Vector(-tangente.y, tangente.x, 0).normalize()
+                    return punto_medio, direccion_perpendicular
+                elif isinstance(sub_obj, Part.Face):
+                    punto_centro = sub_obj.CenterOfMass
+                    normal = sub_obj.normalAt(0.5, 0.5).normalize()
+                    return punto_centro, normal
+        return None, None
+
+    # Obtener los puntos y direcciones de los objetos seleccionados
+    punto1, direccion1 = obtener_punto_y_direccion(selected_objects[0])
+    punto2, direccion2 = obtener_punto_y_direccion(selected_objects[1])
+
+    if punto1 is None or punto2 is None:
+        FreeCAD.Console.PrintError("Error al obtener los puntos de conexión.\n")
+        return
+
+    # Calcular las distancias en cada eje
+    distancia_x = abs(punto1.x - punto2.x)
+    distancia_y = abs(punto1.y - punto2.y)
+    distancia_z = abs(punto1.z - punto2.z)
+    distancia_central = max(distancia_x, distancia_y, distancia_z)
+
+    # Generar los puntos intermedios, asegurando ortogonalidad
+    punto_intermedio1 = punto1 + (direccion1 * 10)  # Reducido a 10mm para evitar problemas
+    punto_intermedio2 = punto2 + (direccion2 * 10)
+
+    if distancia_x > distancia_y:
+        punto_intermedio1.x = (punto1.x + punto2.x) / 2
+        punto_intermedio2.x = punto_intermedio1.x
+    else:
+        punto_intermedio1.y = (punto1.y + punto2.y) / 2
+        punto_intermedio2.y = punto_intermedio1.y
+
+    # Ajustar el radio del fillet basado en la mitad de la distancia entre punto 2 y 3
+    distancia_fillet = (punto_intermedio2 - punto_intermedio1).Length / 2
+    radio_fillet = max(5 * (math.floor(distancia_fillet / 5)), 2, min(distancia_fillet / 2, 10))
+
+    # Crear subdirectorio para conexiones si no existe
+    grupo_conexiones = doc.getObject("Grupo_Conexiones")
+    if not grupo_conexiones:
+        grupo_conexiones = doc.addObject("App::DocumentObjectGroup", "Grupo_Conexiones")
+
+    # Imprimir puntos generados para depuración
+    FreeCAD.Console.PrintMessage("\nPuntos generados para la conexión:\n")
+    FreeCAD.Console.PrintMessage(f"  - Punto 1 (Inicio): {punto1}\n")
+    FreeCAD.Console.PrintMessage(f"  - Salida Perpendicular 1: {punto_intermedio1}\n")
+    FreeCAD.Console.PrintMessage(f"  - Salida Perpendicular 2: {punto_intermedio2}\n")
+    FreeCAD.Console.PrintMessage(f"  - Punto 4 (Final): {punto2}\n")
+    FreeCAD.Console.PrintMessage(f"  - Radio de Fillet: {radio_fillet}\n")
+
+    # Crear la conexión con los puntos definidos
+    puntos = [punto1, punto_intermedio1, punto_intermedio2, punto2]
+    wire = Draft.make_wire(puntos, closed=False)
+    wire.Label = f'Conexion_eSe_{selected_objects[0].Object.Name}_{selected_objects[1].Object.Name}'
+    wire.FilletRadius = radio_fillet  # Aplicar fillet directamente en el Wire
+
+    # Agregar la conexión al grupo de conexiones
+    grupo_conexiones.addObject(wire)
+
+    # Actualizar documento
+    doc.recompute()
+
+# Ejecutar la función
+conectar_objetos_en_eSe()

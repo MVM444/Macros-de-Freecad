@@ -1,0 +1,38 @@
+import FreeCAD
+import FreeCADGui
+import Part
+
+def crear_conector():
+    # Obtener los objetos seleccionados
+    selected_objects = FreeCADGui.Selection.getSelection()
+    
+    if len(selected_objects) != 2:
+        FreeCAD.Console.PrintError("Debe seleccionar exactamente dos objetos para conectar.\n")
+        return
+    
+    objeto1, objeto2 = selected_objects
+    
+    # Obtener las coordenadas de los centros de los objetos
+    centro1 = objeto1.Shape.BoundBox.Center
+    centro2 = objeto2.Shape.BoundBox.Center
+    
+    puntos = []
+
+    # Crear un conector en ángulo recto entre los dos objetos
+    puntos.append(centro1)
+    
+    if centro1.x != centro2.x:
+        puntos.append(FreeCAD.Vector(centro2.x, centro1.y, centro1.z))
+    
+    puntos.append(centro2)
+
+    # Crear una línea que conecte los puntos
+    polilinea = Part.makePolygon(puntos)
+    linea_obj = FreeCAD.ActiveDocument.addObject("Part::Feature", "Conector")
+    linea_obj.Shape = polilinea
+
+    FreeCAD.ActiveDocument.recompute()
+    FreeCAD.Console.PrintMessage("Conector creado con éxito.\n")
+
+# Ejecutar la función
+crear_conector()

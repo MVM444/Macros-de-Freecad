@@ -1,0 +1,103 @@
+import FreeCAD
+import FreeCADGui
+from PySide2 import QtGui, QtCore, QtWidgets
+
+def seleccionar_hoja_de_calculo():
+    # Crear un cuadro de diálogo para seleccionar la hoja de cálculo
+    dialog = QtWidgets.QDialog()
+    dialog.setWindowTitle("Seleccionar Hoja de Cálculo")
+    layout = QtWidgets.QVBoxLayout(dialog)
+
+    # Obtener las hojas de cálculo disponibles en el documento activo
+    doc = FreeCAD.ActiveDocument
+    hojas_disponibles = [obj for obj in doc.Objects if obj.TypeId == 'Spreadsheet::Sheet']
+
+    if not hojas_disponibles:
+        FreeCAD.Console.PrintError("No hay hojas de cálculo disponibles en el documento.\n")
+        return None
+
+    # Crear un combobox para seleccionar la hoja de cálculo
+    combobox = QtWidgets.QComboBox()
+    for hoja in hojas_disponibles:
+        combobox.addItem(hoja.Label)
+    layout.addWidget(combobox)
+
+    # Crear botones de aceptar y cancelar
+    botones = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+    layout.addWidget(botones)
+
+    # Definir las acciones para los botones
+    def aceptar():
+        dialog.accept()
+
+    def cancelar():
+        dialog.reject()
+
+    botones.accepted.connect(aceptar)
+    botones.rejected.connect(cancelar)
+
+    # Mostrar el cuadro de diálogo y obtener la hoja seleccionada
+    if dialog.exec_() == QtGui.QDialog.Accepted:
+        hoja_seleccionada_label = combobox.currentText()
+        # Buscar la hoja de cálculo correspondiente por Label
+        for hoja in hojas_disponibles:
+            if hoja.Label == hoja_seleccionada_label:
+                return hoja
+
+    return None
+
+def obtener_grupo_seleccionado():
+    doc = FreeCAD.ActiveDocument
+    selected_objects = FreeCADGui.Selection.getSelection()
+
+    if not selected_objects:
+        FreeCAD.Console.PrintError("No se ha seleccionado ningún objeto.\n")
+        return None
+
+    # Verifica si el objeto seleccionado es un grupo
+    if selected_objects[0].TypeId == 'App::DocumentObjectGroup':
+        return selected_objects[0]
+    else:
+        FreeCAD.Console.PrintError("El objeto seleccionado no es un grupo.\n")
+        return None
+
+def actualizar_rectangulos_con_spreadsheet():
+    # Obtener el documento y el grupo seleccionado
+    doc = FreeCAD.ActiveDocument
+
+    # Llamar a la función de selección de hoja de cálculo
+    hoja = seleccionar_hoja_de_calculo()
+    if not hoja:
+        FreeCAD.Console.PrintError("No se seleccionó una hoja de cálculo válida.\n")
+        return
+
+    grupo = obtener_grupo_seleccionado()
+    if not grupo:
+        return
+
+    FreeCAD.Console.PrintMessage(f"Grupo seleccionado: {grupo.Label}\n")
+    FreeCAD.Console.PrintMessage(f"Hoja seleccionada: {hoja.Label}\n")
+
+    # Leer la hoja de cálculo y guardar la información en un diccionario
+    data_luminarias = {}
+    fila = 2
+
+    while True:
+        try:
+            celda_actual = hoja.get(f"A{fila}")
+        except ValueError as e:
+            FreeCAD.Console.PrintError(f"Error accediendo a la celda A{fila}: {e}\n")
+            break
+
+        # Verificar si la celda es válida y no está vacía
+        if not celda_actual:
+            break
+
+        # Procesar la celda y almacenar la información en el diccionario
+        data_luminarias[fila] = celda_actual
+        fila += 1
+
+    # Resto de tu código para actualizar los rectángulos con la información de la hoja de cálculo...
+
+# Llamar a la función principal
+actualizar_rectangulos_con_spreadsheet()

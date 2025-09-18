@@ -1,0 +1,286 @@
+# -*- coding: utf-8 -*-
+# Macro: ColocarApagadores_BIM_v4.FCMacro
+# Descripcion (sin acentos):
+#   Coloca un App::Link al prototipo "Simbolo Apagador" junto a cada puerta BIM
+#   seleccionada (Arch::Door o Arch::Window con Role/IfcRole tipo Door).
+#   Reglas:
+#     - 100 mm desde el borde del picaporte (lado opuesto a la bisagra).
+#     - 100 mm hacia el interior + 50 mm (mitad del simbolo de 100x100).
+#     - El simbolo queda en Z=0 y su eje local Y+ apunta hacia el interior.
+#   Nombres: "Apagador-<LabelPuerta>" y todos agrupados en "Apagadores".
+#
+#   Si la puerta no expone bisagra (Hinge/HingeSide/Flip/Reversed), se aplica
+#   una regla por defecto: el lado del picaporte se toma como la perpendicular
+#   a la direccion de interior:
+#       DEFAULT_LATCH_RULE = "R90"  -> latch = rotar 90 grados horario a interior
+#       DEFAULT_LATCH_RULE = "L90"  -> latch = rotar 90 grados antihorario
+#
+# Notas del proyecto:
+#   - Sin acentos en codigo y comentarios.
+#   - Mensajes de depuracion detallados en la consola.
+#   - Objetivo final: integrar esta macro a un Workbench electrico.
+#
+# Version: 2025-08-18 16:25
+# Autor: ChatGPT (Proyecto Programacion en FreeCAD)
+# -------------------------------------------------------------------
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import math
+
+DOC = App.ActiveDocument
+
+# -------------------- parametros ajustables --------------------
+OFFSET_LATERAL_MM   = 100.0   # desde el borde libre (picaporte)
+OFFSET_INTERIOR_MM  = 100.0   # hacia el interior del recinto
+HALF_SYMBOL_MM      = 50.0    # mitad del simbolo (100x100)
+GROUP_NAME          = "Apagadores"
+PROTOTYPE_LABEL     = "Simbolo Apagador"
+
+# Regla por defecto si no hay bisagra expuesta por la puerta BIM:
+# "R90" = rotar interior 90 grados horario para obtener el lado del picaporte
+# "L90" = rotar interior 90 grados antihorario
+DEFAULT_LATCH_RULE  = "R90"
+
+# Si tu plantilla tiene interior invertido, cambia este signo:
+# INTERIOR_SIGN = +1 -> interior = -Normal (comun en Arch/BIM)
+# INTERIOR_SIGN = -1 -> interior = +Normal
+INTERIOR_SIGN       = +1
+
+# -------------------- utilidades de log --------------------
+def log(msg):  App.Console.PrintMessage("[APAGADOR] " + str(msg) + "\n")
+def warn(msg): App.Console.PrintWarning("[APAGADOR][WARN] " + str(msg) + "\n")
+def err(msg):  App.Console.PrintError("[APAGADOR][ERROR] " + str(msg) + "\n")
+
+# -------------------- prototipo y grupo --------------------
+def find_prototype():
+    objs = DOC.getObjectsByLabel(PROTOTYPE_LABEL)
+    if objs:
+        return objs[0]
+    for o in DOC.Objects:
+        if o.Name == PROTOTYPE_LABEL:
+            return o
+    return None
+
+def ensure_group(name=GROUP_NAME):
+    grp = DOC.getObject(name)
+    if grp is None:
+        grp = DOC.addObject("App::DocumentObjectGroup", name)
+    return grp
+
+# -------------------- helpers de geometria --------------------
+def v2(x, y): return App.Vector(x, y, 0.0)
+
+def rot_from_y_to(vecY):
+    # rotacion que alinea el eje local +Y del simbolo hacia vecY (en XY)
+    try:
+        return App.Rotation(App.Vector(0, 1, 0), vecY)
+    except Exception:
+        ang = math.degrees(math.atan2(vecY.y, vecY.x))
+        return App.Rotation(App.Vector(0, 0, 1), ang)
+
+def rot90_hor(v):   # rotar 90 grados horario alrededor de Z
+    return App.Vector(-v.y, v.x, 0.0)
+
+def rot90_antih(v): # rotar 90 grados antihorario alrededor de Z
+    return App.Vector(v.y, -v.x, 0.0)
+
+# -------------------- resolucion de seleccion --------------------
+def resolve_link(o):
+    # si es App::Link, seguir hasta el objeto base
+    seen = set()
+    cur = o
+    while getattr(cur, "TypeId", "") == "App::Link":
+        if cur in seen: break
+        seen.add(cur)
+        lo = getattr(cur, "LinkedObject", None)
+        if not lo: break
+        cur = lo
+    return cur
+
+def iter_group(o):
+    # iterar recursivamente grupos anidados
+    stack = [o]
+    while stack:
+        cur = stack.pop()
+        yield cur
+        if hasattr(cur, "Group") and cur.Group:
+            for c in cur.Group:
+                stack.append(c)
+
+def _has_ifc_door_props(base):
+    txts = []
+    for p in ("IfcType", "IfcClass", "IfcRole", "Role"):
+        try:
+            v = getattr(base, p, "")
+            if v: txts.append(str(v).lower())
+        except Exception:
+            pass
+    return any("door" in t for t in txts)
+
+def is_bim_door(base):
+    tid = getattr(base, "TypeId", "")
+    if tid == "Arch::Door":
+        return True
+    if tid == "Arch::Window" and _has_ifc_door_props(base):
+        return True
+    # otros contenedores BIM con props IFC de puerta
+    if _has_ifc_door_props(base):
+        if hasattr(base, "Shape") and base.Shape and not base.Shape.isNull():
+            return True
+    return False
+
+def collect_selected_bim_doors():
+    sel = Gui.Selection.getSelection()
+    if not sel:
+        return []
+    doors = []
+    seen = set()
+    for o in sel:
+        for it in iter_group(o):
+            base = resolve_link(it)
+            if not base or base.Name in seen:
+                continue
+            if is_bim_door(base):
+                doors.append(base)
+                seen.add(base.Name)
+    return doors
+
+# -------------------- lectura de ejes y datos BIM --------------------
+def get_width_bim(door):
+    w = getattr(door, "Width", None)
+    if w is not None:
+        try:
+            return float(w)
+        except Exception:
+            pass
+    try:
+        bb = door.Shape.BoundBox
+        return max(bb.XLength, bb.YLength)
+    except Exception:
+        warn("Door {} sin Width; usando 900".format(door.Label))
+        return 900.0
+
+def get_axes_bim(door):
+    # x: a lo ancho del hueco; y_out: normal del muro (suele apuntar "afuera")
+    rot = door.Placement.Rotation
+    x = rot.multVec(App.Vector(1, 0, 0))
+    y_prop = getattr(door, "Normal", None)
+    y = y_prop if y_prop else rot.multVec(App.Vector(0, 1, 0))
+    x = v2(x.x, x.y)
+    y = v2(y.x, y.y)
+    if x.Length == 0: x = v2(1, 0)
+    if y.Length == 0: y = v2(0, 1)
+    x.normalize(); y.normalize()
+    return x, y
+
+def hinge_right_bim(door):
+    # intenta varias propiedades comunes
+    h = getattr(door, "Hinge", None)
+    if isinstance(h, str):
+        hl = h.lower()
+        if hl.startswith("l"): return False
+        if hl.startswith("r"): return True
+    for alt in ("HingeSide", "LeftRight", "HingeLR"):
+        v = getattr(door, alt, None)
+        if isinstance(v, str):
+            vl = v.lower()
+            if vl.startswith("l"): return False
+            if vl.startswith("r"): return True
+    # paridad Flip/Reversed (si existen)
+    rev = getattr(door, "Reversed", None)
+    flp = getattr(door, "Flip", None)
+    if (h is None) and (rev is None) and (flp is None):
+        return None
+    score = 0
+    if isinstance(rev, bool) and rev: score += 1
+    if isinstance(flp, bool) and flp: score += 1
+    return (score % 2 == 0)
+
+def interior_vec_bim(door, y_out):
+    # interior = -Normal si INTERIOR_SIGN=+1; o +Normal si INTERIOR_SIGN=-1
+    iv = (-y_out if INTERIOR_SIGN > 0 else y_out)
+    if iv.Length == 0: iv = v2(0, 1)
+    iv.normalize()
+    return iv
+
+# -------------------- pose para puerta BIM --------------------
+def pose_for_bim(door):
+    base = door.Placement.Base
+    base2 = v2(base.x, base.y)
+    width = get_width_bim(door)
+    x_axis, y_out = get_axes_bim(door)
+    iv = interior_vec_bim(door, y_out)
+
+    hr = hinge_right_bim(door)
+    if hr is None:
+        # regla por defecto si no hay datos de bisagra
+        latch = rot90_hor(iv) if DEFAULT_LATCH_RULE.upper() == "R90" else rot90_antih(iv)
+        latch.normalize()
+        used_rule = "infer-" + DEFAULT_LATCH_RULE.upper()
+    else:
+        # lado del picaporte: opuesto a bisagra en el eje local X
+        latch = (-x_axis if hr else x_axis)
+        used_rule = "props"
+
+    lateral  = latch.multiply((width * 0.5) + OFFSET_LATERAL_MM)
+    interior = iv.multiply(OFFSET_INTERIOR_MM + HALF_SYMBOL_MM)
+    pos = base2 + lateral + interior
+    rot = rot_from_y_to(iv)
+
+    # depuracion detallada
+    log("BIM {}: width={:.1f} rule={} base=({}, {})".format(
+        door.Label, width, used_rule, round(base2.x,1), round(base2.y,1)))
+    log("  x=({}, {}) y_out=({}, {})".format(
+        round(x_axis.x,3), round(x_axis.y,3), round(y_out.x,3), round(y_out.y,3)))
+    log("  iv=({}, {}) latch=({}, {})".format(
+        round(iv.x,3), round(iv.y,3), round(latch.x,3), round(latch.y,3)))
+    log("  lateral=({}, {}) interior=({}, {})".format(
+        round(lateral.x,1), round(lateral.y,1), round(interior.x,1), round(interior.y,1)))
+    log("  pos=({}, {}, 0)".format(round(pos.x,1), round(pos.y,1)))
+    return pos, rot
+
+# -------------------- insercion del simbolo --------------------
+def insert_switch_link(proto, pos, rot, group, door_label):
+    ln = DOC.addObject("App::Link", "Apagador")
+    ln.LinkedObject = proto
+    ln.Placement = App.Placement(App.Vector(pos.x, pos.y, 0.0), rot)
+    ln.Label = "Apagador-" + str(door_label)
+    if group:
+        group.addObject(ln)
+    return ln
+
+# -------------------- main --------------------
+def main():
+    if DOC is None:
+        err("No active document.")
+        return
+
+    proto = find_prototype()
+    if proto is None:
+        err('No se encontro prototipo "{}" en el documento.'.format(PROTOTYPE_LABEL))
+        return
+
+    doors = collect_selected_bim_doors()
+    if not doors:
+        warn("La seleccion no contiene puertas BIM reconocibles. Selecciona las puertas (no el sketch) y reintenta.")
+        return
+
+    grp = ensure_group()
+    created = 0
+    for d in doors:
+        try:
+            pos, rot = pose_for_bim(d)
+            if pos is None:
+                continue
+            insert_switch_link(proto, pos, rot, grp, d.Label)
+            created += 1
+            log("Colocado Apagador para '{}'".format(d.Label))
+        except Exception as ex:
+            err("Fallo con {}: {}".format(d.Label, ex))
+
+    DOC.recompute()
+    log("Total de apagadores creados (BIM): {}".format(created))
+
+if __name__ == "__main__":
+    main()

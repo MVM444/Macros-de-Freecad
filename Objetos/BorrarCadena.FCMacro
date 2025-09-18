@@ -1,0 +1,45 @@
+# Macro: MacroRenombrar
+# Descripcion: Renombra los objetos seleccionados eliminando una cadena de texto especifica de sus nombres.
+# Fecha: 2025-02-25
+# Autor: [Tu Nombre]
+
+import FreeCAD
+import FreeCADGui
+from PySide2 import QtWidgets
+
+def renombrar_objetos():
+    """
+    Renombra los objetos seleccionados eliminando una cadena de texto especifica de sus nombres.
+    """
+    # Obtener la lista de objetos seleccionados
+    seleccionados = FreeCADGui.Selection.getSelection()
+    
+    if not seleccionados:
+        FreeCAD.Console.PrintError("No se han seleccionado objetos.\n")
+        return
+
+    # Solicitar al usuario la cadena de texto a eliminar
+    input_dialog = QtWidgets.QInputDialog()
+    cadena_a_eliminar, ok = input_dialog.getText(None, "Eliminar cadena", "Ingrese la cadena de texto a eliminar:")
+    
+    if not ok or not cadena_a_eliminar:
+        FreeCAD.Console.PrintError("No se ingreso ninguna cadena de texto.\n")
+        return
+
+    # Recorrer los objetos seleccionados y renombrarlos
+    for obj in seleccionados:
+        nombre_original = obj.Label  # Label es el nombre visible en FreeCAD
+        nuevo_nombre = nombre_original.replace(cadena_a_eliminar, "")
+        
+        if nuevo_nombre == nombre_original:
+            FreeCAD.Console.PrintMessage(f"No se encontro la cadena '{cadena_a_eliminar}' en el objeto '{nombre_original}'.\n")
+        else:
+            # Verificar si el nuevo nombre ya existe en el documento
+            if any(o.Label == nuevo_nombre for o in FreeCAD.ActiveDocument.Objects):
+                FreeCAD.Console.PrintError(f"El nombre '{nuevo_nombre}' ya existe. No se puede renombrar el objeto '{nombre_original}'.\n")
+            else:
+                obj.Label = nuevo_nombre
+                FreeCAD.Console.PrintMessage(f"Objeto '{nombre_original}' renombrado a '{nuevo_nombre}'.\n")
+
+# Ejecutar la función de renombrado
+renombrar_objetos()

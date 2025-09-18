@@ -1,0 +1,222 @@
+import FreeCAD
+import FreeCADGui
+import Draft
+import unicodedata
+from PySide2.QtWidgets import QInputDialog
+
+def remove_leading_apostrophe(txt):
+    """
+    Si 'txt' inicia con apostrofo ', se quita.
+    Ej: "'Inspección" -> "Inspección"
+    """
+    if txt.startswith("'"):
+        return txt[1:].strip()
+    return txt
+
+def remove_accents(txt):
+    """
+    Elimina acentos y eñes, si deseas ignorar tildes.
+    """
+    s_norm = unicodedata.normalize("NFD", txt)
+    resultado = []
+    for c in s_norm:
+        if unicodedata.category(c) == "Mn":  # marca diacritica
+            continue
+        if c in ("ñ","Ñ"):
+            resultado.append("n" if c=="ñ" else "N")
+        else:
+            resultado.append(c)
+    return "".join(resultado)
+
+def truncar_area(area_str):
+    """
+    Convierte 'area_str' en float y retorna algo como '9.08 m²' (2 decimales).
+    Si falla, deja el texto como estaba.
+    """
+    try:
+        val = float(area_str)
+        return f"{val:.2f} m2"
+    except:
+        return area_str
+
+def truncar_ilum(ilum_str):
+    """
+    Convierte 'ilum_str' a float y retorna algo como '100%' (0 decimales).
+    Si falla, deja el texto tal cual.
+    """
+    try:
+        val = float(ilum_str)
+        return f"{val:.0f}%"
+    except:
+        return ilum_str
+
+def get_parent_group(obj):
+    """
+    Retorna el primer grupo padre que contenga a 'obj', o None si no encuentra ninguno.
+    """
+    if hasattr(obj, "InList") and obj.InList:
+        for padre in obj.InList:
+            if hasattr(padre, "Group"):
+                return padre
+    return None
+
+doc = FreeCAD.ActiveDocument
+if not doc:
+    raise Exception("No hay documento activo.")
+
+# --- Seleccionar la hoja de calculo ---
+hojas = [obj for obj in doc.Objects if obj.TypeId == "Spreadsheet::Sheet"]
+if not hojas:
+    raise Exception("No hay hojas de calculo en el documento.")
+
+nombres_hojas = [h.Label for h in hojas]
+nombre_hoja, ok = QInputDialog.getItem(
+    None,
+    "Seleccionar Hoja de Calculo",
+    "Seleccione la hoja de calculo:",
+    nombres_hojas,
+    0,
+    False
+)
+if not ok:
+    raise Exception("Seleccion cancelada por el usuario.")
+
+spreadsheet = None
+for h in hojas:
+    if h.Label == nombre_hoja:
+        spreadsheet = h
+        break
+
+if not spreadsheet:
+    raise Exception(f"La hoja '{nombre_hoja}' no existe en este documento.")
+
+FreeCAD.Console.PrintMessage(f"Hoja seleccionada: {spreadsheet.Label}\n")
+
+# --- Leer datos (columna A=Recinto, B=Area, H=Desc, O=Ilum) ---
+#     Guardar en un dict, pero quitando apostrofo al inicio y
+#     opcionalmente removiendo acentos si deseas ignorar tildes
+try:
+    num_filas = spreadsheet.RowCount
+except AttributeError:
+    num_filas = 100
+
+info_por_recinto = {}
+for i in range(2, num_filas+1):
+    try:
+        rec = str(spreadsheet.get(f"A{i}") or "").strip()
+    except:
+        break
+    
+    if not rec:
+        break  # no mas datos
+    
+    # Quitar apostrofo inicial
+    rec_sin_ap = remove_leading_apostrophe(rec)
+    # Ignorar acentos si deseas normalizar
+    rec_norm = remove_accents(rec_sin_ap)
+    
+    area = str(spreadsheet.get(f"B{i}") or "").strip()
+    desc = str(spreadsheet.get(f"H{i}") or "").strip()
+    ilum = str(spreadsheet.get(f"O{i}") or "").strip()
+
+    info_por_recinto[rec_norm] = (area, desc, ilum)
+    FreeCAD.Console.PrintMessage(
+        f"Fila {i}: {rec_sin_ap}, {area}, {desc}, {ilum}\n"
+    )
+
+FreeCAD.Console.PrintMessage(f"Se leyeron datos de {len(info_por_recinto)} recintos.\n")
+
+# --- Seleccionar grupo o padre ---
+sel = FreeCADGui.Selection.getSelection()
+if not sel:
+    raise Exception("No hay objetos seleccionados.")
+
+grupo = None
+for obj in sel:
+    if hasattr(obj, "Group"):
+        grupo = obj
+        break
+    else:
+        p = get_parent_group(obj)
+        if p:
+            grupo = p
+            break
+
+if not grupo:
+    raise Exception("No se encontro un grupo en la seleccion.")
+
+FreeCAD.Console.PrintMessage(f"Grupo identificado: {grupo.Label}\n")
+
+# --- Crear subgrupo "Etiquetas" ---
+subgrupo_label = "Etiquetas"
+subgrupo = None
+for item in grupo.Group:
+    if item.Label == subgrupo_label and hasattr(item, "Group"):
+        subgrupo = item
+        break
+
+if not subgrupo:
+    subgrupo = doc.addObject("App::DocumentObjectGroup", subgrupo_label)
+    grupo.addObject(subgrupo)
+    FreeCAD.Console.PrintMessage(f"Se creo subgrupo '{subgrupo_label}' en '{grupo.Label}'\n")
+
+# --- Crear textos sin expresiones, 4 lineas ---
+for rect in grupo.Group:
+    if rect == subgrupo:
+        continue
+
+    rect_label = rect.Label.strip()
+    # Quitar apostrofo del label, remover acentos para comparar
+    label_sin_ap = remove_leading_apostrophe(rect_label)
+    label_norm = remove_accents(label_sin_ap)
+
+    if label_norm in info_por_recinto:
+        area_str, desc_str, ilum_str = info_por_recinto[label_norm]
+        # Truncar area a 2 decimales con " m²"
+        area_final = truncar_area(area_str)
+        # Truncar iluminacion a 0 decimales con "%"
+        ilum_final = truncar_ilum(ilum_str)
+        
+        # 4 lineas: 
+        # 1) Recinto (sin apostrofo, con acentos originales si deseas),
+        # 2) area con 2 dec,
+        # 3) desc (texto tal cual, sin apostrofo),
+        # 4) ilum con 0 dec
+        # OJO: si deseas mostrar 'label_sin_ap' tal cual, no normalizado
+        lineas = [
+            label_sin_ap,       # Recinto
+            area_final,         # area con 2 dec
+            desc_str,           # desc tal cual
+            ilum_final          # ilum con 0 dec
+        ]
+
+        # Centro
+        if hasattr(rect, "Shape") and rect.Shape and hasattr(rect.Shape, "BoundBox"):
+            centro = rect.Shape.BoundBox.Center
+        else:
+            centro = rect.Placement.Base
+
+        texto_obj = Draft.make_text(lineas)
+        texto_obj.Label = "Etiqueta_" + label_sin_ap
+        texto_obj.Placement.Base = centro
+
+        # Modo 3D, tamano grande
+        if hasattr(texto_obj.ViewObject, "DrawStyle"):
+            try:
+                texto_obj.ViewObject.DrawStyle = "3D"
+            except:
+                pass
+        if hasattr(texto_obj.ViewObject, "FontSize"):
+            texto_obj.ViewObject.FontSize = "200 mm"
+
+        subgrupo.addObject(texto_obj)
+        FreeCAD.Console.PrintMessage(
+            f"Etiqueta creada para '{rect_label}'\n"
+        )
+    else:
+        FreeCAD.Console.PrintMessage(
+            f"No se encontraron datos para '{rect_label}'. Se omite.\n"
+        )
+
+doc.recompute()
+FreeCAD.Console.PrintMessage("Proceso finalizado (texto fijo, 4 lineas).\n")

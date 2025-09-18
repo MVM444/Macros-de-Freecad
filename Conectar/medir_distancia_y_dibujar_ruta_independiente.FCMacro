@@ -1,0 +1,117 @@
+# ------------------------------------------------------------------------
+# RESUMEN:
+# Esta macro automatiza el cálculo de distancias y el dibujo de rutas ortogonales
+# entre un objeto inicial (por ejemplo, breaker) y cada equipo de un grupo en FreeCAD.
+# - El usuario selecciona primero el objeto inicial y luego el grupo de equipos.
+# - Solicita la altura de las rutas al usuario.
+# - Calcula la distancia directa a cada equipo y la registra en una hoja de cálculo.
+# - Dibuja una ruta ortogonal en 3D desde el objeto inicial a cada equipo,
+#   intentando suavizar las esquinas (fillet).
+# - Organiza las rutas en un subgrupo "Conexiones" dentro del grupo de equipos.
+# - Recomputa el documento para mostrar los cambios.import FreeCAD
+import FreeCADGui # type: ignore
+import Part # type: ignore
+from PySide import QtGui # type: ignore
+
+def medir_distancia_y_dibujar_ruta_independiente():
+    doc = FreeCAD.ActiveDocument
+    selection = FreeCADGui.Selection.getSelection()
+
+    # Verificar selección
+    if len(selection) < 2:
+        FreeCAD.Console.PrintError("Debe seleccionar un objeto inicial y un grupo de equipos.\n")
+        return
+
+    # Objeto inicial (punto de conexión o breaker)
+    objeto_inicial = selection[0]
+
+    # Grupo con los equipos
+    grupo_equipos = selection[1]
+    if not hasattr(grupo_equipos, "Group"):
+        FreeCAD.Console.PrintError("Debe seleccionar un grupo como segundo objeto.\n")
+        return
+
+    # Crear o seleccionar la hoja de cálculo para resultados
+    if not hasattr(doc, 'ResultadosEquiposIndependientes'):
+        hoja = doc.addObject('Spreadsheet::Sheet', 'ResultadosEquiposIndependientes')
+        hoja.set("A1", "Equipo")
+        hoja.set("B1", "Distancia (mm)")
+    else:
+        hoja = doc.ResultadosEquiposIndependientes
+
+    # Obtener la altura desde el usuario
+    dialog = QtGui.QInputDialog()
+    altura, ok = dialog.getDouble(None, "Altura", "Ingrese la altura (mm):", 3000, -10000, 10000, 2)
+
+    if not ok:
+        return
+
+    fila = 2
+
+    # Obtener todos los equipos del grupo
+    equipos = [obj for obj in grupo_equipos.Group if hasattr(obj, "Placement")]
+
+    if not equipos:
+        FreeCAD.Console.PrintError("No se encontraron equipos en el grupo seleccionado.\n")
+        return
+
+    # Crear o verificar la existencia del subgrupo para las conexiones
+    grupo_conexiones = None
+    for obj in grupo_equipos.Group:
+        if obj.TypeId == 'App::DocumentObjectGroup' and obj.Name.startswith("Conexiones"):
+            grupo_conexiones = obj
+            break
+
+    if not grupo_conexiones:
+        grupo_conexiones = doc.addObject("App::DocumentObjectGroup", "Conexiones")
+        grupo_equipos.addObject(grupo_conexiones)
+
+    # Iterar sobre cada equipo del grupo y calcular la distancia
+    for equipo in equipos:
+        distancia = objeto_inicial.Placement.Base.distanceToPoint(equipo.Placement.Base)
+
+        # Escribir resultados en la hoja de cálculo
+        hoja.set(f"A{fila}", equipo.Label)
+        hoja.set(f"B{fila}", str(round(distancia, 2)))
+        fila += 1
+
+        FreeCAD.Console.PrintMessage(f"Equipo: {equipo.Label}, Distancia: {distancia} mm\n") # type: ignore
+
+        # Dibujar la ruta ortogonal hacia el equipo
+        puntos = []
+        puntos.append(objeto_inicial.Placement.Base)
+        puntos.append(FreeCAD.Vector(objeto_inicial.Placement.Base.x, objeto_inicial.Placement.Base.y, altura))
+        puntos.append(FreeCAD.Vector(equipo.Placement.Base.x, objeto_inicial.Placement.Base.y, altura))
+        puntos.append(FreeCAD.Vector(equipo.Placement.Base.x, equipo.Placement.Base.y, altura))
+        puntos.append(equipo.Placement.Base)
+
+        # Crear la polilínea con segmentos horizontales y verticales
+        edges = []
+        for i in range(len(puntos) - 1):
+            edges.append(Part.LineSegment(puntos[i], puntos[i + 1]).toShape())
+
+        wire = Part.Wire(edges)
+
+        # Intentar aplicar redondeo en las esquinas
+        try:
+            rounded_wire = wire.makeFillet(500, wire.Edges)
+            ruta_final = rounded_wire
+        except Part.OCCError:
+            FreeCAD.Console.PrintWarning("No hay aristas adecuadas para redondeo.\n")
+            ruta_final = wire
+
+        # Mostrar el wire y asignar nombre a la conexión
+        Part.show(ruta_final)
+
+        # Añadir la conexión al subgrupo de conexiones y asignar un nombre
+        conexion = doc.addObject("Part::Feature", f'Ruta_Critica_{equipo.Label}')
+        conexion.Label = f'Ruta Critica hacia {equipo.Label}'
+        conexion.Shape = ruta_final
+        grupo_conexiones.addObject(conexion)
+
+    # Recomputa el documento para aplicar los cambios
+    doc.recompute()
+
+# Ejecutar la macro
+medir_distancia_y_dibujar_ruta_independiente()
+

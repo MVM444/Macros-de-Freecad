@@ -1,0 +1,86 @@
+import FreeCAD
+import FreeCADGui
+import Part
+from collections import defaultdict
+
+def conectar_objetos_seleccionados():
+    doc = FreeCAD.ActiveDocument
+    selected_objects = FreeCADGui.Selection.getSelection()
+
+    if len(selected_objects) < 2:
+        FreeCAD.Console.PrintError("Debe seleccionar al menos dos objetos.\n")
+        return
+
+    # Identificar el grupo padre de los objetos seleccionados
+    grupo_padre = None
+    for obj in doc.Objects:
+        if obj.TypeId == 'App::DocumentObjectGroup' and all(sel_obj in obj.Group for sel_obj in selected_objects):
+            grupo_padre = obj
+            break
+
+    if not grupo_padre:
+        FreeCAD.Console.PrintError("Los objetos seleccionados no están en el mismo grupo.\n")
+        return
+
+    FreeCAD.Console.PrintMessage(f"Grupo padre encontrado: {grupo_padre.Name}\n")
+
+    # Verificar si ya existe un subgrupo de conexiones
+    conexiones_grupo = None
+    for obj in grupo_padre.Group:
+        if obj.TypeId == 'App::DocumentObjectGroup' and obj.Name.startswith("Conexiones"):
+            conexiones_grupo = obj
+            break
+
+    # Crear un nuevo grupo de conexiones si no existe
+    if not conexiones_grupo:
+        conexiones_grupo = doc.addObject("App::DocumentObjectGroup", "Conexiones")
+        grupo_padre.addObject(conexiones_grupo)
+
+    # Filtrar y ordenar objetos con Placement
+    objetos_numerados = sorted(
+        [obj for obj in selected_objects if hasattr(obj, 'Placement') and any(char.isdigit() for char in obj.Label)],
+        key=lambda x: int(''.join(filter(str.isdigit, x.Label))) if any(char.isdigit() for char in x.Label) else float('inf')
+    )
+
+    if len(objetos_numerados) < 2:
+        FreeCAD.Console.PrintError("No hay suficientes objetos numerados para conectar.\n")
+        return
+
+    # Diccionario para rastrear conexiones
+    conexiones_realizadas = set()
+
+    # Función para dibujar conexiones ortogonales entre objetos
+    def dibujar_conexiones(objetos):
+        for i in range(len(objetos) - 1):
+            objeto1 = objetos[i]
+            objeto2 = objetos[i + 1]
+
+            if (objeto1.Label, objeto2.Label) in conexiones_realizadas or (objeto2.Label, objeto1.Label) in conexiones_realizadas:
+                continue
+
+            puntos = [objeto1.Placement.Base]
+
+            # Crear puntos intermedios para ángulos rectos
+            if objeto1.Placement.Base.x != objeto2.Placement.Base.x:
+                puntos.append(FreeCAD.Vector(objeto2.Placement.Base.x, objeto1.Placement.Base.y, objeto1.Placement.Base.z))
+            if objeto1.Placement.Base.y != objeto2.Placement.Base.y:
+                puntos.append(FreeCAD.Vector(objeto2.Placement.Base.x, objeto2.Placement.Base.y, objeto1.Placement.Base.z))
+
+            puntos.append(objeto2.Placement.Base)
+
+            # Crear y almacenar la línea en el grupo de conexiones
+            linea = Part.makePolygon(puntos)
+            linea_obj = doc.addObject("Part::Feature", f'Conexion_{objeto1.Label}_{objeto2.Label}')
+            linea_obj.Shape = linea
+            conexiones_grupo.addObject(linea_obj)
+
+            conexiones_realizadas.add((objeto1.Label, objeto2.Label))
+
+    # Dibujar conexiones
+    dibujar_conexiones(objetos_numerados)
+
+    # Actualizar el documento
+    doc.recompute()
+
+# Ejecutar la función
+conectar_objetos_seleccionados()

@@ -1,0 +1,124 @@
+# Macro: AsignarNombreEstandar.FCMacro
+# Descripcion:
+# Esta macro muestra una ventana flotante con botones por cada nombre estandar definido en una hoja de calculo.
+# Al hacer clic en un boton, todos los objetos seleccionados en FreeCAD seran renombrados con ese nombre.
+# Si el nombre ya fue usado (marcado con fondo gris), se muestra una advertencia, pero se permite su reutilizacion.
+# La hoja editable "NombresEstandar" permite personalizar los nombres.
+#
+# Fecha: 2025-07-05
+# Requiere: PySide2, FreeCADGui
+
+import FreeCAD
+import FreeCADGui
+from PySide2 import QtWidgets, QtCore
+
+# Obtener documento
+doc = FreeCAD.ActiveDocument
+if doc is None:
+    doc = FreeCAD.newDocument("Proyecto")
+
+# Crear hoja si no existe
+nombre_hoja = "NombresEstandar"
+crear_hoja = not hasattr(doc, nombre_hoja)
+if crear_hoja:
+    hoja = doc.addObject("Spreadsheet::Sheet", nombre_hoja)
+    hoja.set("A1", "Oficina")
+    hoja.set("A2", "Sala de Espera")
+    hoja.set("A3", "Bodega")
+    hoja.set("A4", "Recepcion")
+    hoja.set("A5", "Pasillo")
+    doc.recompute()
+    FreeCAD.Console.PrintMessage("Se creo la hoja 'NombresEstandar' con nombres iniciales.\n")
+else:
+    hoja = getattr(doc, nombre_hoja)
+
+# Leer nombres y estilos
+nombres = []
+marcados = []
+fila = 1
+while True:
+    celda = f"A{fila}"
+    try:
+        valor = hoja.get(celda)
+    except:
+        break
+    if valor == "":
+        break
+    nombres.append(valor)
+
+    estilo = hoja.getStyle(celda)
+    if estilo is None:
+        ya_usado = False
+    elif isinstance(estilo, str):
+        ya_usado = "#dddddd" in estilo.lower()
+    elif isinstance(estilo, set):
+        ya_usado = any("#dddddd" in s.lower() for s in estilo if isinstance(s, str))
+    else:
+        ya_usado = False
+
+    marcados.append(ya_usado)
+    fila += 1
+
+if not nombres:
+    QtWidgets.QMessageBox.warning(None, "Error", "La hoja 'NombresEstandar' no contiene nombres.")
+    raise Exception("Lista vacia.")
+
+# Crear ventana con botones en varias columnas
+class VentanaNombres(QtWidgets.QDialog):
+    def __init__(self):
+        super().__init__(None, QtCore.Qt.Tool)
+        self.setWindowTitle("Asignar Nombre Estandar")
+        self.resize(300, 400)
+        self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
+
+        layout_principal = QtWidgets.QVBoxLayout(self)
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        contenedor = QtWidgets.QWidget()
+        self.grid = QtWidgets.QGridLayout(contenedor)
+
+        self.botones = []
+        columnas = 2
+
+        for i, nombre in enumerate(nombres):
+            boton = QtWidgets.QPushButton(nombre)
+            if marcados[i]:
+                boton.setStyleSheet("background-color: #dddddd")
+            boton.clicked.connect(lambda checked=False, n=nombre, f=i, b=boton: self.renombrar(n, f, b))
+            fila = i // columnas
+            col = i % columnas
+            self.grid.addWidget(boton, fila, col)
+            self.botones.append(boton)
+
+        scroll.setWidget(contenedor)
+        layout_principal.addWidget(scroll)
+
+        boton_cerrar = QtWidgets.QPushButton("Cerrar")
+        boton_cerrar.clicked.connect(self.close)
+        layout_principal.addWidget(boton_cerrar)
+
+    def renombrar(self, nombre, fila_index, boton):
+        seleccion = FreeCADGui.Selection.getSelection()
+        if not seleccion:
+            QtWidgets.QMessageBox.warning(None, "Sin seleccion", "No hay objetos seleccionados.")
+            return
+
+        if marcados[fila_index]:
+            QtWidgets.QMessageBox.information(None, "Advertencia", f"El nombre '{nombre}' ya ha sido utilizado.")
+
+        for obj in seleccion:
+            anterior = obj.Label
+            obj.Label = nombre
+            FreeCAD.Console.PrintMessage(f"Objeto '{anterior}' renombrado como '{nombre}'.\n")
+
+        try:
+            hoja.setStyle(f"A{fila_index+1}", "background-color: #DDDDDD")
+            boton.setStyleSheet("background-color: #dddddd")
+        except:
+            FreeCAD.Console.PrintMessage(f"No se pudo marcar visualmente el nombre '{nombre}'.\n")
+
+        doc.recompute()
+
+ventana = VentanaNombres()
+ventana.setWindowModality(QtCore.Qt.NonModal)
+ventana.show()

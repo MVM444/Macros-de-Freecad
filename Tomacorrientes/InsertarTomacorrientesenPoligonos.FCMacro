@@ -1,0 +1,150 @@
+# Macro: InsertarTomacorrientesEnPoligonos.FCMacro
+# Descripcion: Inserta tomacorrientes a lo largo del borde exterior de cada rectángulo (o polígono) seleccionado.
+# - Si un polígono no está subdividido, usa su único wire.
+# - Si un polígono está subdividido en celdas, genera el contorno exterior de ese polígono mediante bounding box de sus vértices.
+# - Para cada figura seleccionada, procesa su contorno de forma independiente.
+# - Inserta tomacorrientes cada 1800 mm centrados en cada arista.
+# - Impares: uno en el centro; pares: centro vacío.
+# - Orientación: dentro o fuera del polígono (desplegable).
+# - Desplazamiento: 60 mm desde el borde.
+# - Tomacorrientes 2D/3D usando archivos STEP; 3D elevado 300 mm.
+# - Soporta selección de figuras individuales, grupos o subgrupos.
+# Fecha creación: 2025-06-23 15:30
+
+import FreeCAD
+import FreeCADGui
+import Part
+import os
+import math
+from PySide2 import QtWidgets
+from FreeCAD import Vector
+
+# Parámetros
+DISTANCIA_ENTRE_TOMAS = 1800.0  # mm
+DESPLAZAMIENTO = 60.0           # mm
+ALTURA_3D = 300.0               # mm elevación para modelo 3D
+INSERTAR_3D = True
+
+# Rutas STEP
+MACRO_PATH = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/Macro").GetString("MacroPath", "")
+STEP_2D = os.path.join(MACRO_PATH, "Resources", "SimboloToma.step")
+STEP_3D = os.path.join(MACRO_PATH, "Resources", "tomacorriente-3D.step")
+
+# Expandir grupos recursivamente
+def expandir_grupo(obj):
+    objs = []
+    if hasattr(obj, 'Group'):
+        for sub in obj.Group:
+            objs += expandir_grupo(sub)
+    else:
+        objs.append(obj)
+    return objs
+
+# Diálogo orientación
+def definir_orientacion():
+    resp = QtWidgets.QMessageBox.question(None,
+        "Orientación Tomas",
+        "¿Orientar tomacorrientes hacia adentro?",
+        QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
+    return resp == QtWidgets.QMessageBox.Yes
+
+MIRAR_HACIA_ADENTRO = definir_orientacion()
+FreeCAD.Console.PrintMessage(f"Intervalo: {DISTANCIA_ENTRE_TOMAS} mm | Orientación: {'Dentro' if MIRAR_HACIA_ADENTRO else 'Fuera'}\n")
+
+# Leer shape STEP
+def cargar_shape(path):
+    if not os.path.exists(path):
+        FreeCAD.Console.PrintError(f"No existe: {path}\n")
+        return None
+    shp = Part.Shape()
+    shp.read(path)
+    return shp
+
+# Insertar toma simple
+
+def insertar_toma(pos, dir_arista, idx):
+    t = dir_arista.normalize()
+    ccw = Vector(-t.y, t.x, 0).normalize()
+    modo = 1 if MIRAR_HACIA_ADENTRO else -1
+    normal = ccw.multiply(modo)
+    punto_final = pos.add(normal.multiply(DESPLAZAMIENTO))
+    s2 = cargar_shape(STEP_2D)
+    if not s2: return
+    if INSERTAR_3D:
+        s3 = cargar_shape(STEP_3D)
+        if not s3: return
+        s3.translate(Vector(0,0,ALTURA_3D))
+        comp = Part.Compound([s2, s3])
+    else:
+        comp = s2
+    feat = FreeCAD.ActiveDocument.addObject("Part::Feature", f"Toma_{idx}")
+    feat.Shape = comp
+    ang = math.degrees(math.atan2(normal.y, normal.x))
+    feat.Placement = FreeCAD.Placement(punto_final, FreeCAD.Rotation(Vector(0,0,1), ang-90))
+    FreeCAD.Console.PrintMessage(f"Toma #{idx} en {punto_final}\n")
+
+# Patrón centrado en wire
+def insertar_tomas_en_wire(wire, idx0):
+    cnt = idx0
+    for edge in wire.Edges:
+        L = edge.Length
+        n = max(1, int(L // DISTANCIA_ENTRE_TOMAS))
+        patt = (n-1)*DISTANCIA_ENTRE_TOMAS
+        start = -patt/2.0
+        p0 = edge.FirstParameter; delta = edge.LastParameter - p0
+        for i in range(n):
+            ofs = start + i*DISTANCIA_ENTRE_TOMAS
+            u = 0.5 + (ofs / L)
+            param = p0 + u*delta
+            pt = edge.valueAt(param); dr = edge.tangentAt(param)
+            insertar_toma(pt, dr, cnt)
+            cnt += 1
+    return cnt
+
+# Construir wire exterior con bounding box
+
+def construir_wire_exterior(obj):
+    pts = []
+    if hasattr(obj, 'Shape'):
+        for w in obj.Shape.Wires:
+            pts += [v.Point for v in w.Vertexes]
+    if not pts: return None
+    xs=[p.x for p in pts]; ys=[p.y for p in pts]; z=pts[0].z
+    p1=Vector(min(xs),min(ys),z); p2=Vector(max(xs),min(ys),z)
+    p3=Vector(max(xs),max(ys),z); p4=Vector(min(xs),max(ys),z)
+    return Part.makePolygon([p1,p2,p3,p4,p1])
+
+# Procesar cada figura por separado
+def procesar():
+    sel = FreeCADGui.Selection.getSelection()
+    if not sel:
+        FreeCAD.Console.PrintError("Seleccione al menos un objeto.\n")
+        return
+    idx = 1
+    # Expandir grupos y subgrupos
+    areas_objects = []
+    for obj in sel:
+        areas_objects += expandir_grupo(obj)
+    # Para cada objeto individual
+    for obj in areas_objects:
+        wires = [w for w in getattr(obj.Shape,'Wires',[]) if w.isClosed()]
+        if not wires:
+            continue
+        if len(wires)==1:
+            idx = insertar_tomas_en_wire(wires[0], idx)
+        else:
+            # Bounding box del rectángulo completo
+            wire_ext = construir_wire_exterior(obj)
+            if wire_ext:
+                idx = insertar_tomas_en_wire(wire_ext, idx)
+    FreeCAD.ActiveDocument.recompute()
+    FreeCAD.Console.PrintMessage("Proceso finalizado para cada rectángulo individual.\n")
+
+# Entrada principal
+
+def main():
+    FreeCAD.Console.PrintMessage("Iniciando macro Tomacorrientes en Polígonos...\n")
+    procesar()
+
+if __name__=='__main__':
+    main()

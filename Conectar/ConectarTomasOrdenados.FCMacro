@@ -1,0 +1,100 @@
+import FreeCAD
+import FreeCADGui
+import Part
+import re
+
+def extraer_numero(label):
+    # Usar una expresión regular para extraer el número del Label
+    match = re.search(r'(\d+)', label)
+    return int(match.group()) if match else float('inf')
+
+def ordenar_por_etiqueta(objetos):
+    # Función de ordenación que extrae los números y los ordena correctamente
+    def sort_key(obj):
+        parts = re.split('(\d+)', obj.Label)
+        return [int(part) if part.isdigit() else part for part in parts]
+    
+    return sorted(objetos, key=sort_key)
+
+def conectar_tomacorrientes_con_polilinea():
+    doc = FreeCAD.ActiveDocument
+    
+    # Obtiene el objeto seleccionado
+    selected_objects = FreeCADGui.Selection.getSelection()
+    
+    if not selected_objects:
+        FreeCAD.Console.PrintError("No se ha seleccionado ningún objeto.\n")
+        return
+    
+    # Verifica si el objeto seleccionado es un grupo
+    if selected_objects[0].TypeId == 'App::DocumentObjectGroup':
+        grupo = selected_objects[0]
+    else:
+        # Si no es un grupo, busca el grupo al que pertenece el objeto
+        for obj in doc.Objects:
+            if obj.TypeId == 'App::DocumentObjectGroup' and selected_objects[0] in obj.Group:
+                grupo = obj
+                break
+        else:
+            FreeCAD.Console.PrintError("El objeto seleccionado no pertenece a ningún grupo.\n")
+            return
+    
+    FreeCAD.Console.PrintMessage(f"Grupo seleccionado: {grupo.Name}\n")
+    
+    # Obtener y ordenar los objetos en el grupo según sus etiquetas
+    objetos_numerados = ordenar_por_etiqueta([obj for obj in grupo.Group if re.search(r'\d+', obj.Label)])
+
+    puntos = []
+    
+    for obj in objetos_numerados:
+        FreeCAD.Console.PrintMessage(f"Revisando objeto: {obj.Label}\n")
+        if hasattr(obj, 'Placement'):
+            FreeCAD.Console.PrintMessage(f"El objeto {obj.Label} tiene la propiedad Placement.\n")
+            puntos.append(obj.Placement.Base)  # Usar la posición base sin ajuste
+        else:
+            FreeCAD.Console.PrintWarning(f"El objeto {obj.Label} no tiene la propiedad Placement.\n")
+    
+    # Imprimir puntos para verificación
+    FreeCAD.Console.PrintMessage(f"Puntos encontrados: {len(puntos)}\n")
+    for punto in puntos:
+        FreeCAD.Console.PrintMessage(f"Punto: {punto}\n")
+    
+    if len(puntos) < 2:
+        FreeCAD.Console.PrintError("No hay suficientes tomacorrientes en el grupo para crear una polilínea.\n")
+        return
+    
+    # Crear la polilínea con segmentos horizontales y verticales
+    edges = []
+    for i in range(len(puntos) - 1):
+        p1 = puntos[i]
+        p2 = puntos[i + 1]
+        
+        if p1 != p2:
+            # Crear segmento horizontal desde p1 hasta el punto intermedio
+            mid_point = FreeCAD.Vector(p2.x, p1.y, p1.z)
+            if p1 != mid_point:
+                edges.append(Part.LineSegment(p1, mid_point).toShape())
+            if mid_point != p2:
+                edges.append(Part.LineSegment(mid_point, p2).toShape())
+        else:
+            FreeCAD.Console.PrintWarning(f"Se evitó crear un segmento entre puntos iguales: {p1} y {p2}\n")
+    
+    if not edges:
+        FreeCAD.Console.PrintError("No se pudieron crear aristas suficientes para la polilínea.\n")
+        return
+
+    # Crear un contenedor de aristas y unirlas en una sola Wire
+    wire = Part.Wire(edges)
+    
+    # Aplicar redondeo en las esquinas
+    try:
+        rounded_wire = wire.makeFillet(10, wire.Edges)  # Radio de redondeo de 10 mm
+        Part.show(rounded_wire)
+    except Part.OCCError:
+        FreeCAD.Console.PrintError("No hay aristas adecuadas para chaflán o redondeo.\n")
+        Part.show(wire)
+    
+    doc.recompute()
+
+# Ejecuta la función para conectar tomacorrientes en el grupo seleccionado
+conectar_tomacorrientes_con_polilinea()

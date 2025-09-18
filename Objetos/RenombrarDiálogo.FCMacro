@@ -1,0 +1,173 @@
+import FreeCAD
+import FreeCADGui
+import re
+from PySide2 import QtGui, QtCore, QtWidgets
+
+class RenombrarDialogo(QtWidgets.QDialog):
+    def __init__(self, grupo, parent=None):
+        super(RenombrarDialogo, self).__init__(parent)
+        
+        self.grupo = grupo
+        self.setWindowTitle("Renombrar Objetos del Grupo")
+
+        # Layout principal
+        layout = QtWidgets.QVBoxLayout(self)
+
+        # Campo para el nombre base (label del grupo)
+        self.label_grupo = QtWidgets.QLabel(f"Label del Grupo: {grupo.Label}")
+        layout.addWidget(self.label_grupo)
+
+        # Campo para el nuevo nombre base
+        self.label_base = QtWidgets.QLabel("Nombre base para el objeto:")
+        self.input_base = QtWidgets.QLineEdit(self)
+        layout.addWidget(self.label_base)
+        layout.addWidget(self.input_base)
+
+        # Campo para el separador
+        self.label_separador = QtWidgets.QLabel("Separador:")
+        self.input_separador = QtWidgets.QLineEdit(self)
+        layout.addWidget(self.label_separador)
+        layout.addWidget(self.input_separador)
+
+        # Checkbox para incluir el nombre original del objeto (deseleccionado por defecto)
+        self.checkbox_nombre_original = QtWidgets.QCheckBox("Incluir nombre original del objeto", self)
+        self.checkbox_nombre_original.setChecked(False)  # Deseleccionado por defecto
+        layout.addWidget(self.checkbox_nombre_original)
+
+        # Lista de objetos
+        self.label_lista = QtWidgets.QLabel("Lista de Objetos (orden actual):")
+        layout.addWidget(self.label_lista)
+        self.lista_objetos = QtWidgets.QListWidget(self)
+        layout.addWidget(self.lista_objetos)
+
+        # Botones para mover objetos en la lista
+        self.boton_subir = QtWidgets.QPushButton("Subir", self)
+        self.boton_subir.clicked.connect(self.mover_objeto_arriba)
+        self.boton_bajar = QtWidgets.QPushButton("Bajar", self)
+        self.boton_bajar.clicked.connect(self.mover_objeto_abajo)
+        layout.addWidget(self.boton_subir)
+        layout.addWidget(self.boton_bajar)
+
+        # Botón para vista preliminar
+        self.boton_preliminar = QtWidgets.QPushButton("Vista Preliminar", self)
+        self.boton_preliminar.clicked.connect(self.actualizar_preliminar)
+        layout.addWidget(self.boton_preliminar)
+
+        # Campo de texto para vista preliminar
+        self.preliminar = QtWidgets.QTextEdit(self)
+        self.preliminar.setReadOnly(True)
+        layout.addWidget(self.preliminar)
+
+        # Botón para aplicar cambios
+        self.boton_aplicar = QtWidgets.QPushButton("Aplicar", self)
+        self.boton_aplicar.clicked.connect(self.aplicar_cambios)
+        layout.addWidget(self.boton_aplicar)
+
+        self.setLayout(layout)
+        self.llenar_lista()
+
+    def llenar_lista(self):
+        # Mostrar objetos tal como están en el orden del grupo
+        for obj in self.grupo.Group:
+            self.lista_objetos.addItem(obj.Label)
+
+    def mover_objeto_arriba(self):
+        current_row = self.lista_objetos.currentRow()
+        if current_row > 0:
+            item = self.lista_objetos.takeItem(current_row)
+            self.lista_objetos.insertItem(current_row - 1, item)
+            self.lista_objetos.setCurrentRow(current_row - 1)
+
+    def mover_objeto_abajo(self):
+        current_row = self.lista_objetos.currentRow()
+        if current_row < self.lista_objetos.count() - 1:
+            item = self.lista_objetos.takeItem(current_row)
+            self.lista_objetos.insertItem(current_row + 1, item)
+            self.lista_objetos.setCurrentRow(current_row + 1)
+
+    def actualizar_preliminar(self):
+        base = self.input_base.text().strip()
+        separador = self.input_separador.text().strip()
+        incluir_nombre_original = self.checkbox_nombre_original.isChecked()
+
+        if not base or not separador:
+            self.preliminar.setText("Error: El nombre base y el separador no pueden estar vacíos.")
+            return
+
+        vista_preliminar = []
+        nombres_generados = set()
+
+        for i in range(self.lista_objetos.count()):
+            obj_label = self.lista_objetos.item(i).text()
+            nuevo_label = f"{self.grupo.Label}{separador}{base}"
+            
+            if incluir_nombre_original:
+                nuevo_label += f"{separador}{obj_label}"
+
+            nuevo_label += f"{separador}{str(i+1).zfill(2)}"
+            
+            if nuevo_label in nombres_generados:
+                self.preliminar.setText(f"Error: Nombres duplicados detectados: {nuevo_label}")
+                return
+            
+            nombres_generados.add(nuevo_label)
+            vista_preliminar.append(f"{obj_label} -> {nuevo_label}")
+        
+        self.preliminar.setText("\n".join(vista_preliminar))
+
+    def aplicar_cambios(self):
+        base = self.input_base.text().strip()
+        separador = self.input_separador.text().strip()
+        incluir_nombre_original = self.checkbox_nombre_original.isChecked()
+
+        if not base or not separador:
+            FreeCAD.Console.PrintError("Error: El nombre base y el separador no pueden estar vacíos.\n")
+            return
+
+        objetos_dict = {obj.Label: obj for obj in self.grupo.Group}
+        nombres_generados = set()
+
+        for i in range(self.lista_objetos.count()):
+            obj_label = self.lista_objetos.item(i).text()
+            nuevo_label = f"{self.grupo.Label}{separador}{base}"
+            
+            if incluir_nombre_original:
+                nuevo_label += f"{separador}{obj_label}"
+
+            nuevo_label += f"{separador}{str(i+1).zfill(2)}"
+
+            if nuevo_label in nombres_generados:
+                FreeCAD.Console.PrintError(f"Error: Nombres duplicados detectados: {nuevo_label}\n")
+                return
+
+            nombres_generados.add(nuevo_label)
+            obj = objetos_dict[obj_label]
+            obj.Label = nuevo_label
+        
+        FreeCAD.ActiveDocument.recompute()
+        self.accept()
+
+def renombrar_labels_con_dialogo():
+    doc = FreeCAD.ActiveDocument
+    selected_objects = FreeCADGui.Selection.getSelection()
+    
+    if not selected_objects:
+        FreeCAD.Console.PrintError("No se ha seleccionado ningún objeto.\n")
+        return
+    
+    if selected_objects[0].TypeId == 'App::DocumentObjectGroup':
+        grupo = selected_objects[0]
+    else:
+        for obj in doc.Objects:
+            if obj.TypeId == 'App::DocumentObjectGroup' and selected_objects[0] in obj.Group:
+                grupo = obj
+                break
+        else:
+            FreeCAD.Console.PrintError("El objeto seleccionado no pertenece a ningún grupo.\n")
+            return
+
+    dialog = RenombrarDialogo(grupo)
+    dialog.exec_()
+
+# Ejecuta la función para abrir el cuadro de diálogo de renombrado
+renombrar_labels_con_dialogo()

@@ -1,0 +1,298 @@
+# -*- coding: utf-8 -*-
+# ======================================================================
+# Macro: ColocarApagadores_Sketch_v7.FCMacro
+# Descripcion:
+#   Inserta simbolos de apagador en cada PUNTO del Sketch y los nombra/
+#   orienta segun las areas (rectangulos) del proyecto.
+#
+# Reglas del proyecto:
+#   - Comentarios y cadenas sin tildes ni caracteres especiales.
+#   - Prototipo con Label EXACTO: "Simbolo Apagador" (en cualquier grupo).
+#   - Sketch: si no hay seleccion, busca "Sketch apagadores".
+#   - El sketch se MUEVE al grupo organizativo "apagadores".
+#   - Grupo destino de instancias: "Apagadores" (Mayuscula).
+#   - Areas: del grupo "Grupo de areas" (con o sin acento) o de la seleccion.
+#   - Solo puntos del Sketch (no vertices de aristas).
+#   - Orientacion ortogonal: 0/90/180/270 (Y+ apunta hacia el centro del area).
+#   - Empuje hacia adentro: 100 mm despues del giro (ajustable).
+#   - Instancias por Draft.clone (sin App::Link).
+#   - Logs detallados en consola.
+#
+# Fecha/Hora: 2025-08-20 08:40 America/Costa_Rica
+# FreeCAD: 1.0.x
+# ======================================================================
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import unicodedata
+import math
+
+DOC = App.ActiveDocument
+
+# -----------------------
+# Parametros
+# -----------------------
+PROTO_LABEL            = "Simbolo Apagador"
+GRUPO_DESTINO_LABEL    = "Apagadores"       # grupo de instancias (Mayuscula)
+GRUPO_SKETCH_LABEL     = "apagadores"       # grupo organizativo del sketch
+SKETCH_TARGET_LABEL    = "Sketch apagadores"
+GRUPO_AREAS_LABEL      = "Grupo de areas"   # se compara con o sin acento
+
+Z_BASE                 = 0.0
+ROTATION_EXTRA_DEG     = 0.0                 # ajuste fino si el simbolo base esta girado
+OFFSET_LOCAL           = App.Vector(0.0, 0.0, 0.0)  # offset adicional tras el empuje; por defecto 0
+BB_TOL                 = 0.5                 # tolerancia para contencion por bounding box
+PUSH_TO_CENTER_MM      = 100.0               # empuje hacia el centro del area, luego del giro
+
+# -----------------------
+# Utilidades de debug
+# -----------------------
+def log(m):  App.Console.PrintMessage("[APAGADOR][INFO] " + str(m) + "\n")
+def warn(m): App.Console.PrintWarning("[APAGADOR][WARN] " + str(m) + "\n")
+def err(m):  App.Console.PrintError("[APAGADOR][ERROR] " + str(m) + "\n")
+
+# -----------------------
+# Helpers basicos
+# -----------------------
+def norm(s):
+    try:
+        return unicodedata.normalize("NFKD", s).encode("ascii","ignore").decode("ascii").lower().strip()
+    except:
+        return str(s).lower().strip()
+
+def rotZ(deg):
+    return App.Rotation(App.Vector(0,0,1), deg)
+
+def snap_ortho_deg(deg):
+    return round(deg / 90.0) * 90.0
+
+def scaled(v, s):
+    return App.Vector(v.x * s, v.y * s, v.z * s)
+
+def find_object_by_label(lbl):
+    for o in DOC.Objects:
+        if getattr(o, "Label", None) == lbl:
+            return o
+    return None
+
+def find_group_loose(lbl_expected):
+    target = norm(lbl_expected)
+    for o in DOC.Objects:
+        if getattr(o, "TypeId", "") == "App::DocumentObjectGroup":
+            if norm(getattr(o, "Label","")) == target:
+                return o
+    return None
+
+def get_or_make_group(lbl):
+    g = DOC.getObject(lbl)
+    if g is None:
+        g = DOC.addObject("App::DocumentObjectGroup", lbl)
+        log("Grupo creado: {}".format(lbl))
+    return g
+
+def is_point_geom(g):
+    if hasattr(g, "TypeId") and "Point" in str(g.TypeId):
+        return True
+    has_xyz = all(hasattr(g, c) for c in ("X","Y","Z"))
+    has_pos = hasattr(g, "Position") and hasattr(g.Position, "x")
+    return has_xyz or has_pos
+
+def get_sketch_points_world(sk):
+    pts = []
+    try:
+        for geo in sk.Geometry:
+            if is_point_geom(geo):
+                if all(hasattr(geo, c) for c in ("X","Y","Z")):
+                    v_local = App.Vector(geo.X, geo.Y, geo.Z)
+                elif hasattr(geo, "Position"):
+                    v_local = App.Vector(geo.Position.x, geo.Position.y, geo.Position.z)
+                else:
+                    continue
+                v_global = sk.Placement.multVec(v_local)
+                pts.append(v_global)
+    except Exception as ex:
+        warn("Fallo leyendo puntos del sketch: {}".format(ex))
+    return pts
+
+def area_info_from_obj(o):
+    try:
+        shp = getattr(o, "Shape", None)
+        if shp is None:
+            return None
+        bb = shp.BoundBox
+        cx = (bb.XMin + bb.XMax) / 2.0
+        cy = (bb.YMin + bb.YMax) / 2.0
+        return {
+            "obj": o,
+            "label": getattr(o, "Label", o.Name),
+            "bb": bb,
+            "center": App.Vector(cx, cy, 0.0)
+        }
+    except Exception:
+        return None
+
+def load_areas(group_loose_label, selected_objs):
+    areas = []
+    grp = find_group_loose(group_loose_label)
+    if grp:
+        for o in getattr(grp, "Group", []):
+            ai = area_info_from_obj(o)
+            if ai: areas.append(ai)
+    if not areas and selected_objs:
+        for o in selected_objs:
+            if o.TypeId in ("Sketcher::SketchObject","Sketcher::SketchObjectPython"):
+                continue
+            ai = area_info_from_obj(o)
+            if ai: areas.append(ai)
+    return areas
+
+def point_in_bb(P, bb, tol=0.0):
+    return (P.x >= bb.XMin - tol and P.x <= bb.XMax + tol and
+            P.y >= bb.YMin - tol and P.y <= bb.YMax + tol)
+
+def yaw_for_y_along_vec(v):
+    ang = math.degrees(math.atan2(v.y, v.x))
+    return ang - 90.0 + ROTATION_EXTRA_DEG
+
+# -----------------------
+# Main
+# -----------------------
+def main():
+    # Prototipo
+    proto = find_object_by_label(PROTO_LABEL)
+    if proto is None:
+        err("No existe el prototipo con Label '{}'.".format(PROTO_LABEL))
+        err("Seleccione un Sketch y seleccione tambien las areas o el grupo 'Grupo de areas'.")
+        return
+    if proto.TypeId == "App::Link" and getattr(proto, "LinkedObject", None):
+        log("Prototipo es Link; se usa LinkedObject: {} ({})".format(proto.LinkedObject.Label, proto.LinkedObject.Name))
+        proto = proto.LinkedObject
+    log("Prototipo resuelto: {} ({})".format(proto.Label, proto.Name))
+
+    # Seleccion
+    sel = Gui.Selection.getSelection()
+    selected_sketch = next((o for o in sel if o.TypeId in ("Sketcher::SketchObject","Sketcher::SketchObjectPython")), None)
+
+    # Sketch objetivo
+    sketch = None
+    if selected_sketch:
+        sketch = selected_sketch
+        log("Sketch seleccionado: {} ({})".format(sketch.Label, sketch.Name))
+    else:
+        grp_sk = get_or_make_group(GRUPO_SKETCH_LABEL)
+        candidate = None
+        for o in getattr(grp_sk, "Group", []):
+            if o.TypeId in ("Sketcher::SketchObject","Sketcher::SketchObjectPython") and o.Label == SKETCH_TARGET_LABEL:
+                candidate = o; break
+        if not candidate:
+            any_sk = find_object_by_label(SKETCH_TARGET_LABEL)
+            if any_sk and any_sk.TypeId in ("Sketcher::SketchObject","Sketcher::SketchObjectPython"):
+                grp_sk.addObject(any_sk)
+                candidate = any_sk
+        sketch = candidate
+
+    if sketch is None:
+        err("No se selecciono un Sketch y tampoco existe '{}' en el grupo '{}'.".format(SKETCH_TARGET_LABEL, GRUPO_SKETCH_LABEL))
+        err("Seleccione un Sketch con puntos y seleccione tambien las areas o el grupo de areas.")
+        return
+
+    # Acomodar sketch: renombrar y mover a grupo 'apagadores'
+    try:
+        if sketch.Label != SKETCH_TARGET_LABEL:
+            sketch.Label = SKETCH_TARGET_LABEL
+            log("Sketch renombrado a '{}'".format(SKETCH_TARGET_LABEL))
+        grp_sk = get_or_make_group(GRUPO_SKETCH_LABEL)
+        if sketch not in getattr(grp_sk, "Group", []):
+            grp_sk.addObject(sketch)
+            log("Sketch movido al grupo '{}'".format(grp_sk.Label))
+    except Exception as ex:
+        warn("No se pudo renombrar/mover sketch: {}".format(ex))
+
+    # Puntos del sketch
+    try:
+        sketch.recompute()
+    except Exception as ex:
+        warn("Recompute del sketch con advertencia: {}".format(ex))
+
+    points = get_sketch_points_world(sketch)
+    log("Puntos detectados (solo puntos de Sketcher): {}".format(len(points)))
+    if not points:
+        err("El Sketch no tiene puntos de geometria. Agregue puntos y reintente.")
+        return
+
+    # Areas (grupo o seleccion)
+    areas = load_areas(GRUPO_AREAS_LABEL, sel)
+    if not areas:
+        err("No se encontraron areas. Cree/seleccione el grupo '{}' o seleccione los rectangulos de las areas.".format(GRUPO_AREAS_LABEL))
+        return
+    log("Areas cargadas: {}".format(len(areas)))
+
+    # Grupo destino 'Apagadores'
+    grp_dest = get_or_make_group(GRUPO_DESTINO_LABEL)
+
+    # Insercion
+    import Draft
+    count = 0
+    for i, P in enumerate(points):
+        # area por BB
+        area_hit = None
+        for ai in areas:
+            if point_in_bb(P, ai["bb"], BB_TOL):
+                area_hit = ai
+                break
+        if area_hit is None:
+            warn("Punto {} no pertenece a ninguna area (por BB). Se omite.".format(i+1))
+            continue
+
+        # nombre segun area
+        base_label = area_hit["label"]
+        name = "Apagador-{}-{:03d}".format(base_label, i+1)
+
+        # vector hacia el centro del area (BB center)
+        v_in = App.Vector(area_hit["center"].x - P.x, area_hit["center"].y - P.y, 0.0)
+        if v_in.Length == 0:
+            v_in = App.Vector(0,1,0)
+
+        # yaw crudo para que Y+ apunte a v_in -> snap 90 deg
+        yaw_raw = yaw_for_y_along_vec(v_in)
+        yaw = snap_ortho_deg(yaw_raw)
+        Rz  = rotZ(yaw)
+
+        try:
+            inst = Draft.clone(proto)
+            inst.Label = name
+
+            # empuje 100 mm hacia adentro a lo largo de Y+ ya rotado
+            y_dir_world = Rz.multVec(App.Vector(0,1,0))
+            if y_dir_world.Length == 0:
+                push = App.Vector(0, PUSH_TO_CENTER_MM, 0)
+            else:
+                push = scaled(y_dir_world, PUSH_TO_CENTER_MM / y_dir_world.Length)
+
+            # offset adicional en coords locales del simbolo
+            off_local = Rz.multVec(OFFSET_LOCAL)
+
+            base = App.Vector(P.x, P.y, Z_BASE)
+            final_base = base + push + off_local
+
+            pl = App.Placement()
+            pl.Base = final_base
+            pl.Rotation = Rz
+            inst.Placement = pl
+
+            grp_dest.addObject(inst)
+            log("Creado {} en ({:.2f},{:.2f},{:.2f}) yaw={} push={}mm".format(
+                name, pl.Base.x, pl.Base.y, pl.Base.z, int(yaw), int(PUSH_TO_CENTER_MM)))
+            count += 1
+        except Exception as ex:
+            warn("Fallo creando instancia en punto {}: {}".format(i+1, ex))
+
+    try:
+        DOC.recompute()
+    except Exception as ex:
+        warn("Recompute final con advertencia: {}".format(ex))
+
+    log("Listo. Insertados {} simbolos en '{}'.".format(count, GRUPO_DESTINO_LABEL))
+
+# Ejecutar
+main()

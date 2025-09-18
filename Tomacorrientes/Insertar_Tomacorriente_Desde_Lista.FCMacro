@@ -1,0 +1,53 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+# ============================================================================
+# Wrapper de insercion: delega en InsertarTomacorriente(params)
+# Mantiene la UI libre: usa una lista simple como ejemplo.
+# ============================================================================
+
+import FreeCAD as App
+import FreeCADGui as Gui
+
+LOG_TAG = "[TOMA23D]"
+
+def _info(m): App.Console.PrintMessage(f"{LOG_TAG}[INFO] {m}\n")
+def _err(m): App.Console.PrintError(f"{LOG_TAG}[ERROR] {m}\n")
+
+
+def _ensure_factory_loaded():
+    # If not present, try to exec the factory macro from disk
+    if 'InsertarTomacorriente' in globals():
+        return True
+    import os
+    try:
+        here = os.path.dirname(os.path.abspath(__file__))
+        path = os.path.join(here, 'Insertar_Tomacorriente_Fabrica.FCMacro')
+        if os.path.exists(path):
+            with open(path, 'r', encoding='utf-8') as f:
+                code = f.read()
+            exec(compile(code, path, 'exec'), globals())
+            return 'InsertarTomacorriente' in globals()
+    except Exception:
+        pass
+    return False
+
+
+def insertar_desde_lista():
+    if not _ensure_factory_loaded():
+        _err('Factory not available. Ensure Insertar_Tomacorriente_Fabrica.FCMacro exists in same folder.')
+        return
+
+    tipos = [
+        'NEMA5-15_duplex',
+        'NEMA5-20_duplex',
+        'GFCI_120V'
+    ]
+
+    for t in tipos:
+        InsertarTomacorriente({'Tipo': t, 'Altura': 300, 'ModoVisual': 'Ambos'})
+
+    _info('Inserted sample list using factory')
+
+
+if __name__ == '__main__':
+    insertar_desde_lista()

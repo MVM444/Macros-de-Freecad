@@ -1,0 +1,94 @@
+import FreeCAD
+import FreeCADGui
+import os
+from PySide2 import QtGui, QtCore, QtWidgets
+from functools import partial
+
+def colocar_objetos_en_rectangulos():
+    import Draft  # Importar Draft dentro de la función
+
+    doc = FreeCAD.ActiveDocument
+    selection = FreeCADGui.Selection.getSelection()
+
+    # Filtrar los objetos seleccionados para identificar los rectángulos y el objeto
+    rectangulos = []
+    objeto = None
+
+    for sel in selection:
+        if hasattr(sel, 'Proxy') and sel.Proxy.Type == 'Rectangle':
+            rectangulos.append(sel)
+        elif sel.TypeId == 'App::DocumentObjectGroup':
+            # Añadir todos los rectángulos del grupo
+            for obj in sel.Group:
+                if hasattr(obj, 'Proxy') and obj.Proxy.Type == 'Rectangle':
+                    rectangulos.append(obj)
+        else:
+            objeto = sel
+
+    # Verificar si se seleccionó al menos un rectángulo y un objeto
+    if not rectangulos or not objeto:
+        FreeCAD.Console.PrintError("Debe seleccionar al menos un rectángulo y un objeto.\n")
+        return
+
+    # Crear un nuevo grupo para los objetos clonados
+    nuevo_grupo = doc.addObject("App::DocumentObjectGroup", f"Grupo_{objeto.Label}")
+    nuevo_grupo.Label = f"Clones de {objeto.Label}"
+
+    # Procesar cada rectángulo seleccionado
+    consecutivo_global = 1
+    for rect in rectangulos:
+        # Obtener las dimensiones del rectángulo
+        rect_width = rect.Length.Value
+        rect_height = rect.Height.Value
+
+        # Verificar si el rectángulo tiene las propiedades Columns y Rows
+        if hasattr(rect, 'Columns') and hasattr(rect, 'Rows'):
+            num_cols = rect.Columns
+            num_rows = rect.Rows
+        else:
+            FreeCAD.Console.PrintError(f"El rectángulo {rect.Label} no tiene las propiedades Columns y Rows.\n")
+            continue
+
+        # Calcular la posición de cada celda
+        dist_x = rect_width / num_cols
+        dist_y = rect_height / num_rows
+
+        # Obtener la posición y orientación del rectángulo
+        rect_placement = rect.Placement
+        rect_position = rect_placement.Base
+        rect_rotation = rect_placement.Rotation
+
+        # Mostrar información de depuración en consola
+        FreeCAD.Console.PrintMessage(f"Procesando {rect.Label}:\n")
+        FreeCAD.Console.PrintMessage(f"Rect Width: {rect_width}\n")
+        FreeCAD.Console.PrintMessage(f"Rect Height: {rect_height}\n")
+        FreeCAD.Console.PrintMessage(f"Num Columns: {num_cols}\n")
+        FreeCAD.Console.PrintMessage(f"Num Rows: {num_rows}\n")
+
+        # Iterar sobre cada celda del rectángulo
+        for row in range(num_rows):
+            for col in range(num_cols):
+                # Calcular la posición central de cada celda
+                x = (col + 0.5) * dist_x
+                y = (row + 0.5) * dist_y
+                z = 0
+
+                FreeCAD.Console.PrintMessage(f"Celda [{row},{col}]: X={x}, Y={y}, Z={z}\n")
+
+                # Crear una copia del objeto y colocarla en la celda correspondiente
+                obj_copy = Draft.clone(objeto)
+                obj_copy.Placement.Base = rect_position + rect_rotation.multVec(FreeCAD.Vector(x, y, z))
+                obj_copy.Placement.Rotation = rect_rotation
+
+                # Renombrar la copia según el nombre del rectángulo y del objeto
+                obj_copy.Label = f"{rect.Label}_{objeto.Label}_{consecutivo_global:02d}"
+                consecutivo_global += 1
+
+                # Añadir la copia al nuevo grupo
+                nuevo_grupo.addObject(obj_copy)
+
+    # Recomputa el documento para aplicar los cambios
+    doc.recompute()
+
+# Ejecutar la función para colocar los objetos en los rectángulos seleccionados
+colocar_objetos_en_rectangulos()

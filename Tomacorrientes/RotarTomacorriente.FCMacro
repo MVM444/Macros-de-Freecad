@@ -1,0 +1,64 @@
+# ------------------------------------------------------------------------
+# Esta macro rota automáticamente uno o varios tomacorrientes seleccionados
+# para que queden perpendiculares a una línea (edge) seleccionada en FreeCAD.
+# El usuario debe seleccionar al menos un tomacorriente y una línea.
+# Para cada combinación, calcula el ángulo necesario y aplica la rotación
+# alrededor del eje Z, manteniendo la posición original del tomacorriente.
+# Si ya está perpendicular, rota 180° adicionales para invertir la orientación.import FreeCAD
+import FreeCADGui
+import Part
+
+def rotar_tomacorrientes_perpendicular():
+    doc = FreeCAD.ActiveDocument
+    selection = FreeCADGui.Selection.getSelectionEx()
+    if not selection:
+        FreeCAD.Console.PrintError("No hay ninguna selección. Por favor seleccione al menos un tomacorriente y una línea.\n")
+        return
+    
+    tomacorrientes = []
+    edges = []
+    
+    # Clasificar la selección en tomacorrientes y bordes
+    for sel in selection:
+        if sel.HasSubObjects:
+            for sub in sel.SubObjects:
+                if isinstance(sub, Part.Edge):
+                    edges.append(sub)
+        else:
+            if isinstance(sel.Object, Part.Feature):
+                tomacorrientes.append(sel.Object)
+    
+    if not tomacorrientes or not edges:
+        FreeCAD.Console.PrintError("Debe seleccionar al menos un tomacorriente y una línea.\n")
+        return
+
+    for edge in edges:
+        for tomacorriente in tomacorrientes:
+            # Calcular el vector de dirección del borde
+            edge_vector = edge.tangentAt(edge.Length / 2)
+            edge_vector.normalize()
+            
+            # Obtener la posición actual del tomacorriente
+            placement = tomacorriente.Placement
+            current_position = placement.Base
+            
+            # Calcular el ángulo de rotación necesario en el eje Z
+            angle = edge_vector.getAngle(FreeCAD.Vector(1, 0, 0))
+            if edge_vector.y < 0:
+                angle = -angle
+            
+            # Aplicar la rotación al tomacorriente
+            rotation = FreeCAD.Rotation(FreeCAD.Vector(0, 0, 1), angle * 180.0 / 3.14159)
+            tomacorriente.Placement.Rotation = rotation.multiply(tomacorriente.Placement.Rotation)
+            
+            # Si ya está perpendicular, rotar 180 grados
+            if abs(tomacorriente.Placement.Rotation.Angle - 90.0) < 1.0:
+                tomacorriente.Placement.Rotation = FreeCAD.Rotation(FreeCAD.Vector(0, 0, 1), 180.0).multiply(tomacorriente.Placement.Rotation)
+            
+            # Mantener la posición original del tomacorriente
+            tomacorriente.Placement.Base = current_position
+            
+            doc.recompute()
+
+# Ejecuta la función para rotar los tomacorrientes
+rotar_tomacorrientes_perpendicular()

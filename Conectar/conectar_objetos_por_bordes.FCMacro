@@ -1,0 +1,106 @@
+import FreeCAD
+import FreeCADGui
+import Part
+from collections import defaultdict
+
+def conectar_objetos_por_bordes():
+    doc = FreeCAD.ActiveDocument
+    selected_objects = FreeCADGui.Selection.getSelectionEx()
+
+    if len(selected_objects) < 2:
+        FreeCAD.Console.PrintError("Debe seleccionar al menos dos objetos y los puntos correspondientes (vértices o bordes).\n")
+        return
+
+    # Identificar el grupo padre de los objetos seleccionados
+    grupo_padre = None
+    for obj in doc.Objects:
+        if obj.TypeId == 'App::DocumentObjectGroup' and all(sel_obj.Object in obj.Group for sel_obj in selected_objects):
+            grupo_padre = obj
+            break
+
+    if not grupo_padre:
+        FreeCAD.Console.PrintError("Los objetos seleccionados no están en el mismo grupo.\n")
+        return
+
+    FreeCAD.Console.PrintMessage(f"Grupo padre encontrado: {grupo_padre.Name}\n")
+
+    # Verificar si ya existe un subgrupo de conexiones
+    conexiones_grupo = None
+    for obj in grupo_padre.Group:
+        if obj.TypeId == 'App::DocumentObjectGroup' and obj.Name.startswith("Conexiones"):
+            conexiones_grupo = obj
+            break
+
+    # Crear un nuevo grupo de conexiones si no existe
+    if not conexiones_grupo:
+        conexiones_grupo = doc.addObject("App::DocumentObjectGroup", "Conexiones")
+        grupo_padre.addObject(conexiones_grupo)
+
+    # Diccionario para rastrear conexiones
+    conexiones_realizadas = set()
+
+    # Función para obtener el punto medio exacto del borde seleccionado
+    def obtener_punto_y_direccion_borde(selection_detail):
+        if selection_detail.HasSubObjects:  # Verificar si hay subobjetos seleccionados
+            sub_objects = selection_detail.SubObjects
+            for sub_obj in sub_objects:
+                if isinstance(sub_obj, Part.Edge):
+                    # Si es un borde, retornar el punto medio del borde
+                    punto_medio = sub_obj.CenterOfMass  # Cambiado para obtener el centro exacto del borde
+                    tangente = sub_obj.tangentAt(0.5)
+                    direccion_perpendicular = FreeCAD.Vector(-tangente.y, tangente.x, 0)  # Asegurar una dirección 2D
+                    return punto_medio, direccion_perpendicular
+        # Si no hay borde seleccionado, usar el centro del objeto como fallback
+        return selection_detail.Object.Shape.BoundBox.Center, None
+
+    # Filtrar y obtener puntos seleccionados
+    puntos_seleccionados = []
+    for selection_detail in selected_objects:
+        punto, direccion = obtener_punto_y_direccion_borde(selection_detail)
+        puntos_seleccionados.append((selection_detail.Object, punto, direccion))
+
+    if len(puntos_seleccionados) < 2:
+        FreeCAD.Console.PrintError("No hay suficientes puntos seleccionados para conectar.\n")
+        return
+
+    # Función para dibujar conexiones ortogonales entre puntos seleccionados
+    def dibujar_conexiones(puntos):
+        for i in range(len(puntos) - 1):
+            objeto1, punto1, direccion1 = puntos[i]
+            objeto2, punto2, direccion2 = puntos[i + 1]
+
+            if (objeto1.Label, objeto2.Label) in conexiones_realizadas or (objeto2.Label, objeto1.Label) in conexiones_realizadas:
+                continue
+
+            puntos_conexion = [punto1]
+
+            # Crear puntos intermedios para asegurar conexiones perpendiculares
+            if direccion1 and direccion2:
+                punto_intermedio1 = punto1 + direccion1 * 20  # Ajustar la longitud según sea necesario
+                puntos_conexion.append(punto_intermedio1)
+
+                if abs(punto1.x - punto2.x) > 1e-3:  # Asegurar que haya una diferencia significativa
+                    punto_intermedio2 = FreeCAD.Vector(punto2.x, punto_intermedio1.y, punto1.z)
+                    puntos_conexion.append(punto_intermedio2)
+                if abs(punto1.y - punto2.y) > 1e-3:  # Asegurar que haya una diferencia significativa
+                    punto_intermedio3 = FreeCAD.Vector(punto2.x, punto2.y, punto1.z)
+                    puntos_conexion.append(punto_intermedio3)
+
+            puntos_conexion.append(punto2)
+
+            # Crear y almacenar la línea en el grupo de conexiones
+            linea = Part.makePolygon(puntos_conexion)
+            linea_obj = doc.addObject("Part::Feature", f'Conexion_{objeto1.Label}_{objeto2.Label}')
+            linea_obj.Shape = linea
+            conexiones_grupo.addObject(linea_obj)
+
+            conexiones_realizadas.add((objeto1.Label, objeto2.Label))
+
+    # Dibujar conexiones
+    dibujar_conexiones(puntos_seleccionados)
+
+    # Actualizar el documento
+    doc.recompute()
+
+# Ejecutar la función
+conectar_objetos_por_bordes()

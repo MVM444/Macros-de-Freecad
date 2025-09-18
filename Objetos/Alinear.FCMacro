@@ -1,0 +1,126 @@
+import FreeCAD
+import FreeCADGui
+from PySide import QtGui, QtCore
+
+class AlignObjectsDialog(QtGui.QDialog):
+    def __init__(self):
+        super(AlignObjectsDialog, self).__init__()
+
+        self.setWindowTitle("Alinear Objetos")
+
+        self.layout = QtGui.QVBoxLayout()
+
+        self.instructions = QtGui.QLabel("Seleccione el objeto de referencia primero, luego seleccione los objetos a alinear.")
+        self.layout.addWidget(self.instructions)
+
+        self.addButton("Alinear Izquierda (Eje X)", self.align_left)
+        self.addButton("Alinear Derecha (Eje X)", self.align_right)
+        self.addButton("Alinear Centro (Eje X)", self.align_center_x)
+        
+        self.addButton("Alinear Arriba (Eje Y)", self.align_top)
+        self.addButton("Alinear Abajo (Eje Y)", self.align_bottom)
+        self.addButton("Alinear Centro (Eje Y)", self.align_center_y)
+
+        self.addButton("Alinear Adelante (Eje Z)", self.align_front)
+        self.addButton("Alinear Atrás (Eje Z)", self.align_back)
+        self.addButton("Alinear Centro (Eje Z)", self.align_center_z)
+
+        self.setLayout(self.layout)
+
+    def addButton(self, text, function):
+        button = QtGui.QPushButton(text)
+        button.clicked.connect(function)
+        self.layout.addWidget(button)
+
+    def align_objects(self, alignment_func):
+        selection = FreeCADGui.Selection.getSelection()
+        if len(selection) < 2:
+            FreeCAD.Console.PrintError("Debe seleccionar al menos dos objetos para alinear.\n")
+            return
+
+        ref_obj = selection[0]
+        other_objs = selection[1:]
+
+        ref_box = ref_obj.Shape.BoundBox
+
+        for obj in other_objs:
+            obj_box = obj.Shape.BoundBox
+            alignment_func(obj, ref_box, obj_box)
+            obj.recompute()
+
+        FreeCAD.ActiveDocument.recompute()
+
+    def align_left(self):
+        def align(obj, ref_box, obj_box):
+            delta_x = ref_box.XMin - obj_box.XMin
+            obj.Placement.Base.x += delta_x
+
+        self.align_objects(align)
+
+    def align_right(self):
+        def align(obj, ref_box, obj_box):
+            delta_x = ref_box.XMax - obj_box.XMax
+            obj.Placement.Base.x += delta_x
+
+        self.align_objects(align)
+
+    def align_center_x(self):
+        def align(obj, ref_box, obj_box):
+            ref_center_x = (ref_box.XMin + ref_box.XMax) / 2
+            obj_center_x = (obj_box.XMin + obj_box.XMax) / 2
+            delta_x = ref_center_x - obj_center_x
+            obj.Placement.Base.x += delta_x
+
+        self.align_objects(align)
+
+    def align_top(self):
+        def align(obj, ref_box, obj_box):
+            delta_y = ref_box.YMax - obj_box.YMax
+            obj.Placement.Base.y += delta_y
+
+        self.align_objects(align)
+
+    def align_bottom(self):
+        def align(obj, ref_box, obj_box):
+            delta_y = ref_box.YMin - obj_box.YMin
+            obj.Placement.Base.y += delta_y
+
+        self.align_objects(align)
+
+    def align_center_y(self):
+        def align(obj, ref_box, obj_box):
+            ref_center_y = (ref_box.YMin + ref_box.YMax) / 2
+            obj_center_y = (obj_box.YMin + obj_box.YMax) / 2
+            delta_y = ref_center_y - obj_center_y
+            obj.Placement.Base.y += delta_y
+
+        self.align_objects(align)
+
+    def align_front(self):
+        def align(obj, ref_box, obj_box):
+            delta_z = ref_box.ZMax - obj_box.ZMax
+            obj.Placement.Base.z += delta_z
+
+        self.align_objects(align)
+
+    def align_back(self):
+        def align(obj, ref_box, obj_box):
+            delta_z = ref_box.ZMin - obj_box.ZMin
+            obj.Placement.Base.z += delta_z
+
+        self.align_objects(align)
+
+    def align_center_z(self):
+        def align(obj, ref_box, obj_box):
+            ref_center_z = (ref_box.ZMin + ref_box.ZMax) / 2
+            obj_center_z = (obj_box.ZMin + obj_box.ZMax) / 2
+            delta_z = ref_center_z - obj_center_z
+            obj.Placement.Base.z += delta_z
+
+        self.align_objects(align)
+
+def show_align_dialog():
+    dialog = AlignObjectsDialog()
+    dialog.exec_()
+
+show_align_dialog()

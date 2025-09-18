@@ -1,0 +1,87 @@
+import FreeCAD
+import FreeCADGui
+from PySide2 import QtWidgets
+
+class CambiarAlturaYRotacionDialogo(QtWidgets.QDialog):
+    def __init__(self, parent=None):
+        super(CambiarAlturaYRotacionDialogo, self).__init__(parent)
+        self.setWindowTitle("Cambiar Altura y Rotación de Objetos")
+
+        # Layout principal
+        layout = QtWidgets.QVBoxLayout(self)
+
+        # Campo para la nueva altura
+        self.label_altura = QtWidgets.QLabel("Nueva Altura (mm):")
+        self.input_altura = QtWidgets.QLineEdit(self)
+        layout.addWidget(self.label_altura)
+        layout.addWidget(self.input_altura)
+
+        # Campo para la nueva rotación
+        self.label_rotacion = QtWidgets.QLabel("Nueva Rotación (grados):")
+        self.input_rotacion = QtWidgets.QLineEdit(self)
+        layout.addWidget(self.label_rotacion)
+        layout.addWidget(self.input_rotacion)
+
+        # Botones de aceptar y cancelar
+        botones = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        layout.addWidget(botones)
+
+        # Conectar los botones a las funciones correspondientes
+        botones.accepted.connect(self.accept)
+        botones.rejected.connect(self.reject)
+
+        # Precargar valores iniciales si hay selección
+        self.precargar_valores()
+
+    def precargar_valores(self):
+        """Carga valores promedio de los objetos seleccionados."""
+        seleccionados = FreeCADGui.Selection.getSelection()
+        if seleccionados:
+            alturas = [obj.Placement.Base.z for obj in seleccionados if hasattr(obj, 'Placement')]
+            rotaciones = [obj.Placement.Rotation.Angle for obj in seleccionados if hasattr(obj, 'Placement')]
+
+            if alturas:
+                self.input_altura.setPlaceholderText(f"Actual: {sum(alturas)/len(alturas):.2f} mm")
+            if rotaciones:
+                self.input_rotacion.setPlaceholderText(f"Actual: {sum(rotaciones)/len(rotaciones):.2f}°")
+
+def cambiar_altura_y_rotacion_objetos(altura_nueva=None, rotacion_nueva=None):
+    seleccionados = FreeCADGui.Selection.getSelection()
+
+    if not seleccionados:
+        FreeCAD.Console.PrintError("No se ha seleccionado ningún objeto.\n")
+        return
+
+    for obj in seleccionados:
+        if hasattr(obj, 'Placement'):
+            # Cambiar altura si se proporciona un valor válido
+            if altura_nueva is not None:
+                try:
+                    nueva_altura = float(altura_nueva)
+                    obj.Placement.Base.z = nueva_altura
+                    FreeCAD.Console.PrintMessage(f"Altura de {obj.Label} cambiada a {nueva_altura} mm\n")
+                except ValueError:
+                    FreeCAD.Console.PrintError(f"Valor inválido para altura en {obj.Label}.\n")
+
+            # Cambiar rotación si se proporciona un valor válido
+            if rotacion_nueva is not None:
+                try:
+                    nueva_rotacion = float(rotacion_nueva)
+                    obj.Placement.Rotation = FreeCAD.Rotation(FreeCAD.Vector(0, 0, 1), nueva_rotacion)
+                    FreeCAD.Console.PrintMessage(f"Rotación de {obj.Label} cambiada a {nueva_rotacion}°\n")
+                except ValueError:
+                    FreeCAD.Console.PrintError(f"Valor inválido para rotación en {obj.Label}.\n")
+        else:
+            FreeCAD.Console.PrintWarning(f"El objeto {obj.Label} no tiene la propiedad Placement.\n")
+
+    FreeCAD.ActiveDocument.recompute()
+
+def ejecutar_dialogo():
+    dialog = CambiarAlturaYRotacionDialogo()
+    if dialog.exec_() == QtWidgets.QDialog.Accepted:
+        altura_nueva = dialog.input_altura.text() or None
+        rotacion_nueva = dialog.input_rotacion.text() or None
+        cambiar_altura_y_rotacion_objetos(altura_nueva, rotacion_nueva)
+
+if __name__ == "__main__":
+    ejecutar_dialogo()

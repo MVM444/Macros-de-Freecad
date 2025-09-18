@@ -1,0 +1,140 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+# =============================================================================
+# Insertar tomacorrientes en borde (wrapper v1)
+# Usa la fabrica InsertarTomacorriente para crear TomacorrienteHibrido.
+# Mantiene UI: intervalo, altura y direccion (Adelante/Atras) con offset 60 mm.
+# =============================================================================
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+import os
+import datetime
+import math
+
+try:
+    from PySide2.QtWidgets import QInputDialog, QMessageBox
+except ImportError:
+    from PySide.QtGui import QInputDialog, QMessageBox
+
+LOG = "[TOMA23D]"
+
+def _info(m): App.Console.PrintMessage(f"{LOG}[INFO] {m}\n")
+def _err(m): App.Console.PrintError(f"{LOG}[ERROR] {m}\n")
+
+
+def _ensure_factory_loaded():
+    if 'InsertarTomacorriente' in globals():
+        return True
+    try:
+        here = os.path.dirname(os.path.abspath(__file__))
+        path = os.path.join(here, 'Insertar_Tomacorriente_Fabrica.FCMacro')
+        if os.path.exists(path):
+            with open(path, 'r', encoding='utf-8') as f:
+                code = f.read()
+            exec(compile(code, path, 'exec'), globals())
+            return 'InsertarTomacorriente' in globals()
+    except Exception as e:
+        _err(f"Factory load failed: {e}")
+    return False
+
+
+def insertar_tomacorrientes():
+    ahora = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    _info(f"Ejecutando insertar_tomacorrientes_en_borde: {ahora}")
+
+    if not _ensure_factory_loaded():
+        _err('Factory not available. Ensure Insertar_Tomacorriente_Fabrica.FCMacro exists in same folder.')
+        return
+
+    # Inputs
+    intervalo_mm, ok = QInputDialog.getInt(None, "Intervalo", "Distancia entre tomacorrientes (mm):", 1800, 1, 100000)
+    if not ok:
+        _err("Operacion cancelada: sin intervalo.")
+        return
+    altura_mm, ok = QInputDialog.getInt(None, "Altura", "Altura tomacorriente (mm):", 300, 0, 5000)
+    if not ok:
+        _err("Operacion cancelada: sin altura.")
+        return
+
+    msg = QMessageBox()
+    msg.setWindowTitle("Direccion")
+    msg.setText("Selecciona direccion del offset perpendicular:")
+    btnA = msg.addButton("Adelante", QMessageBox.AcceptRole)
+    btnB = msg.addButton("Atras", QMessageBox.RejectRole)
+    msg.exec_()
+    adelante = (msg.clickedButton() == btnA)
+
+    despl_mm = 60
+    off = -despl_mm if adelante else despl_mm
+
+    doc = App.ActiveDocument or App.newDocument("PlanoElectricos")
+    sel = Gui.Selection.getSelectionEx()
+    if not sel:
+        _err("Selecciona al menos un borde o linea.")
+        return
+
+    creados = 0
+    for item in sel:
+        for edge in item.SubObjects:
+            if isinstance(edge, Part.Edge):
+                L = edge.Length
+                count = max(1, int(L // intervalo_mm))
+                _info(f"Arista {L:.2f} mm -> {count} tomacorrientes")
+                for i in range(count):
+                    # Parametro y punto
+                    t = (i + 1) / (count + 1)
+                    param = edge.FirstParameter + t * (edge.LastParameter - edge.FirstParameter)
+                    p = edge.valueAt(param)
+                    # Tangente y normal 2D
+                    tg = edge.tangentAt(param); tg.normalize()
+                    normal = App.Vector(tg.y, -tg.x, 0); normal.normalize()
+                    # Posicion en XY (plano de trabajo) con offset perpendicular
+                    pos = App.Vector(p.x + normal.x * off, p.y + normal.y * off, 0)
+                    # Rotacion yaw: normal +90 y +180 si atras
+                    base_angle = math.degrees(math.atan2(normal.y, normal.x))
+                    angle = (base_angle + 90 + (0 if adelante else 180)) % 360
+                    rot = App.Rotation(App.Vector(0, 0, 1), angle)
+
+                    # Crear mediante fabrica (sin depender de la seleccion actual)
+                    try:
+                        Gui.Selection.clearSelection()
+                    except Exception:
+                        pass
+                    parent = InsertarTomacorriente({'Tipo':'NEMA5-15_duplex', 'Altura': altura_mm, 'ModoVisual':'Ambos'})
+
+                    # Colocar: XY+Yaw en el padre; Altura ya aplicada al 3D por la fabrica
+                    pl = parent.Placement
+                    pl.Base = pos
+                    pl.Rotation = rot
+                    parent.Placement = pl
+
+                    # Asegurar altura del 3D si la sesion no cargo _apply_transform
+                    try:
+                        if '_apply_transform' in globals():
+                            _apply_transform(parent)
+                        else:
+                            # fallback: subir el hijo 3D
+                            rep3d = None
+                            for ch in getattr(parent, 'Group', []):
+                                if ch.Label == getattr(parent, 'Rep3DName', 'Rep3D'):
+                                    rep3d = ch; break
+                            if rep3d:
+                                pl3 = rep3d.Placement
+                                pl3.Base = App.Vector(pl3.Base.x, pl3.Base.y, float(altura_mm))
+                                rep3d.Placement = pl3
+                    except Exception:
+                        pass
+                    creados += 1
+
+    try:
+        doc.recompute()
+    except Exception:
+        pass
+    _info(f"Insercion completada. Creados: {creados}")
+
+
+if __name__ == '__main__':
+    insertar_tomacorrientes()
+
