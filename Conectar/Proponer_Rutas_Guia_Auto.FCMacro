@@ -1,0 +1,1410 @@
+# -*- coding: utf-8 -*-
+# MenuText: [ACTIVA] Proponer Rutas Guia (Auto)
+# Icon: Proponer_Rutas_Guia_Auto.svg
+"""
+Macro: Proponer_Rutas_Guia_Auto
+Description:
+Generate proposed editable guide routes for ElectricCR electrical routing.
+
+Date:
+2026
+
+Author:
+Codex
+
+Notes:
+- Uses current document geometry and selection.
+- Creates guide wires only.
+- Does not create conduits.
+- Uses current Draft working plane when available.
+- Keeps routing simple and editable.
+"""
+
+import math
+import re
+
+import FreeCAD as App
+import Draft
+
+try:
+    import FreeCADGui as Gui
+except Exception:
+    Gui = None
+
+try:
+    import Part
+except Exception:
+    Part = None
+
+try:
+    from PySide2 import QtCore, QtWidgets
+except Exception:
+    try:
+        from PySide import QtCore, QtGui as QtWidgets
+    except Exception:
+        QtCore = None
+        QtWidgets = None
+
+
+TAG = "[RUTAS_GUIA]"
+GROUP_LABEL = "Rutas_Guia_Propuestas"
+DEFAULT_ROUTE_Z = 3000.0
+DEFAULT_CREATE_3D_COPY = False
+DEFAULT_PANEL_TITLE = "[ACTIVA] Proponer Rutas Guia (Auto)"
+DEFAULT_CREATE_AREA_AXES = False
+DEFAULT_CREATE_CIRCUIT_ROUTES = True
+DEFAULT_CREATE_PANEL_TRUNKS = False
+DEFAULT_CLEAR_PREVIOUS = True
+DEFAULT_DEDUP_ROUTES = True
+DEFAULT_SIGNATURE_GRID = 50.0
+CORRIDOR_KEYWORDS = ("pasillo", "corredor", "circulacion", "hall", "lobby")
+EPS = 1e-6
+
+
+def log_info(msg):
+    App.Console.PrintMessage(f"{TAG} {msg}\n")
+
+
+def log_error(msg):
+    App.Console.PrintError(f"{TAG} {msg}\n")
+
+
+def pref_group():
+    return App.ParamGet("User parameter:BaseApp/Preferences/Macros/ProponerRutasGuiaAuto")
+
+
+def pref_get_bool(key, default):
+    try:
+        return bool(pref_group().GetBool(key, bool(default)))
+    except Exception:
+        return bool(default)
+
+
+def pref_get_float(key, default):
+    try:
+        return float(pref_group().GetFloat(key, float(default)))
+    except Exception:
+        return float(default)
+
+
+def pref_set_bool(key, value):
+    try:
+        pref_group().SetBool(key, bool(value))
+    except Exception:
+        pass
+
+
+def pref_set_float(key, value):
+    try:
+        pref_group().SetFloat(key, float(value))
+    except Exception:
+        pass
+
+
+def texto_seguro(value):
+    try:
+        return str(value or "")
+    except Exception:
+        return ""
+
+
+def vec(x=0.0, y=0.0, z=0.0):
+    return App.Vector(float(x), float(y), float(z))
+
+
+def natural_key(text):
+    s = texto_seguro(text)
+    return [int(t) if t.isdigit() else t.lower() for t in re.split(r"([0-9]+)", s)]
+
+
+def es_grupo(obj):
+    if obj is None:
+        return False
+    type_id = texto_seguro(getattr(obj, "TypeId", ""))
+    return type_id.startswith("App::DocumentObjectGroup") or hasattr(obj, "Group")
+
+
+def es_tablero(obj):
+    if obj is None or es_grupo(obj):
+        return False
+    tipo = texto_seguro(getattr(obj, "Tipo", "")).strip().lower()
+    if "tablero" in tipo:
+        return True
+    txt = f"{texto_seguro(getattr(obj, 'Label', ''))} {texto_seguro(getattr(obj, 'Name', ''))}".lower()
+    return "tablero" in txt
+
+
+def es_octogonal(obj):
+    if obj is None or es_grupo(obj):
+        return False
+    tipo = texto_seguro(getattr(obj, "Tipo", "")).strip()
+    if tipo == "EMT_Octagon_Box":
+        return True
+    txt = f"{texto_seguro(getattr(obj, 'Label', ''))} {texto_seguro(getattr(obj, 'Name', ''))}".lower()
+    if "caja emt octogonal" in txt or "emt_octagon_box" in txt:
+        return True
+    return hasattr(obj, "CajaOrigenKey") and hasattr(obj, "PuertosJSON")
+
+
+def es_octogonal_usable(obj):
+    if not es_octogonal(obj):
+        return False
+    txt = f"{texto_seguro(getattr(obj, 'Label', ''))} {texto_seguro(getattr(obj, 'Name', ''))}".lower()
+    if not txt:
+        return False
+    skip_tokens = ("master", "template", "plantilla", "prototype", "prototipo")
+    return not any(tok in txt for tok in skip_tokens)
+
+
+def circuito_id_valido(texto):
+    txt = texto_seguro(texto).strip()
+    low = txt.lower()
+    if not txt:
+        return False
+    invalid_tokens = (
+        "sin_circuito",
+        "sincircuito",
+        "sin circuito",
+        "master",
+        "plantilla",
+    )
+    return not any(tok in low for tok in invalid_tokens)
+
+
+def iterar_padres(obj, visitados=None):
+    if obj is None:
+        return
+    if visitados is None:
+        visitados = set()
+    for parent in list(getattr(obj, "InList", []) or []):
+        pname = texto_seguro(getattr(parent, "Name", ""))
+        if pname and pname in visitados:
+            continue
+        if pname:
+            visitados.add(pname)
+        yield parent
+        for pp in iterar_padres(parent, visitados):
+            yield pp
+
+
+def es_grupo_tecnico(texto):
+    low = texto_seguro(texto).strip().lower()
+    if not low:
+        return True
+    tokens = (
+        "cajas_",
+        "tuberias_",
+        "conexiones",
+        "electrico",
+        "tomacorrientes",
+        "apagadores",
+        "dispositivos",
+        "ramales",
+        "alimentadores",
+    )
+    return any(tok in low for tok in tokens)
+
+
+def resolver_grupo_circuito(obj):
+    for parent in iterar_padres(obj):
+        txt = texto_seguro(getattr(parent, "Label", "")) or texto_seguro(getattr(parent, "Name", ""))
+        low = txt.lower()
+        if es_grupo(parent) and not es_grupo_tecnico(txt):
+            if low.startswith("tp-") or "circuito" in low:
+                return parent
+    for parent in iterar_padres(obj):
+        txt = texto_seguro(getattr(parent, "Label", "")) or texto_seguro(getattr(parent, "Name", ""))
+        if es_grupo(parent) and not es_grupo_tecnico(txt):
+            return parent
+    return None
+
+
+def obtener_circuito_desde_objeto(obj):
+    grupo = resolver_grupo_circuito(obj)
+    if grupo is not None:
+        txt = texto_seguro(getattr(grupo, "Label", "")) or texto_seguro(getattr(grupo, "Name", ""))
+        if circuito_id_valido(txt):
+            return txt
+    cid = texto_seguro(getattr(obj, "CircuitoID", "")).strip()
+    if circuito_id_valido(cid):
+        return cid
+    txt = texto_seguro(getattr(obj, "Label", "")) or texto_seguro(getattr(obj, "Name", ""))
+    if "circuito" in txt.lower() and circuito_id_valido(txt):
+        return txt
+    return ""
+
+
+def obtener_centro_objeto(obj):
+    if obj is None:
+        return vec(0.0, 0.0, 0.0)
+    try:
+        shape = getattr(obj, "Shape", None)
+        if shape is not None and not shape.isNull():
+            bb = shape.BoundBox
+            return vec(0.5 * (bb.XMin + bb.XMax), 0.5 * (bb.YMin + bb.YMax), 0.5 * (bb.ZMin + bb.ZMax))
+    except Exception:
+        pass
+    try:
+        return obj.Placement.Base
+    except Exception:
+        return vec(0.0, 0.0, 0.0)
+
+
+def obtener_bbox(obj):
+    try:
+        shape = getattr(obj, "Shape", None)
+        if shape is not None and not shape.isNull():
+            return shape.BoundBox
+    except Exception:
+        pass
+    return None
+
+
+def flatten_selection(objs):
+    out = []
+    seen = set()
+
+    def add(obj):
+        if obj is None:
+            return
+        key = texto_seguro(getattr(obj, "Name", "")) or str(id(obj))
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(obj)
+        if es_grupo(obj):
+            for child in list(getattr(obj, "Group", []) or []):
+                add(child)
+
+    for obj in list(objs or []):
+        add(obj)
+    return out
+
+
+def tableros_desde_seleccion():
+    if Gui is None:
+        return []
+    out = []
+    seen = set()
+    for obj in flatten_selection(Gui.Selection.getSelection() or []):
+        if not es_tablero(obj):
+            continue
+        name = texto_seguro(getattr(obj, "Name", ""))
+        if name and name not in seen:
+            out.append(obj)
+            seen.add(name)
+    return out
+
+
+def get_workplane():
+    last_err = None
+    try:
+        if hasattr(Draft, "getWorkingPlane"):
+            return Draft.getWorkingPlane()
+        if hasattr(Draft, "WorkingPlane"):
+            wpmod = Draft.WorkingPlane
+            if hasattr(wpmod, "getWorkingPlane"):
+                return wpmod.getWorkingPlane()
+            if hasattr(wpmod, "plane"):
+                return wpmod.plane
+            if hasattr(wpmod, "workingPlane"):
+                return wpmod.workingPlane
+    except Exception as ex:
+        last_err = ex
+    try:
+        import DraftWorkingPlane as DWP
+        if hasattr(DWP, "getWorkingPlane"):
+            return DWP.getWorkingPlane()
+        if hasattr(DWP, "plane"):
+            return DWP.plane
+        if hasattr(DWP, "workingPlane"):
+            return DWP.workingPlane
+    except Exception as ex:
+        last_err = ex
+    try:
+        import DraftGui
+        if hasattr(DraftGui, "getWorkingPlane"):
+            return DraftGui.getWorkingPlane()
+        if hasattr(DraftGui, "workingPlane"):
+            return DraftGui.workingPlane
+    except Exception as ex:
+        last_err = ex
+    try:
+        if Gui is not None and hasattr(Gui, "Snapper"):
+            snapper = Gui.Snapper
+            if hasattr(snapper, "getWorkingPlane"):
+                return snapper.getWorkingPlane()
+            if hasattr(snapper, "workingPlane"):
+                return snapper.workingPlane
+    except Exception as ex:
+        last_err = ex
+    if last_err is not None:
+        log_info(f"Plano de trabajo no disponible, se usa XY: {last_err}")
+    return None
+
+
+def plane_origin_normal(wp):
+    if wp is None:
+        return vec(0.0, 0.0, 0.0), vec(0.0, 0.0, 1.0)
+    origin = None
+    for attr in ("origin", "position"):
+        if hasattr(wp, attr):
+            origin = getattr(wp, attr)
+            break
+    if origin is None:
+        origin = vec(0.0, 0.0, 0.0)
+    normal = None
+    for attr in ("axis", "normal"):
+        if hasattr(wp, attr):
+            normal = getattr(wp, attr)
+            break
+    if normal is None and hasattr(wp, "getNormal"):
+        try:
+            normal = wp.getNormal()
+        except Exception:
+            normal = None
+    if normal is None:
+        normal = vec(0.0, 0.0, 1.0)
+    try:
+        normal = vec(normal.x, normal.y, normal.z)
+        if normal.Length <= EPS:
+            normal = vec(0.0, 0.0, 1.0)
+        else:
+            normal.normalize()
+    except Exception:
+        normal = vec(0.0, 0.0, 1.0)
+    return origin, normal
+
+
+def plane_axes(wp, normal):
+    u_axis = None
+    v_axis = None
+    for attr in ("u", "uvec", "xdir", "U"):
+        if hasattr(wp, attr):
+            u_axis = getattr(wp, attr)
+            break
+    for attr in ("v", "vvec", "ydir", "V"):
+        if hasattr(wp, attr):
+            v_axis = getattr(wp, attr)
+            break
+    try:
+        if u_axis is not None:
+            u_axis = vec(u_axis.x, u_axis.y, u_axis.z)
+            if u_axis.Length > EPS:
+                u_axis.normalize()
+    except Exception:
+        u_axis = None
+    try:
+        if v_axis is not None:
+            v_axis = vec(v_axis.x, v_axis.y, v_axis.z)
+            if v_axis.Length > EPS:
+                v_axis.normalize()
+    except Exception:
+        v_axis = None
+    if u_axis is None or v_axis is None:
+        ref = vec(0.0, 0.0, 1.0)
+        if abs(float(normal.dot(ref))) >= 0.95:
+            ref = vec(1.0, 0.0, 0.0)
+        u_axis = ref.cross(normal)
+        if u_axis.Length <= EPS:
+            u_axis = vec(1.0, 0.0, 0.0)
+        else:
+            u_axis.normalize()
+        v_axis = normal.cross(u_axis)
+        if v_axis.Length <= EPS:
+            v_axis = vec(0.0, 1.0, 0.0)
+        else:
+            v_axis.normalize()
+    return u_axis, v_axis
+
+
+def obtener_contexto_plano():
+    wp = get_workplane()
+    origin, normal = plane_origin_normal(wp)
+    u_axis, v_axis = plane_axes(wp, normal)
+    return {
+        "wp": wp,
+        "origin": origin,
+        "normal": normal,
+        "u_axis": u_axis,
+        "v_axis": v_axis,
+    }
+
+
+def world_to_plane(pt, plane_ctx):
+    rel = pt.sub(plane_ctx["origin"])
+    u = rel.dot(plane_ctx["u_axis"])
+    v = rel.dot(plane_ctx["v_axis"])
+    w = rel.dot(plane_ctx["normal"])
+    return (float(u), float(v), float(w))
+
+
+def plane_to_world(u, v, plane_ctx, w=0.0):
+    origin = plane_ctx["origin"]
+    u_axis = plane_ctx["u_axis"]
+    v_axis = plane_ctx["v_axis"]
+    normal = plane_ctx["normal"]
+    return vec(
+        origin.x + (u_axis.x * float(u)) + (v_axis.x * float(v)) + (normal.x * float(w)),
+        origin.y + (u_axis.y * float(u)) + (v_axis.y * float(v)) + (normal.y * float(w)),
+        origin.z + (u_axis.z * float(u)) + (v_axis.z * float(v)) + (normal.z * float(w)),
+    )
+
+
+def project_world_to_plane_world(pt, plane_ctx):
+    u, v, _w = world_to_plane(pt, plane_ctx)
+    return plane_to_world(u, v, plane_ctx, 0.0)
+
+
+def bbox_corners(bb):
+    if bb is None:
+        return []
+    return [
+        vec(x, y, z)
+        for x in (bb.XMin, bb.XMax)
+        for y in (bb.YMin, bb.YMax)
+        for z in (bb.ZMin, bb.ZMax)
+    ]
+
+
+def projected_bbox_uv_from_obj(obj, plane_ctx):
+    bb = obtener_bbox(obj)
+    if bb is None:
+        c = obtener_centro_objeto(obj)
+        u, v, _w = world_to_plane(c, plane_ctx)
+        return (u, u, v, v)
+    corners = bbox_corners(bb)
+    if not corners:
+        c = obtener_centro_objeto(obj)
+        u, v, _w = world_to_plane(c, plane_ctx)
+        return (u, u, v, v)
+    us = []
+    vs = []
+    for pt in corners:
+        u, v, _w = world_to_plane(pt, plane_ctx)
+        us.append(float(u))
+        vs.append(float(v))
+    return (min(us), max(us), min(vs), max(vs))
+
+
+def dist2d_uv(a, b):
+    du = float(a[0]) - float(b[0])
+    dv = float(a[1]) - float(b[1])
+    return (du * du + dv * dv) ** 0.5
+
+
+def project_uv_to_segment(p, a, b):
+    ab_u = float(b[0]) - float(a[0])
+    ab_v = float(b[1]) - float(a[1])
+    den = (ab_u * ab_u) + (ab_v * ab_v)
+    if den <= EPS:
+        q = (float(a[0]), float(a[1]))
+        return q, 0.0, dist2d_uv(p, q)
+    ap_u = float(p[0]) - float(a[0])
+    ap_v = float(p[1]) - float(a[1])
+    t = ((ap_u * ab_u) + (ap_v * ab_v)) / den
+    t = max(0.0, min(1.0, t))
+    q = (float(a[0]) + (ab_u * t), float(a[1]) + (ab_v * t))
+    return q, t, dist2d_uv(p, q)
+
+
+def project_uv_to_polyline(p, pts):
+    pts0 = list(pts or [])
+    if len(pts0) < 2:
+        return None
+    best = None
+    acc = 0.0
+    for idx, (a, b) in enumerate(zip(pts0[:-1], pts0[1:])):
+        seg_len = dist2d_uv(a, b)
+        q, t, dist = project_uv_to_segment(p, a, b)
+        item = {
+            "index": idx,
+            "point": q,
+            "distance": float(dist),
+            "t": float(t),
+            "s": float(acc + (seg_len * float(t))),
+        }
+        if best is None or item["distance"] < best["distance"]:
+            best = item
+        acc += seg_len
+    return best
+
+
+def path_between_polyline_projections(pts, proj_a, proj_b):
+    if proj_a is None or proj_b is None:
+        return []
+    pa = (float(proj_a["point"][0]), float(proj_a["point"][1]))
+    pb = (float(proj_b["point"][0]), float(proj_b["point"][1]))
+    if int(proj_a["index"]) == int(proj_b["index"]):
+        return dedup_2d_points([pa, pb])
+    out = [pa]
+    if float(proj_a["s"]) <= float(proj_b["s"]):
+        for idx in range(int(proj_a["index"]) + 1, int(proj_b["index"]) + 1):
+            out.append((float(pts[idx][0]), float(pts[idx][1])))
+    else:
+        for idx in range(int(proj_a["index"]), int(proj_b["index"]), -1):
+            out.append((float(pts[idx][0]), float(pts[idx][1])))
+    out.append(pb)
+    return dedup_2d_points(out)
+
+
+def dedup_2d_points(points):
+    out = []
+    for p in list(points or []):
+        cur = (float(p[0]), float(p[1]))
+        if not out:
+            out.append(cur)
+            continue
+        if dist2d_uv(out[-1], cur) > 0.1:
+            out.append(cur)
+    return out
+
+
+def orthogonal_path_2d(a, b, prefer_axis=None):
+    p1 = (float(a[0]), float(a[1]))
+    p2 = (float(b[0]), float(b[1]))
+    if abs(p1[0] - p2[0]) <= 0.1 or abs(p1[1] - p2[1]) <= 0.1:
+        return dedup_2d_points([p1, p2])
+    axis = texto_seguro(prefer_axis).strip().lower()
+    if axis == "u":
+        mid = (p2[0], p1[1])
+    elif axis == "v":
+        mid = (p1[0], p2[1])
+    else:
+        du = abs(p2[0] - p1[0])
+        dv = abs(p2[1] - p1[1])
+        mid = (p2[0], p1[1]) if du >= dv else (p1[0], p2[1])
+    return dedup_2d_points([p1, mid, p2])
+
+
+def simplificar_ruta_ortogonal(points):
+    pts = dedup_2d_points(points)
+    changed = True
+    while changed and len(pts) >= 3:
+        changed = False
+        out = [pts[0]]
+        for i in range(1, len(pts) - 1):
+            a = out[-1]
+            b = pts[i]
+            c = pts[i + 1]
+            same_u = abs(float(a[0]) - float(b[0])) <= 0.1 and abs(float(b[0]) - float(c[0])) <= 0.1
+            same_v = abs(float(a[1]) - float(b[1])) <= 0.1 and abs(float(b[1]) - float(c[1])) <= 0.1
+            if same_u or same_v:
+                changed = True
+                continue
+            out.append(b)
+        out.append(pts[-1])
+        pts = dedup_2d_points(out)
+    return pts
+
+
+def sanitize_name(text):
+    txt = texto_seguro(text).strip()
+    if not txt:
+        return "RutaGuia"
+    txt = re.sub(r"[^0-9A-Za-z_]+", "_", txt)
+    txt = re.sub(r"_+", "_", txt).strip("_")
+    return txt or "RutaGuia"
+
+
+def make_draft_wire(points):
+    maker = getattr(Draft, "makeWire", None)
+    if maker is None:
+        maker = getattr(Draft, "make_wire", None)
+    if maker is None:
+        raise RuntimeError("No se encontro Draft.makeWire")
+    attempts = [
+        lambda: maker(points, closed=False, face=False, support=None),
+        lambda: maker(points, closed=False, face=False),
+        lambda: maker(points, False, False),
+        lambda: maker(points, False),
+        lambda: maker(points),
+    ]
+    last_err = None
+    for fn in attempts:
+        try:
+            return fn()
+        except Exception as ex:
+            last_err = ex
+    raise RuntimeError(f"No se pudo crear el wire: {last_err}")
+
+
+def ensure_property(obj, ptype, pname, pgroup, pdesc):
+    try:
+        if pname not in obj.PropertiesList:
+            obj.addProperty(ptype, pname, pgroup, pdesc)
+    except Exception:
+        pass
+
+
+def ensure_group(doc, label):
+    for obj in list(doc.Objects or []):
+        if es_grupo(obj) and (texto_seguro(getattr(obj, "Label", "")) == label or texto_seguro(getattr(obj, "Name", "")) == label):
+            return obj
+    name = sanitize_name(label)
+    grp = doc.addObject("App::DocumentObjectGroup", name)
+    grp.Label = label
+    return grp
+
+
+def clear_group(doc, group_obj):
+    if group_obj is None:
+        return 0
+    names = []
+    queue = list(getattr(group_obj, "Group", []) or [])
+    while queue:
+        cur = queue.pop(0)
+        if es_grupo(cur):
+            queue.extend(list(getattr(cur, "Group", []) or []))
+        names.append(texto_seguro(getattr(cur, "Name", "")))
+    removed = 0
+    for name in reversed([n for n in names if n]):
+        try:
+            if doc.getObject(name) is not None:
+                doc.removeObject(name)
+                removed += 1
+        except Exception:
+            pass
+    return removed
+
+
+def wire_points_on_plane(points_2d, plane_ctx):
+    return [plane_to_world(p[0], p[1], plane_ctx, 0.0) for p in list(points_2d or [])]
+
+
+def crear_wire_ruta(doc, group_obj, name, label, points_world, route_kind, circuito_id="", area_name=""):
+    pts = []
+    for p in list(points_world or []):
+        pts.append(vec(p.x, p.y, p.z))
+    if len(pts) < 2:
+        return None
+    wire = make_draft_wire(pts)
+    wire.Label = label
+    try:
+        wire.Closed = False
+    except Exception:
+        pass
+    try:
+        wire.MakeFace = False
+    except Exception:
+        pass
+    ensure_property(wire, "App::PropertyString", "GeneradoPor", "ElectricCR", "Generado por macro")
+    ensure_property(wire, "App::PropertyString", "Tipo", "ElectricCR", "Tipo logico")
+    ensure_property(wire, "App::PropertyString", "CircuitoID", "ElectricCR", "Circuito")
+    ensure_property(wire, "App::PropertyString", "AreaName", "ElectricCR", "Area origen")
+    try:
+        wire.GeneradoPor = "Proponer_Rutas_Guia_Auto"
+        wire.Tipo = str(route_kind or "RutaGuiaPropuesta")
+        wire.CircuitoID = texto_seguro(circuito_id)
+        wire.AreaName = texto_seguro(area_name)
+    except Exception:
+        pass
+    try:
+        if wire not in list(group_obj.Group or []):
+            group_obj.addObject(wire)
+    except Exception:
+        pass
+    log_info(f"Wire creada: {label} | puntos={len(pts)}")
+    return wire
+
+
+def crear_ruta_3d(doc, group_obj, base_label, points_world):
+    pts3d = [vec(p.x, p.y, DEFAULT_ROUTE_Z) for p in list(points_world or [])]
+    return crear_wire_ruta(
+        doc,
+        group_obj,
+        sanitize_name(base_label + "_3D"),
+        base_label + "_3D",
+        pts3d,
+        "RutaGuiaPropuesta3D",
+    )
+
+
+def obtener_octogonales_por_circuito():
+    doc = App.ActiveDocument
+    if doc is None:
+        return {}
+    out = {}
+    for obj in list(doc.Objects or []):
+        if not es_octogonal_usable(obj):
+            continue
+        circuito = obtener_circuito_desde_objeto(obj)
+        if not circuito_id_valido(circuito):
+            continue
+        out.setdefault(circuito, []).append(obj)
+    for circuito, cajas in out.items():
+        cajas.sort(key=lambda o: natural_key(texto_seguro(getattr(o, "Label", "")) or texto_seguro(getattr(o, "Name", ""))))
+        log_info(f"Circuito detectado: {circuito} | cajas={len(cajas)}")
+    return out
+
+
+def obtener_tableros():
+    if Gui is None:
+        return []
+    doc = App.ActiveDocument
+    out = []
+    seen = set()
+    selected = flatten_selection(Gui.Selection.getSelection() or [])
+    for obj in selected:
+        if es_tablero(obj):
+            name = texto_seguro(getattr(obj, "Name", ""))
+            if name and name not in seen:
+                out.append(obj)
+                seen.add(name)
+    if out:
+        log_info(f"Tableros seleccionados: {len(out)}")
+        return out
+    for obj in list(getattr(doc, "Objects", []) or []):
+        if es_tablero(obj):
+            name = texto_seguro(getattr(obj, "Name", ""))
+            if name and name not in seen:
+                out.append(obj)
+                seen.add(name)
+    log_info(f"Tableros detectados: {len(out)}")
+    return out
+
+
+def obtener_areas_seleccionadas():
+    if Gui is None:
+        return []
+    out = []
+    seen = set()
+    for obj in flatten_selection(Gui.Selection.getSelection() or []):
+        name = texto_seguro(getattr(obj, "Name", ""))
+        if not name or name in seen:
+            continue
+        if es_grupo(obj) or es_tablero(obj) or es_octogonal(obj):
+            continue
+        bb = obtener_bbox(obj)
+        if bb is None:
+            continue
+        dx = float(bb.XMax) - float(bb.XMin)
+        dy = float(bb.YMax) - float(bb.YMin)
+        if max(dx, dy) <= 10.0:
+            continue
+        label = texto_seguro(getattr(obj, "Label", "")) or name
+        low = label.lower()
+        is_corridor = any(tok in low for tok in CORRIDOR_KEYWORDS)
+        out.append({
+            "obj": obj,
+            "name": name,
+            "label": label,
+            "is_corridor": bool(is_corridor),
+            "center": obtener_centro_objeto(obj),
+        })
+        seen.add(name)
+    log_info(f"Areas seleccionadas: {len(out)}")
+    return out
+
+
+def route_signature_2d(points_2d, grid=DEFAULT_SIGNATURE_GRID):
+    pts = []
+    step = max(float(grid), 1.0)
+    for p in list(points_2d or []):
+        pts.append((int(round(float(p[0]) / step)), int(round(float(p[1]) / step))))
+    return tuple(pts)
+
+
+def route_length_2d(points_2d):
+    total = 0.0
+    pts = list(points_2d or [])
+    for i in range(len(pts) - 1):
+        total += dist2d_uv(pts[i], pts[i + 1])
+    return float(total)
+
+
+def generar_eje_pasillo(area_info, plane_ctx):
+    obj = area_info.get("obj")
+    bbox_uv = projected_bbox_uv_from_obj(obj, plane_ctx)
+    umin, umax, vmin, vmax = bbox_uv
+    du = float(umax) - float(umin)
+    dv = float(vmax) - float(vmin)
+    uc = 0.5 * (umin + umax)
+    vc = 0.5 * (vmin + vmax)
+    if du >= dv:
+        p1 = (umin, vc)
+        p2 = (umax, vc)
+        axis = "u"
+    else:
+        p1 = (uc, vmin)
+        p2 = (uc, vmax)
+        axis = "v"
+    points_2d = simplificar_ruta_ortogonal([p1, p2])
+    points_world = wire_points_on_plane(points_2d, plane_ctx)
+    return {
+        "area": area_info,
+        "axis": axis,
+        "points_2d": points_2d,
+        "points_world": points_world,
+    }
+
+
+def proponer_ruta_desde_eje_a_tablero(axis, tablero, plane_ctx):
+    if axis is None or tablero is None:
+        return None
+    axis_pts = list(axis.get("points_2d") or [])
+    if len(axis_pts) < 2:
+        return None
+    panel_world = project_world_to_plane_world(obtener_centro_objeto(tablero), plane_ctx)
+    panel_uv = world_to_plane(panel_world, plane_ctx)[:2]
+    proj = project_uv_to_polyline(panel_uv, axis_pts)
+    if proj is None:
+        return None
+    route_2d = orthogonal_path_2d(panel_uv, proj["point"], prefer_axis=axis.get("axis"))
+    route_2d = simplificar_ruta_ortogonal(route_2d)
+    return {
+        "tablero": tablero,
+        "axis": axis,
+        "points_2d": route_2d,
+        "points_world": wire_points_on_plane(route_2d, plane_ctx),
+    }
+
+
+def seleccionar_panel_para_circuito(cajas, tableros):
+    if not cajas or not tableros:
+        return None
+    centros = [obtener_centro_objeto(o) for o in list(cajas or [])]
+    base = vec(
+        sum(float(p.x) for p in centros) / float(len(centros)),
+        sum(float(p.y) for p in centros) / float(len(centros)),
+        sum(float(p.z) for p in centros) / float(len(centros)),
+    )
+    best = None
+    best_d = None
+    for tablero in list(tableros or []):
+        d = base.distanceToPoint(obtener_centro_objeto(tablero))
+        if best is None or d < best_d:
+            best = tablero
+            best_d = d
+    return best
+
+
+def elegir_origen_circuito(cajas, panel_uv, corridor_axes, plane_ctx):
+    best = None
+    best_cost = None
+    best_axis = None
+    for caja in list(cajas or []):
+        p_world = project_world_to_plane_world(obtener_centro_objeto(caja), plane_ctx)
+        p_uv = world_to_plane(p_world, plane_ctx)[:2]
+        direct_cost = dist2d_uv(p_uv, panel_uv)
+        axis_choice = None
+        cost = direct_cost
+        for axis in list(corridor_axes or []):
+            pts = list(axis.get("points_2d") or [])
+            if len(pts) < 2:
+                continue
+            pr_box = project_uv_to_polyline(p_uv, pts)
+            pr_panel = project_uv_to_polyline(panel_uv, pts)
+            if pr_box is None or pr_panel is None:
+                continue
+            axis_cost = float(pr_box["distance"]) + abs(float(pr_panel["s"]) - float(pr_box["s"])) + float(pr_panel["distance"])
+            if axis_choice is None or axis_cost < axis_choice[0]:
+                axis_choice = (axis_cost, axis)
+        if axis_choice is not None and axis_choice[0] <= (direct_cost * 1.5):
+            cost = axis_choice[0]
+            selected_axis = axis_choice[1]
+        else:
+            selected_axis = None
+        key = (float(cost), natural_key(texto_seguro(getattr(caja, "Label", "")) or texto_seguro(getattr(caja, "Name", ""))))
+        if best is None or key < best_cost:
+            best = caja
+            best_cost = key
+            best_axis = selected_axis
+    return best, best_axis
+
+
+def proponer_ruta_para_circuito(circuito, octogonales, corridor_axes, tableros, plane_ctx, extend_to_panel=True):
+    if not octogonales:
+        return None
+    tablero = seleccionar_panel_para_circuito(octogonales, tableros)
+    if tablero is None:
+        log_error(f"Circuito sin tablero disponible: {circuito}")
+        return None
+    panel_world = project_world_to_plane_world(obtener_centro_objeto(tablero), plane_ctx)
+    panel_uv = world_to_plane(panel_world, plane_ctx)[:2]
+    origen, axis = elegir_origen_circuito(octogonales, panel_uv, corridor_axes, plane_ctx)
+    if origen is None:
+        return None
+    box_world = project_world_to_plane_world(obtener_centro_objeto(origen), plane_ctx)
+    box_uv = world_to_plane(box_world, plane_ctx)[:2]
+    route_2d = []
+    panel_axis_s = None
+    box_axis_s = None
+    if axis is not None:
+        axis_pts = list(axis.get("points_2d") or [])
+        pr_box = project_uv_to_polyline(box_uv, axis_pts)
+        box_axis_s = float(pr_box["s"]) if pr_box is not None else None
+        route_2d.extend(orthogonal_path_2d(box_uv, pr_box["point"], prefer_axis=axis.get("axis")))
+        if extend_to_panel:
+            pr_panel = project_uv_to_polyline(panel_uv, axis_pts)
+            panel_axis_s = float(pr_panel["s"]) if pr_panel is not None else None
+            path_axis = path_between_polyline_projections(axis_pts, pr_box, pr_panel)
+            route_2d = route_2d[:-1]
+            route_2d.extend(path_axis[:-1])
+            route_2d.extend(orthogonal_path_2d(path_axis[-1], panel_uv, prefer_axis=axis.get("axis")))
+    else:
+        route_2d.extend(orthogonal_path_2d(box_uv, panel_uv))
+    route_2d = simplificar_ruta_ortogonal(route_2d)
+    points_world = wire_points_on_plane(route_2d, plane_ctx)
+    axis_name = texto_seguro(axis.get("area", {}).get("label", "")) if axis is not None else ""
+    if axis is not None and panel_axis_s is not None and box_axis_s is not None:
+        side = "pos" if (box_axis_s - panel_axis_s) >= 0.0 else "neg"
+        group_key = f"axis:{axis_name}:{side}"
+        route_score = abs(box_axis_s - panel_axis_s)
+    else:
+        du = float(box_uv[0]) - float(panel_uv[0])
+        dv = float(box_uv[1]) - float(panel_uv[1])
+        if abs(du) >= abs(dv):
+            side = "east" if du >= 0.0 else "west"
+        else:
+            side = "north" if dv >= 0.0 else "south"
+        group_key = f"direct:{side}"
+        route_score = dist2d_uv(box_uv, panel_uv)
+    log_info(
+        "Ruta propuesta | circuito={} | origen={} | tablero={} | corredor={}".format(
+            circuito,
+            texto_seguro(getattr(origen, "Label", "")) or texto_seguro(getattr(origen, "Name", "")),
+            texto_seguro(getattr(tablero, "Label", "")) or texto_seguro(getattr(tablero, "Name", "")),
+            texto_seguro(axis.get("area", {}).get("label", "")) if axis is not None else "NO",
+        )
+    )
+    return {
+        "circuito": circuito,
+        "caja_origen": origen,
+        "tablero": tablero,
+        "axis": axis,
+        "points_2d": route_2d,
+        "points_world": points_world,
+        "group_key": group_key,
+        "route_score": float(route_score),
+        "axis_name": axis_name,
+    }
+
+
+def seleccionar_rutas_representativas(candidates):
+    selected = {}
+    for data in list(candidates or []):
+        group_key = texto_seguro(data.get("group_key", "")) or "__all__"
+        circuito = texto_seguro(data.get("circuito", ""))
+        score = float(data.get("route_score", 0.0))
+        key = (score, route_length_2d(data.get("points_2d", [])), natural_key(circuito))
+        current = selected.get(group_key)
+        if current is None or key > current[0]:
+            selected[group_key] = (key, data)
+    out = [item[1] for item in list(selected.values())]
+    out.sort(key=lambda d: natural_key(texto_seguro(d.get("circuito", ""))))
+    for data in out:
+        log_info(
+            "Ruta representativa seleccionada | grupo={} | circuito={} | score={:.1f}".format(
+                texto_seguro(data.get("group_key", "")),
+                texto_seguro(data.get("circuito", "")),
+                float(data.get("route_score", 0.0)),
+            )
+        )
+    return out
+
+
+def mostrar_formulario_rutas_guia(doc):
+    board_default = None
+    selected_boards = tableros_desde_seleccion()
+    if selected_boards:
+        board_default = selected_boards[0]
+    area_defaults = obtener_areas_seleccionadas()
+    cfg_defaults = {
+        "route_z": pref_get_float("route_z", DEFAULT_ROUTE_Z),
+        "create_3d_copy": pref_get_bool("create_3d_copy", DEFAULT_CREATE_3D_COPY),
+        "create_area_axes": pref_get_bool("create_area_axes", DEFAULT_CREATE_AREA_AXES),
+        "create_circuit_routes": pref_get_bool("create_circuit_routes", DEFAULT_CREATE_CIRCUIT_ROUTES),
+        "create_panel_trunks": pref_get_bool("create_panel_trunks", DEFAULT_CREATE_PANEL_TRUNKS),
+        "clear_previous": pref_get_bool("clear_previous", DEFAULT_CLEAR_PREVIOUS),
+        "dedup_routes": pref_get_bool("dedup_routes", DEFAULT_DEDUP_ROUTES),
+    }
+
+    if QtWidgets is None:
+        return {
+            "tablero": board_default,
+            "areas": list(area_defaults),
+            "route_z": float(cfg_defaults["route_z"]),
+            "create_3d_copy": bool(cfg_defaults["create_3d_copy"]),
+            "create_area_axes": bool(cfg_defaults["create_area_axes"]),
+            "create_circuit_routes": bool(cfg_defaults["create_circuit_routes"]),
+            "create_panel_trunks": bool(cfg_defaults["create_panel_trunks"]),
+            "clear_previous": bool(cfg_defaults["clear_previous"]),
+            "dedup_routes": bool(cfg_defaults["dedup_routes"]),
+        }
+
+    parent = Gui.getMainWindow() if Gui is not None else None
+    dlg = QtWidgets.QDialog(parent)
+    dock = None
+    root = None
+    lay = None
+
+    if QtCore is not None and parent is not None and hasattr(QtWidgets, "QDockWidget"):
+        try:
+            old = parent.findChild(QtWidgets.QDockWidget, "ElectricCR_ProponerRutasGuiaDock")
+            if old is not None:
+                old.close()
+                old.deleteLater()
+        except Exception:
+            pass
+        try:
+            dock = QtWidgets.QDockWidget(DEFAULT_PANEL_TITLE, parent)
+            dock.setObjectName("ElectricCR_ProponerRutasGuiaDock")
+            dock.setAllowedAreas(QtCore.Qt.RightDockWidgetArea)
+            dock.setMinimumWidth(360)
+            dock.setMaximumWidth(460)
+            dock.setFeatures(QtWidgets.QDockWidget.DockWidgetClosable)
+            dock.setFloating(False)
+            root = QtWidgets.QWidget(dock)
+            dock.setWidget(root)
+            parent.addDockWidget(QtCore.Qt.RightDockWidgetArea, dock)
+            lay = QtWidgets.QVBoxLayout(root)
+        except Exception:
+            dock = None
+            root = None
+            lay = None
+
+    if root is None or lay is None:
+        dlg.setWindowTitle(DEFAULT_PANEL_TITLE)
+        dlg.resize(440, 420)
+        if QtCore is not None:
+            dlg.setWindowModality(QtCore.Qt.NonModal)
+            dlg.setWindowFlag(QtCore.Qt.Tool, True)
+        lay = QtWidgets.QVBoxLayout(dlg)
+
+    state = {"tablero": board_default, "areas": list(area_defaults)}
+    lbl_intro = QtWidgets.QLabel("Seleccione un tablero y las areas preferidas con el panel abierto.")
+    lbl_intro.setWordWrap(True)
+    lbl_board = QtWidgets.QLabel()
+    lbl_areas = QtWidgets.QLabel("Areas preferidas:")
+    list_areas = QtWidgets.QListWidget()
+    list_areas.setMinimumHeight(90)
+    list_areas.setMaximumHeight(120)
+
+    def refresh():
+        board_txt = texto_seguro(getattr(state["tablero"], "Label", "")) or texto_seguro(getattr(state["tablero"], "Name", "")) or "(ninguno)"
+        lbl_board.setText("Tablero activo: " + board_txt)
+        list_areas.clear()
+        for area in state["areas"]:
+            suffix = " [pasillo]" if bool(area.get("is_corridor")) else ""
+            list_areas.addItem(f"{area.get('label', '')}{suffix}")
+
+    def tomar_tablero():
+        boards = tableros_desde_seleccion()
+        state["tablero"] = boards[0] if boards else None
+        refresh()
+
+    def tomar_areas():
+        state["areas"] = obtener_areas_seleccionadas()
+        refresh()
+
+    btn_board = QtWidgets.QPushButton("Tomar tablero desde seleccion")
+    btn_board.clicked.connect(tomar_tablero)
+    btn_areas = QtWidgets.QPushButton("Tomar areas desde seleccion")
+    btn_areas.clicked.connect(tomar_areas)
+
+    form = QtWidgets.QFormLayout()
+    sp_route = QtWidgets.QDoubleSpinBox()
+    sp_route.setRange(-5000.0, 20000.0)
+    sp_route.setDecimals(1)
+    sp_route.setSuffix(" mm")
+    sp_route.setValue(float(cfg_defaults["route_z"]))
+    chk_3d = QtWidgets.QCheckBox("Crear copia 3D")
+    chk_3d.setChecked(bool(cfg_defaults["create_3d_copy"]))
+    chk_axes = QtWidgets.QCheckBox("Crear ejes de areas de paso")
+    chk_axes.setChecked(bool(cfg_defaults["create_area_axes"]))
+    chk_circuit = QtWidgets.QCheckBox("Crear rutas por circuito")
+    chk_circuit.setChecked(bool(cfg_defaults["create_circuit_routes"]))
+    chk_panel = QtWidgets.QCheckBox("Crear enlaces tablero-pasillo")
+    chk_panel.setChecked(bool(cfg_defaults["create_panel_trunks"]))
+    chk_clear = QtWidgets.QCheckBox("Limpiar rutas propuestas anteriores")
+    chk_clear.setChecked(bool(cfg_defaults["clear_previous"]))
+    chk_dedup = QtWidgets.QCheckBox("Evitar rutas repetidas")
+    chk_dedup.setChecked(bool(cfg_defaults["dedup_routes"]))
+    form.addRow("Nivel ruta 3D:", sp_route)
+    form.addRow("", chk_3d)
+    form.addRow("", chk_axes)
+    form.addRow("", chk_panel)
+    form.addRow("", chk_circuit)
+    form.addRow("", chk_dedup)
+    form.addRow("", chk_clear)
+
+    lbl_note = QtWidgets.QLabel(
+        "Modo recomendado: seleccionar areas de paso y un tablero activo. Las areas guian la ruta; los destinos dibujados son los circuitos."
+    )
+    lbl_note.setWordWrap(True)
+    buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+    buttons.accepted.connect(dlg.accept)
+    buttons.rejected.connect(dlg.reject)
+
+    lay.addWidget(lbl_intro)
+    lay.addWidget(lbl_board)
+    lay.addWidget(btn_board)
+    lay.addWidget(lbl_areas)
+    lay.addWidget(list_areas)
+    lay.addWidget(btn_areas)
+    lay.addLayout(form)
+    lay.addWidget(lbl_note)
+    lay.addWidget(buttons)
+    refresh()
+
+    if QtCore is None:
+        if dlg.exec_() != QtWidgets.QDialog.Accepted:
+            return None
+    else:
+        loop = QtCore.QEventLoop()
+        state_result = {"accepted": False}
+
+        def accept_and_close():
+            state_result["accepted"] = True
+            if dock is not None:
+                dock.close()
+            else:
+                dlg.accept()
+
+        def reject_and_close():
+            state_result["accepted"] = False
+            if dock is not None:
+                dock.close()
+            else:
+                dlg.reject()
+
+        try:
+            buttons.accepted.disconnect()
+        except Exception:
+            pass
+        try:
+            buttons.rejected.disconnect()
+        except Exception:
+            pass
+        buttons.accepted.connect(accept_and_close)
+        buttons.rejected.connect(reject_and_close)
+
+        if dock is not None:
+            try:
+                dock.visibilityChanged.connect(lambda visible: loop.quit() if not visible else None)
+            except Exception:
+                pass
+            dock.show()
+            try:
+                dock.raise_()
+            except Exception:
+                pass
+        else:
+            dlg.show()
+            try:
+                dlg.raise_()
+                dlg.activateWindow()
+            except Exception:
+                pass
+            dlg.finished.connect(loop.quit)
+
+        loop.exec_()
+        if not state_result["accepted"]:
+            return None
+
+    cfg = {
+        "tablero": state["tablero"],
+        "areas": list(state["areas"]),
+        "route_z": float(sp_route.value()),
+        "create_3d_copy": bool(chk_3d.isChecked()),
+        "create_area_axes": bool(chk_axes.isChecked()),
+        "create_circuit_routes": bool(chk_circuit.isChecked()),
+        "create_panel_trunks": bool(chk_panel.isChecked()),
+        "clear_previous": bool(chk_clear.isChecked()),
+        "dedup_routes": bool(chk_dedup.isChecked()),
+    }
+    pref_set_float("route_z", cfg["route_z"])
+    pref_set_bool("create_3d_copy", cfg["create_3d_copy"])
+    pref_set_bool("create_area_axes", cfg["create_area_axes"])
+    pref_set_bool("create_circuit_routes", cfg["create_circuit_routes"])
+    pref_set_bool("create_panel_trunks", cfg["create_panel_trunks"])
+    pref_set_bool("clear_previous", cfg["clear_previous"])
+    pref_set_bool("dedup_routes", cfg["dedup_routes"])
+    return cfg
+
+
+def proponer_rutas_guia_auto():
+    doc = App.ActiveDocument
+    if doc is None:
+        log_error("No hay documento activo")
+        return
+
+    cfg = mostrar_formulario_rutas_guia(doc)
+    if cfg is None:
+        log_info("Operacion cancelada por el usuario")
+        return
+
+    tablero_activo = cfg.get("tablero")
+    if tablero_activo is None:
+        log_error("Debe seleccionar un tablero activo en el formulario")
+        return
+
+    plane_ctx = obtener_contexto_plano()
+    log_info(
+        "Plano de trabajo | origen=({:.1f}, {:.1f}, {:.1f}) | normal=({:.3f}, {:.3f}, {:.3f})".format(
+            float(plane_ctx["origin"].x),
+            float(plane_ctx["origin"].y),
+            float(plane_ctx["origin"].z),
+            float(plane_ctx["normal"].x),
+            float(plane_ctx["normal"].y),
+            float(plane_ctx["normal"].z),
+        )
+    )
+
+    octogonales_por_circuito = obtener_octogonales_por_circuito()
+    if not octogonales_por_circuito:
+        log_error("No se encontraron cajas octogonales por circuito")
+        return
+
+    global DEFAULT_ROUTE_Z
+    DEFAULT_ROUTE_Z = float(cfg.get("route_z", DEFAULT_ROUTE_Z))
+
+    tableros = [tablero_activo]
+    areas = list(cfg.get("areas") or [])
+    corridor_areas = [item for item in areas if bool(item.get("is_corridor"))]
+    preferred_areas = corridor_areas if corridor_areas else list(areas)
+    create_3d_copy = bool(cfg.get("create_3d_copy", DEFAULT_CREATE_3D_COPY))
+    create_area_axes = bool(cfg.get("create_area_axes", DEFAULT_CREATE_AREA_AXES))
+    create_panel_trunks = bool(cfg.get("create_panel_trunks", DEFAULT_CREATE_PANEL_TRUNKS))
+    create_circuit_routes = bool(cfg.get("create_circuit_routes", DEFAULT_CREATE_CIRCUIT_ROUTES))
+    dedup_routes = bool(cfg.get("dedup_routes", DEFAULT_DEDUP_ROUTES))
+    clear_previous = bool(cfg.get("clear_previous", DEFAULT_CLEAR_PREVIOUS))
+
+    group_obj = ensure_group(doc, GROUP_LABEL)
+    if clear_previous:
+        removed = clear_group(doc, group_obj)
+        if removed:
+            log_info(f"Rutas anteriores eliminadas: {removed}")
+
+    created = 0
+    corridor_axes = []
+    seen_signatures = set()
+
+    try:
+        doc.openTransaction("ElectricCR: Proponer rutas guia auto")
+
+        for idx, area in enumerate(sorted(preferred_areas, key=lambda item: natural_key(item.get("label", ""))), start=1):
+            axis = generar_eje_pasillo(area, plane_ctx)
+            signature = route_signature_2d(axis["points_2d"])
+            if dedup_routes and signature in seen_signatures:
+                log_info(f"Ruta repetida omitida | tipo=eje | area={area.get('label', '')}")
+                continue
+            seen_signatures.add(signature)
+            corridor_axes.append(axis)
+            if create_area_axes:
+                prefix = "RutaGuia_Pasillo" if bool(area.get("is_corridor")) else "RutaGuia_Area"
+                name = f"{prefix}_{len(corridor_axes):02d}"
+                label = f"{name} - {area.get('label', '')}".strip()
+                wire = crear_wire_ruta(
+                    doc,
+                    group_obj,
+                    name,
+                    label,
+                    axis["points_world"],
+                    "RutaGuiaPasillo" if bool(area.get("is_corridor")) else "RutaGuiaArea",
+                    area_name=area.get("label", ""),
+                )
+                if wire is not None:
+                    created += 1
+                    if create_3d_copy:
+                        crear_ruta_3d(doc, group_obj, label, axis["points_world"])
+
+        if create_panel_trunks:
+            for idx, axis in enumerate(corridor_axes, start=1):
+                trunk = proponer_ruta_desde_eje_a_tablero(axis, tablero_activo, plane_ctx)
+                if trunk is None:
+                    continue
+                signature = route_signature_2d(trunk["points_2d"])
+                if dedup_routes and signature in seen_signatures:
+                    log_info(f"Ruta repetida omitida | tipo=tablero | area={axis.get('area', {}).get('label', '')}")
+                    continue
+                seen_signatures.add(signature)
+                name = f"RutaGuia_Tablero_{idx:02d}"
+                label = f"{name} - {texto_seguro(axis.get('area', {}).get('label', 'Panel'))}"
+                wire = crear_wire_ruta(
+                    doc,
+                    group_obj,
+                    name,
+                    label,
+                    trunk["points_world"],
+                    "RutaGuiaTablero",
+                    area_name=texto_seguro(axis.get("area", {}).get("label", "")),
+                )
+                if wire is not None:
+                    created += 1
+                    if create_3d_copy:
+                        crear_ruta_3d(doc, group_obj, label, trunk["points_world"])
+
+        if not corridor_axes:
+            create_circuit_routes = True
+
+        if create_circuit_routes:
+            circuit_candidates = []
+            for circuito in sorted(octogonales_por_circuito.keys(), key=natural_key):
+                data = proponer_ruta_para_circuito(
+                    circuito,
+                    octogonales_por_circuito.get(circuito, []),
+                    corridor_axes,
+                    tableros,
+                    plane_ctx,
+                    extend_to_panel=True,
+                )
+                if data is None:
+                    continue
+                circuit_candidates.append(data)
+
+            for idx, data in enumerate(seleccionar_rutas_representativas(circuit_candidates), start=1):
+                circuito = texto_seguro(data.get("circuito", ""))
+                signature = route_signature_2d(data["points_2d"])
+                if dedup_routes and signature in seen_signatures:
+                    log_info(f"Ruta repetida omitida | tipo=circuito | circuito={circuito}")
+                    continue
+                seen_signatures.add(signature)
+                name = f"RutaGuia_Circuito_{idx:02d}"
+                label = f"{name} - {circuito}"
+                route_kind = "RutaGuiaCircuitoPanel" if not corridor_axes else "RutaGuiaCircuitoCanal"
+                wire = crear_wire_ruta(
+                    doc,
+                    group_obj,
+                    name,
+                    label,
+                    data["points_world"],
+                    route_kind,
+                    circuito_id=circuito,
+                )
+                if wire is not None:
+                    created += 1
+                    if create_3d_copy:
+                        crear_ruta_3d(doc, group_obj, label, data["points_world"])
+
+        doc.recompute()
+        doc.commitTransaction()
+    except Exception as ex:
+        try:
+            doc.abortTransaction()
+        except Exception:
+            pass
+        log_error(f"Error general: {ex}")
+        return
+
+    log_info(
+        "Proceso terminado | circuitos={} | tableros={} | areas={} | rutas_creadas={}".format(
+            len(octogonales_por_circuito),
+            len(tableros),
+            len(areas),
+            created,
+        )
+    )
+
+
+# FUTURE IMPROVEMENTS
+# - better panel side detection
+# - smarter corridor chaining between multiple selected areas
+# - better route proposal for circuits with many octogonal boxes
+# - optional configuration panel with persistence
+# - optional user choice for strict corridor usage
+# - integration into ElectricCR workbench
+
+
+proponer_rutas_guia_auto()

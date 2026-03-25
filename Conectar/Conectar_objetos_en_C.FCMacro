@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# Icon: Conectar_objetos_en_C.svg
 
 import FreeCAD
 import FreeCADGui
@@ -6,7 +7,15 @@ import Part
 import Draft
 import math
 from PySide import QtGui, QtCore
-
+import os
+import sys
+_THIS_DIR = os.path.dirname(__file__) if '__file__' in globals() else ''
+if _THIS_DIR and _THIS_DIR not in sys.path:
+    sys.path.insert(0, _THIS_DIR)
+import importlib
+import conexiones_grouping as _conexiones_grouping_mod
+_conexiones_grouping_mod = importlib.reload(_conexiones_grouping_mod)
+ensure_conexiones_group = _conexiones_grouping_mod.ensure_conexiones_group
 class DireccionSelector(QtGui.QDialog):
     """
     Ventana de seleccion de direccion con botones en forma de cruz.
@@ -136,10 +145,10 @@ def conectar_objetos_en_C():
     FreeCAD.Console.PrintMessage(f"  - Punto 4 (Final): {punto2}\n")
     FreeCAD.Console.PrintMessage(f"  - Radio de Fillet: {radio_fillet}\n")
 
-    # Crear grupo "Conexiones"
-    grupo_conexiones = doc.getObject("Conexiones")
-    if not grupo_conexiones:
-        grupo_conexiones = doc.addObject("App::DocumentObjectGroup", "Conexiones")
+    grupo_conexiones = ensure_conexiones_group(
+        doc,
+        objects=[selected_objects[0].Object, selected_objects[1].Object],
+    )
 
     # Crear la conexion con Draft Wire
     puntos = [punto1, punto_intermedio1, punto_intermedio2, punto2]
@@ -160,3 +169,5 @@ def conectar_objetos_en_C():
 
 # Ejecutar la funcion
 conectar_objetos_en_C()
+
+

@@ -1,0 +1,158 @@
+# -*- coding: utf-8 -*-
+# Icon: Ordenar_Tomas_XY.svg
+# Ordena tomas en un grupo segun XY (Arriba Y+, Abajo Y-, Izquierda X-, Derecha X+)
+
+import FreeCAD as App
+import FreeCADGui as Gui
+
+TAG = "[ORDXY]"
+EPS = 1e-6
+
+
+def log_info(msg):
+    App.Console.PrintMessage(f"{TAG} {msg}\n")
+
+
+def log_warn(msg):
+    App.Console.PrintWarning(f"{TAG} {msg}\n")
+
+
+def log_err(msg):
+    App.Console.PrintError(f"{TAG} {msg}\n")
+
+
+def _is_group(obj):
+    return hasattr(obj, "Group") and getattr(obj, "TypeId", "") == "App::DocumentObjectGroup"
+
+
+def _is_toma(obj):
+    try:
+        tipo = getattr(obj, "Tipo", None)
+        if tipo is not None and str(tipo) == "Toma":
+            return True
+    except Exception:
+        pass
+    label = getattr(obj, "Label", "")
+    if isinstance(label, str) and label.lower().startswith("toma"):
+        return True
+    return False
+
+
+def _xy_pos(obj):
+    if hasattr(obj, "Placement"):
+        p = obj.Placement.Base
+        return float(p.x), float(p.y)
+    if hasattr(obj, "Shape"):
+        try:
+            p = obj.Shape.BoundBox.Center
+            return float(p.x), float(p.y)
+        except Exception:
+            pass
+    return 0.0, 0.0
+
+
+def _sort_key(obj, idx):
+    x, y = _xy_pos(obj)
+    # Arriba primero (Y+), luego Izquierda (X-)
+    return (-y, x, idx)
+
+
+def _find_parent_groups(doc, objects):
+    groups = []
+    for g in doc.Objects:
+        if not _is_group(g):
+            continue
+        for o in objects:
+            if o in getattr(g, "Group", []):
+                groups.append(g)
+                break
+    # Unique by Name
+    seen = set()
+    out = []
+    for g in groups:
+        if g.Name not in seen:
+            out.append(g)
+            seen.add(g.Name)
+    return out
+
+
+def _reorder_group(group):
+    items = list(getattr(group, "Group", []) or [])
+    if not items:
+        return False
+
+    toma_items = []
+    for i, obj in enumerate(items):
+        if _is_toma(obj):
+            toma_items.append((obj, i))
+
+    if len(toma_items) < 2:
+        return False
+
+    sorted_tomas = sorted(toma_items, key=lambda it: _sort_key(it[0], it[1]))
+    sorted_iter = iter([t[0] for t in sorted_tomas])
+
+    toma_names = set(t[0].Name for t in toma_items)
+    new_items = []
+    for obj in items:
+        if obj.Name in toma_names:
+            try:
+                new_items.append(next(sorted_iter))
+            except StopIteration:
+                new_items.append(obj)
+        else:
+            new_items.append(obj)
+
+    if new_items == items:
+        return False
+
+    try:
+        group.Group = new_items
+        return True
+    except Exception as ex:
+        log_err(f"No se pudo ordenar grupo '{group.Label}': {ex}")
+        return False
+
+
+def ordenar_tomas_xy():
+    doc = App.ActiveDocument
+    if doc is None:
+        log_err("No hay documento activo.")
+        return
+
+    sel = Gui.Selection.getSelection()
+    if not sel:
+        log_err("Seleccione un grupo o tomas dentro de un grupo.")
+        return
+
+    target_groups = []
+    for s in sel:
+        if _is_group(s):
+            target_groups.append(s)
+
+    if not target_groups:
+        target_groups = _find_parent_groups(doc, sel)
+
+    if not target_groups:
+        log_err("No se encontraron grupos para ordenar.")
+        return
+
+    done = 0
+    for g in target_groups:
+        if _reorder_group(g):
+            done += 1
+
+    if done == 0:
+        log_warn("No hubo cambios (pocas tomas o ya ordenadas).")
+    else:
+        log_info(f"Grupos ordenados: {done}")
+
+    try:
+        doc.recompute()
+    except Exception:
+        pass
+
+
+if __name__ == "__main__":
+    ordenar_tomas_xy()
+

@@ -1,0 +1,4 @@
+c13af82044251f39f58c93242cde34a282d0fe3df911c65921535509f776a5ca  c:\Users\marco\OneDrive - Caja Costarricense de Seguro Social\Documentos\FreeCAD\Macros\Macros-de-Freecad\Conectar\alimentadores_backend.py
+89ba63af179c3a936d775ae165b9f0f49adb7c9275edcbdbf9f1e1705e6827ea  c:\Users\marco\OneDrive - Caja Costarricense de Seguro Social\Documentos\FreeCAD\Macros\Macros-de-Freecad\Conectar\Conectar_Alimentadores_a_Tablero_Auto.FCMacro
+7ed66fabff2f9b9debdb38e49c4c4b4e622030bc7e4e6ed1639609657edcf731  c:\Users\marco\OneDrive - Caja Costarricense de Seguro Social\Documentos\FreeCAD\Macros\Macros-de-Freecad\Conectar\Conectar_Cajas_a_Tablero_Auto.FCMacro
+f61f5cf58af395c2918d626f3f8b60c8efe7bd9b1f4939fd20ba3c01183c6204  c:\Users\marco\OneDrive - Caja Costarricense de Seguro Social\Documentos\FreeCAD\Macros\Macros-de-Freecad\Conectar\Backups\respaldo_alimentadores_20260319_114918.zip

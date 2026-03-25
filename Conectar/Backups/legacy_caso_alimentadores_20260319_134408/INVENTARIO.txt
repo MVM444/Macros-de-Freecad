@@ -1,0 +1,11 @@
+Archivado de archivos legacy del caso de alimentadores a tablero
+Fecha: 2026-03-19T13:44:08
+
+Archivos movidos fuera de la carpeta principal:
+- Conectar_Cajas_a_Tablero_Auto_v2.FCMacro
+- Conectar_Alimentadores_a_Tablero_Auto_v2.svg
+
+Archivo conservado en la carpeta principal por dependencia activa:
+- Conectar_Cajas_a_Tablero_Auto.FCMacro
+  Motivo: alimentadores_backend.py lo usa como backend legado estable.
+

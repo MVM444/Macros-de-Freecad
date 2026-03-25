@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0d2a45"/>
+      <stop offset="100%" stop-color="#1a5f7d"/>
+    </linearGradient>
+    <linearGradient id="oct" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#edf3f7"/>
+      <stop offset="100%" stop-color="#b7c5d1"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="2" y="2" width="60" height="60" rx="11" fill="url(#bg)" stroke="#0a1827" stroke-width="2.5"/>
+
+  <g stroke="#12364d" stroke-width="1.2" fill="#f8c86f">
+    <rect x="10" y="43" width="11" height="8" rx="1.2"/>
+    <rect x="25" y="43" width="11" height="8" rx="1.2"/>
+    <rect x="40" y="43" width="11" height="8" rx="1.2"/>
+  </g>
+
+  <g stroke="#f8d795" stroke-width="1.1" fill="none" stroke-linecap="round">
+    <path d="M15.5 43 V35"/>
+    <path d="M30.5 43 V33"/>
+    <path d="M45.5 43 V35"/>
+  </g>
+
+  <polygon
+    points="32,13 43,17.5 47.5,28.5 43,39.5 32,44 21,39.5 16.5,28.5 21,17.5"
+    fill="url(#oct)"
+    stroke="#173245"
+    stroke-width="2.1"
+    stroke-linejoin="round"
+  />
+
+  <g fill="#f3f8fb" stroke="#173245" stroke-width="1.2">
+    <circle cx="32" cy="10.7" r="1.6"/>
+    <circle cx="45.3" cy="15.8" r="1.6"/>
+    <circle cx="50.2" cy="28.5" r="1.6"/>
+    <circle cx="45.3" cy="41.2" r="1.6"/>
+    <circle cx="32" cy="46.3" r="1.6"/>
+    <circle cx="18.7" cy="41.2" r="1.6"/>
+    <circle cx="13.8" cy="28.5" r="1.6"/>
+    <circle cx="18.7" cy="15.8" r="1.6"/>
+  </g>
+</svg>

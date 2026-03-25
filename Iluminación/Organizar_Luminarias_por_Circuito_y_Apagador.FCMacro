@@ -1,0 +1,1170 @@
+# -*- coding: utf-8 -*-
+# MenuText: Organizar luminarias por Areas
+# Icon: Organizar_Luminarias_por_Circuito_y_Apagador.svg
+# Transaction: self
+#
+# Organiza luminarias segun rectangulos del grupo Areas:
+#   Electric/ILUMINACION/CIRCUITOS DE ILUMINACION/RECINTOS/<Recinto>/<Apagador>
+#
+# Nota:
+# - Por defecto crea App::Link de indice (no mueve luminarias originales).
+# - Si no encuentra Areas o rectangulos validos, hace fallback por propiedades.
+
+import re
+import sys
+import unicodedata
+from pathlib import Path
+
+import FreeCAD as App
+import FreeCADGui as Gui
+
+try:
+    from PySide2 import QtWidgets
+except Exception:
+    from PySide import QtGui as QtWidgets
+
+
+try:
+    import importlib
+    import component_classifier as _component_classifier_mod
+    _component_classifier_mod = importlib.reload(_component_classifier_mod)
+except Exception:
+    try:
+        this_dir = Path(__file__).resolve().parent
+        con_dir = this_dir.parent / "Conectar"
+        if str(con_dir) not in sys.path:
+            sys.path.insert(0, str(con_dir))
+        import importlib
+        import component_classifier as _component_classifier_mod
+        _component_classifier_mod = importlib.reload(_component_classifier_mod)
+    except Exception:
+        _component_classifier_mod = None
+
+
+ROOT_LABEL = "Electric"
+ILUM_LABEL = "ILUMINACION"
+CIRCUITOS_ILUM_LABEL = "CIRCUITOS DE ILUMINACION"
+RECINTOS_LABEL = "RECINTOS"
+FALLBACK_AREA = "Sin_Area"
+FALLBACK_SWITCH = "Sin_Apagador"
+DEFAULT_CIRCUIT_LABEL = "Circuito 1"
+
+ROOT_LABEL_ALIASES = {"electric", "electrico"}
+ILUM_LABEL_ALIASES = {"iluminacion"}
+CIRCUITOS_ILUM_ALIASES = {"circuitos de iluminacion", "circuitos iluminacion", "circuitos"}
+RECINTOS_LABEL_ALIASES = {"recintos", "areas", "area", "espacios", "zonas"}
+
+RECINTO_CHILD_LABELS = (
+    "Luminarias",
+    "Apagadores",
+    "Cajas ortogonales",
+    "Conexiones 2d",
+    "Tuberia o Conexiones 3d",
+)
+
+# Backward-compatible aliases used by the current organizer flow.
+LUM_LABEL = ILUM_LABEL
+AREAS_LABEL = RECINTOS_LABEL
+
+INDEX_WITH_LINKS = True
+INDEX_TAG = "ORG_LUM_IDX"
+INDEX_PREFIX = "IdxLum"
+DEFAULT_RENAME_PREFIX = "Lum"
+
+AREA_GROUP_ALIASES = {
+    "areas",
+    "area",
+    "recintos",
+    "recinto",
+    "espacios",
+    "espacio",
+    "zonas",
+    "zona",
+}
+
+AREA_GROUP_EXCLUDE = {
+    "electrico",
+    "luminarias",
+    "conexiones",
+    "tomacorrientes",
+    "apagadores",
+    "cajas",
+}
+
+AREA_GROUP_EXCLUDE_HINTS = {
+    "sensor",
+    "humo",
+    "detector",
+    "rociador",
+    "sprinkler",
+}
+
+AREA_ATTRS = (
+    "Area",
+    "AreaID",
+    "AreaNombre",
+    "Recinto",
+    "Habitacion",
+    "Local",
+    "Zona",
+    "Espacio",
+    "Ambiente",
+    "NombreArea",
+)
+
+SWITCH_ATTRS = (
+    "ApagadorID",
+    "SwitchID",
+    "InterruptorID",
+    "ControlID",
+    "Control_Grupo",
+    "GrupoControl",
+    "ControlGrupo",
+    "Apagador",
+    "Switch",
+    "Interruptor",
+    "Control",
+)
+
+CIRCUITO_ATTRS = (
+    "Circuito",
+    "CircuitoID",
+    "Circuit",
+    "CircuitName",
+    "CircuitoNombre",
+    "Panel",
+    "PanelID",
+    "Tablero",
+    "TableroID",
+)
+
+IGNORE_TOKENS = {
+    "",
+    "-",
+    "_",
+    "na",
+    "n/a",
+    "none",
+    "null",
+    "sin",
+    "sin_dato",
+    "sin_datos",
+    "sin_info",
+    "sin_apagador",
+    "sin_area",
+}
+
+
+def _log(msg):
+    App.Console.PrintMessage(f"[ORG_LUM][INFO] {msg}\n")
+
+
+def _warn(msg):
+    App.Console.PrintWarning(f"[ORG_LUM][WARN] {msg}\n")
+
+
+def _err(msg):
+    App.Console.PrintError(f"[ORG_LUM][ERROR] {msg}\n")
+
+
+def _safe_text(value):
+    try:
+        return str(value or "")
+    except Exception:
+        return ""
+
+
+def _normalize(text):
+    s = _safe_text(text).strip().lower()
+    if not s:
+        return ""
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    s = s.replace("\\", "/")
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _token_for_name(text, fallback="grp"):
+    s = _normalize(text)
+    s = re.sub(r"[^0-9a-zA-Z_]+", "_", s)
+    s = re.sub(r"_+", "_", s).strip("_")
+    return s or fallback
+
+
+def _is_valid_id(value):
+    txt = _normalize(value)
+    if not txt:
+        return False
+    if txt in IGNORE_TOKENS:
+        return False
+    if txt in {"true", "false", "0", "1"}:
+        return False
+    return True
+
+
+def _is_group(obj):
+    return getattr(obj, "TypeId", "") == "App::DocumentObjectGroup"
+
+
+def _is_link(obj):
+    return getattr(obj, "TypeId", "") == "App::Link"
+
+
+def _iter_doc_groups(doc):
+    for obj in (doc.Objects or []):
+        if _is_group(obj):
+            yield obj
+
+
+def _iter_group_tree(root_group):
+    stack = [root_group]
+    seen = set()
+    while stack:
+        grp = stack.pop()
+        gid = getattr(grp, "Name", None) or id(grp)
+        if gid in seen:
+            continue
+        seen.add(gid)
+        yield grp
+        for child in (getattr(grp, "Group", []) or []):
+            if _is_group(child):
+                stack.append(child)
+
+
+def _find_parent_group_linear(doc, obj):
+    for grp in _iter_doc_groups(doc):
+        try:
+            if obj in (getattr(grp, "Group", []) or []):
+                return grp
+        except Exception:
+            continue
+    return None
+
+
+def _get_parent_group(doc, obj):
+    gp = getattr(obj, "getParentGroup", None)
+    if callable(gp):
+        try:
+            p = gp()
+            if p:
+                return p
+        except Exception:
+            pass
+    return _find_parent_group_linear(doc, obj)
+
+
+def _ancestor_groups(doc, obj, max_depth=30):
+    chain = []
+    seen = set()
+    cur = _get_parent_group(doc, obj)
+    while cur is not None and len(chain) < max_depth:
+        gid = getattr(cur, "Name", None) or id(cur)
+        if gid in seen:
+            break
+        seen.add(gid)
+        chain.append(cur)
+        cur = _get_parent_group(doc, cur)
+    return chain
+
+
+def _first_valid_property(obj, names):
+    for attr in names:
+        try:
+            if hasattr(obj, attr):
+                value = getattr(obj, attr)
+                txt = _safe_text(value).strip()
+                if _is_valid_id(txt):
+                    return txt
+        except Exception:
+            continue
+    return ""
+
+
+def _find_root_group_by_label(doc, label):
+    target = _normalize(label)
+    for grp in _iter_doc_groups(doc):
+        if _normalize(getattr(grp, "Label", "")) == target:
+            return grp
+    return None
+
+
+def _find_child_group_by_alias(parent, aliases):
+    if parent is None:
+        return None
+    wanted = set()
+    for a in aliases or []:
+        n = _normalize(a)
+        if n:
+            wanted.add(n)
+    if not wanted:
+        return None
+    for child in (getattr(parent, "Group", []) or []):
+        if not _is_group(child):
+            continue
+        c = _normalize(getattr(child, "Label", ""))
+        if c in wanted:
+            return child
+    return None
+
+
+def _unique_doc_name(doc, base_name):
+    name = _token_for_name(base_name, "obj")
+    if doc.getObject(name) is None:
+        return name
+    i = 2
+    while True:
+        cand = f"{name}_{i:02d}"
+        if doc.getObject(cand) is None:
+            return cand
+        i += 1
+
+
+def _ensure_root_group(doc):
+    for name in (ROOT_LABEL, "electrico"):
+        grp = doc.getObject(name)
+        if grp and _is_group(grp):
+            return grp
+    for grp in _iter_doc_groups(doc):
+        if _normalize(getattr(grp, "Label", "")) in ROOT_LABEL_ALIASES:
+            return grp
+    name = _unique_doc_name(doc, ROOT_LABEL)
+    grp = doc.addObject("App::DocumentObjectGroup", name)
+    grp.Label = ROOT_LABEL
+    return grp
+
+
+def _ensure_child_group(doc, parent, label, name_prefix):
+    target = _normalize(label)
+    for child in (getattr(parent, "Group", []) or []):
+        if _is_group(child) and _normalize(getattr(child, "Label", "")) == target:
+            return child
+    base = f"{name_prefix}_{_token_for_name(label, 'grupo')}"
+    name = _unique_doc_name(doc, base)
+    grp = doc.addObject("App::DocumentObjectGroup", name)
+    grp.Label = _safe_text(label).strip() or "Grupo"
+    parent.addObject(grp)
+    return grp
+
+
+def _is_luminaria(obj):
+    try:
+        if _component_classifier_mod is not None:
+            ctype = _component_classifier_mod.get_component_type(obj)
+            if ctype:
+                return ctype == "Luminaria"
+    except Exception:
+        pass
+    for attr in ("Tipo", "TipoLogico", "Categoria", "KeyRegistro", "EtiquetaPlano"):
+        try:
+            if hasattr(obj, attr):
+                txt = _normalize(getattr(obj, attr))
+                if "luminaria" in txt or "lampara" in txt:
+                    return True
+        except Exception:
+            continue
+    txt = _normalize(f"{getattr(obj, 'Label', '')} {getattr(obj, 'Name', '')}")
+    return ("luminaria" in txt) or ("lampara" in txt) or ("luz" in txt)
+
+
+def _is_draft_rectangle(obj):
+    try:
+        proxy = getattr(obj, "Proxy", None)
+        if _normalize(getattr(proxy, "Type", "")) == "rectangle":
+            return True
+    except Exception:
+        pass
+    if hasattr(obj, "Length") and hasattr(obj, "Height") and hasattr(obj, "Placement"):
+        return True
+    return False
+
+
+def _qfloat(value, default=0.0):
+    try:
+        if hasattr(value, "Value"):
+            return float(value.Value)
+        return float(value)
+    except Exception:
+        return float(default)
+
+
+def _collect_from_group_recursive(group_obj, out, seen):
+    gid = getattr(group_obj, "Name", None) or id(group_obj)
+    if gid in seen:
+        return
+    seen.add(gid)
+    for child in (getattr(group_obj, "Group", []) or []):
+        if _is_group(child):
+            _collect_from_group_recursive(child, out, seen)
+        else:
+            cid = getattr(child, "Name", None) or id(child)
+            if cid not in seen:
+                seen.add(cid)
+                out.append(child)
+
+
+def _collect_candidate_objects(doc):
+    try:
+        sel = Gui.Selection.getSelection() or []
+    except Exception:
+        sel = []
+    out = []
+    seen = set()
+    if sel:
+        for obj in sel:
+            if _is_group(obj):
+                _collect_from_group_recursive(obj, out, seen)
+            else:
+                oid = getattr(obj, "Name", None) or id(obj)
+                if oid not in seen:
+                    seen.add(oid)
+                    out.append(obj)
+        return out, True
+    for obj in (doc.Objects or []):
+        if not _is_group(obj):
+            out.append(obj)
+    return out, False
+
+
+def _find_areas_group(doc):
+    # 1) Si el usuario selecciona un grupo con rectangulos, usar ese primero.
+    try:
+        sel = Gui.Selection.getSelection() or []
+    except Exception:
+        sel = []
+    for obj in sel:
+        if _is_group(obj) and _group_rect_count(obj) > 0:
+            return obj
+
+    # 2) Buscar por nombres comunes.
+    for name in ("Areas", "Áreas", "areas", "Recintos", "Espacios", "Zonas"):
+        g = doc.getObject(name)
+        if g and _is_group(g):
+            return g
+
+    # 3) Buscar por label (normalizado) en aliases.
+    for grp in _iter_doc_groups(doc):
+        n = _normalize(getattr(grp, "Label", ""))
+        if n in AREA_GROUP_ALIASES:
+            return grp
+
+    # 4) Heuristica: grupo con mayor cantidad de rectangulos.
+    best = None
+    best_count = 0
+    for grp in _iter_doc_groups(doc):
+        n = _normalize(getattr(grp, "Label", ""))
+        if n in AREA_GROUP_EXCLUDE:
+            continue
+        if any(h in n for h in AREA_GROUP_EXCLUDE_HINTS):
+            continue
+        cnt = _group_rect_count(grp)
+        if cnt > best_count:
+            best = grp
+            best_count = cnt
+    if best is not None and best_count >= 2:
+        return best
+    return None
+
+
+def _group_rect_count(group_obj):
+    count = 0
+    for grp in _iter_group_tree(group_obj):
+        for child in (getattr(grp, "Group", []) or []):
+            if _is_group(child):
+                continue
+            if _is_draft_rectangle(child):
+                count += 1
+    return count
+
+
+def _build_area_records(areas_group):
+    records = []
+    if areas_group is None:
+        return records
+    for grp in _iter_group_tree(areas_group):
+        for child in (getattr(grp, "Group", []) or []):
+            if _is_group(child):
+                continue
+            if not _is_draft_rectangle(child):
+                continue
+            width = abs(_qfloat(getattr(child, "Length", 0.0), 0.0))
+            height = abs(_qfloat(getattr(child, "Height", 0.0), 0.0))
+            if width <= 0.0 or height <= 0.0:
+                continue
+            pl = getattr(child, "Placement", None)
+            if pl is None:
+                continue
+            base = pl.Base
+            rot = pl.Rotation
+            area_name = _safe_text(getattr(child, "Label", "")).strip() or _safe_text(getattr(child, "Name", ""))
+            if not _is_valid_id(area_name):
+                area_name = _safe_text(getattr(child, "Name", "Area")) or "Area"
+            center = base + rot.multVec(App.Vector(width * 0.5, height * 0.5, 0.0))
+            records.append(
+                {
+                    "obj": child,
+                    "name": area_name,
+                    "base": base,
+                    "rot": rot,
+                    "w": width,
+                    "h": height,
+                    "a": width * height,
+                    "center": center,
+                }
+            )
+    return records
+
+
+def _object_point(obj):
+    try:
+        pl = getattr(obj, "Placement", None)
+        if pl is not None:
+            return pl.Base
+    except Exception:
+        pass
+    try:
+        shp = getattr(obj, "Shape", None)
+        if shp and not shp.isNull():
+            return shp.BoundBox.Center
+    except Exception:
+        pass
+    return App.Vector(0.0, 0.0, 0.0)
+
+
+def _contains_point_xy(rec, point, tol=1.0):
+    try:
+        local = rec["rot"].inverted().multVec(point - rec["base"])
+        x = float(local.x)
+        y = float(local.y)
+        return (-tol <= x <= rec["w"] + tol) and (-tol <= y <= rec["h"] + tol)
+    except Exception:
+        return False
+
+
+def _dist2_xy(p1, p2):
+    dx = float(p1.x - p2.x)
+    dy = float(p1.y - p2.y)
+    return dx * dx + dy * dy
+
+
+def _resolve_area_from_areas_group(doc, obj, area_records):
+    # Prioridad 1: propiedad explicita si coincide con un recinto existente.
+    area_prop = _first_valid_property(obj, AREA_ATTRS)
+    if area_prop:
+        target = _normalize(area_prop)
+        for rec in area_records:
+            if _normalize(rec["name"]) == target:
+                return rec["name"], "prop_match"
+
+    if not area_records:
+        return "", "no_areas_records"
+
+    # Prioridad 2: contencion geometrica.
+    p = _object_point(obj)
+    inside = [rec for rec in area_records if _contains_point_xy(rec, p)]
+    if inside:
+        inside.sort(key=lambda r: float(r.get("a", 0.0)))
+        return inside[0]["name"], "inside_rect"
+
+    # Prioridad 3: recinto mas cercano por centro.
+    best = min(area_records, key=lambda r: _dist2_xy(p, r["center"]))
+    return best["name"], "nearest_rect"
+
+
+def _resolve_area_fallback(doc, obj):
+    txt = _first_valid_property(obj, AREA_ATTRS)
+    if txt:
+        return txt, "prop"
+    for grp in _ancestor_groups(doc, obj):
+        label = _safe_text(getattr(grp, "Label", "")).strip()
+        if _is_valid_id(label):
+            n = _normalize(label)
+            if n not in {"electrico", "luminarias", "areas", "conexiones"}:
+                return label, "ancestor"
+    return FALLBACK_AREA, "fallback"
+
+
+def _resolve_area(doc, obj, area_records):
+    area_name, source = _resolve_area_from_areas_group(doc, obj, area_records)
+    if _is_valid_id(area_name):
+        return area_name, source
+    return _resolve_area_fallback(doc, obj)
+
+
+def _resolve_switch(doc, obj, area_name):
+    txt = _first_valid_property(obj, SWITCH_ATTRS)
+    if txt:
+        return txt, "prop"
+    for grp in _ancestor_groups(doc, obj):
+        label = _safe_text(getattr(grp, "Label", "")).strip()
+        n = _normalize(label)
+        if ("apagador" in n) or ("switch" in n) or ("interruptor" in n):
+            if _is_valid_id(label):
+                return label, "ancestor"
+    if _is_valid_id(area_name) and _normalize(area_name) != _normalize(FALLBACK_AREA):
+        return f"Apagador {area_name}", "area_default"
+    return FALLBACK_SWITCH, "fallback"
+
+
+def _resolve_circuit_label(doc, luminarias, manual_label=""):
+    txt = _safe_text(manual_label).strip()
+    if _is_valid_id(txt):
+        return txt, "manual"
+
+    counts = {}
+    for obj in luminarias or []:
+        val = _first_valid_property(obj, CIRCUITO_ATTRS)
+        if not _is_valid_id(val):
+            continue
+        key = val.strip()
+        counts[key] = counts.get(key, 0) + 1
+
+    if counts:
+        chosen = sorted(counts.items(), key=lambda kv: (-kv[1], _normalize(kv[0])))[0][0]
+        return chosen, "prop"
+
+    return DEFAULT_CIRCUIT_LABEL, "default"
+
+
+def _is_generated_index_link(obj):
+    if not _is_link(obj):
+        return False
+    try:
+        if hasattr(obj, "GeneradoPor") and _safe_text(obj.GeneradoPor).strip() == INDEX_TAG:
+            return True
+    except Exception:
+        pass
+    n = _safe_text(getattr(obj, "Name", ""))
+    return n.startswith(INDEX_PREFIX + "_")
+
+
+def _get_linked_object(obj):
+    try:
+        linked = getattr(obj, "LinkedObject", None)
+        if linked is not None:
+            return linked
+    except Exception:
+        pass
+    try:
+        linked = getattr(obj, "Link", None)
+        if linked is not None:
+            return linked
+    except Exception:
+        pass
+    return None
+
+
+def _collect_source_luminarias(candidates):
+    out = []
+    seen = set()
+    unwrapped_generated = 0
+    skipped_generated = 0
+    for obj in candidates:
+        src = obj
+        if _is_generated_index_link(obj):
+            linked = _get_linked_object(obj)
+            if linked is None:
+                skipped_generated += 1
+                continue
+            src = linked
+            unwrapped_generated += 1
+        if _is_generated_index_link(src):
+            skipped_generated += 1
+            continue
+        if not _is_luminaria(src):
+            continue
+        sid = getattr(src, "Name", None) or id(src)
+        if sid in seen:
+            continue
+        seen.add(sid)
+        out.append(src)
+    return out, unwrapped_generated, skipped_generated
+
+
+def _cleanup_generated_index_links(doc, luminarias_group):
+    removed = 0
+    to_delete = []
+    for grp in _iter_group_tree(luminarias_group):
+        for child in (getattr(grp, "Group", []) or []):
+            if _is_generated_index_link(child):
+                to_delete.append(child)
+    for obj in to_delete:
+        try:
+            doc.removeObject(obj.Name)
+            removed += 1
+        except Exception:
+            continue
+    return removed
+
+
+def _ensure_index_metadata(link_obj, source_obj, area, switch, area_source, switch_source):
+    defs = (
+        ("App::PropertyString", "GeneradoPor", "ElectricCR", "Macro generadora"),
+        ("App::PropertyString", "ORG_SourceName", "ElectricCR", "Nombre fuente"),
+        ("App::PropertyString", "ORG_Area", "ElectricCR", "Area inferida"),
+        ("App::PropertyString", "ORG_Apagador", "ElectricCR", "Apagador inferido"),
+        ("App::PropertyString", "ORG_AreaSource", "ElectricCR", "Fuente de area"),
+        ("App::PropertyString", "ORG_ApagadorSource", "ElectricCR", "Fuente de apagador"),
+    )
+    for ptype, pname, pgroup, pdesc in defs:
+        try:
+            if pname not in getattr(link_obj, "PropertiesList", []):
+                link_obj.addProperty(ptype, pname, pgroup, pdesc)
+        except Exception:
+            continue
+    try:
+        link_obj.GeneradoPor = INDEX_TAG
+    except Exception:
+        pass
+    try:
+        link_obj.ORG_SourceName = _safe_text(getattr(source_obj, "Name", ""))
+    except Exception:
+        pass
+    try:
+        link_obj.ORG_Area = _safe_text(area)
+    except Exception:
+        pass
+    try:
+        link_obj.ORG_Apagador = _safe_text(switch)
+    except Exception:
+        pass
+    try:
+        link_obj.ORG_AreaSource = _safe_text(area_source)
+    except Exception:
+        pass
+    try:
+        link_obj.ORG_ApagadorSource = _safe_text(switch_source)
+    except Exception:
+        pass
+
+
+def _create_index_link(doc, source_obj, target_group, area, switch, area_source, switch_source):
+    base_name = f"{INDEX_PREFIX}_{_safe_text(getattr(source_obj, 'Name', 'Lum'))}"
+    name = _unique_doc_name(doc, base_name)
+    link = doc.addObject("App::Link", name)
+    link.LinkedObject = source_obj
+    try:
+        link.LinkTransform = False
+    except Exception:
+        pass
+    try:
+        link.Label = _safe_text(getattr(source_obj, "Label", source_obj.Name))
+    except Exception:
+        pass
+    _ensure_index_metadata(link, source_obj, area, switch, area_source, switch_source)
+    target_group.addObject(link)
+    return link
+
+
+def _collect_candidate_objects_from_group(group_obj):
+    if group_obj is None or not _is_group(group_obj):
+        return []
+    out = []
+    seen = set()
+    _collect_from_group_recursive(group_obj, out, seen)
+    return out
+
+
+def _group_luminaria_count(group_obj):
+    candidates = _collect_candidate_objects_from_group(group_obj)
+    luminarias, _u, _s = _collect_source_luminarias(candidates)
+    return len(luminarias)
+
+
+def _list_luminaria_groups(doc):
+    out = []
+    for grp in _iter_doc_groups(doc):
+        cnt = _group_luminaria_count(grp)
+        if cnt <= 0:
+            continue
+        out.append((grp, cnt))
+    out.sort(key=lambda t: _normalize(getattr(t[0], "Label", "") or getattr(t[0], "Name", "")))
+    return out
+
+
+def _list_area_groups(doc):
+    out = []
+    for grp in _iter_doc_groups(doc):
+        cnt = _group_rect_count(grp)
+        if cnt <= 0:
+            continue
+        out.append((grp, cnt))
+    out.sort(key=lambda t: _normalize(getattr(t[0], "Label", "") or getattr(t[0], "Name", "")))
+    return out
+
+
+def _remove_obj_from_group_tree(root_group, obj):
+    removed = 0
+    if root_group is None or obj is None:
+        return removed
+    for grp in _iter_group_tree(root_group):
+        try:
+            if obj in (getattr(grp, "Group", []) or []):
+                grp.removeObject(obj)
+                removed += 1
+        except Exception:
+            continue
+    return removed
+
+
+def _unique_label(seed, used):
+    base = _safe_text(seed).strip() or "Lum"
+    cand = base
+    idx = 2
+    while cand in used:
+        cand = f"{base} {idx:02d}"
+        idx += 1
+    used.add(cand)
+    return cand
+
+
+def _rename_target(obj, area_name, switch_name, local_idx, used_labels, prefix=DEFAULT_RENAME_PREFIX):
+    if obj is None:
+        return False
+    area_txt = _safe_text(area_name).strip() or FALLBACK_AREA
+    switch_txt = _safe_text(switch_name).strip() or FALLBACK_SWITCH
+    pref = _safe_text(prefix).strip() or DEFAULT_RENAME_PREFIX
+    seed = f"{pref} {area_txt} {switch_txt} {int(local_idx):03d}"
+    try:
+        obj.Label = _unique_label(seed, used_labels)
+        return True
+    except Exception:
+        return False
+
+
+def organizar_luminarias_por_circuito_y_apagador(
+    luminarias_group_name="",
+    areas_group_name="",
+    circuit_label="",
+    index_with_links=INDEX_WITH_LINKS,
+    rename_items=True,
+    rename_prefix=DEFAULT_RENAME_PREFIX,
+    use_selection_scope=True,
+):
+    doc = App.ActiveDocument
+    if doc is None:
+        _err("No hay documento activo.")
+        return
+
+    index_with_links = bool(index_with_links)
+    rename_items = bool(rename_items)
+    rename_prefix = _safe_text(rename_prefix).strip() or DEFAULT_RENAME_PREFIX
+
+    from_selection = False
+    scope_txt = "documento completo"
+    g_lum_src = None
+    if _is_valid_id(luminarias_group_name):
+        g_lum_src = doc.getObject(_safe_text(luminarias_group_name).strip())
+        if g_lum_src is None or not _is_group(g_lum_src):
+            _warn(f"Grupo luminarias no valido: '{luminarias_group_name}'. Se usa alcance automatico.")
+            g_lum_src = None
+        else:
+            scope_txt = f"grupo:{getattr(g_lum_src, 'Label', getattr(g_lum_src, 'Name', '?'))}"
+
+    if g_lum_src is not None:
+        candidates = _collect_candidate_objects_from_group(g_lum_src)
+    elif bool(use_selection_scope):
+        candidates, from_selection = _collect_candidate_objects(doc)
+        scope_txt = "seleccion" if from_selection else "documento completo"
+    else:
+        candidates = [obj for obj in (doc.Objects or []) if not _is_group(obj)]
+        scope_txt = "documento completo"
+
+    luminarias, unwrapped_generated, skipped_generated = _collect_source_luminarias(candidates)
+    if not luminarias:
+        if g_lum_src is not None:
+            _warn("No se detectaron luminarias en el grupo seleccionado.")
+        elif from_selection:
+            _warn("No se detectaron luminarias en la seleccion.")
+        else:
+            _warn("No se detectaron luminarias en el documento.")
+        return
+    if unwrapped_generated:
+        _log(f"Seleccion contiene links indice previos. Se resolvieron a fuente: {unwrapped_generated}")
+    if skipped_generated:
+        _warn(f"Links indice generados omitidos por no resolver fuente: {skipped_generated}")
+
+    circuit_name, circuit_source = _resolve_circuit_label(doc, luminarias, manual_label=circuit_label)
+
+    areas_group = None
+    if _is_valid_id(areas_group_name):
+        areas_group = doc.getObject(_safe_text(areas_group_name).strip())
+        if areas_group is None or not _is_group(areas_group):
+            _warn(f"Grupo Areas no valido: '{areas_group_name}'. Se usa auto-deteccion.")
+            areas_group = None
+    if areas_group is None:
+        areas_group = _find_areas_group(doc)
+    area_records = _build_area_records(areas_group)
+    if areas_group is None:
+        _warn("No se encontro grupo Areas/Áreas. Se aplicara fallback por propiedades.")
+    else:
+        _log(
+            f"Grupo Areas detectado: {getattr(areas_group, 'Label', getattr(areas_group, 'Name', '?'))} | "
+            f"rectangulos_validos={len(area_records)}"
+        )
+        if not area_records:
+            _warn("El grupo Areas no tiene rectangulos validos con Length/Height.")
+
+    g_root = _ensure_root_group(doc)
+    g_lum = _find_child_group_by_alias(g_root, ILUM_LABEL_ALIASES)
+    if g_lum is None:
+        g_lum = _ensure_child_group(doc, g_root, ILUM_LABEL, "ILUMINACION")
+
+    g_circ = _find_child_group_by_alias(g_lum, [circuit_name])
+    if g_circ is None:
+        # Backward compatibility: if old generic node exists, reuse it.
+        g_circ = _find_child_group_by_alias(g_lum, CIRCUITOS_ILUM_ALIASES)
+    if g_circ is None:
+        g_circ = _ensure_child_group(doc, g_lum, circuit_name, "Circuito")
+    elif _normalize(getattr(g_circ, "Label", "")) in CIRCUITOS_ILUM_ALIASES and _is_valid_id(circuit_name):
+        try:
+            g_circ.Label = circuit_name
+        except Exception:
+            pass
+
+    g_areas = _find_child_group_by_alias(g_circ, RECINTOS_LABEL_ALIASES)
+    if g_areas is None:
+        g_areas = _ensure_child_group(doc, g_circ, RECINTOS_LABEL, "RECINTOS")
+
+    removed_links = 0
+    indexed = 0
+    moved = 0
+    skipped = 0
+    renamed = 0
+    detached_prev = 0
+    area_fallback = 0
+    switch_fallback = 0
+    buckets = {}
+    name_counters = {}
+    used_labels = set(_safe_text(getattr(o, "Label", "")) for o in (doc.Objects or []))
+
+    doc.openTransaction("ElectricCR: Organizar luminarias por areas")
+    try:
+        if index_with_links:
+            removed_links = _cleanup_generated_index_links(doc, g_lum)
+
+        for obj in luminarias:
+            area_name, area_source = _resolve_area(doc, obj, area_records)
+            switch_name, switch_source = _resolve_switch(doc, obj, area_name)
+
+            if _normalize(area_name) == _normalize(FALLBACK_AREA):
+                area_fallback += 1
+            if _normalize(switch_name) == _normalize(FALLBACK_SWITCH):
+                switch_fallback += 1
+
+            g_area = _ensure_child_group(doc, g_areas, area_name, "Lum_Area")
+            g_switch = _ensure_child_group(doc, g_area, switch_name, "Lum_Apagador")
+
+            target_obj = None
+            try:
+                if index_with_links:
+                    target_obj = _create_index_link(doc, obj, g_switch, area_name, switch_name, area_source, switch_source)
+                    indexed += 1
+                else:
+                    already = obj in (getattr(g_switch, "Group", []) or [])
+                    if already:
+                        skipped += 1
+                        target_obj = obj
+                    else:
+                        detached_prev += _remove_obj_from_group_tree(g_areas, obj)
+                        g_switch.addObject(obj)
+                        moved += 1
+                        target_obj = obj
+            except Exception as ex:
+                _warn(f"No se pudo organizar '{getattr(obj, 'Label', obj.Name)}': {ex}")
+                continue
+
+            key = f"{g_area.Label}/{g_switch.Label}"
+            buckets[key] = buckets.get(key, 0) + 1
+
+            if rename_items and target_obj is not None:
+                local_idx = name_counters.get(key, 0) + 1
+                name_counters[key] = local_idx
+                if _rename_target(target_obj, g_area.Label, g_switch.Label, local_idx, used_labels, rename_prefix):
+                    renamed += 1
+
+        try:
+            doc.recompute()
+        except Exception as ex:
+            _warn(f"Recompute con advertencia: {ex}")
+        doc.commitTransaction()
+    except Exception as ex:
+        try:
+            doc.abortTransaction()
+        except Exception:
+            pass
+        _err(f"Operacion cancelada: {ex}")
+        return
+
+    mode_txt = "indice_links" if index_with_links else "mover_objetos"
+    _log(
+        "Proceso finalizado. "
+        f"Luminarias detectadas={len(luminarias)} | modo={mode_txt} | indexadas={indexed} | movidas={moved} | "
+        f"ya_organizadas={skipped} | renombradas={renamed} | desancladas_previas={detached_prev} | "
+        f"links_previos_eliminados={removed_links} | circuito='{circuit_name}' ({circuit_source}) | "
+        f"sin_area={area_fallback} | sin_apagador={switch_fallback} | "
+        f"alcance={scope_txt}"
+    )
+    if buckets:
+        for key in sorted(buckets.keys()):
+            _log(f"  - {key}: {buckets[key]}")
+
+
+class OrganizarLuminariasForm(QtWidgets.QWidget):
+    def __init__(self, doc, parent=None):
+        super(OrganizarLuminariasForm, self).__init__(parent)
+        self._doc = doc
+        self.setWindowTitle("Organizar luminarias por Areas")
+        self.setMinimumWidth(700)
+        self._build_ui()
+        self.refresh_lists()
+
+    def _build_ui(self):
+        self.cmb_lums = QtWidgets.QComboBox()
+        self.cmb_areas = QtWidgets.QComboBox()
+        self.le_circuit = QtWidgets.QLineEdit(DEFAULT_CIRCUIT_LABEL)
+        self.le_circuit.setPlaceholderText("Ej: Circuito 1 o TP-01 (vacio = auto)")
+        self.cmb_mode = QtWidgets.QComboBox()
+        self.cmb_mode.addItem("Reacomodar objetos", "move")
+        self.cmb_mode.addItem("Indice con App::Link", "links")
+
+        self.chk_rename = QtWidgets.QCheckBox("Renombrar por area/apagador")
+        self.chk_rename.setChecked(True)
+        self.le_prefix = QtWidgets.QLineEdit(DEFAULT_RENAME_PREFIX)
+
+        self.btn_refresh = QtWidgets.QPushButton("Actualizar listas")
+        self.btn_run = QtWidgets.QPushButton("Ejecutar")
+        self.btn_refresh.clicked.connect(self.refresh_lists)
+        self.btn_run.clicked.connect(self.run_exec)
+
+        form = QtWidgets.QFormLayout()
+        form.addRow("Fuente luminarias:", self.cmb_lums)
+        form.addRow("Grupo Areas:", self.cmb_areas)
+        form.addRow("Circuito/Tablero:", self.le_circuit)
+        form.addRow("Modo:", self.cmb_mode)
+        form.addRow("", self.chk_rename)
+        form.addRow("Prefijo nombre:", self.le_prefix)
+
+        row = QtWidgets.QHBoxLayout()
+        row.addWidget(self.btn_refresh)
+        row.addStretch(1)
+        row.addWidget(self.btn_run)
+
+        root = QtWidgets.QVBoxLayout(self)
+        root.addLayout(form)
+        root.addLayout(row)
+
+    def refresh_lists(self):
+        self.cmb_lums.clear()
+        self.cmb_lums.addItem("Seleccion actual (si hay)", "__SELECTION__")
+        self.cmb_lums.addItem("Documento completo", "__DOC__")
+        for grp, cnt in _list_luminaria_groups(self._doc):
+            txt = f"{getattr(grp, 'Label', grp.Name)} ({grp.Name}) [{cnt}]"
+            self.cmb_lums.addItem(txt, grp.Name)
+
+        self.cmb_areas.clear()
+        self.cmb_areas.addItem("Auto detectar", "__AUTO__")
+        for grp, cnt in _list_area_groups(self._doc):
+            txt = f"{getattr(grp, 'Label', grp.Name)} ({grp.Name}) [{cnt} rect]"
+            self.cmb_areas.addItem(txt, grp.Name)
+
+        _log("Listas del formulario actualizadas.")
+
+    def run_exec(self):
+        lsrc = _safe_text(self.cmb_lums.currentData()).strip()
+        asrc = _safe_text(self.cmb_areas.currentData()).strip()
+        circuit_label = _safe_text(self.le_circuit.text()).strip()
+        mode = _safe_text(self.cmb_mode.currentData()).strip()
+        rename_items = bool(self.chk_rename.isChecked())
+        prefix = _safe_text(self.le_prefix.text()).strip() or DEFAULT_RENAME_PREFIX
+
+        if lsrc == "__SELECTION__":
+            lum_group = ""
+            use_sel = True
+        elif lsrc == "__DOC__":
+            lum_group = ""
+            use_sel = False
+        else:
+            lum_group = lsrc
+            use_sel = False
+
+        if asrc == "__AUTO__":
+            area_group = ""
+        else:
+            area_group = asrc
+
+        organizar_luminarias_por_circuito_y_apagador(
+            luminarias_group_name=lum_group,
+            areas_group_name=area_group,
+            circuit_label=circuit_label,
+            index_with_links=(mode == "links"),
+            rename_items=rename_items,
+            rename_prefix=prefix,
+            use_selection_scope=use_sel,
+        )
+
+
+class OrganizarLuminariasTaskPanel:
+    def __init__(self, doc):
+        self.form = OrganizarLuminariasForm(doc, parent=None)
+
+    def getStandardButtons(self):
+        try:
+            return int(QtWidgets.QDialogButtonBox.Close)
+        except Exception:
+            return 0
+
+    def accept(self):
+        self._close_panel()
+        return True
+
+    def reject(self):
+        self._close_panel()
+        return True
+
+    def _close_panel(self):
+        try:
+            Gui.Control.closeDialog()
+            return
+        except Exception:
+            pass
+        try:
+            self.form.window().close()
+        except Exception:
+            pass
+
+
+def run():
+    doc = App.ActiveDocument
+    if doc is None:
+        _err("No hay documento activo.")
+        return
+    if not getattr(App, "GuiUp", False):
+        organizar_luminarias_por_circuito_y_apagador()
+        return
+
+    panel = OrganizarLuminariasTaskPanel(doc)
+    try:
+        Gui.Control.closeDialog()
+    except Exception:
+        pass
+    try:
+        Gui.Control.showDialog(panel)
+        return
+    except Exception:
+        pass
+
+    dlg = QtWidgets.QDialog(Gui.getMainWindow())
+    dlg.setWindowTitle("Organizar luminarias por Areas")
+    dlg.setMinimumWidth(760)
+    lay = QtWidgets.QVBoxLayout(dlg)
+    lay.addWidget(panel.form)
+    btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Close)
+    btns.rejected.connect(dlg.reject)
+    btns.accepted.connect(dlg.accept)
+    lay.addWidget(btns)
+    dlg.exec_()
+
+
+if __name__ == "__main__":
+    run()

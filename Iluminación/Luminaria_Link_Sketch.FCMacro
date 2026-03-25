@@ -1,0 +1,829 @@
+# -*- coding: utf-8 -*-
+# MenuText: Luminaria Link Sketch
+# ToolTip: Insertar App::Link de luminarias desde puntos de Sketch
+# Icon: ColocarLuminarias.svg
+# Transaction: self
+
+"""
+Luminaria_Link_Sketch.FCMacro
+
+Insert App::Link instances using points from a Sketch (or group of Sketches).
+Two engines:
+1) base: link to an existing base object in the document
+2) registry: build/reuse a master from ElectricCR registry, then link to it
+"""
+
+from pathlib import Path
+import json
+
+import FreeCAD as App
+import FreeCADGui as Gui
+
+try:
+    from PySide2 import QtWidgets
+except Exception:
+    from PySide import QtGui as QtWidgets
+
+
+REG_PATH = Path(
+    r"C:\Users\marco\OneDrive - Caja Costarricense de Seguro Social\Documentos\FreeCAD\Macros\Macros-de-Freecad\Resources\registry\registry_electric.json"
+)
+
+ROOT_GROUP_NAME = "electrico"
+ROOT_GROUP_LABEL = "electrico"
+ILUM_GROUP_NAME = "Iluminacion"
+ILUM_GROUP_LABEL = "Iluminacion"
+
+
+def _ts():
+    from datetime import datetime
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def log_i(msg):
+    App.Console.PrintMessage("[{}][LNKSK][INFO] {}\n".format(_ts(), msg))
+
+
+def log_w(msg):
+    App.Console.PrintWarning("[{}][LNKSK][WARN] {}\n".format(_ts(), msg))
+
+
+def log_e(msg):
+    App.Console.PrintError("[{}][LNKSK][ERROR] {}\n".format(_ts(), msg))
+
+
+def is_group(obj):
+    if obj is None:
+        return False
+    tid = str(getattr(obj, "TypeId", "") or "")
+    if tid.startswith("App::DocumentObjectGroup"):
+        return True
+    return hasattr(obj, "addObject") and hasattr(obj, "Group")
+
+
+def sanitize_name(text, fallback):
+    raw = str(text or "").strip()
+    chars = []
+    for ch in raw:
+        chars.append(ch if (ch.isalnum() or ch == "_") else "_")
+    out = "".join(chars).strip("_")
+    if not out:
+        out = fallback
+    if out[0].isdigit():
+        out = "{}_{}".format(fallback, out)
+    return out
+
+
+def unique_name(doc, base):
+    token = sanitize_name(base, "Obj")
+    cand = token
+    idx = 1
+    while doc.getObject(cand) is not None:
+        cand = "{}_{:03d}".format(token, idx)
+        idx += 1
+    return cand
+
+
+def unique_value(base, used):
+    cand = str(base or "").strip() or "Obj"
+    out = cand
+    idx = 1
+    while out in used:
+        out = "{}_{:03d}".format(cand, idx)
+        idx += 1
+    used.add(out)
+    return out
+
+
+def ensure_root_group(doc):
+    grp = doc.getObject(ROOT_GROUP_NAME)
+    if is_group(grp):
+        if getattr(grp, "Label", "") != ROOT_GROUP_LABEL:
+            grp.Label = ROOT_GROUP_LABEL
+        return grp
+    for obj in doc.Objects:
+        if is_group(obj) and getattr(obj, "Label", "") == ROOT_GROUP_LABEL:
+            return obj
+    grp = doc.addObject("App::DocumentObjectGroup", ROOT_GROUP_NAME)
+    grp.Label = ROOT_GROUP_LABEL
+    return grp
+
+
+def find_child_group(parent, label=None, name=None):
+    for ch in getattr(parent, "Group", []) or []:
+        if not is_group(ch):
+            continue
+        if label is not None and getattr(ch, "Label", "") == label:
+            return ch
+        if name is not None and getattr(ch, "Name", "") == name:
+            return ch
+    return None
+
+
+def ensure_child_group(doc, parent, label, pref_name):
+    g = find_child_group(parent, label=label)
+    if g is not None:
+        return g
+    g = find_child_group(parent, name=pref_name)
+    if g is not None:
+        if getattr(g, "Label", "") != label:
+            g.Label = label
+        return g
+    name = unique_name(doc, pref_name)
+    g = doc.addObject("App::DocumentObjectGroup", name)
+    g.Label = label
+    parent.addObject(g)
+    return g
+
+
+def ensure_output_group(doc, label):
+    root = ensure_root_group(doc)
+    ilum = ensure_child_group(doc, root, ILUM_GROUP_LABEL, ILUM_GROUP_NAME)
+    target = str(label or "").strip() or "Luminarias_Link_Sketch"
+    g = find_child_group(ilum, label=target)
+    if g is not None:
+        return g
+    name = unique_name(doc, sanitize_name(target, "Luminarias_Link_Sketch"))
+    g = doc.addObject("App::DocumentObjectGroup", name)
+    g.Label = target
+    ilum.addObject(g)
+    return g
+
+
+def ensure_link_library_group(doc):
+    root = ensure_root_group(doc)
+    glib = doc.getObject("_lib")
+    if glib is None:
+        glib = doc.addObject("App::DocumentObjectGroup", "_lib")
+        glib.Label = "_lib"
+    if glib not in (getattr(root, "Group", []) or []):
+        try:
+            root.addObject(glib)
+        except Exception:
+            pass
+
+    target_label = "Luminarias_Link_Masters"
+    for child in getattr(glib, "Group", []) or []:
+        if is_group(child) and getattr(child, "Label", "") == target_label:
+            return child
+    name = unique_name(doc, "Luminarias_Link_Masters")
+    grp = doc.addObject("App::DocumentObjectGroup", name)
+    grp.Label = target_label
+    glib.addObject(grp)
+    return grp
+
+
+def ensure_prop(obj, ptype, pname, pgroup, pdoc):
+    if hasattr(obj, pname):
+        return
+    try:
+        obj.addProperty(ptype, pname, pgroup, pdoc)
+    except Exception:
+        pass
+
+
+def float_near(a, b, eps=1e-6):
+    try:
+        return abs(float(a) - float(b)) <= float(eps)
+    except Exception:
+        return False
+
+
+def load_registry():
+    try:
+        data = json.loads(REG_PATH.read_text(encoding="utf-8-sig"))
+        if isinstance(data, dict) and "types" in data:
+            return data
+    except Exception as ex:
+        log_w("No se pudo leer registro: {}".format(ex))
+    return {"schema": "1.0.0", "types": {}}
+
+
+def type_keys_sorted_for_ui(reg):
+    keys = list((reg.get("types") or {}).keys())
+    keys.sort(key=lambda k: (0 if "lumin" in str(k).lower() else 1, str(k).lower()))
+    return keys
+
+
+def mode_from_registry_defaults(reg, key):
+    info = ((reg.get("types") or {}).get(key) or {}) if isinstance(reg, dict) else {}
+    defaults = info.get("defaults", {}) or {}
+    raw = str(defaults.get("modo", "Both") or "Both")
+    mode_map = {
+        "Both": "Ambos",
+        "Ambos": "Ambos",
+        "Solo2D": "Solo2D",
+        "Solo 2D": "Solo2D",
+        "Solo3D": "Solo3D",
+        "Solo 3D": "Solo3D",
+    }
+    return mode_map.get(raw, "Ambos")
+
+
+def altura_from_registry_defaults(reg, key):
+    info = ((reg.get("types") or {}).get(key) or {}) if isinstance(reg, dict) else {}
+    defaults = info.get("defaults", {}) or {}
+    try:
+        return float(defaults.get("altura", 300.0))
+    except Exception:
+        return 300.0
+
+
+def ensure_electriccr_on_path():
+    import importlib
+    import sys
+    for name in ("ElectricCR", "electriccr"):
+        try:
+            importlib.import_module(name)
+            return True
+        except Exception:
+            pass
+    try:
+        here = Path(__file__).resolve()
+        cands = []
+        for parent in [here.parent] + list(here.parents):
+            cand = parent / "ElectricCR"
+            if cand.is_dir():
+                cands.append(str(cand.parent))
+                cands.append(str(cand))
+        try:
+            base = Path(App.getUserAppDataDir())
+        except Exception:
+            base = Path.home() / "AppData" / "Roaming" / "FreeCAD"
+        for nm in ("Macro", "Macros"):
+            cand = base / nm / "ElectricCR"
+            if cand.is_dir():
+                cands.append(str(cand.parent))
+                cands.append(str(cand))
+        for p in cands:
+            if p and p not in sys.path:
+                sys.path.insert(0, p)
+        importlib.invalidate_caches()
+        for name in ("ElectricCR", "electriccr"):
+            try:
+                importlib.import_module(name)
+                return True
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return False
+
+
+def get_crear_toma_uno():
+    if not ensure_electriccr_on_path():
+        return None
+    import importlib
+    for mod_name in (
+        "ElectricCR.electriccr.features.objeto_toma_uno",
+        "electriccr.features.objeto_toma_uno",
+    ):
+        try:
+            mod = importlib.import_module(mod_name)
+            fn = getattr(mod, "crear_toma_uno", None)
+            if callable(fn):
+                return fn
+        except Exception:
+            pass
+    return None
+
+
+def find_existing_master(doc, key_registro, altura_rel, modo_visual):
+    for obj in doc.Objects:
+        if str(getattr(obj, "TypeId", "") or "") == "App::Link":
+            continue
+        if str(getattr(obj, "LnkMasterKey", "") or "") != str(key_registro):
+            continue
+        if str(getattr(obj, "LnkMasterMode", "") or "") != str(modo_visual):
+            continue
+        if not float_near(getattr(obj, "LnkMasterAltura", None), altura_rel):
+            continue
+        return obj
+    return None
+
+
+def ensure_link_master(doc, crear_toma_uno, key_registro, altura_rel, modo_visual, reuse=True):
+    if reuse:
+        old = find_existing_master(doc, key_registro, altura_rel, modo_visual)
+        if old is not None:
+            return old
+
+    master = crear_toma_uno(
+        doc,
+        name_prefix="MasterLink_",
+        key_registro=str(key_registro),
+        tipo_logico="Luminaria",
+    )
+    if master is None:
+        return None
+
+    try:
+        master.AlturaRel = float(altura_rel)
+    except Exception:
+        pass
+    try:
+        master.ModoVisual = str(modo_visual)
+    except Exception:
+        pass
+    try:
+        master.OrientacionPared = "Vertical"
+    except Exception:
+        pass
+    try:
+        master.Placement = App.Placement(App.Vector(0, 0, 0), App.Rotation())
+    except Exception:
+        pass
+
+    ensure_prop(master, "App::PropertyString", "LnkMasterKey", "Link", "Key de registro del master link")
+    ensure_prop(master, "App::PropertyFloat", "LnkMasterAltura", "Link", "Altura del master link")
+    ensure_prop(master, "App::PropertyString", "LnkMasterMode", "Link", "Modo visual del master link")
+    try:
+        master.LnkMasterKey = str(key_registro)
+        master.LnkMasterAltura = float(altura_rel)
+        master.LnkMasterMode = str(modo_visual)
+    except Exception:
+        pass
+
+    try:
+        master.Label = "Master Link {} {}mm {}".format(
+            str(key_registro), int(round(float(altura_rel))), str(modo_visual)
+        )
+    except Exception:
+        pass
+
+    glib = ensure_link_library_group(doc)
+    if master not in (getattr(glib, "Group", []) or []):
+        try:
+            glib.addObject(master)
+        except Exception:
+            pass
+
+    try:
+        vo = getattr(master, "ViewObject", None)
+        if vo is not None:
+            vo.Visibility = False
+            if hasattr(vo, "Selectable"):
+                vo.Selectable = False
+            if hasattr(vo, "Pickable"):
+                vo.Pickable = False
+    except Exception:
+        pass
+    return master
+
+
+def canonical_link_base(obj):
+    if obj is None:
+        return None
+    best_any = obj
+    best_part = None
+    visited = set()
+    stack = [(obj, 0)]
+    while stack:
+        cur, depth = stack.pop()
+        name = str(getattr(cur, "Name", "") or "")
+        if name and name in visited:
+            continue
+        if name:
+            visited.add(name)
+        tid = str(getattr(cur, "TypeId", "") or "")
+        if depth > 0:
+            if tid.startswith("App::Part"):
+                best_part = cur
+            elif best_part is None:
+                best_any = cur
+        for parent in getattr(cur, "InList", []) or []:
+            stack.append((parent, depth + 1))
+    return best_part if best_part is not None else best_any
+
+
+def list_base_candidates(doc):
+    out = []
+    for obj in doc.Objects:
+        tid = str(getattr(obj, "TypeId", "") or "")
+        if tid.startswith("App::DocumentObjectGroup"):
+            continue
+        if tid == "App::Link":
+            continue
+        if tid.startswith("Sketcher::"):
+            continue
+        if tid.startswith("App::Origin"):
+            continue
+        out.append(obj)
+    out.sort(key=lambda o: ("{}".format(getattr(o, "Label", "")).lower(), "{}".format(getattr(o, "Name", "")).lower()))
+    return out
+
+
+def _vector_from_geom(geom):
+    if geom is None:
+        return None
+    p = getattr(geom, "Point", None)
+    if p is not None:
+        return App.Vector(float(p.x), float(p.y), float(p.z))
+    return None
+
+
+def points_from_sketch(sk):
+    out = []
+    pl = getattr(sk, "Placement", None)
+    for geom in (getattr(sk, "Geometry", []) or []):
+        v = _vector_from_geom(geom)
+        if v is None:
+            continue
+        w = v
+        if pl is not None:
+            try:
+                w = pl.multVec(v)
+            except Exception:
+                base = getattr(pl, "Base", None)
+                if base is not None:
+                    w = App.Vector(float(v.x) + float(base.x), float(v.y) + float(base.y), float(v.z) + float(base.z))
+        out.append(w)
+
+    # Fallback if geometry points are empty.
+    if not out:
+        sh = getattr(sk, "Shape", None)
+        if sh is not None:
+            for vx in getattr(sh, "Vertexes", []) or []:
+                p = getattr(vx, "Point", None)
+                if p is not None:
+                    out.append(App.Vector(float(p.x), float(p.y), float(p.z)))
+
+    # Deduplicate by rounded key.
+    uniq = []
+    seen = set()
+    for v in out:
+        key = (round(float(v.x), 6), round(float(v.y), 6), round(float(v.z), 6))
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append(v)
+    return uniq
+
+
+def iter_sketches_in_group(group_obj):
+    out = []
+    visited = set()
+    stack = [group_obj]
+    while stack:
+        cur = stack.pop()
+        if cur is None:
+            continue
+        name = str(getattr(cur, "Name", "") or "")
+        if name and name in visited:
+            continue
+        if name:
+            visited.add(name)
+        for ch in getattr(cur, "Group", []) or []:
+            tid = str(getattr(ch, "TypeId", "") or "")
+            if tid == "Sketcher::SketchObject":
+                out.append(ch)
+            elif is_group(ch):
+                stack.append(ch)
+    return out
+
+
+def list_sketch_sources(doc):
+    out = []
+    for obj in doc.Objects:
+        tid = str(getattr(obj, "TypeId", "") or "")
+        if tid == "Sketcher::SketchObject":
+            label = getattr(obj, "Label", "") or getattr(obj, "Name", "")
+            out.append(("Sketch: {} ({})".format(label, obj.Name), obj.Name, "sketch"))
+    for obj in doc.Objects:
+        if not is_group(obj):
+            continue
+        sketches = iter_sketches_in_group(obj)
+        if not sketches:
+            continue
+        label = getattr(obj, "Label", "") or getattr(obj, "Name", "")
+        out.append(("Grupo: {} ({}) [{} sketch(es)]".format(label, obj.Name, len(sketches)), obj.Name, "group"))
+    out.sort(key=lambda t: t[0].lower())
+    return out
+
+
+def resolve_source_points(doc, source_name):
+    src = doc.getObject(str(source_name or "").strip())
+    if src is None:
+        return [], []
+    tid = str(getattr(src, "TypeId", "") or "")
+    sketches = []
+    if tid == "Sketcher::SketchObject":
+        sketches = [src]
+    elif is_group(src):
+        sketches = iter_sketches_in_group(src)
+    if not sketches:
+        return [], []
+    points = []
+    for sk in sketches:
+        points.extend(points_from_sketch(sk))
+    return sketches, points
+
+
+def insert_link_at(doc, master, point, prefix, idx, out_group, used_labels):
+    oname = unique_name(doc, "{}{:03d}".format(sanitize_name(prefix, "Luminaria_"), idx))
+    link = doc.addObject("App::Link", oname)
+    if hasattr(link, "LinkedObject"):
+        link.LinkedObject = master
+    else:
+        link.Link = master
+    try:
+        if hasattr(link, "LinkTransform"):
+            link.LinkTransform = True
+    except Exception:
+        pass
+    link.Placement = App.Placement(
+        App.Vector(float(point.x), float(point.y), float(point.z)),
+        App.Rotation(),
+    )
+    seed = "{}{:03d}".format(prefix, idx)
+    try:
+        link.Label = unique_value(seed, used_labels)
+    except Exception:
+        pass
+    try:
+        vo = getattr(link, "ViewObject", None)
+        if vo is not None:
+            if hasattr(vo, "Selectable"):
+                vo.Selectable = True
+            if hasattr(vo, "Pickable"):
+                vo.Pickable = True
+    except Exception:
+        pass
+    if out_group is not None:
+        try:
+            out_group.addObject(link)
+        except Exception:
+            pass
+    return link
+
+
+def unlock_links_for_pick(doc):
+    if doc is None:
+        return 0
+    cnt = 0
+    for obj in doc.Objects:
+        if str(getattr(obj, "TypeId", "") or "") != "App::Link":
+            continue
+        try:
+            vo = getattr(obj, "ViewObject", None)
+            if vo is not None:
+                if hasattr(vo, "Selectable"):
+                    vo.Selectable = True
+                if hasattr(vo, "Pickable"):
+                    vo.Pickable = True
+                cnt += 1
+        except Exception:
+            pass
+    return cnt
+
+
+class LuminariaLinkSketchForm(QtWidgets.QWidget):
+    def __init__(self, doc, parent=None):
+        super(LuminariaLinkSketchForm, self).__init__(parent)
+        self.doc = doc
+        self.reg = load_registry()
+        self.setWindowTitle("Luminaria Link Sketch")
+        self.setMinimumWidth(660)
+        self._build_ui()
+        self.refresh_lists()
+
+    def _build_ui(self):
+        self.cmb_source = QtWidgets.QComboBox()
+        self.cmb_mode = QtWidgets.QComboBox()
+        self.cmb_mode.addItem("Base object", "base")
+        self.cmb_mode.addItem("Registry master", "registry")
+        self.cmb_mode.currentIndexChanged.connect(self._toggle_mode_ui)
+
+        self.cmb_base = QtWidgets.QComboBox()
+        self.cmb_type = QtWidgets.QComboBox()
+        self.cmb_type.addItems(type_keys_sorted_for_ui(self.reg))
+        self.cmb_type.currentIndexChanged.connect(self._apply_registry_defaults)
+
+        self.sp_altura = QtWidgets.QDoubleSpinBox()
+        self.sp_altura.setRange(0.0, 10000.0)
+        self.sp_altura.setDecimals(1)
+        self.sp_altura.setSuffix(" mm")
+        self.sp_altura.setValue(300.0)
+
+        self.cmb_modo = QtWidgets.QComboBox()
+        self.cmb_modo.addItems(["Ambos", "Solo2D", "Solo3D"])
+
+        self.chk_reuse_master = QtWidgets.QCheckBox("Reusar master existente")
+        self.chk_reuse_master.setChecked(True)
+
+        self.le_prefix = QtWidgets.QLineEdit("Luminaria_")
+        self.le_group = QtWidgets.QLineEdit("Luminarias_Link_Sketch")
+
+        self.btn_refresh = QtWidgets.QPushButton("Actualizar listas")
+        self.btn_refresh.clicked.connect(self.refresh_lists)
+        self.btn_run = QtWidgets.QPushButton("Insertar links")
+        self.btn_run.clicked.connect(self.run_insert)
+
+        form = QtWidgets.QFormLayout()
+        form.addRow("Sketch origen:", self.cmb_source)
+        form.addRow("Motor insercion:", self.cmb_mode)
+        form.addRow("Base object:", self.cmb_base)
+        form.addRow("Tipo registro:", self.cmb_type)
+        form.addRow("Altura:", self.sp_altura)
+        form.addRow("Modo visual:", self.cmb_modo)
+        form.addRow("", self.chk_reuse_master)
+        form.addRow("Prefijo label:", self.le_prefix)
+        form.addRow("Grupo salida:", self.le_group)
+
+        row = QtWidgets.QHBoxLayout()
+        row.addWidget(self.btn_refresh)
+        row.addStretch(1)
+        row.addWidget(self.btn_run)
+
+        root = QtWidgets.QVBoxLayout(self)
+        root.addLayout(form)
+        root.addLayout(row)
+        self._toggle_mode_ui()
+        self._apply_registry_defaults()
+
+    def _toggle_mode_ui(self):
+        mode = str(self.cmb_mode.currentData() or "base")
+        is_registry = (mode == "registry")
+        self.cmb_base.setEnabled(not is_registry)
+        self.cmb_type.setEnabled(is_registry)
+        self.sp_altura.setEnabled(is_registry)
+        self.cmb_modo.setEnabled(is_registry)
+        self.chk_reuse_master.setEnabled(is_registry)
+
+    def _apply_registry_defaults(self):
+        key = str(self.cmb_type.currentText() or "").strip()
+        if not key:
+            return
+        self.sp_altura.setValue(altura_from_registry_defaults(self.reg, key))
+        target = mode_from_registry_defaults(self.reg, key)
+        idx = self.cmb_modo.findText(target)
+        if idx >= 0:
+            self.cmb_modo.setCurrentIndex(idx)
+
+    def refresh_lists(self):
+        self.cmb_source.clear()
+        sources = list_sketch_sources(self.doc)
+        for txt, name, kind in sources:
+            self.cmb_source.addItem(txt, "{}|{}".format(kind, name))
+
+        self.cmb_base.clear()
+        for obj in list_base_candidates(self.doc):
+            txt = "{} ({}) [{}]".format(
+                getattr(obj, "Label", "") or getattr(obj, "Name", ""),
+                getattr(obj, "Name", ""),
+                getattr(obj, "TypeId", ""),
+            )
+            self.cmb_base.addItem(txt, getattr(obj, "Name", ""))
+
+        if self.cmb_source.count() == 0:
+            log_w("No hay Sketch(es) o grupos con Sketch en el documento.")
+        else:
+            log_i("Fuentes Sketch cargadas: {}".format(self.cmb_source.count()))
+
+    def _resolve_source_name(self):
+        token = str(self.cmb_source.currentData() or "").strip()
+        if "|" not in token:
+            return ""
+        return token.split("|", 1)[1].strip()
+
+    def run_insert(self):
+        source_name = self._resolve_source_name()
+        if not source_name:
+            log_e("Seleccione un Sketch origen.")
+            return
+
+        sketches, points = resolve_source_points(self.doc, source_name)
+        if not sketches:
+            log_e("La fuente no contiene Sketch(es) validos.")
+            return
+        if not points:
+            log_e("No se encontraron puntos en los Sketch(es).")
+            return
+
+        mode = str(self.cmb_mode.currentData() or "base")
+        prefix = str(self.le_prefix.text() or "").strip() or "Luminaria_"
+        group_label = str(self.le_group.text() or "").strip() or "Luminarias_Link_Sketch"
+        used_labels = set(getattr(o, "Label", "") for o in self.doc.Objects)
+
+        self.doc.openTransaction("ElectricCR: Luminaria Link Sketch")
+        try:
+            if mode == "registry":
+                key = str(self.cmb_type.currentText() or "").strip()
+                if not key:
+                    raise RuntimeError("Seleccione tipo de registro.")
+                crear_toma_uno = get_crear_toma_uno()
+                if not callable(crear_toma_uno):
+                    raise RuntimeError("crear_toma_uno no disponible.")
+                master = ensure_link_master(
+                    doc=self.doc,
+                    crear_toma_uno=crear_toma_uno,
+                    key_registro=key,
+                    altura_rel=float(self.sp_altura.value()),
+                    modo_visual=str(self.cmb_modo.currentText() or "Ambos"),
+                    reuse=bool(self.chk_reuse_master.isChecked()),
+                )
+                if master is None:
+                    raise RuntimeError("No se pudo crear/resolver master de registro.")
+                log_i("Master registro: {}".format(getattr(master, "Name", "?")))
+            else:
+                base_name = str(self.cmb_base.currentData() or self.cmb_base.currentText() or "").strip()
+                base_obj = self.doc.getObject(base_name) if base_name else None
+                if base_obj is None:
+                    raise RuntimeError("Seleccione base object valida.")
+                master = canonical_link_base(base_obj)
+                if master is None:
+                    raise RuntimeError("No se pudo resolver base para Link.")
+                log_i("Base object: {}".format(getattr(master, "Name", "?")))
+
+            out_group = ensure_output_group(self.doc, group_label)
+            created = 0
+            for idx, p in enumerate(points, start=1):
+                insert_link_at(
+                    doc=self.doc,
+                    master=master,
+                    point=p,
+                    prefix=prefix,
+                    idx=idx,
+                    out_group=out_group,
+                    used_labels=used_labels,
+                )
+                created += 1
+
+            unlocked = unlock_links_for_pick(self.doc)
+            if unlocked:
+                log_i("Links desbloqueados para seleccion: {}".format(unlocked))
+
+            self.doc.recompute()
+            self.doc.commitTransaction()
+            log_i(
+                "Insercion completada. Sketches: {} | Puntos: {} | Creados: {}.".format(
+                    len(sketches), len(points), created
+                )
+            )
+        except Exception as ex:
+            self.doc.abortTransaction()
+            log_e("Insercion cancelada: {}".format(ex))
+
+
+class LuminariaLinkSketchTaskPanel:
+    def __init__(self, doc):
+        self.form = LuminariaLinkSketchForm(doc, parent=None)
+
+    def getStandardButtons(self):
+        try:
+            return int(QtWidgets.QDialogButtonBox.Close)
+        except Exception:
+            return 0
+
+    def accept(self):
+        self._close_panel()
+        return True
+
+    def reject(self):
+        self._close_panel()
+        return True
+
+    def _close_panel(self):
+        try:
+            Gui.Control.closeDialog()
+            return
+        except Exception:
+            pass
+        try:
+            self.form.window().close()
+        except Exception:
+            pass
+
+
+def run():
+    doc = App.ActiveDocument
+    if doc is None:
+        log_e("No hay documento activo.")
+        return
+
+    panel = LuminariaLinkSketchTaskPanel(doc)
+    try:
+        Gui.Control.closeDialog()
+    except Exception:
+        pass
+    try:
+        Gui.Control.showDialog(panel)
+        return
+    except Exception:
+        pass
+
+    dlg = QtWidgets.QDialog(Gui.getMainWindow())
+    dlg.setWindowTitle("Luminaria Link Sketch")
+    dlg.setMinimumWidth(760)
+    lay = QtWidgets.QVBoxLayout(dlg)
+    lay.addWidget(panel.form)
+    btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Close)
+    btns.rejected.connect(dlg.reject)
+    btns.accepted.connect(dlg.accept)
+    lay.addWidget(btns)
+    dlg.exec_()
+
+
+if __name__ == "__main__":
+    run()
+

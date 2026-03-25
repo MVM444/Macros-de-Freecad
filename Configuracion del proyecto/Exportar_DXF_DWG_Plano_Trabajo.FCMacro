@@ -1,0 +1,456 @@
+# -*- coding: utf-8 -*-
+# MenuText: Exportar DXF/DWG (plano de trabajo)
+# Icon: Exportar_DXF_DWG_Plano_Trabajo.svg
+"""
+Macro: Exportar_DXF_DWG_Plano_Trabajo
+Descripcion:
+- Exporta SOLO la seleccion actual.
+- Filtra objetos que esten en el plano de trabajo (Draft Working Plane).
+- Excluye modelos 3D (objetos fuera del plano).
+- Escala mm -> m (factor 0.001) antes de exportar.
+"""
+
+import os
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+
+try:
+    from PySide2 import QtWidgets
+except Exception:
+    try:
+        from PySide import QtGui as QtWidgets
+    except Exception:
+        QtWidgets = None
+
+# ----------------------------
+# Configuracion rapida
+# ----------------------------
+SCALE_FACTOR = 0.001  # mm -> m
+PLANE_TOL_MM = 0.01   # tolerancia en mm para considerar "en el plano"
+FALLBACK_Z0 = True    # si no hay Draft Working Plane, usar plano XY (Z=0)
+
+# ----------------------------
+# Logging
+# ----------------------------
+
+def _log(msg):
+    App.Console.PrintMessage(f"[DXF][INFO] {msg}\n")
+
+
+def _warn(msg):
+    App.Console.PrintWarning(f"[DXF][WARN] {msg}\n")
+
+
+def _err(msg):
+    App.Console.PrintError(f"[DXF][ERROR] {msg}\n")
+
+
+# ----------------------------
+# Plano de trabajo
+# ----------------------------
+
+def _get_workplane():
+    last_err = None
+    # 1) Draft.getWorkingPlane (si existe)
+    try:
+        import Draft
+        if hasattr(Draft, "getWorkingPlane"):
+            return Draft.getWorkingPlane()
+        # Algunas versiones exponen Draft.WorkingPlane (modulo)
+        if hasattr(Draft, "WorkingPlane"):
+            wpmod = Draft.WorkingPlane
+            if hasattr(wpmod, "getWorkingPlane"):
+                return wpmod.getWorkingPlane()
+            if hasattr(wpmod, "plane"):
+                return wpmod.plane
+            if hasattr(wpmod, "workingPlane"):
+                return wpmod.workingPlane
+    except Exception as exc:
+        last_err = exc
+
+    # 2) DraftWorkingPlane (modulo)
+    try:
+        import DraftWorkingPlane as DWP
+        if hasattr(DWP, "getWorkingPlane"):
+            return DWP.getWorkingPlane()
+        if hasattr(DWP, "plane"):
+            return DWP.plane
+        if hasattr(DWP, "workingPlane"):
+            return DWP.workingPlane
+    except Exception as exc:
+        last_err = exc
+
+    # 3) DraftGui (si existe)
+    try:
+        import DraftGui
+        if hasattr(DraftGui, "getWorkingPlane"):
+            return DraftGui.getWorkingPlane()
+        if hasattr(DraftGui, "workingPlane"):
+            return DraftGui.workingPlane
+    except Exception as exc:
+        last_err = exc
+
+    # 4) Snapper (Draft GUI)
+    try:
+        if hasattr(Gui, "Snapper"):
+            snapper = Gui.Snapper
+            if hasattr(snapper, "getWorkingPlane"):
+                return snapper.getWorkingPlane()
+            if hasattr(snapper, "workingPlane"):
+                return snapper.workingPlane
+    except Exception as exc:
+        last_err = exc
+
+    # 5) ActiveView (algunas versiones guardan el WP aqui)
+    try:
+        if Gui.ActiveDocument and hasattr(Gui.ActiveDocument, "ActiveView"):
+            view = Gui.ActiveDocument.ActiveView
+            if hasattr(view, "getActiveObject"):
+                wp = view.getActiveObject("DraftWorkingPlane")
+                if wp:
+                    return wp
+    except Exception as exc:
+        last_err = exc
+
+    return None
+
+
+def _plane_origin_normal(wp):
+    if wp is None:
+        return App.Vector(0, 0, 0), App.Vector(0, 0, 1)
+
+    origin = None
+    for attr in ("origin", "position"):
+        if hasattr(wp, attr):
+            origin = getattr(wp, attr)
+            break
+    if origin is None:
+        origin = App.Vector(0, 0, 0)
+
+    normal = None
+    for attr in ("axis", "normal"):
+        if hasattr(wp, attr):
+            normal = getattr(wp, attr)
+            break
+    if normal is None and hasattr(wp, "getNormal"):
+        try:
+            normal = wp.getNormal()
+        except Exception:
+            normal = None
+
+    if normal is None:
+        normal = App.Vector(0, 0, 1)
+
+    try:
+        if normal.Length == 0:
+            normal = App.Vector(0, 0, 1)
+        else:
+            normal = App.Vector(normal)  # copia
+            normal.normalize()
+    except Exception:
+        normal = App.Vector(0, 0, 1)
+
+    return origin, normal
+
+
+# ----------------------------
+# Seleccion y filtros
+# ----------------------------
+
+def _flatten_selection(objs):
+    out = []
+    seen = set()
+
+    def add(obj):
+        if obj is None:
+            return
+        key = getattr(obj, "Name", None) or id(obj)
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(obj)
+        if hasattr(obj, "Group"):
+            try:
+                for child in obj.Group:
+                    add(child)
+            except Exception:
+                pass
+
+    for o in objs:
+        add(o)
+    return out
+
+
+def _shape_on_plane(shape, origin, normal, tol_mm):
+    if shape is None or shape.isNull():
+        return False
+    try:
+        verts = shape.Vertexes
+    except Exception:
+        return False
+    if not verts:
+        return False
+    try:
+        max_abs = 0.0
+        for v in verts:
+            p = v.Point
+            dist = normal.dot(p.sub(origin))
+            ad = abs(dist)
+            if ad > max_abs:
+                max_abs = ad
+        return max_abs <= tol_mm
+    except Exception:
+        return False
+
+
+def _make_compound(shapes):
+    try:
+        return Part.Compound(shapes)
+    except Exception:
+        try:
+            return Part.makeCompound(shapes)
+        except Exception:
+            return None
+
+
+def _extract_planar_shape(shape, origin, normal, tol_mm):
+    if shape is None or shape.isNull():
+        return None
+
+    # Si todo el shape esta en el plano, devolverlo tal cual
+    if _shape_on_plane(shape, origin, normal, tol_mm):
+        try:
+            return shape.copy()
+        except Exception:
+            return shape
+
+    # Preferir caras (si existen)
+    try:
+        faces = [f for f in shape.Faces if _shape_on_plane(f, origin, normal, tol_mm)]
+    except Exception:
+        faces = []
+    if faces:
+        return _make_compound(faces)
+
+    # Luego wires
+    try:
+        wires = [w for w in shape.Wires if _shape_on_plane(w, origin, normal, tol_mm)]
+    except Exception:
+        wires = []
+    if wires:
+        return _make_compound(wires)
+
+    # Finalmente edges
+    try:
+        edges = [e for e in shape.Edges if _shape_on_plane(e, origin, normal, tol_mm)]
+    except Exception:
+        edges = []
+    if edges:
+        return _make_compound(edges)
+
+    return None
+
+
+# ----------------------------
+# Escala y export
+# ----------------------------
+
+def _scale_shape(shape, factor):
+    try:
+        s = shape.copy()
+    except Exception:
+        s = shape
+    try:
+        s.scale(factor)
+        return s
+    except Exception:
+        try:
+            m = App.Matrix()
+            m.scale(factor, factor, factor)
+            return s.transformGeometry(m)
+        except Exception:
+            return None
+
+
+def _pick_output_path(doc):
+    if QtWidgets is None:
+        _err("Qt no disponible para dialogo de guardado.")
+        return None
+
+    base_dir = ""
+    try:
+        if doc and doc.FileName:
+            base_dir = os.path.dirname(doc.FileName)
+    except Exception:
+        base_dir = ""
+    if not base_dir:
+        try:
+            base_dir = App.getUserHomePath()
+        except Exception:
+            base_dir = ""
+
+    filters = "DXF (*.dxf);;DWG (*.dwg)"
+    path, selected = QtWidgets.QFileDialog.getSaveFileName(
+        None,
+        "Exportar DXF/DWG",
+        base_dir,
+        filters,
+    )
+    if not path:
+        return None
+
+    root, ext = os.path.splitext(path)
+    if not ext:
+        if "DWG" in (selected or ""):
+            ext = ".dwg"
+        else:
+            ext = ".dxf"
+        path = root + ext
+    return path
+
+
+def _try_importgui_export(objs, filepath):
+    try:
+        import ImportGui
+    except Exception as exc:
+        _err(f"No se pudo cargar ImportGui (exportador): {exc}")
+        return False
+    try:
+        ImportGui.export(objs, filepath)
+        return True
+    except Exception as exc:
+        _err(f"ImportGui.export fallo: {exc}")
+        return False
+
+
+def _try_dxf_export(objs, filepath):
+    try:
+        import importDXF
+    except Exception as exc:
+        _err(f"No se pudo cargar importDXF: {exc}")
+        return False
+    try:
+        importDXF.export(objs, filepath)
+        return True
+    except Exception as exc:
+        _err(f"importDXF.export fallo: {exc}")
+        return False
+
+
+def _export_shapes_scaled(shapes, filepath, scale_factor):
+
+    temp_doc = None
+    prev_doc = App.ActiveDocument
+
+    try:
+        temp_doc = App.newDocument("Temp_DXF_Export")
+        App.setActiveDocument(temp_doc.Name)
+
+        temp_objs = []
+        for i, shape in enumerate(shapes, start=1):
+            if shape is None or shape.isNull():
+                continue
+            scaled = _scale_shape(shape, scale_factor)
+            if scaled is None or scaled.isNull():
+                continue
+            tmp = temp_doc.addObject("Part::Feature", f"Tmp_{i}")
+            tmp.Shape = scaled
+            temp_objs.append(tmp)
+
+        if not temp_objs:
+            _warn("No hay objetos exportables despues de aplicar escala.")
+            return False
+
+        temp_doc.recompute()
+
+        # Intento 1: ImportGui.export
+        _try_importgui_export(temp_objs, filepath)
+
+        # Verificar si se creo el archivo
+        if os.path.exists(filepath):
+            return True
+
+        # Fallback DXF si la extension es .dxf
+        ext = os.path.splitext(filepath)[1].lower()
+        if ext == ".dxf":
+            _warn("ImportGui no genero archivo. Probando exportador DXF alternativo...")
+            _try_dxf_export(temp_objs, filepath)
+
+        return os.path.exists(filepath)
+
+    except Exception as exc:
+        _err(f"Fallo exportando: {exc}")
+        return False
+
+    finally:
+        try:
+            if prev_doc:
+                App.setActiveDocument(prev_doc.Name)
+        except Exception:
+            pass
+        try:
+            if temp_doc:
+                App.closeDocument(temp_doc.Name)
+        except Exception:
+            pass
+
+
+# ----------------------------
+# Main
+# ----------------------------
+
+def exportar_dxf_dwg_plano_trabajo():
+    doc = App.ActiveDocument
+    if doc is None:
+        _err("No hay documento activo.")
+        return
+
+    selection = Gui.Selection.getSelection()
+    if not selection:
+        _warn("No hay seleccion. Seleccione objetos primero.")
+        return
+
+    wp = _get_workplane()
+    if wp is None:
+        if FALLBACK_Z0:
+            _warn("No se encontro Working Plane. Usando plano XY (Z=0).")
+            origin, normal = App.Vector(0, 0, 0), App.Vector(0, 0, 1)
+        else:
+            _err("No se encontro Working Plane (Draft).")
+            return
+    else:
+        origin, normal = _plane_origin_normal(wp)
+    flat = _flatten_selection(selection)
+
+    planar_shapes = []
+    for obj in flat:
+        try:
+            shape = obj.Shape
+        except Exception:
+            continue
+        if shape is None or shape.isNull():
+            continue
+        planar = _extract_planar_shape(shape, origin, normal, PLANE_TOL_MM)
+        if planar is not None and not planar.isNull():
+            planar_shapes.append(planar)
+
+    if not planar_shapes:
+        _warn("Ningun objeto seleccionado tiene geometria en el plano de trabajo.")
+        return
+
+    filepath = _pick_output_path(doc)
+    if not filepath:
+        _warn("Exportacion cancelada.")
+        return
+
+    ok = _export_shapes_scaled(planar_shapes, filepath, SCALE_FACTOR)
+    if ok:
+        _log(f"Exportado: {filepath}")
+    else:
+        _err("No se pudo exportar el archivo.")
+
+
+if __name__ == "__main__":
+    exportar_dxf_dwg_plano_trabajo()
+

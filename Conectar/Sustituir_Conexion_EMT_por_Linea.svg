@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="bgSwap" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f4f7fb"/>
+      <stop offset="100%" stop-color="#dce8f3"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="2" y="2" width="60" height="60" rx="11" fill="url(#bgSwap)" stroke="#8ca2b2" stroke-width="2"/>
+
+  <path d="M9 43h16v-8h16v-8h14" fill="none" stroke="#cf4f4f" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="4 4"/>
+  <path d="M10 52h15c7 0 10-3 10-10v-8h10c6 0 9-3 9-9" fill="none" stroke="#1f6bb0" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <circle cx="10" cy="52" r="2.1" fill="#1f6bb0"/>
+  <circle cx="54" cy="18" r="2.1" fill="#1f6bb0"/>
+
+  <path d="M20 14h18" stroke="#5d6e7b" stroke-width="2.3" stroke-linecap="round"/>
+  <path d="M38 14l-4-3v6z" fill="#5d6e7b"/>
+  <path d="M44 20h-18" stroke="#5d6e7b" stroke-width="2.3" stroke-linecap="round"/>
+  <path d="M26 20l4-3v6z" fill="#5d6e7b"/>
+
+  <path d="M45 40l8 8M53 40l-8 8" stroke="#cf4f4f" stroke-width="2.5" stroke-linecap="round"/>
+</svg>

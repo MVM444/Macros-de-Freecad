@@ -1,0 +1,640 @@
+# -*- coding: utf-8 -*-
+# MenuText: Etiqueta de circuito
+# Icon: Etiquetas.svg
+"""
+Insertar_Etiqueta_Circuito.FCMacro (rev 2026-02-23)
+
+- Selecciona un punto/objeto del circuito y crea un SOLO objeto con:
+  * Simbolo 2D "etiqueta_circuito.step" (flecha + linea)
+  * Texto con el nombre del grupo (circuito)
+- Soporta direccion del rotulo (izquierda/derecha/arriba/abajo)
+- Permite ajustar altura de texto, escala del simbolo y distancia (se guardan)
+"""
+
+import hashlib
+import re
+import sys
+from pathlib import Path
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+
+try:
+    import importlib
+    import conexiones_grouping as _conexiones_grouping_mod
+    _conexiones_grouping_mod = importlib.reload(_conexiones_grouping_mod)
+    ensure_conexiones_group = _conexiones_grouping_mod.ensure_conexiones_group
+except Exception:
+    try:
+        this_dir = Path(__file__).resolve().parent
+        con_dir = this_dir.parent / "Conectar"
+        if str(con_dir) not in sys.path:
+            sys.path.insert(0, str(con_dir))
+        import importlib
+        import conexiones_grouping as _conexiones_grouping_mod
+        _conexiones_grouping_mod = importlib.reload(_conexiones_grouping_mod)
+        ensure_conexiones_group = _conexiones_grouping_mod.ensure_conexiones_group
+    except Exception:
+        ensure_conexiones_group = None
+
+try:
+    from PySide2 import QtWidgets
+except Exception:
+    try:
+        from PySide import QtGui as QtWidgets
+    except Exception:
+        QtWidgets = None
+
+# ----------------------------
+# Configuracion rapida
+# ----------------------------
+# Simbolo (ruta absoluta solicitada + fallback relativo)
+SYMBOL_PATH = r"C:\Users\marco\OneDrive - Caja Costarricense de Seguro Social\Documentos\FreeCAD\Macros\Macros-de-Freecad\Resources\prototypes\2d\etiqueta_circuito.step"
+
+# Texto / simbolo
+ALTURA_TEXTO_MM = 100.0
+FUENTE_TTF = r"C:\Windows\Fonts\arial.ttf"
+DISTANCIA_TEXTO_MM = 120.0  # distancia desde el punto al rotulo
+ESCALA_SIMBOLO = 2.0        # escala del simbolo (1.0 = original)
+LINE_WIDTH = 1.5
+AUTO_DISTANCIA = True       # ajusta distancia segun simbolo + texto
+PREGUNTAR_PARAMETROS = True # True: pedir tamano de texto, escala y distancia
+FORZAR_Z_0 = True          # fuerza Z=0 para simbolo y texto
+Z_PLANO = 0.0
+
+# Lado
+PREGUNTAR_LADO = True       # True: pregunta direccion
+DIRECTION_DEFAULT = "right" # right/left/up/down (si no se pregunta)
+
+SKIP_GROUP_LABELS = {"electrico", "tomacorrientes", "conexiones"}
+
+# ----------------------------
+# Logging
+# ----------------------------
+
+def _log(msg):
+    App.Console.PrintMessage(f"[ETIQUETA][INFO] {msg}\n")
+
+
+def _warn(msg):
+    App.Console.PrintWarning(f"[ETIQUETA][WARN] {msg}\n")
+
+
+def _err(msg):
+    App.Console.PrintError(f"[ETIQUETA][ERROR] {msg}\n")
+
+
+# ----------------------------
+# Parametros persistentes
+# ----------------------------
+
+PARAM_PATH = "User parameter:BaseApp/Preferences/Mod/ElectricCR/EtiquetaCircuito"
+
+
+def _defaults():
+    return {
+        "text_size": float(ALTURA_TEXTO_MM),
+        "scale_symbol": float(ESCALA_SIMBOLO),
+        "distance": float(DISTANCIA_TEXTO_MM),
+        "line_width": float(LINE_WIDTH),
+        "font_path": str(FUENTE_TTF),
+        "auto_distance": bool(AUTO_DISTANCIA),
+    }
+
+
+def _param_group():
+    try:
+        return App.ParamGet(PARAM_PATH)
+    except Exception:
+        return None
+
+
+def _load_params():
+    d = _defaults()
+    p = _param_group()
+    if not p:
+        return d
+    try:
+        d["text_size"] = float(p.GetFloat("text_size", d["text_size"]))
+        d["scale_symbol"] = float(p.GetFloat("scale_symbol", d["scale_symbol"]))
+        d["distance"] = float(p.GetFloat("distance", d["distance"]))
+        d["line_width"] = float(p.GetFloat("line_width", d["line_width"]))
+        d["font_path"] = str(p.GetString("font_path", d["font_path"]))
+        d["auto_distance"] = bool(p.GetBool("auto_distance", d["auto_distance"]))
+    except Exception:
+        pass
+    return d
+
+
+def _save_params(vals):
+    p = _param_group()
+    if not p:
+        return
+    try:
+        p.SetFloat("text_size", float(vals.get("text_size", ALTURA_TEXTO_MM)))
+        p.SetFloat("scale_symbol", float(vals.get("scale_symbol", ESCALA_SIMBOLO)))
+        p.SetFloat("distance", float(vals.get("distance", DISTANCIA_TEXTO_MM)))
+        p.SetFloat("line_width", float(vals.get("line_width", LINE_WIDTH)))
+        p.SetString("font_path", str(vals.get("font_path", FUENTE_TTF)))
+        p.SetBool("auto_distance", bool(vals.get("auto_distance", AUTO_DISTANCIA)))
+    except Exception:
+        pass
+
+# ----------------------------
+# Seleccion y punto
+# ----------------------------
+
+def _anchor_from_selection(sel_ex):
+    if not sel_ex:
+        return None, None
+    item = sel_ex[0]
+    obj = getattr(item, "Object", None)
+    # Prioridad: subobjetos (vertex/edge/face)
+    for sub in getattr(item, "SubObjects", []) or []:
+        try:
+            if isinstance(sub, Part.Vertex):
+                return sub.Point, obj
+            if isinstance(sub, Part.Edge):
+                try:
+                    p = sub.valueAt((sub.FirstParameter + sub.LastParameter) * 0.5)
+                except Exception:
+                    p = sub.CenterOfMass
+                return p, obj
+            if isinstance(sub, Part.Face):
+                return sub.CenterOfMass, obj
+        except Exception:
+            pass
+    # Fallbacks
+    if obj is not None:
+        try:
+            return obj.Shape.BoundBox.Center, obj
+        except Exception:
+            pass
+        try:
+            return obj.Placement.Base, obj
+        except Exception:
+            pass
+    return None, obj
+
+
+# ----------------------------
+# Grupo (circuito)
+# ----------------------------
+
+def _direct_parent_group(doc, obj):
+    if obj is None:
+        return None
+    # API moderna
+    if hasattr(obj, "getParentGroup"):
+        try:
+            pg = obj.getParentGroup()
+            if pg:
+                return pg
+        except Exception:
+            pass
+    # Fallback: buscar en todos los grupos
+    try:
+        for o in doc.Objects:
+            if getattr(o, "TypeId", "") == "App::DocumentObjectGroup":
+                try:
+                    if obj in (getattr(o, "Group", []) or []):
+                        return o
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    return None
+
+
+def _find_circuit_group(doc, obj):
+    visited = set()
+    cur = obj
+    last = None
+    while True:
+        pg = _direct_parent_group(doc, cur)
+        if not pg or pg in visited:
+            break
+        visited.add(pg)
+        last = pg
+        label = (getattr(pg, "Label", "") or getattr(pg, "Name", "") or "").strip()
+        if label and label.lower() not in SKIP_GROUP_LABELS:
+            return pg
+        cur = pg
+    return last
+
+
+# ----------------------------
+# UI helpers
+# ----------------------------
+
+def _ask_direction():
+    if QtWidgets is None or not PREGUNTAR_LADO:
+        return DIRECTION_DEFAULT
+    dlg = QtWidgets.QDialog()
+    dlg.setWindowTitle("Etiqueta de circuito")
+    layout = QtWidgets.QGridLayout(dlg)
+    layout.addWidget(QtWidgets.QLabel("Direccion del rotulo"), 0, 0, 1, 3)
+    btn_up = QtWidgets.QPushButton("Arriba")
+    btn_left = QtWidgets.QPushButton("Izquierda")
+    btn_right = QtWidgets.QPushButton("Derecha")
+    btn_down = QtWidgets.QPushButton("Abajo")
+    layout.addWidget(btn_up, 1, 1)
+    layout.addWidget(btn_left, 2, 0)
+    layout.addWidget(btn_right, 2, 2)
+    layout.addWidget(btn_down, 3, 1)
+    result = {"dir": None}
+    def _set_dir(d):
+        result["dir"] = d
+        dlg.accept()
+    btn_up.clicked.connect(lambda: _set_dir("up"))
+    btn_left.clicked.connect(lambda: _set_dir("left"))
+    btn_right.clicked.connect(lambda: _set_dir("right"))
+    btn_down.clicked.connect(lambda: _set_dir("down"))
+    dlg.exec_()
+    return result["dir"] or DIRECTION_DEFAULT
+
+
+def _dir_angle(direction):
+    d = (direction or "").lower()
+    if d == "left":
+        return 180.0
+    if d == "up":
+        return 90.0
+    if d == "down":
+        return -90.0
+    return 0.0
+
+
+def _ask_params():
+    if QtWidgets is None or not PREGUNTAR_PARAMETROS:
+        d = _load_params()
+        return d["text_size"], d["scale_symbol"], d["distance"], d["font_path"], d["line_width"], d["auto_distance"]
+    dlg = QtWidgets.QDialog()
+    dlg.setWindowTitle("Parametros de etiqueta")
+    layout = QtWidgets.QFormLayout(dlg)
+    vals = _load_params()
+    sp_text = QtWidgets.QDoubleSpinBox()
+    sp_text.setRange(1.0, 1000.0)
+    sp_text.setDecimals(1)
+    sp_text.setValue(float(vals["text_size"]))
+    sp_scale = QtWidgets.QDoubleSpinBox()
+    sp_scale.setRange(0.1, 10.0)
+    sp_scale.setDecimals(2)
+    sp_scale.setValue(float(vals["scale_symbol"]))
+    sp_dist = QtWidgets.QDoubleSpinBox()
+    sp_dist.setRange(1.0, 100000.0)
+    sp_dist.setDecimals(1)
+    sp_dist.setValue(float(vals["distance"]))
+    sp_line = QtWidgets.QDoubleSpinBox()
+    sp_line.setRange(0.1, 10.0)
+    sp_line.setDecimals(1)
+    sp_line.setValue(float(vals["line_width"]))
+    ed_font = QtWidgets.QLineEdit(str(vals["font_path"]))
+    chk_auto = QtWidgets.QCheckBox("Auto distancia")
+    chk_auto.setChecked(bool(vals["auto_distance"]))
+    layout.addRow("Altura texto (mm):", sp_text)
+    layout.addRow("Escala simbolo:", sp_scale)
+    layout.addRow("Distancia rotulo (mm):", sp_dist)
+    layout.addRow("Grosor linea:", sp_line)
+    layout.addRow("Fuente TTF:", ed_font)
+    layout.addRow("", chk_auto)
+    sp_dist.setEnabled(not chk_auto.isChecked())
+    chk_auto.toggled.connect(lambda v: sp_dist.setEnabled(not v))
+    btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+    btn_default = QtWidgets.QPushButton("Predeterminado")
+    btns.addButton(btn_default, QtWidgets.QDialogButtonBox.ResetRole)
+    layout.addRow(btns)
+    btns.accepted.connect(dlg.accept)
+    btns.rejected.connect(dlg.reject)
+    def _set_defaults():
+        d = _defaults()
+        sp_text.setValue(float(d["text_size"]))
+        sp_scale.setValue(float(d["scale_symbol"]))
+        sp_dist.setValue(float(d["distance"]))
+        sp_line.setValue(float(d["line_width"]))
+        ed_font.setText(str(d["font_path"]))
+        chk_auto.setChecked(bool(d["auto_distance"]))
+    btn_default.clicked.connect(_set_defaults)
+    if dlg.exec_() != QtWidgets.QDialog.Accepted:
+        return None
+    out = {
+        "text_size": sp_text.value(),
+        "scale_symbol": sp_scale.value(),
+        "distance": sp_dist.value(),
+        "line_width": sp_line.value(),
+        "font_path": ed_font.text().strip(),
+        "auto_distance": chk_auto.isChecked(),
+    }
+    _save_params(out)
+    return out["text_size"], out["scale_symbol"], out["distance"], out["font_path"], out["line_width"], out["auto_distance"]
+
+
+# ----------------------------
+# Utilidades de geometria
+# ----------------------------
+
+def _resolve_symbol_path():
+    # 1) ruta absoluta solicitada
+    p = Path(SYMBOL_PATH)
+    if p.is_file():
+        return str(p)
+    # 2) fallback relativo al repo
+    try:
+        here = Path(__file__).resolve().parent
+        repo = here.parent  # Macros-de-Freecad
+        cand = repo / "Resources" / "prototypes" / "2d" / "etiqueta_circuito.step"
+        if cand.is_file():
+            return str(cand)
+    except Exception:
+        pass
+    return None
+
+
+def _load_symbol_shape():
+    path = _resolve_symbol_path()
+    if not path:
+        _err("No se encontro etiqueta_circuito.step")
+        return None
+    _log(f"Usando simbolo: {path}")
+    try:
+        shp = Part.Shape()
+        shp.read(path)
+        if shp.isNull():
+            _err("Shape nula al leer etiqueta_circuito.step")
+            return None
+        bb = shp.BoundBox
+        _log(f"Simbolo bbox: {bb.XLength:.2f} x {bb.YLength:.2f} mm")
+        return shp
+    except Exception as ex:
+        _err(f"Error leyendo simbolo: {ex}")
+        return None
+
+
+def _make_text_shape(text, font_path, text_size):
+    if not text:
+        return None
+    if not Path(font_path).is_file():
+        _warn(f"No se encontro fuente: {font_path}")
+        return None
+    # 1) Part.makeShapeString (si existe)
+    try:
+        make_ss = getattr(Part, "makeShapeString", None)
+        if make_ss:
+            shp = make_ss(String=text, FontFile=font_path, Size=float(text_size), Tracking=0)
+            if shp is None or getattr(shp, "isNull", lambda: False)():
+                _warn("ShapeString vacio (Part)")
+                return None
+            bb = shp.BoundBox
+            _log(f"Texto bbox: {bb.XLength:.2f} x {bb.YLength:.2f} mm")
+            return shp
+    except Exception as ex:
+        _warn(f"No se pudo crear ShapeString (Part): {ex}")
+    # 2) Draft.makeShapeString (fallback)
+    try:
+        import Draft
+        make_ds = getattr(Draft, "makeShapeString", None)
+        if not make_ds:
+            _warn("Draft.makeShapeString no disponible")
+            return None
+        tmp = make_ds(String=text, FontFile=font_path, Size=float(text_size), Tracking=0)
+        if tmp is None or not hasattr(tmp, "Shape"):
+            _warn("Draft.makeShapeString devolvio None")
+            return None
+        shp = tmp.Shape.copy() if tmp.Shape else None
+        try:
+            App.ActiveDocument.removeObject(tmp.Name)
+        except Exception:
+            pass
+        if shp is None or getattr(shp, "isNull", lambda: False)():
+            _warn("ShapeString vacio (Draft)")
+            return None
+        bb = shp.BoundBox
+        _log(f"Texto bbox: {bb.XLength:.2f} x {bb.YLength:.2f} mm")
+        return shp
+    except Exception as ex:
+        _warn(f"No se pudo crear ShapeString (Draft): {ex}")
+        return None
+
+
+def _place_text_shape(text_shape, anchor, direction, dist):
+    if text_shape is None:
+        return None
+    bb = text_shape.BoundBox
+    d = (direction or "").lower()
+    if d == "left":
+        tx = anchor.x - float(dist) - bb.XLength
+        ty = anchor.y - (bb.YLength * 0.5)
+    elif d == "up":
+        tx = anchor.x - (bb.XLength * 0.5)
+        ty = anchor.y + float(dist)
+    elif d == "down":
+        tx = anchor.x - (bb.XLength * 0.5)
+        ty = anchor.y - float(dist) - bb.YLength
+    else:
+        tx = anchor.x + float(dist)
+        ty = anchor.y - (bb.YLength * 0.5)
+    # mover desde su bbox actual a la posicion deseada
+    dx = tx - bb.XMin
+    dy = ty - bb.YMin
+    text_shape.translate(App.Vector(dx, dy, 0.0))
+    return text_shape
+
+
+def _auto_distance(direction, sym_bb, text_bb):
+    # gap basado en altura de texto
+    gap = 5.0
+    try:
+        if text_bb:
+            gap = max(gap, float(text_bb.YLength) * 0.2)
+    except Exception:
+        pass
+    d = (direction or "").lower()
+    if d in ("left", "right"):
+        try:
+            return float(sym_bb.XLength) + gap
+        except Exception:
+            return DISTANCIA_TEXTO_MM
+    # up / down
+    try:
+        return float(sym_bb.YLength) + gap
+    except Exception:
+        return DISTANCIA_TEXTO_MM
+
+
+def _safe_name_token(value):
+    txt = str(value or "").strip()
+    txt = re.sub(r"[^0-9A-Za-z_]+", "_", txt)
+    txt = re.sub(r"_+", "_", txt).strip("_")
+    return txt or "Etiqueta"
+
+
+def _ensure_group(doc, name, parent=None):
+    grp = doc.getObject(name)
+    if grp is None:
+        grp = doc.addObject("App::DocumentObjectGroup", name)
+    if parent is not None and hasattr(parent, "addObject"):
+        try:
+            if grp not in (getattr(parent, "Group", []) or []):
+                parent.addObject(grp)
+        except Exception:
+            pass
+    return grp
+
+
+def _ensure_label_library_group(doc):
+    g_elec = _ensure_group(doc, "electrico", parent=None)
+    g_lib = _ensure_group(doc, "_lib", parent=g_elec)
+    g_lbl = _ensure_group(doc, "_lib_labels_circuito", parent=g_lib or g_elec)
+    return g_lbl
+
+
+def _master_label_name(text, direction, text_size, scale_sym, dist_txt, auto_dist):
+    key = "{}|{}|{:.3f}|{:.3f}|{:.3f}|{}".format(
+        text or "",
+        direction or "",
+        float(text_size or 0.0),
+        float(scale_sym or 0.0),
+        float(dist_txt or 0.0),
+        int(bool(auto_dist)),
+    )
+    digest = hashlib.sha1(key.encode("utf-8", errors="ignore")).hexdigest()[:10]
+    base = _safe_name_token(text)[:24]
+    return f"MasterEtiqueta_{base}_{digest}"
+
+
+def _create_label_link(doc, comp_local, text, direction, text_size, scale_sym, dist_txt, auto_dist, anchor, line_width):
+    master_name = _master_label_name(text, direction, text_size, scale_sym, dist_txt, auto_dist)
+    master = doc.getObject(master_name)
+    if master is None:
+        master = doc.addObject("Part::Feature", master_name)
+        master.Label = f"MasterEtiqueta_{text}"
+        master.Shape = comp_local
+        g_lbl = _ensure_label_library_group(doc)
+        try:
+            if master not in (getattr(g_lbl, "Group", []) or []):
+                g_lbl.addObject(master)
+        except Exception:
+            pass
+        try:
+            master.ViewObject.Visibility = False
+        except Exception:
+            pass
+
+    link = doc.addObject("App::Link", "EtiquetaCircuito")
+    link.LinkedObject = master
+    link.Label = f"Etiqueta_{text}"
+    try:
+        link.LinkTransform = False
+    except Exception:
+        pass
+    try:
+        link.Placement = App.Placement(App.Vector(anchor.x, anchor.y, anchor.z), App.Rotation())
+    except Exception:
+        pass
+    try:
+        link.ViewObject.DisplayMode = "Wireframe"
+        link.ViewObject.LineWidth = float(line_width)
+        link.ViewObject.Visibility = True
+    except Exception:
+        pass
+    return link
+
+
+# ----------------------------
+# Principal
+# ----------------------------
+
+def insertar_etiqueta_circuito():
+    doc = App.ActiveDocument or App.newDocument("Electrico")
+    sel = Gui.Selection.getSelectionEx()
+    if not sel:
+        _err("Seleccione un punto/objeto del circuito.")
+        return
+
+    anchor, obj = _anchor_from_selection(sel)
+    if anchor is None:
+        _err("No se pudo obtener un punto de insercion.")
+        return
+
+    if FORZAR_Z_0:
+        anchor = App.Vector(anchor.x, anchor.y, float(Z_PLANO))
+
+    direction = _ask_direction()
+    params = _ask_params()
+    if params is None:
+        _warn("Operacion cancelada.")
+        return
+    text_size, scale_sym, dist_txt, font_path, line_width, auto_dist = params
+    group = _find_circuit_group(doc, obj)
+
+    text = None
+    if group is not None:
+        text = (getattr(group, "Label", "") or getattr(group, "Name", "")).strip()
+    if not text:
+        text = (getattr(obj, "Label", "") or getattr(obj, "Name", "") or "Circuito").strip()
+
+    sym_base = _load_symbol_shape()
+    if sym_base is None:
+        return
+
+    # Orientacion del simbolo (espejo)
+    sym = sym_base.copy()
+    angle = _dir_angle(direction)
+    if angle != 0.0:
+        sym.rotate(App.Vector(0, 0, 0), App.Vector(0, 0, 1), angle)
+    if scale_sym and abs(scale_sym - 1.0) > 1e-6:
+        try:
+            sym.scale(float(scale_sym))
+        except Exception as ex:
+            _warn(f"No se pudo escalar simbolo: {ex}")
+    sym_bb = sym.BoundBox
+
+    text_shape = _make_text_shape(text, font_path, text_size)
+    if auto_dist:
+        dist_txt = _auto_distance(direction, sym_bb, text_shape.BoundBox if text_shape else None)
+        _log(f"Distancia auto: {dist_txt:.1f} mm")
+    local_anchor = App.Vector(0.0, 0.0, 0.0)
+    text_shape = _place_text_shape(text_shape, local_anchor, direction, dist_txt) if text_shape else None
+
+    shapes = [sym]
+    if text_shape:
+        shapes.append(text_shape)
+
+    comp = Part.makeCompound(shapes)
+    obj_new = _create_label_link(
+        doc,
+        comp,
+        text,
+        direction,
+        text_size,
+        scale_sym,
+        dist_txt,
+        auto_dist,
+        anchor,
+        line_width,
+    )
+
+    # Agregar al subgrupo Conexiones del circuito (o huerfanas)
+    if ensure_conexiones_group is not None:
+        try:
+            target = ensure_conexiones_group(
+                doc,
+                parent_group=group,
+                objects=[obj] if obj is not None else None,
+            )
+            if obj_new not in (getattr(target, "Group", []) or []):
+                target.addObject(obj_new)
+        except Exception as ex:
+            _warn(f"No se pudo mover etiqueta a Conexiones: {ex}")
+
+    try:
+        doc.recompute()
+    except Exception:
+        pass
+
+    _log(f"Etiqueta creada: '{text}'")
+
+
+if __name__ == "__main__":
+    insertar_etiqueta_circuito()

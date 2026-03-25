@@ -1,0 +1,1384 @@
+# -*- coding: utf-8 -*-
+# MenuText: [ACTIVA] Conectar Circuitos Ramales
+# Icon: Conectar_Circuitos_Ramales_Auto.svg
+"""
+Macro: Conectar_Circuitos_Ramales_Auto
+Description:
+Automatic branch circuit routing for octagonal boxes and devices inside each circuit group.
+
+This macro is intentionally limited to branch circuits:
+- backbone between octagonal boxes
+- drops from octagonal boxes to devices
+- no feeders to panel
+- no guide routes
+
+Date:
+2026
+
+Author:
+Codex
+
+Notes:
+Uses branch-circuit planning extracted from the stable logic of the v1 macro:
+- drop_box
+- drop_nearest
+- backbone
+
+Keeps a FreeCAD side panel and persistent settings.
+"""
+
+import re
+import sys
+import importlib
+from pathlib import Path
+
+import FreeCAD as App
+import Draft
+
+try:
+    import FreeCADGui as Gui
+except Exception:
+    Gui = None
+
+try:
+    from PySide2 import QtWidgets, QtCore
+except Exception:
+    try:
+        from PySide import QtGui as QtWidgets  # type: ignore
+        from PySide import QtCore  # type: ignore
+    except Exception:
+        QtWidgets = None
+        QtCore = None
+
+
+TAG = "[RAMAL_AUTO]"
+PREF_PATH = "User parameter:BaseApp/Preferences/Macro/ConectarCircuitosRamalesAuto"
+DEFAULT_CONDUIT = "EMT"
+DEFAULT_DIAMETER = 22.2
+DEFAULT_ROUTE_Z = 3000.0
+DEFAULT_BEND_RADIUS = 100.0
+DEFAULT_INCLUDE_APAGADORES = True
+DEFAULT_ROUTE_BY_PERIMETER = True
+DEFAULT_CLEAR_EXISTING = True
+DEFAULT_FALLBACK_NEAR_MM = 700.0
+DEFAULT_DEVICE_LEVEL_TOLERANCE = 10.0
+DEFAULT_PANEL_TITLE = "[ACTIVA] Conectar Circuitos Ramales"
+EPS = 1e-6
+_RAMALES_BACKEND = None
+
+
+def log_info(msg):
+    App.Console.PrintMessage(f"{TAG} {msg}\n")
+
+
+def log_error(msg):
+    App.Console.PrintError(f"{TAG} {msg}\n")
+
+
+def log_warn(msg):
+    App.Console.PrintWarning(f"{TAG} {msg}\n")
+
+
+def ruta_backend_ramales():
+    try:
+        return Path(__file__).resolve().with_name("ramales_backend.py")
+    except Exception:
+        return Path.cwd() / "ramales_backend.py"
+
+
+def cargar_backend_ramales(force_reload=False):
+    global _RAMALES_BACKEND
+    if (not force_reload) and (_RAMALES_BACKEND is not None):
+        return _RAMALES_BACKEND
+    backend_path = ruta_backend_ramales()
+    if not backend_path.exists():
+        raise RuntimeError(f"No se encontro el backend compartido de ramales: {backend_path}")
+    folder = str(backend_path.parent)
+    if folder not in sys.path:
+        sys.path.insert(0, folder)
+    module = importlib.import_module("ramales_backend")
+    if force_reload:
+        module = importlib.reload(module)
+    _RAMALES_BACKEND = module
+    return module
+
+
+def prefs():
+    return App.ParamGet(PREF_PATH)
+
+
+def pref_get_float(name, default):
+    try:
+        return float(prefs().GetFloat(name, float(default)))
+    except Exception:
+        return float(default)
+
+
+def pref_get_bool(name, default):
+    try:
+        return bool(prefs().GetBool(name, bool(default)))
+    except Exception:
+        return bool(default)
+
+
+def pref_set_float(name, value):
+    try:
+        prefs().SetFloat(name, float(value))
+    except Exception:
+        pass
+
+
+def pref_set_bool(name, value):
+    try:
+        prefs().SetBool(name, bool(value))
+    except Exception:
+        pass
+
+
+def texto_seguro(value):
+    try:
+        return str(value or "")
+    except Exception:
+        return ""
+
+
+def vec(x=0.0, y=0.0, z=0.0):
+    return App.Vector(float(x), float(y), float(z))
+
+
+def natural_key(text):
+    s = texto_seguro(text)
+    return [int(t) if t.isdigit() else t.lower() for t in re.split(r"([0-9]+)", s)]
+
+
+def dist_xy(a, b):
+    dx = float(a.x) - float(b.x)
+    dy = float(a.y) - float(b.y)
+    return (dx * dx + dy * dy) ** 0.5
+
+
+def dedup_points(points):
+    out = []
+    for p in list(points or []):
+        pp = vec(p.x, p.y, p.z)
+        if not out:
+            out.append(pp)
+            continue
+        if out[-1].distanceToPoint(pp) > 0.1:
+            out.append(pp)
+    return out
+
+
+def es_grupo(obj):
+    if obj is None:
+        return False
+    type_id = texto_seguro(getattr(obj, "TypeId", ""))
+    if type_id.startswith("App::DocumentObjectGroup"):
+        return True
+    return hasattr(obj, "Group")
+
+
+def iterar_padres(obj, visitados=None):
+    if obj is None:
+        return
+    if visitados is None:
+        visitados = set()
+    for parent in list(getattr(obj, "InList", []) or []):
+        pname = texto_seguro(getattr(parent, "Name", ""))
+        if pname and pname in visitados:
+            continue
+        if pname:
+            visitados.add(pname)
+        yield parent
+        for pp in iterar_padres(parent, visitados):
+            yield pp
+
+
+def iterar_descendientes(obj, visitados=None):
+    if obj is None or not es_grupo(obj):
+        return
+    if visitados is None:
+        visitados = set()
+    for child in list(getattr(obj, "Group", []) or []):
+        cname = texto_seguro(getattr(child, "Name", ""))
+        if cname and cname in visitados:
+            continue
+        if cname:
+            visitados.add(cname)
+        yield child
+        if es_grupo(child):
+            for sub in iterar_descendientes(child, visitados):
+                yield sub
+
+
+def es_grupo_tecnico(texto):
+    low = texto_seguro(texto).strip().lower()
+    if not low:
+        return True
+    low_norm = re.sub(r"[\s\-]+", "_", low)
+    if re.match(r"^g[0-9]{2}_", low_norm):
+        return True
+    tokens = (
+        "cajas_",
+        "cajaoct_",
+        "cajas_octogonales",
+        "cajas_tp",
+        "tuberias_",
+        "ramales_",
+        "alimentadores",
+        "conexiones",
+        "conexiones_luminarias_cajas",
+        "electrico",
+        "_lib",
+        "tomacorrientes",
+        "apagadores",
+        "dispositivos",
+        "componentes",
+        "recintos",
+        "sin_recinto",
+        "sin_circuito",
+        "rutas_guia",
+        "etiquetas",
+        "shape2dview",
+        "origin",
+        "origen",
+    )
+    return any(tok in low_norm for tok in tokens)
+
+
+def es_grupo_circuito(obj):
+    if obj is None or not es_grupo(obj):
+        return False
+    txt = (texto_seguro(getattr(obj, "Label", "")) or texto_seguro(getattr(obj, "Name", ""))).strip().lower()
+    if not txt:
+        return False
+    txt_norm = re.sub(r"[_]+", " ", txt)
+    if txt.startswith("tp-") or txt_norm.startswith("tp "):
+        return True
+    if "circuito" not in txt_norm:
+        return False
+    invalid = ("sin_circuito", "sin circuito", "circuito sin", "subcircuito")
+    return not any(tok in txt_norm for tok in invalid)
+
+
+def iterar_subgrupos_circuito(seed_group):
+    if seed_group is None or not es_grupo(seed_group):
+        return
+    if es_grupo_circuito(seed_group):
+        yield seed_group
+    seen = set()
+    for obj in iterar_descendientes(seed_group, seen):
+        if es_grupo_circuito(obj):
+            yield obj
+
+
+def es_octogonal(obj):
+    if obj is None or es_grupo(obj):
+        return False
+    tipo = texto_seguro(getattr(obj, "Tipo", "")).strip().lower()
+    if tipo == "emt_octagon_box":
+        return True
+    txt = f"{texto_seguro(getattr(obj, 'Label', ''))} {texto_seguro(getattr(obj, 'Name', ''))}".lower()
+    if "caja emt octogonal" in txt or "emt_octagon_box" in txt:
+        return True
+    if hasattr(obj, "CajaOrigenKey") and hasattr(obj, "PuertosJSON"):
+        return True
+    return False
+
+
+def es_octogonal_usable(obj):
+    if not es_octogonal(obj):
+        return False
+    txt = f"{texto_seguro(getattr(obj, 'Label', ''))} {texto_seguro(getattr(obj, 'Name', ''))}".lower()
+    invalid_tokens = ("master", "template", "plantilla", "prototype", "prototipo")
+    return not any(tok in txt for tok in invalid_tokens)
+
+
+def es_tablero(obj):
+    if obj is None or es_grupo(obj):
+        return False
+    txt = f"{texto_seguro(getattr(obj, 'Label', ''))} {texto_seguro(getattr(obj, 'Name', ''))} {texto_seguro(getattr(obj, 'Tipo', ''))}".lower()
+    return "tablero" in txt
+
+
+def es_ruta_guia(obj):
+    txt = f"{texto_seguro(getattr(obj, 'Label', ''))} {texto_seguro(getattr(obj, 'Name', ''))}".lower()
+    return ("ruta" in txt and "guia" in txt)
+
+
+def es_generado_ramal(obj):
+    return texto_seguro(getattr(obj, "GeneradoPor", "")).strip() == "Conectar_Circuitos_Ramales_Auto"
+
+
+def es_apagador(obj):
+    txt = f"{texto_seguro(getattr(obj, 'Label', ''))} {texto_seguro(getattr(obj, 'Name', ''))} {texto_seguro(getattr(obj, 'Tipo', ''))}".lower()
+    return ("apagador" in txt) or ("switch" in txt) or ("interruptor" in txt)
+
+
+def es_tomacorriente(obj):
+    txt = f"{texto_seguro(getattr(obj, 'Label', ''))} {texto_seguro(getattr(obj, 'Name', ''))} {texto_seguro(getattr(obj, 'Tipo', ''))}".lower()
+    if es_octogonal(obj) or es_tablero(obj) or es_ruta_guia(obj):
+        return False
+    return (("toma" in txt) or ("tomacorr" in txt) or ("recept" in txt) or ("outlet" in txt))
+
+
+def es_dispositivo_ramal(obj, include_apagadores=True):
+    if obj is None or es_grupo(obj):
+        return False
+    if es_octogonal(obj) or es_tablero(obj) or es_ruta_guia(obj):
+        return False
+    if es_tomacorriente(obj):
+        return True
+    if include_apagadores and es_apagador(obj):
+        return True
+    return False
+
+
+def obtener_centro_objeto(obj):
+    if obj is None:
+        return vec(0.0, 0.0, 0.0)
+    try:
+        shape = getattr(obj, "Shape", None)
+        if shape is not None and not shape.isNull():
+            bb = shape.BoundBox
+            return vec(0.5 * (bb.XMin + bb.XMax), 0.5 * (bb.YMin + bb.YMax), 0.5 * (bb.ZMin + bb.ZMax))
+    except Exception:
+        pass
+    try:
+        return obj.Placement.Base
+    except Exception:
+        return vec(0.0, 0.0, 0.0)
+
+
+def resolver_grupo_circuito(obj):
+    if es_grupo_circuito(obj):
+        return obj
+    for parent in iterar_padres(obj):
+        if es_grupo_circuito(parent):
+            return parent
+    return None
+
+
+def circuito_id_valido(texto):
+    low = texto_seguro(texto).strip().lower()
+    if not low:
+        return False
+    invalid_tokens = (
+        "sin_circuito",
+        "sincircuito",
+        "sin circuito",
+        "master",
+        "caja emt octogonal",
+        "alimentadores_",
+        "ramales_",
+    )
+    return not any(tok in low for tok in invalid_tokens)
+
+
+def obtener_circuito_desde_objeto(obj):
+    grupo = resolver_grupo_circuito(obj)
+    if grupo is not None:
+        txt = texto_seguro(getattr(grupo, "Label", "")) or texto_seguro(getattr(grupo, "Name", ""))
+        if circuito_id_valido(txt):
+            return txt
+    cid = texto_seguro(getattr(obj, "CircuitoID", "")).strip()
+    if circuito_id_valido(cid):
+        return cid
+    return ""
+
+
+def source_key(obj):
+    for attr in ("UUID",):
+        try:
+            txt = texto_seguro(getattr(obj, attr, "")).strip()
+            if txt:
+                return f"UUID:{txt}"
+        except Exception:
+            pass
+    return f"NAME:{texto_seguro(getattr(obj, 'Name', ''))}"
+
+
+def map_boxes_by_source(boxes):
+    out = {}
+    for box in list(boxes or []):
+        key = texto_seguro(getattr(box, "CajaOrigenKey", "")).strip()
+        if not key:
+            name = texto_seguro(getattr(box, "CajaOrigenName", "")).strip()
+            if name:
+                key = f"NAME:{name}"
+        if key and key not in out:
+            out[key] = box
+    return out
+
+
+def same_level(a_obj, b_obj, tol):
+    pa = obtener_centro_objeto(a_obj)
+    pb = obtener_centro_objeto(b_obj)
+    return abs(float(pa.z) - float(pb.z)) <= max(0.0, float(tol))
+
+
+def nearest_obj(ref_obj, objs, use_xy=True, max_distance=None):
+    pref = obtener_centro_objeto(ref_obj)
+    best = None
+    best_d = None
+    for obj in list(objs or []):
+        pt = obtener_centro_objeto(obj)
+        d = dist_xy(pref, pt) if use_xy else float(pref.distanceToPoint(pt))
+        if max_distance is not None and d > float(max_distance):
+            continue
+        if best is None or d < best_d:
+            best = obj
+            best_d = d
+    return best
+
+
+def asegurar_subgrupo(doc, parent, label):
+    if parent is None:
+        return None
+    for child in list(getattr(parent, "Group", []) or []):
+        if texto_seguro(getattr(child, "Label", "")) == label or texto_seguro(getattr(child, "Name", "")) == label:
+            return child
+    obj = doc.addObject("App::DocumentObjectGroup", re.sub(r"[^0-9A-Za-z_]+", "_", label))
+    obj.Label = label
+    try:
+        parent.addObject(obj)
+    except Exception:
+        pass
+    return obj
+
+
+def asegurar_objeto_en_grupo(group_obj, obj):
+    if group_obj is None or obj is None:
+        return
+    try:
+        if obj not in list(group_obj.Group or []):
+            group_obj.addObject(obj)
+    except Exception:
+        pass
+
+
+def limpiar_ramales_generados(doc, group_obj):
+    if group_obj is None:
+        return 0
+    eliminados = 0
+    for child in list(getattr(group_obj, "Group", []) or []):
+        if not es_generado_ramal(child):
+            continue
+        name = texto_seguro(getattr(child, "Name", ""))
+        try:
+            group_obj.removeObject(child)
+        except Exception:
+            pass
+        try:
+            if name:
+                doc.removeObject(name)
+                eliminados += 1
+        except Exception:
+            pass
+    return eliminados
+
+
+def limpiar_ramales_generados_compat(doc, group_obj):
+    if doc is None or group_obj is None:
+        return 0
+    names = []
+    seen = set()
+    queue = [group_obj]
+    while queue:
+        cur = queue.pop(0)
+        gname = texto_seguro(getattr(cur, "Name", ""))
+        if gname:
+            if gname in seen:
+                continue
+            seen.add(gname)
+        for child in list(getattr(cur, "Group", []) or []):
+            if es_grupo(child):
+                queue.append(child)
+                continue
+            name = texto_seguro(getattr(child, "Name", "")).strip()
+            if not name:
+                continue
+            generado = es_generado_ramal(child)
+            kind = texto_seguro(getattr(child, "LinkKind", "")).strip().lower()
+            autoroute = bool(texto_seguro(getattr(child, "AutoRouteKey", "")).strip())
+            if generado or (autoroute and kind in ("backbone", "drop_box", "drop_nearest")):
+                if name not in names:
+                    names.append(name)
+    removed = 0
+    for name in names:
+        try:
+            if doc.getObject(name) is not None:
+                doc.removeObject(name)
+                removed += 1
+        except Exception:
+            pass
+    return removed
+
+
+def child_group_by_label(parent, label):
+    want = texto_seguro(label).strip().lower()
+    if not want or parent is None:
+        return None
+    for child in list(getattr(parent, "Group", []) or []):
+        if not es_grupo(child):
+            continue
+        name = texto_seguro(getattr(child, "Name", "")).strip().lower()
+        lab = texto_seguro(getattr(child, "Label", "")).strip().lower()
+        if name == want or lab == want:
+            return child
+    return None
+
+
+def make_draft_wire(points):
+    maker = getattr(Draft, "makeWire", None)
+    if maker is None:
+        maker = getattr(Draft, "make_wire", None)
+    if maker is None:
+        raise RuntimeError("No se encontro Draft.makeWire")
+    tries = [
+        lambda: maker(points, closed=False, face=False, support=None),
+        lambda: maker(points, False, False, None),
+        lambda: maker(points, False, False),
+        lambda: maker(points, False),
+        lambda: maker(points),
+    ]
+    last_err = None
+    for fn in tries:
+        try:
+            return fn()
+        except Exception as ex:
+            last_err = ex
+    raise RuntimeError(f"No se pudo crear el wire: {last_err}")
+
+
+def radio_curva_efectivo(points, radio_solicitado):
+    pts = dedup_points(points)
+    if len(pts) < 3:
+        return 0.0
+    minimo = None
+    for a, b in zip(pts[:-1], pts[1:]):
+        seg_len = float(a.distanceToPoint(b))
+        if seg_len <= 0.1:
+            continue
+        if minimo is None or seg_len < minimo:
+            minimo = seg_len
+    if minimo is None:
+        return 0.0
+    radio_max = max(0.0, float(minimo) * 0.45)
+    return min(float(radio_solicitado), radio_max)
+
+
+def ruta_ortogonal_xy(a, b, z_level):
+    p1 = vec(a.x, a.y, z_level)
+    p2 = vec(b.x, b.y, z_level)
+    if abs(float(p1.x) - float(p2.x)) <= 0.1 or abs(float(p1.y) - float(p2.y)) <= 0.1:
+        return dedup_points([p1, p2])
+    dx = abs(float(p2.x) - float(p1.x))
+    dy = abs(float(p2.y) - float(p1.y))
+    if dx >= dy:
+        mid = vec(p2.x, p1.y, z_level)
+    else:
+        mid = vec(p1.x, p2.y, z_level)
+    return dedup_points([p1, mid, p2])
+
+
+def ruta_dispositivo_a_caja(device_obj, box_obj, cfg):
+    route_z = float(cfg.get("route_z", DEFAULT_ROUTE_Z))
+    p_box = obtener_centro_objeto(box_obj)
+    p_dev = obtener_centro_objeto(device_obj)
+    p_box_z = vec(p_box.x, p_box.y, route_z)
+    p_dev_z = vec(p_dev.x, p_dev.y, route_z)
+    pts = [p_box_z]
+    pts.extend(ruta_ortogonal_xy(p_box_z, p_dev_z, route_z)[1:])
+    pts.append(p_dev)
+    return dedup_points(pts)
+
+
+def bbox_from_points_xy(points):
+    pts = list(points or [])
+    if not pts:
+        return None
+    xs = [float(p.x) for p in pts]
+    ys = [float(p.y) for p in pts]
+    return {
+        "xmin": min(xs),
+        "xmax": max(xs),
+        "ymin": min(ys),
+        "ymax": max(ys),
+        "cx": 0.5 * (min(xs) + max(xs)),
+        "cy": 0.5 * (min(ys) + max(ys)),
+    }
+
+
+def point_to_rect_border(p, rect):
+    if rect is None:
+        return vec(p.x, p.y, p.z), "None"
+    x = float(p.x)
+    y = float(p.y)
+    d_left = abs(x - rect["xmin"])
+    d_right = abs(x - rect["xmax"])
+    d_bottom = abs(y - rect["ymin"])
+    d_top = abs(y - rect["ymax"])
+    best = min(d_left, d_right, d_bottom, d_top)
+    if best == d_left:
+        return vec(rect["xmin"], y, p.z), "West"
+    if best == d_right:
+        return vec(rect["xmax"], y, p.z), "East"
+    if best == d_bottom:
+        return vec(x, rect["ymin"], p.z), "South"
+    return vec(x, rect["ymax"], p.z), "North"
+
+
+def perimeter_param(p, rect):
+    anchor, side = point_to_rect_border(p, rect)
+    width = max(0.0, float(rect["xmax"] - rect["xmin"]))
+    height = max(0.0, float(rect["ymax"] - rect["ymin"]))
+    if side == "North":
+        return float(anchor.x - rect["xmin"])
+    if side == "East":
+        return width + float(rect["ymax"] - anchor.y)
+    if side == "South":
+        return width + height + float(rect["xmax"] - anchor.x)
+    if side == "West":
+        return width + height + width + float(anchor.y - rect["ymin"])
+    return 0.0
+
+
+def rotate_after_largest_gap(items, param_fn, perimeter_len):
+    ordered = sorted(list(items or []), key=param_fn)
+    if len(ordered) <= 2 or perimeter_len <= EPS:
+        return ordered
+    params = [float(param_fn(it)) for it in ordered]
+    max_gap = -1.0
+    max_idx = 0
+    for idx in range(len(params)):
+        curr = params[idx]
+        nxt = params[(idx + 1) % len(params)]
+        gap = (nxt - curr) if idx < len(params) - 1 else ((nxt + perimeter_len) - curr)
+        if gap > max_gap:
+            max_gap = gap
+            max_idx = idx
+    start = (max_idx + 1) % len(ordered)
+    return ordered[start:] + ordered[:start]
+
+
+def ordenar_octogonales_perimetro(boxes):
+    boxes = list(boxes or [])
+    if len(boxes) <= 2:
+        return sorted(boxes, key=lambda o: (float(obtener_centro_objeto(o).y), float(obtener_centro_objeto(o).x)))
+    centers = [obtener_centro_objeto(o) for o in boxes]
+    rect = bbox_from_points_xy(centers)
+    if rect is None:
+        return boxes
+    width = max(0.0, float(rect["xmax"] - rect["xmin"]))
+    height = max(0.0, float(rect["ymax"] - rect["ymin"]))
+    per_len = (2.0 * width) + (2.0 * height)
+    by_name = {texto_seguro(getattr(o, "Name", "")): o for o in boxes}
+    ordered_names = rotate_after_largest_gap(
+        list(by_name.keys()),
+        lambda name: perimeter_param(obtener_centro_objeto(by_name[name]), rect),
+        per_len,
+    )
+    return [by_name[name] for name in ordered_names if name in by_name]
+
+
+def border_path_between(a_anchor, b_anchor, rect):
+    if rect is None:
+        return dedup_points([a_anchor, b_anchor])
+    corners = {
+        "NW": vec(rect["xmin"], rect["ymax"], a_anchor.z),
+        "NE": vec(rect["xmax"], rect["ymax"], a_anchor.z),
+        "SE": vec(rect["xmax"], rect["ymin"], a_anchor.z),
+        "SW": vec(rect["xmin"], rect["ymin"], a_anchor.z),
+    }
+    p1 = perimeter_param(a_anchor, rect)
+    p2 = perimeter_param(b_anchor, rect)
+    width = max(0.0, float(rect["xmax"] - rect["xmin"]))
+    height = max(0.0, float(rect["ymax"] - rect["ymin"]))
+    per_len = max(EPS, (2.0 * width) + (2.0 * height))
+    cw = (p2 - p1) % per_len
+    ccw = (p1 - p2) % per_len
+
+    def side_of(anchor):
+        return point_to_rect_border(anchor, rect)[1]
+
+    side_a = side_of(a_anchor)
+    side_b = side_of(b_anchor)
+
+    cw_map = {
+        "North": ["NE", "SE", "SW", "NW"],
+        "East": ["SE", "SW", "NW", "NE"],
+        "South": ["SW", "NW", "NE", "SE"],
+        "West": ["NW", "NE", "SE", "SW"],
+    }
+    ccw_map = {
+        "North": ["NW", "SW", "SE", "NE"],
+        "East": ["NE", "NW", "SW", "SE"],
+        "South": ["SE", "NE", "NW", "SW"],
+        "West": ["SW", "SE", "NE", "NW"],
+    }
+
+    route = [a_anchor]
+    if cw <= ccw:
+        for key in cw_map.get(side_a, []):
+            route.append(corners[key])
+            if point_to_rect_border(route[-1], rect)[1] == side_b:
+                break
+    else:
+        for key in ccw_map.get(side_a, []):
+            route.append(corners[key])
+            if point_to_rect_border(route[-1], rect)[1] == side_b:
+                break
+    route.append(b_anchor)
+    return dedup_points(route)
+
+
+def ruta_backbone_entre_cajas(src_obj, dst_obj, cfg, rect=None):
+    route_z = float(cfg.get("route_z", DEFAULT_ROUTE_Z))
+    a = obtener_centro_objeto(src_obj)
+    b = obtener_centro_objeto(dst_obj)
+    a = vec(a.x, a.y, route_z)
+    b = vec(b.x, b.y, route_z)
+    if not bool(cfg.get("route_by_perimeter", DEFAULT_ROUTE_BY_PERIMETER)) or rect is None:
+        return ruta_ortogonal_xy(a, b, route_z)
+    a_anchor, _ = point_to_rect_border(a, rect)
+    b_anchor, _ = point_to_rect_border(b, rect)
+    pts = [a]
+    if pts[-1].distanceToPoint(a_anchor) > 0.1:
+        pts.append(a_anchor)
+    pts.extend(border_path_between(a_anchor, b_anchor, rect)[1:])
+    if pts[-1].distanceToPoint(b) > 0.1:
+        pts.append(b)
+    return dedup_points(pts)
+
+
+def nearest_box_for_device(device_obj, boxes):
+    if not boxes:
+        return None
+    p_dev = obtener_centro_objeto(device_obj)
+    best = None
+    best_d = None
+    for box in boxes:
+        p_box = obtener_centro_objeto(box)
+        d = dist_xy(p_dev, p_box)
+        if best is None or d < best_d:
+            best = box
+            best_d = d
+    return best
+
+
+def ruta_dispositivo_a_dispositivo(src_obj, dst_obj):
+    p1 = obtener_centro_objeto(src_obj)
+    p2 = obtener_centro_objeto(dst_obj)
+    z = max(float(p1.z), float(p2.z))
+    a = vec(p1.x, p1.y, z)
+    b = vec(p2.x, p2.y, z)
+    pts = [p1]
+    if p1.distanceToPoint(a) > 0.1:
+        pts.append(a)
+    pts.extend(ruta_ortogonal_xy(a, b, z)[1:])
+    if pts[-1].distanceToPoint(p2) > 0.1:
+        pts.append(p2)
+    return dedup_points(pts)
+
+
+def build_plan_for_circuit_ramal(devices, boxes, box_by_source, cfg):
+    plan = []
+    seen_pairs = set()
+    same_level_only = bool(cfg.get("direct_same_level_only", True))
+    level_tol = max(0.0, float(cfg.get("device_level_tolerance", DEFAULT_DEVICE_LEVEL_TOLERANCE)))
+    near_limit = max(0.0, float(cfg.get("fallback_near_mm", DEFAULT_FALLBACK_NEAR_MM)))
+
+    def pair_key(a_obj, b_obj):
+        a = texto_seguro(getattr(a_obj, "Name", ""))
+        b = texto_seguro(getattr(b_obj, "Name", ""))
+        if not a or not b:
+            return ""
+        x, y = sorted([a, b])
+        return f"{x}|{y}"
+
+    def push(a_obj, b_obj, kind):
+        if a_obj is None or b_obj is None or a_obj is b_obj:
+            return
+        k = pair_key(a_obj, b_obj)
+        if not k or k in seen_pairs:
+            return
+        seen_pairs.add(k)
+        plan.append((a_obj, b_obj, texto_seguro(kind)))
+
+    missing = []
+    devices_with_box = []
+    for dev in devices:
+        bx = box_by_source.get(source_key(dev))
+        if bx is not None:
+            devices_with_box.append(dev)
+            push(dev, bx, "drop_box")
+        else:
+            missing.append(dev)
+
+    for dev in missing:
+        preferred = [o for o in devices_with_box if o is not dev]
+        others = [o for o in devices if o is not dev]
+        preferred_same = [o for o in preferred if (not same_level_only) or same_level(dev, o, level_tol)]
+        others_same = [o for o in others if (not same_level_only) or same_level(dev, o, level_tol)]
+
+        near = nearest_obj(dev, preferred_same, use_xy=True, max_distance=near_limit)
+        if near is None:
+            near = nearest_obj(dev, others_same, use_xy=True, max_distance=near_limit)
+        if near is None:
+            near = nearest_obj(dev, preferred_same, use_xy=True)
+        if near is None:
+            near = nearest_obj(dev, others_same, use_xy=True)
+        if near is not None:
+            push(dev, near, "drop_nearest")
+            continue
+
+        candidate_boxes = [box_by_source.get(source_key(o)) for o in preferred]
+        candidate_boxes = [bx for bx in candidate_boxes if bx is not None]
+        near_box = nearest_obj(dev, candidate_boxes, use_xy=True, max_distance=near_limit)
+        if near_box is None:
+            near_box = nearest_obj(dev, candidate_boxes, use_xy=True)
+        if near_box is not None:
+            push(dev, near_box, "drop_box")
+
+    ordered_boxes = []
+    seen_box = set()
+    for dev in devices:
+        bx = box_by_source.get(source_key(dev))
+        if bx is None:
+            continue
+        bname = texto_seguro(getattr(bx, "Name", ""))
+        if bname and bname not in seen_box:
+            seen_box.add(bname)
+            ordered_boxes.append(bx)
+    for bx in boxes:
+        bname = texto_seguro(getattr(bx, "Name", ""))
+        if bname and bname not in seen_box:
+            seen_box.add(bname)
+            ordered_boxes.append(bx)
+
+    if len(ordered_boxes) >= 3:
+        ordered_boxes = ordenar_octogonales_perimetro(ordered_boxes)
+
+    if len(ordered_boxes) >= 2:
+        for a_obj, b_obj in zip(ordered_boxes[:-1], ordered_boxes[1:]):
+            push(a_obj, b_obj, "backbone")
+    elif len(ordered_boxes) == 0 and len(devices) >= 2:
+        for a_obj, b_obj in zip(devices[:-1], devices[1:]):
+            if same_level_only and (not same_level(a_obj, b_obj, level_tol)):
+                continue
+            push(a_obj, b_obj, "backbone")
+
+    return plan, ordered_boxes
+
+
+def resolver_grupos_alcance(doc, selection_only=False):
+    groups = []
+    seen = set()
+
+    def add_group(group_obj):
+        if group_obj is None:
+            return
+        gname = texto_seguro(getattr(group_obj, "Name", ""))
+        if not gname or gname in seen:
+            return
+        seen.add(gname)
+        groups.append(group_obj)
+
+    sel = list(Gui.Selection.getSelection() or []) if Gui is not None else []
+    for obj in sel:
+        if es_grupo(obj):
+            expanded = list(iterar_subgrupos_circuito(obj))
+            if expanded:
+                for grp in expanded:
+                    add_group(grp)
+            else:
+                # Fallback manual: permitir grupo seleccionado aunque no cumpla patron.
+                add_group(obj)
+            continue
+        add_group(resolver_grupo_circuito(obj))
+    if groups:
+        groups.sort(key=lambda g: natural_key(texto_seguro(getattr(g, "Label", "")) or texto_seguro(getattr(g, "Name", ""))))
+        return groups
+    if selection_only:
+        return []
+
+    for obj in list(doc.Objects or []):
+        if not es_octogonal_usable(obj) and not es_dispositivo_ramal(obj, include_apagadores=True):
+            continue
+        add_group(resolver_grupo_circuito(obj))
+
+    # Ultimo fallback: grupos tipo circuito aunque no tengan dispositivos detectables aun.
+    if not groups:
+        for obj in list(doc.Objects or []):
+            if es_grupo_circuito(obj):
+                add_group(obj)
+
+    groups.sort(key=lambda g: natural_key(texto_seguro(getattr(g, "Label", "")) or texto_seguro(getattr(g, "Name", ""))))
+    return groups
+
+
+def objects_by_names(doc, names):
+    out = []
+    seen = set()
+    for name in list(names or []):
+        obj = doc.getObject(texto_seguro(name))
+        if obj is None:
+            continue
+        oname = texto_seguro(getattr(obj, "Name", ""))
+        if not oname or oname in seen:
+            continue
+        seen.add(oname)
+        out.append(obj)
+    return out
+
+
+def colectar_objetos_circuito(group_obj, include_apagadores=True):
+    boxes = []
+    devices = []
+    seen = set()
+    for obj in iterar_descendientes(group_obj, seen):
+        if es_generado_ramal(obj):
+            continue
+        if es_octogonal_usable(obj):
+            boxes.append(obj)
+            continue
+        if es_dispositivo_ramal(obj, include_apagadores=include_apagadores):
+            devices.append(obj)
+    boxes.sort(key=lambda o: natural_key(texto_seguro(getattr(o, "Label", "")) or texto_seguro(getattr(o, "Name", ""))))
+    devices.sort(key=lambda o: natural_key(texto_seguro(getattr(o, "Label", "")) or texto_seguro(getattr(o, "Name", ""))))
+    return boxes, devices
+
+
+def aplicar_curvas(wire_obj, radio):
+    if wire_obj is None:
+        return
+    try:
+        if hasattr(wire_obj, "FilletRadius"):
+            wire_obj.FilletRadius = max(0.0, float(radio))
+    except Exception as ex:
+        log_warn(f"No se pudo asignar FilletRadius: {ex}")
+
+
+def crear_wire_ramal(doc, puntos, src_obj, dst_obj, circuit_id, conduit_type, diameter, link_kind, index):
+    pts = dedup_points(puntos)
+    if len(pts) < 2:
+        return None
+    wire = make_draft_wire(pts)
+    label_src = texto_seguro(getattr(src_obj, "Label", "")) or texto_seguro(getattr(src_obj, "Name", ""))
+    label_dst = texto_seguro(getattr(dst_obj, "Label", "")) or texto_seguro(getattr(dst_obj, "Name", ""))
+    wire.Label = f"{conduit_type}_{circuit_id}: {label_src} -> {label_dst}"
+    for ptype, pname, pgroup, pdesc in [
+        ("App::PropertyString", "Tipo", "ElectricCR", "Tipo logico"),
+        ("App::PropertyString", "ConduitType", "ElectricCR", "Tipo de canalizacion"),
+        ("App::PropertyFloat", "DiametroConduit", "ElectricCR", "Diametro"),
+        ("App::PropertyString", "CircuitoID", "ElectricCR", "Circuito"),
+        ("App::PropertyString", "GeneradoPor", "ElectricCR", "Macro"),
+        ("App::PropertyString", "LinkKind", "ElectricCR", "Tipo de enlace"),
+        ("App::PropertyString", "OrigenName", "ElectricCR", "Origen"),
+        ("App::PropertyString", "DestinoName", "ElectricCR", "Destino"),
+        ("App::PropertyInteger", "IndiceEnlace", "ElectricCR", "Indice"),
+    ]:
+        try:
+            if pname not in wire.PropertiesList:
+                wire.addProperty(ptype, pname, pgroup, pdesc)
+        except Exception:
+            pass
+    try:
+        wire.Tipo = "ConduitPath"
+        wire.ConduitType = conduit_type
+        wire.DiametroConduit = float(diameter)
+        wire.CircuitoID = circuit_id
+        wire.GeneradoPor = "Conectar_Circuitos_Ramales_Auto"
+        wire.LinkKind = link_kind
+        wire.OrigenName = texto_seguro(getattr(src_obj, "Name", ""))
+        wire.DestinoName = texto_seguro(getattr(dst_obj, "Name", ""))
+        wire.IndiceEnlace = int(index)
+    except Exception:
+        pass
+    return wire
+
+
+def procesar_circuito(doc, group_obj, cfg):
+    try:
+        backend = cargar_backend_ramales()
+    except Exception as ex:
+        raise RuntimeError(f"No se pudo cargar el backend compartido de ramales: {ex}")
+
+    try:
+        devices, boxes = backend.collect_circuit_objects(
+            group_obj,
+            include_apagadores=bool(cfg.get("include_apagadores", True)),
+        )
+    except Exception as ex:
+        raise RuntimeError(f"No se pudieron recolectar objetos del circuito: {ex}")
+
+    circuit_id = texto_seguro(getattr(group_obj, "Label", "")) or texto_seguro(getattr(group_obj, "Name", ""))
+    if not boxes and not devices:
+        log_warn(f"Circuito omitido sin objetos: {circuit_id}")
+        return 0
+
+    conduit_type = DEFAULT_CONDUIT
+    diameter = DEFAULT_DIAMETER
+    group_dest = child_group_by_label(group_obj, f"Ramales_{conduit_type}")
+    if group_dest is None:
+        group_dest = asegurar_subgrupo(doc, group_obj, f"Ramales_{conduit_type}")
+    if bool(cfg.get("clear_existing", DEFAULT_CLEAR_EXISTING)):
+        borrados = limpiar_ramales_generados_compat(doc, group_dest)
+        if borrados:
+            log_info(f"Ramales previos eliminados en {circuit_id}: {borrados}")
+
+    cfg_v1 = {
+        "connect_to_board": False,
+        "include_apagadores": bool(cfg.get("include_apagadores", DEFAULT_INCLUDE_APAGADORES)),
+        "route_by_perimeter": bool(cfg.get("route_by_perimeter", DEFAULT_ROUTE_BY_PERIMETER)),
+        "route_z": float(cfg.get("route_z", DEFAULT_ROUTE_Z)),
+        "bend_radius": float(cfg.get("bend_radius", DEFAULT_BEND_RADIUS)),
+        "orthogonal_route": True,
+        "fallback_missing_box": True,
+        "fallback_near_mm": float(cfg.get("fallback_near_mm", DEFAULT_FALLBACK_NEAR_MM)),
+        "direct_same_level_only": bool(cfg.get("direct_same_level_only", True)),
+        "device_level_tolerance": float(cfg.get("device_level_tolerance", DEFAULT_DEVICE_LEVEL_TOLERANCE)),
+        "wall_margin": 0.0,
+    }
+    plan, ordered_boxes, _box_by_source = backend.build_plan_for_circuit(
+        circuit_group=group_obj,
+        devices=devices,
+        boxes=boxes,
+        cfg=cfg_v1,
+        board_obj=None,
+    )
+    route_rect_backbone = backend.route_rect_for_circuit(boxes, cfg_v1)
+    existing_keys = set(backend.collect_existing_route_keys(group_dest))
+    used_ports = backend.new_used_ports()
+    backend.reserve_existing_ports(group_dest, used_ports)
+
+    generados = 0
+    log_info(
+        f"Circuito {circuit_id}: cajas={len(boxes)} dispositivos={len(devices)} "
+        f"ordered_boxes={len(ordered_boxes)} plan={len(plan)}"
+    )
+
+    for idx, (src_obj, dst_obj, link_kind) in enumerate(plan, start=1):
+        use_perimeter = bool(cfg_v1.get("route_by_perimeter", True)) and (texto_seguro(link_kind).strip().lower() == "backbone")
+        active_rect = route_rect_backbone if use_perimeter else None
+        try:
+            status, _route_key = backend.connect_branch_pair_with_kind(
+                doc=doc,
+                src_obj=src_obj,
+                dst_obj=dst_obj,
+                link_kind=texto_seguro(link_kind),
+                circuit_id=circuit_id,
+                conduit_type=conduit_type,
+                diameter=float(diameter),
+                bend_radius=float(cfg_v1.get("bend_radius", DEFAULT_BEND_RADIUS)),
+                route_z=float(cfg_v1.get("route_z", DEFAULT_ROUTE_Z)),
+                route_by_perimeter=use_perimeter,
+                route_rect=active_rect,
+                used_ports=used_ports,
+                group_target=group_dest,
+                existing_keys=existing_keys,
+                skip_existing=True,
+            )
+        except Exception as ex:
+            log_warn(
+                f"Fallo en enlace {texto_seguro(link_kind)} de {circuit_id}: "
+                f"{texto_seguro(getattr(src_obj, 'Label', '')) or texto_seguro(getattr(src_obj, 'Name', ''))} -> "
+                f"{texto_seguro(getattr(dst_obj, 'Label', '')) or texto_seguro(getattr(dst_obj, 'Name', ''))} | {ex}"
+            )
+            continue
+        if status == "created":
+            generados += 1
+
+    log_info(f"Circuito procesado: {circuit_id} | cajas={len(boxes)} | dispositivos={len(devices)} | generados={generados}")
+    return generados
+
+
+class FormularioRamales(object):
+    def __init__(self, doc):
+        self.doc = doc
+
+    def _move_dialog_to_side(self, dlg, parent):
+        if QtWidgets is None:
+            return
+        try:
+            base_geo = parent.frameGeometry() if parent is not None else dlg.frameGeometry()
+            screen = None
+            if parent is not None and parent.windowHandle() is not None:
+                screen = parent.windowHandle().screen()
+            if screen is not None:
+                avail = screen.availableGeometry()
+            else:
+                avail = QtWidgets.QApplication.desktop().availableGeometry(parent)  # type: ignore[attr-defined]
+            right_x = base_geo.x() + base_geo.width() + 12
+            x = min(right_x, avail.right() - dlg.width() - 12)
+            y = max(avail.top() + 12, base_geo.y() + 40)
+            dlg.move(x, y)
+        except Exception:
+            pass
+
+    def run(self):
+        if QtWidgets is None:
+            return {
+                "route_z": pref_get_float("route_z", DEFAULT_ROUTE_Z),
+                "bend_radius": pref_get_float("bend_radius", DEFAULT_BEND_RADIUS),
+                "include_apagadores": pref_get_bool("include_apagadores", DEFAULT_INCLUDE_APAGADORES),
+                "route_by_perimeter": pref_get_bool("route_by_perimeter", DEFAULT_ROUTE_BY_PERIMETER),
+                "clear_existing": pref_get_bool("clear_existing", DEFAULT_CLEAR_EXISTING),
+                "direct_same_level_only": pref_get_bool("direct_same_level_only", True),
+                "device_level_tolerance": pref_get_float("device_level_tolerance", DEFAULT_DEVICE_LEVEL_TOLERANCE),
+                "fallback_near_mm": pref_get_float("fallback_near_mm", DEFAULT_FALLBACK_NEAR_MM),
+            }
+
+        parent = Gui.getMainWindow() if Gui is not None else None
+        dlg = QtWidgets.QDialog(parent)
+        dock = None
+        root = None
+        lay = None
+
+        if QtCore is not None and parent is not None and hasattr(QtWidgets, "QDockWidget"):
+            try:
+                old = parent.findChild(QtWidgets.QDockWidget, "ElectricCR_ConectarCircuitosRamalesDock")
+                if old is not None:
+                    old.close()
+                    old.deleteLater()
+            except Exception:
+                pass
+            try:
+                dock = QtWidgets.QDockWidget(DEFAULT_PANEL_TITLE, parent)
+                dock.setObjectName("ElectricCR_ConectarCircuitosRamalesDock")
+                dock.setAllowedAreas(QtCore.Qt.RightDockWidgetArea)
+                dock.setMinimumWidth(340)
+                dock.setMaximumWidth(440)
+                dock.setFeatures(QtWidgets.QDockWidget.DockWidgetClosable)
+                dock.setFloating(False)
+                root = QtWidgets.QWidget(dock)
+                dock.setWidget(root)
+                parent.addDockWidget(QtCore.Qt.RightDockWidgetArea, dock)
+                lay = QtWidgets.QVBoxLayout(root)
+            except Exception:
+                dock = None
+                root = None
+                lay = None
+
+        if root is None or lay is None:
+            dlg.setWindowTitle(DEFAULT_PANEL_TITLE)
+            dlg.resize(420, 380)
+            if QtCore is not None:
+                dlg.setWindowModality(QtCore.Qt.NonModal)
+                dlg.setWindowFlag(QtCore.Qt.Tool, True)
+            root = QtWidgets.QWidget(dlg)
+            outer = QtWidgets.QVBoxLayout(dlg)
+            outer.addWidget(root)
+            lay = QtWidgets.QVBoxLayout(root)
+
+        lbl_intro = QtWidgets.QLabel(
+            "Seleccione grupos de circuito, cajas o dispositivos antes de ejecutar.\n"
+            "Si no hay seleccion, se intentaran procesar todos los circuitos detectados."
+        )
+        lbl_intro.setWordWrap(True)
+
+        grp_scope = QtWidgets.QGroupBox("Alcance")
+        lay_scope = QtWidgets.QVBoxLayout(grp_scope)
+        lbl_scope = QtWidgets.QLabel("Circuitos: (sin actualizar)")
+        list_scope = QtWidgets.QListWidget()
+        list_scope.setMinimumHeight(100)
+        btn_scope = QtWidgets.QPushButton("Actualizar alcance desde seleccion")
+        lay_scope.addWidget(lbl_scope)
+        lay_scope.addWidget(list_scope)
+        lay_scope.addWidget(btn_scope)
+
+        grp_param = QtWidgets.QGroupBox("Parametros")
+        form = QtWidgets.QFormLayout(grp_param)
+        sp_route_z = QtWidgets.QDoubleSpinBox()
+        sp_route_z.setRange(-5000.0, 20000.0)
+        sp_route_z.setDecimals(1)
+        sp_route_z.setSuffix(" mm")
+        sp_route_z.setValue(pref_get_float("route_z", DEFAULT_ROUTE_Z))
+
+        sp_bend = QtWidgets.QDoubleSpinBox()
+        sp_bend.setRange(0.0, 1000.0)
+        sp_bend.setDecimals(1)
+        sp_bend.setSuffix(" mm")
+        sp_bend.setValue(pref_get_float("bend_radius", DEFAULT_BEND_RADIUS))
+
+        sp_level_tol = QtWidgets.QDoubleSpinBox()
+        sp_level_tol.setRange(0.0, 500.0)
+        sp_level_tol.setDecimals(1)
+        sp_level_tol.setSuffix(" mm")
+        sp_level_tol.setValue(pref_get_float("device_level_tolerance", DEFAULT_DEVICE_LEVEL_TOLERANCE))
+
+        sp_fallback = QtWidgets.QDoubleSpinBox()
+        sp_fallback.setRange(0.0, 10000.0)
+        sp_fallback.setDecimals(1)
+        sp_fallback.setSuffix(" mm")
+        sp_fallback.setValue(pref_get_float("fallback_near_mm", DEFAULT_FALLBACK_NEAR_MM))
+
+        chk_apag = QtWidgets.QCheckBox("Incluir apagadores")
+        chk_apag.setChecked(pref_get_bool("include_apagadores", DEFAULT_INCLUDE_APAGADORES))
+
+        chk_perim = QtWidgets.QCheckBox("Ruta por perimetro entre octogonales")
+        chk_perim.setChecked(pref_get_bool("route_by_perimeter", DEFAULT_ROUTE_BY_PERIMETER))
+
+        chk_clear = QtWidgets.QCheckBox("Borrar ramales generados antes de recalcular")
+        chk_clear.setChecked(pref_get_bool("clear_existing", DEFAULT_CLEAR_EXISTING))
+
+        chk_same_level = QtWidgets.QCheckBox("Conexion directa solo si estan a la misma cota")
+        chk_same_level.setChecked(pref_get_bool("direct_same_level_only", True))
+
+        form.addRow("Nivel ruta:", sp_route_z)
+        form.addRow("Radio curvatura:", sp_bend)
+        form.addRow("Tolerancia cota:", sp_level_tol)
+        form.addRow("Fallback cercano:", sp_fallback)
+        form.addRow("", chk_apag)
+        form.addRow("", chk_same_level)
+        form.addRow("", chk_perim)
+        form.addRow("", chk_clear)
+
+        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        state = {"group_names": []}
+
+        def refresh_scope():
+            list_scope.clear()
+            groups = resolver_grupos_alcance(self.doc, selection_only=True)
+            state["group_names"] = [texto_seguro(getattr(g, "Name", "")) for g in groups if texto_seguro(getattr(g, "Name", ""))]
+            if groups:
+                lbl_scope.setText(f"Circuitos seleccionados: {len(groups)}")
+            else:
+                lbl_scope.setText("Circuitos: sin seleccion explicita; al aceptar se procesaran todos")
+            for group in groups:
+                list_scope.addItem(texto_seguro(getattr(group, "Label", "")) or texto_seguro(getattr(group, "Name", "")))
+
+        btn_scope.clicked.connect(refresh_scope)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+
+        lay.addWidget(lbl_intro)
+        lay.addWidget(grp_scope)
+        lay.addWidget(grp_param)
+        lay.addWidget(buttons)
+
+        refresh_scope()
+
+        if QtCore is None:
+            if dlg.exec_() != QtWidgets.QDialog.Accepted:
+                return None
+        else:
+            loop = QtCore.QEventLoop()
+            accepted = {"ok": False}
+
+            def accept_and_close():
+                accepted["ok"] = True
+                if dock is not None:
+                    dock.close()
+                else:
+                    dlg.accept()
+
+            def reject_and_close():
+                accepted["ok"] = False
+                if dock is not None:
+                    dock.close()
+                else:
+                    dlg.reject()
+
+            try:
+                buttons.accepted.disconnect()
+            except Exception:
+                pass
+            try:
+                buttons.rejected.disconnect()
+            except Exception:
+                pass
+            buttons.accepted.connect(accept_and_close)
+            buttons.rejected.connect(reject_and_close)
+
+            if dock is not None:
+                try:
+                    dock.visibilityChanged.connect(lambda visible: loop.quit() if not visible else None)
+                except Exception:
+                    pass
+                dock.show()
+                try:
+                    dock.raise_()
+                except Exception:
+                    pass
+            else:
+                dlg.show()
+                QtWidgets.QApplication.processEvents()
+                self._move_dialog_to_side(dlg, parent)
+                try:
+                    dlg.raise_()
+                    dlg.activateWindow()
+                except Exception:
+                    pass
+                dlg.finished.connect(loop.quit)
+
+            loop.exec_()
+            if not accepted["ok"]:
+                return None
+
+        cfg = {
+            "route_z": float(sp_route_z.value()),
+            "bend_radius": float(sp_bend.value()),
+            "include_apagadores": bool(chk_apag.isChecked()),
+            "direct_same_level_only": bool(chk_same_level.isChecked()),
+            "device_level_tolerance": float(sp_level_tol.value()),
+            "fallback_near_mm": float(sp_fallback.value()),
+            "route_by_perimeter": bool(chk_perim.isChecked()),
+            "clear_existing": bool(chk_clear.isChecked()),
+            "group_names": list(state.get("group_names", []) or []),
+        }
+        pref_set_float("route_z", cfg["route_z"])
+        pref_set_float("bend_radius", cfg["bend_radius"])
+        pref_set_bool("include_apagadores", cfg["include_apagadores"])
+        pref_set_bool("direct_same_level_only", cfg["direct_same_level_only"])
+        pref_set_float("device_level_tolerance", cfg["device_level_tolerance"])
+        pref_set_float("fallback_near_mm", cfg["fallback_near_mm"])
+        pref_set_bool("route_by_perimeter", cfg["route_by_perimeter"])
+        pref_set_bool("clear_existing", cfg["clear_existing"])
+        return cfg
+
+
+def conectar_circuitos_ramales_auto():
+    doc = App.ActiveDocument
+    if doc is None:
+        log_error("No hay documento activo")
+        return
+    if Gui is None:
+        log_error("FreeCADGui no esta activo")
+        return
+
+    cfg = FormularioRamales(doc).run()
+    if cfg is None:
+        log_info("Operacion cancelada")
+        return
+
+    selected_group_names = list(cfg.get("group_names", []) or [])
+    if selected_group_names:
+        groups = objects_by_names(doc, selected_group_names)
+        log_info(f"Alcance congelado desde la seleccion: {len(groups)} circuito(s)")
+    else:
+        groups = resolver_grupos_alcance(doc, selection_only=False)
+        log_info("Sin seleccion explicita: se procesaran todos los circuitos detectados")
+    if not groups:
+        log_error("No se detectaron grupos de circuito")
+        return
+
+    log_info(f"Circuitos seleccionados para ramales: {len(groups)}")
+    try:
+        doc.openTransaction("ElectricCR: Conectar Circuitos Ramales Auto")
+        total = 0
+        for group in groups:
+            total += procesar_circuito(doc, group, cfg)
+        doc.recompute()
+        doc.commitTransaction()
+        log_info(f"Proceso terminado | circuitos={len(groups)} | enlaces_generados={total}")
+    except Exception as ex:
+        try:
+            doc.abortTransaction()
+        except Exception:
+            pass
+        log_error(f"Error general: {ex}")
+
+
+conectar_circuitos_ramales_auto()

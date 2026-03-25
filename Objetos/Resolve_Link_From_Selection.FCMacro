@@ -1,0 +1,426 @@
+# -*- coding: utf-8 -*-
+# MenuText: Resolve Link From Selection
+# ToolTip: Resolve selected objects to App::Link instances and detect container path.
+"""
+Resolve Link From Selection
+
+Purpose:
+- Get selection from Gui.Selection.getSelectionEx()
+- Resolve App::Link even when user clicks sub-geometry
+- Report container path for business logic:
+  Iluminacion > Circuito > Recinto
+"""
+
+import unicodedata
+
+import FreeCAD as App
+
+try:
+    import FreeCADGui as Gui
+except Exception:
+    Gui = None
+
+
+def _log(msg):
+    App.Console.PrintMessage(f"[RESOLVE_LINK][INFO] {msg}\n")
+
+
+def _warn(msg):
+    App.Console.PrintWarning(f"[RESOLVE_LINK][WARN] {msg}\n")
+
+
+def _err(msg):
+    App.Console.PrintError(f"[RESOLVE_LINK][ERROR] {msg}\n")
+
+
+def _safe_text(value):
+    try:
+        return str(value or "")
+    except Exception:
+        return ""
+
+
+def _norm(text):
+    s = _safe_text(text).strip().lower()
+    if not s:
+        return ""
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    s = " ".join(s.split())
+    return s
+
+
+def _is_doc_object(obj):
+    if obj is None:
+        return False
+    if isinstance(obj, str):
+        return False
+    if hasattr(obj, "TypeId"):
+        return True
+    if hasattr(obj, "isDerivedFrom"):
+        return True
+    if hasattr(obj, "Name"):
+        return True
+    return False
+
+
+def _is_link(obj):
+    if not _is_doc_object(obj):
+        return False
+    try:
+        if obj.isDerivedFrom("App::Link"):
+            return True
+    except Exception:
+        pass
+    tid = _safe_text(getattr(obj, "TypeId", ""))
+    return tid.startswith("App::Link")
+
+
+def _is_group(obj):
+    if not _is_doc_object(obj):
+        return False
+    try:
+        if obj.isDerivedFrom("App::DocumentObjectGroup"):
+            return True
+    except Exception:
+        pass
+    try:
+        if obj.isDerivedFrom("App::Part"):
+            return True
+    except Exception:
+        pass
+    try:
+        if obj.isDerivedFrom("App::Link"):
+            return False
+    except Exception:
+        pass
+    return hasattr(obj, "Group")
+
+
+def _obj_name(obj):
+    if not _is_doc_object(obj):
+        return _safe_text(obj) or "Unknown"
+    return _safe_text(getattr(obj, "Name", "")) or _safe_text(getattr(obj, "Label", "")) or "Unknown"
+
+
+def _obj_label(obj):
+    if not _is_doc_object(obj):
+        return _safe_text(obj) or "Unknown"
+    return _safe_text(getattr(obj, "Label", "")) or _safe_text(getattr(obj, "Name", "")) or "Unknown"
+
+
+def _obj_type(obj):
+    if not _is_doc_object(obj):
+        return type(obj).__name__
+    return _safe_text(getattr(obj, "TypeId", "")) or type(obj).__name__
+
+
+def _iter_parent_candidates(obj):
+    if obj is None:
+        return
+    for attr in ("InListRecursive", "InList"):
+        try:
+            parents = list(getattr(obj, attr, []) or [])
+        except Exception:
+            parents = []
+        for p in parents:
+            if _is_doc_object(p):
+                yield p
+    try:
+        gp = obj.getParentGroup() if hasattr(obj, "getParentGroup") else None
+    except Exception:
+        gp = None
+    if _is_doc_object(gp):
+        yield gp
+
+
+def resolve_link(obj):
+    """
+    If obj is App::Link, return it.
+    Else climb parents (InList/InListRecursive/getParentGroup) until App::Link.
+    """
+    if obj is None:
+        return None
+    if _is_link(obj):
+        return obj
+
+    queue = [obj]
+    seen = set()
+    while queue:
+        cur = queue.pop(0)
+        key = _obj_name(cur) or f"id:{id(cur)}"
+        if key in seen:
+            continue
+        seen.add(key)
+        if _is_link(cur):
+            return cur
+        for p in _iter_parent_candidates(cur):
+            pkey = _obj_name(p) or f"id:{id(p)}"
+            if pkey not in seen:
+                queue.append(p)
+    return None
+
+
+def _find_parent_group_linear(doc, obj):
+    if doc is None or obj is None:
+        return None
+    for g in (doc.Objects or []):
+        if not _is_group(g):
+            continue
+        try:
+            if obj in (getattr(g, "Group", []) or []):
+                return g
+        except Exception:
+            continue
+    return None
+
+
+def _parent_group(doc, obj):
+    if obj is None:
+        return None
+    try:
+        gp = obj.getParentGroup() if hasattr(obj, "getParentGroup") else None
+        if gp is not None:
+            return gp
+    except Exception:
+        pass
+    return _find_parent_group_linear(doc, obj)
+
+
+def _group_chain_topdown(doc, obj, max_depth=64):
+    chain = []
+    seen = set()
+    cur = _parent_group(doc, obj)
+    depth = 0
+    while cur is not None and depth < max_depth:
+        key = _obj_name(cur) or f"id:{id(cur)}"
+        if key in seen:
+            break
+        seen.add(key)
+        chain.append(cur)
+        cur = _parent_group(doc, cur)
+        depth += 1
+    chain.reverse()
+    return chain
+
+
+def _is_iluminacion_group(g):
+    txt = _norm(f"{_obj_label(g)} {_obj_name(g)}")
+    return "iluminacion" in txt
+
+
+def _is_root_device_group(g):
+    txt = _norm(f"{_obj_label(g)} {_obj_name(g)}")
+    return ("tomacorr" in txt) or ("apagador" in txt)
+
+
+def _is_technical_group(g):
+    txt = _norm(f"{_obj_label(g)} {_obj_name(g)}")
+    if not txt:
+        return False
+    if "conexion" in txt or "ramal" in txt or "alimentador" in txt:
+        return True
+    if "componente" in txt:
+        return True
+    if "cajas_octogonales" in txt or "conexiones_3d" in txt:
+        return True
+    if txt.startswith("_lib") or " _lib" in txt:
+        return True
+    return False
+
+
+def _path_string(groups):
+    if not groups:
+        return "-"
+    return " > ".join(_obj_label(g) for g in groups)
+
+
+def get_container(link):
+    """
+    Resolve functional container from link:
+    Iluminacion > Circuito > Recinto
+    """
+    doc = App.ActiveDocument
+    if doc is None or link is None:
+        return {"ok": False, "reason": "No doc/link"}
+
+    chain = _group_chain_topdown(doc, link)
+    if not chain:
+        return {"ok": False, "reason": "No parent chain", "chain": []}
+
+    ilum_idx = None
+    for i, g in enumerate(chain):
+        if _is_iluminacion_group(g):
+            ilum_idx = i
+            break
+    if ilum_idx is not None:
+        tail = [g for g in chain[ilum_idx + 1:] if not _is_technical_group(g)]
+        circuito = tail[0] if len(tail) >= 1 else None
+        recinto = tail[1] if len(tail) >= 2 else None
+        container = recinto or circuito
+        if container is not None:
+            return {
+                "ok": True,
+                "chain": chain,
+                "iluminacion": chain[ilum_idx],
+                "circuito": circuito,
+                "recinto": recinto,
+                "container": container,
+            }
+
+    root_idx = None
+    for i, g in enumerate(chain):
+        if _is_root_device_group(g):
+            root_idx = i
+            break
+    if root_idx is not None:
+        tail = [g for g in chain[root_idx + 1:] if not _is_technical_group(g)]
+        if tail:
+            return {
+                "ok": True,
+                "chain": chain,
+                "container": tail[-1],
+            }
+
+    return {"ok": False, "reason": "No functional container", "chain": chain}
+
+
+def debug_selection():
+    doc = App.ActiveDocument
+    if doc is None:
+        _err("No active document.")
+        return
+    if Gui is None:
+        _err("FreeCADGui not available.")
+        return
+
+    try:
+        sel_ex = Gui.Selection.getSelectionEx() or []
+    except Exception:
+        sel_ex = []
+
+    _log(f"SelectionEx count: {len(sel_ex)}")
+    for i, sx in enumerate(sel_ex, 1):
+        obj = getattr(sx, "Object", None)
+        if obj is None:
+            on = _safe_text(getattr(sx, "ObjectName", ""))
+            if on:
+                obj = doc.getObject(on)
+        if obj is None:
+            _warn(f"[{i}] Empty selection object")
+            continue
+
+        parents = []
+        try:
+            parents = list(getattr(obj, "InList", []) or [])
+        except Exception:
+            parents = []
+        parent_txt = ", ".join(f"{_obj_label(p)}<{_obj_type(p)}>" for p in parents) if parents else "-"
+
+        resolved = resolve_link(obj)
+        _log(
+            f"[{i}] sel={_obj_label(obj)} | name={_obj_name(obj)} | type={_obj_type(obj)} | "
+            f"parents={parent_txt} | link={_obj_label(resolved) if resolved else 'None'}"
+        )
+
+
+def get_selected_links():
+    """
+    Return unique App::Link objects from current selection.
+    """
+    doc = App.ActiveDocument
+    if doc is None:
+        _err("No active document.")
+        return []
+    if Gui is None:
+        _err("FreeCADGui not available.")
+        return []
+
+    try:
+        sel_ex = Gui.Selection.getSelectionEx() or []
+    except Exception:
+        sel_ex = []
+    try:
+        raw = Gui.Selection.getSelection() or []
+    except Exception:
+        raw = []
+
+    if not sel_ex and not raw:
+        _warn("No selection found.")
+        return []
+
+    links = []
+    seen = set()
+
+    for sx in sel_ex:
+        obj = getattr(sx, "Object", None)
+        if obj is None:
+            on = _safe_text(getattr(sx, "ObjectName", ""))
+            if on:
+                obj = doc.getObject(on)
+        if obj is None:
+            continue
+        link = resolve_link(obj)
+        if link is None:
+            _warn(f"No link resolved for selection: {_obj_label(obj)}<{_obj_type(obj)}>")
+            continue
+        key = _obj_name(link) or f"id:{id(link)}"
+        if key in seen:
+            continue
+        seen.add(key)
+        links.append(link)
+
+    for obj in raw:
+        if obj is None:
+            continue
+        link = resolve_link(obj)
+        if link is None:
+            continue
+        key = _obj_name(link) or f"id:{id(link)}"
+        if key in seen:
+            continue
+        seen.add(key)
+        links.append(link)
+
+    return links
+
+
+def main():
+    doc = App.ActiveDocument
+    if doc is None:
+        _err("No active document.")
+        return []
+    if Gui is None:
+        _err("FreeCADGui not available.")
+        return []
+
+    debug_selection()
+    links = get_selected_links()
+    if not links:
+        _warn("No App::Link resolved from selection.")
+        return []
+
+    _log(f"Resolved links: {len(links)}")
+    for link in links:
+        info = get_container(link)
+        if info.get("ok"):
+            circuito = info.get("circuito")
+            recinto = info.get("recinto")
+            container = info.get("container")
+            _log(
+                f"Link={_obj_label(link)} | circuito={_obj_label(circuito) if circuito else '-'} | "
+                f"recinto={_obj_label(recinto) if recinto else '-'} | "
+                f"container={_obj_label(container) if container else '-'}"
+            )
+            _log(f"Path: {_path_string(info.get('chain', []))}")
+        else:
+            _warn(
+                f"Link={_obj_label(link)} has no valid container | reason={_safe_text(info.get('reason'))} | "
+                f"path={_path_string(info.get('chain', []))}"
+            )
+    return links
+
+
+if __name__ == "__main__":
+    main()
+

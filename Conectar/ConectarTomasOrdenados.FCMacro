@@ -1,100 +1,132 @@
 import FreeCAD
 import FreeCADGui
-import Part
+import Draft
 import re
+import os
+import sys
+_THIS_DIR = os.path.dirname(__file__) if '__file__' in globals() else ''
+if _THIS_DIR and _THIS_DIR not in sys.path:
+    sys.path.insert(0, _THIS_DIR)
+import importlib
+import conexiones_grouping as _conexiones_grouping_mod
+_conexiones_grouping_mod = importlib.reload(_conexiones_grouping_mod)
+ensure_conexiones_group = _conexiones_grouping_mod.ensure_conexiones_group
+EPS = 1e-6
 
-def extraer_numero(label):
-    # Usar una expresión regular para extraer el número del Label
-    match = re.search(r'(\d+)', label)
-    return int(match.group()) if match else float('inf')
+
+def _make_wire(points):
+    maker = getattr(Draft, "make_wire", None)
+    if maker is None:
+        maker = getattr(Draft, "makeWire", None)
+    if maker is None:
+        raise RuntimeError("No se encontro Draft.make_wire ni Draft.makeWire")
+
+    attempts = [
+        lambda: maker(points, closed=False, face=False),
+        lambda: maker(points, False, False),
+        lambda: maker(points, False),
+        lambda: maker(points),
+    ]
+    last_err = None
+    for attempt in attempts:
+        try:
+            return attempt()
+        except Exception as ex:
+            last_err = ex
+    raise RuntimeError(f"No se pudo crear wire: {last_err}")
+
+
+def _add_point(seq, p):
+    if not seq:
+        seq.append(p)
+        return
+    if seq[-1].distanceToPoint(p) > EPS:
+        seq.append(p)
+
 
 def ordenar_por_etiqueta(objetos):
-    # Función de ordenación que extrae los números y los ordena correctamente
     def sort_key(obj):
-        parts = re.split('(\d+)', obj.Label)
+        parts = re.split(r"(\d+)", obj.Label)
         return [int(part) if part.isdigit() else part for part in parts]
-    
+
     return sorted(objetos, key=sort_key)
+
 
 def conectar_tomacorrientes_con_polilinea():
     doc = FreeCAD.ActiveDocument
-    
-    # Obtiene el objeto seleccionado
-    selected_objects = FreeCADGui.Selection.getSelection()
-    
-    if not selected_objects:
-        FreeCAD.Console.PrintError("No se ha seleccionado ningún objeto.\n")
+    if doc is None:
+        FreeCAD.Console.PrintError("No hay documento activo.\n")
         return
-    
-    # Verifica si el objeto seleccionado es un grupo
-    if selected_objects[0].TypeId == 'App::DocumentObjectGroup':
+
+    selected_objects = FreeCADGui.Selection.getSelection()
+    if not selected_objects:
+        FreeCAD.Console.PrintError("No se ha seleccionado ningun objeto.\n")
+        return
+
+    if selected_objects[0].TypeId == "App::DocumentObjectGroup":
         grupo = selected_objects[0]
     else:
-        # Si no es un grupo, busca el grupo al que pertenece el objeto
+        grupo = None
         for obj in doc.Objects:
-            if obj.TypeId == 'App::DocumentObjectGroup' and selected_objects[0] in obj.Group:
+            if obj.TypeId == "App::DocumentObjectGroup" and selected_objects[0] in obj.Group:
                 grupo = obj
                 break
-        else:
-            FreeCAD.Console.PrintError("El objeto seleccionado no pertenece a ningún grupo.\n")
+        if grupo is None:
+            FreeCAD.Console.PrintError("El objeto seleccionado no pertenece a ningun grupo.\n")
             return
-    
+
     FreeCAD.Console.PrintMessage(f"Grupo seleccionado: {grupo.Name}\n")
-    
-    # Obtener y ordenar los objetos en el grupo según sus etiquetas
-    objetos_numerados = ordenar_por_etiqueta([obj for obj in grupo.Group if re.search(r'\d+', obj.Label)])
+
+    objetos_numerados = ordenar_por_etiqueta([obj for obj in grupo.Group if re.search(r"\d+", obj.Label)])
 
     puntos = []
-    
     for obj in objetos_numerados:
-        FreeCAD.Console.PrintMessage(f"Revisando objeto: {obj.Label}\n")
-        if hasattr(obj, 'Placement'):
-            FreeCAD.Console.PrintMessage(f"El objeto {obj.Label} tiene la propiedad Placement.\n")
-            puntos.append(obj.Placement.Base)  # Usar la posición base sin ajuste
+        if hasattr(obj, "Placement"):
+            puntos.append(obj.Placement.Base)
         else:
-            FreeCAD.Console.PrintWarning(f"El objeto {obj.Label} no tiene la propiedad Placement.\n")
-    
-    # Imprimir puntos para verificación
-    FreeCAD.Console.PrintMessage(f"Puntos encontrados: {len(puntos)}\n")
-    for punto in puntos:
-        FreeCAD.Console.PrintMessage(f"Punto: {punto}\n")
-    
+            FreeCAD.Console.PrintWarning(f"El objeto {obj.Label} no tiene Placement.\n")
+
     if len(puntos) < 2:
-        FreeCAD.Console.PrintError("No hay suficientes tomacorrientes en el grupo para crear una polilínea.\n")
+        FreeCAD.Console.PrintError("No hay suficientes tomacorrientes en el grupo para crear una ruta.\n")
         return
-    
-    # Crear la polilínea con segmentos horizontales y verticales
-    edges = []
+
+    # Construir ruta ortogonal continua
+    ruta = []
+    _add_point(ruta, puntos[0])
+
     for i in range(len(puntos) - 1):
         p1 = puntos[i]
         p2 = puntos[i + 1]
-        
-        if p1 != p2:
-            # Crear segmento horizontal desde p1 hasta el punto intermedio
-            mid_point = FreeCAD.Vector(p2.x, p1.y, p1.z)
-            if p1 != mid_point:
-                edges.append(Part.LineSegment(p1, mid_point).toShape())
-            if mid_point != p2:
-                edges.append(Part.LineSegment(mid_point, p2).toShape())
-        else:
-            FreeCAD.Console.PrintWarning(f"Se evitó crear un segmento entre puntos iguales: {p1} y {p2}\n")
-    
-    if not edges:
-        FreeCAD.Console.PrintError("No se pudieron crear aristas suficientes para la polilínea.\n")
+        if p1.distanceToPoint(p2) <= EPS:
+            FreeCAD.Console.PrintWarning(f"Se omitio segmento entre puntos iguales: {p1}\n")
+            continue
+
+        mid_point = FreeCAD.Vector(p2.x, p1.y, p1.z)
+        _add_point(ruta, mid_point)
+        _add_point(ruta, p2)
+
+    if len(ruta) < 2:
+        FreeCAD.Console.PrintError("No se pudo construir una ruta valida.\n")
         return
 
-    # Crear un contenedor de aristas y unirlas en una sola Wire
-    wire = Part.Wire(edges)
-    
-    # Aplicar redondeo en las esquinas
+    wire = _make_wire(ruta)
+    wire.Label = f"Conexion_Tomas_{grupo.Label}"
+    conexiones_grupo = ensure_conexiones_group(doc, parent_group=grupo, objects=objetos_numerados)
     try:
-        rounded_wire = wire.makeFillet(10, wire.Edges)  # Radio de redondeo de 10 mm
-        Part.show(rounded_wire)
-    except Part.OCCError:
-        FreeCAD.Console.PrintError("No hay aristas adecuadas para chaflán o redondeo.\n")
-        Part.show(wire)
-    
+        conexiones_grupo.addObject(wire)
+    except Exception:
+        pass
+
+    if hasattr(wire, "FilletRadius"):
+        try:
+            wire.FilletRadius = 10.0
+        except Exception as ex:
+            FreeCAD.Console.PrintWarning(f"No se pudo aplicar FilletRadius: {ex}\n")
+
     doc.recompute()
 
-# Ejecuta la función para conectar tomacorrientes en el grupo seleccionado
+
+# Ejecuta la funcion para conectar tomacorrientes en el grupo seleccionado
 conectar_tomacorrientes_con_polilinea()
+
+

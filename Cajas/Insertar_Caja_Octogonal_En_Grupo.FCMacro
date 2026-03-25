@@ -1,0 +1,652 @@
+# -*- coding: utf-8 -*-
+# MenuText: Insertar Caja Octogonal en Grupo...
+# Icon: Cajas/Insertar_Cajas_Octogonales.svg
+"""
+Inserta una caja EMT octogonal en el grupo relacionado con la seleccion actual.
+
+Uso esperado:
+- Seleccionar una canalizacion, caja u objeto dentro de un circuito/grupo.
+- La macro detecta el grupo de circuito relacionado.
+- Reutiliza el grupo de cajas del circuito si ya existe.
+- Si hay una caja octogonal previa en ese grupo/circuito, copia su altura SNPT,
+  diametro y propiedades generales de circuito.
+- La nueva caja se coloca cerca del objeto seleccionado, usando su centro 3D.
+"""
+
+from pathlib import Path
+import importlib
+import re
+import sys
+
+import FreeCAD as App
+
+try:
+    import FreeCADGui as Gui
+    GUI_UP = True
+except Exception:
+    Gui = None
+    GUI_UP = False
+
+
+DEFAULT_DIAMETER = 22.2
+DEFAULT_SNPT = 3000.0
+NAME_PREFIX = "Caja EMT Octogonal"
+
+
+def _log(msg):
+    App.Console.PrintMessage(f"[CAJA_EMT_GRUPO][INFO] {msg}\n")
+
+
+def _warn(msg):
+    App.Console.PrintWarning(f"[CAJA_EMT_GRUPO][WARN] {msg}\n")
+
+
+def _err(msg):
+    App.Console.PrintError(f"[CAJA_EMT_GRUPO][ERROR] {msg}\n")
+
+
+def _safe_text(value):
+    try:
+        return str(value or "")
+    except Exception:
+        return ""
+
+
+def _as_float(value, default=0.0):
+    try:
+        if hasattr(value, "Value"):
+            return float(value.Value)
+        return float(value)
+    except Exception:
+        return float(default)
+
+
+def _safe_name_token(value, fallback="Caja_EMT"):
+    txt = _safe_text(value).strip()
+    if not txt:
+        return fallback
+    txt = re.sub(r"[^0-9A-Za-z_]+", "_", txt)
+    txt = re.sub(r"_+", "_", txt).strip("_")
+    return txt or fallback
+
+
+def _is_group(obj):
+    try:
+        if obj and obj.isDerivedFrom("App::DocumentObjectGroup"):
+            return True
+    except Exception:
+        pass
+    try:
+        if obj and obj.isDerivedFrom("App::Part"):
+            return True
+    except Exception:
+        pass
+    return bool(obj and hasattr(obj, "Group"))
+
+
+def _linked_object(obj):
+    if obj is None:
+        return None
+    for attr in ("LinkedObject", "Link"):
+        try:
+            ref = getattr(obj, attr, None)
+            if ref is not None:
+                return ref
+        except Exception:
+            pass
+    return None
+
+
+def _as_group_obj(obj):
+    if _is_group(obj):
+        return obj
+    ref = _linked_object(obj)
+    if _is_group(ref):
+        return ref
+    return None
+
+
+def _add_to_group(group, obj):
+    if group is None or obj is None:
+        return
+    try:
+        if obj not in (group.Group or []):
+            group.addObject(obj)
+    except Exception:
+        pass
+
+
+def _remove_from_group(group, obj):
+    if group is None or obj is None:
+        return
+    try:
+        if obj in (group.Group or []):
+            group.removeObject(obj)
+    except Exception:
+        pass
+
+
+def _parent_group(obj):
+    if obj is None:
+        return None
+    if hasattr(obj, "getParentGroup"):
+        try:
+            pg = obj.getParentGroup()
+            if pg is not None:
+                return pg
+        except Exception:
+            pass
+    for parent in (getattr(obj, "InList", []) or []):
+        if _is_group(parent):
+            return parent
+    return None
+
+
+def _group_chain_topdown(obj):
+    chain = []
+    seen = set()
+    cur = obj
+    while True:
+        pg = _parent_group(cur)
+        if pg is None:
+            break
+        name = _safe_text(getattr(pg, "Name", ""))
+        if not name or name in seen:
+            break
+        seen.add(name)
+        chain.append(pg)
+        cur = pg
+    chain.reverse()
+    return chain
+
+
+def _find_child_group_by_label(parent, label):
+    want = _safe_text(label).strip().lower()
+    if not want or parent is None:
+        return None
+    for child in (getattr(parent, "Group", []) or []):
+        grp = _as_group_obj(child)
+        if grp is None:
+            continue
+        lbl = _safe_text(getattr(grp, "Label", "")).strip().lower()
+        name = _safe_text(getattr(grp, "Name", "")).strip().lower()
+        if lbl == want or name == want:
+            return grp
+    return None
+
+
+def _ensure_child_group_by_label(doc, parent, label, prefix="CajaOct"):
+    token = _safe_name_token(label, fallback="Grupo")
+    base = f"{prefix}_{_safe_name_token(getattr(parent, 'Name', 'Root'), 'Root')}_{token}"
+
+    grp_base = doc.getObject(base)
+    if _is_group(grp_base):
+        _add_to_group(parent, grp_base)
+        return grp_base
+
+    existing = _find_child_group_by_label(parent, label)
+    if existing is not None:
+        return existing
+
+    name = base
+    i = 1
+    while doc.getObject(name) is not None:
+        name = f"{base}_{i:02d}"
+        i += 1
+    grp = doc.addObject("App::DocumentObjectGroup", name)
+    try:
+        grp.Label = _safe_text(label) or token
+    except Exception:
+        pass
+    _add_to_group(parent, grp)
+    return grp
+
+
+def _is_connection_group_label(group_obj):
+    txt = f"{_safe_text(getattr(group_obj, 'Name', ''))} {_safe_text(getattr(group_obj, 'Label', ''))}".lower()
+    return ("conexion" in txt) or ("conexiones" in txt)
+
+
+def _is_conduit_group_label(group_obj):
+    txt = f"{_safe_text(getattr(group_obj, 'Name', ''))} {_safe_text(getattr(group_obj, 'Label', ''))}".lower()
+    return ("tuber" in txt) or ("conduit" in txt) or ("emt" in txt) or ("pvc" in txt)
+
+
+def _is_boxes_group_label(group_obj):
+    txt = f"{_safe_text(getattr(group_obj, 'Name', ''))} {_safe_text(getattr(group_obj, 'Label', ''))}".lower()
+    return "caja" in txt
+
+
+def _is_circuit_group_label(group_obj):
+    txt = f"{_safe_text(getattr(group_obj, 'Name', ''))} {_safe_text(getattr(group_obj, 'Label', ''))}".lower()
+    if ("circuito" in txt) or ("circuit" in txt):
+        return True
+    return bool(re.search(r"\btp[\s\-_]*\d+", txt))
+
+
+def _is_root_device_group_label(group_obj):
+    txt = f"{_safe_text(getattr(group_obj, 'Name', ''))} {_safe_text(getattr(group_obj, 'Label', ''))}".lower()
+    return ("tomacorr" in txt) or ("toma" in txt) or ("apagador" in txt) or ("switch" in txt) or ("interruptor" in txt)
+
+
+def _group_has_child_matching(group_obj, predicate):
+    for child in (getattr(group_obj, "Group", []) or []):
+        grp = _as_group_obj(child)
+        if grp is not None and predicate(grp):
+            return True
+    return False
+
+
+def _iter_non_group_descendants(root):
+    if root is None:
+        return
+    queue = [root]
+    seen = set()
+    while queue:
+        cur = queue.pop(0)
+        name = _safe_text(getattr(cur, "Name", ""))
+        if name and name in seen:
+            continue
+        if name:
+            seen.add(name)
+        if _is_group(cur):
+            for child in (getattr(cur, "Group", []) or []):
+                if child is not None:
+                    queue.append(child)
+            continue
+        yield cur
+
+
+def _iter_group_descendants(root):
+    if root is None:
+        return
+    queue = [root]
+    seen = set()
+    while queue:
+        cur = queue.pop(0)
+        name = _safe_text(getattr(cur, "Name", ""))
+        if name and name in seen:
+            continue
+        if name:
+            seen.add(name)
+        if cur is not root and _is_group(cur):
+            yield cur
+        if _is_group(cur):
+            for child in (getattr(cur, "Group", []) or []):
+                grp = _as_group_obj(child)
+                if grp is not None:
+                    queue.append(grp)
+
+
+def _is_octagon_box(obj):
+    txt = (
+        f"{_safe_text(getattr(obj, 'Name', ''))} "
+        f"{_safe_text(getattr(obj, 'Label', ''))} "
+        f"{_safe_text(getattr(obj, 'Tipo', ''))}"
+    ).lower()
+    return ("caja emt octogonal" in txt) or ("emt_octagon_box" in txt)
+
+
+def _group_contains_octagon_box(group):
+    for obj in _iter_non_group_descendants(group):
+        if _is_octagon_box(obj):
+            return True
+    return False
+
+
+def _object_ancestors(obj):
+    seen = set()
+    queue = list(getattr(obj, "InList", []) or [])
+    out = []
+    while queue:
+        nxt = queue.pop(0)
+        if nxt is None:
+            continue
+        name = _safe_text(getattr(nxt, "Name", ""))
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append(nxt)
+        for parent in (getattr(nxt, "InList", []) or []):
+            if parent is not None:
+                queue.append(parent)
+    return out
+
+
+def _related_circuit_group(obj):
+    chain = _group_chain_topdown(obj)
+    fallback = None
+    for grp in reversed(chain):
+        if _is_boxes_group_label(grp) or _is_connection_group_label(grp) or _is_conduit_group_label(grp):
+            continue
+        if _is_circuit_group_label(grp):
+            return grp
+        if fallback is None:
+            fallback = grp
+        if _group_has_child_matching(grp, _is_boxes_group_label):
+            return grp
+        if _group_has_child_matching(grp, _is_conduit_group_label):
+            return grp
+        parent = _parent_group(grp)
+        if parent is not None and _is_root_device_group_label(parent):
+            return grp
+    if fallback is not None:
+        return fallback
+    parent = _parent_group(obj)
+    if parent is not None and (_is_boxes_group_label(parent) or _is_connection_group_label(parent) or _is_conduit_group_label(parent)):
+        return _parent_group(parent) or parent
+    return parent
+
+
+def _related_boxes_group(doc, obj):
+    circuit_group = _related_circuit_group(obj)
+    if circuit_group is None:
+        return None, None
+
+    chain = _group_chain_topdown(obj)
+    for grp in reversed(chain):
+        if _is_boxes_group_label(grp):
+            return grp, circuit_group
+
+    candidates = []
+    for grp in _iter_group_descendants(circuit_group):
+        if grp is None or _is_connection_group_label(grp):
+            continue
+        if not _is_boxes_group_label(grp):
+            continue
+        has_boxes = _group_contains_octagon_box(grp)
+        depth = len(_group_chain_topdown(grp))
+        label = _safe_text(getattr(grp, "Label", "")) or _safe_text(getattr(grp, "Name", ""))
+        candidates.append((
+            0 if has_boxes else 1,
+            depth,
+            _safe_text(label).lower(),
+            grp,
+        ))
+    if candidates:
+        candidates.sort(key=lambda item: (item[0], item[1], item[2]))
+        return candidates[0][3], circuit_group
+
+    legacy = _find_child_group_by_label(circuit_group, "Cajas")
+    if legacy is not None:
+        return legacy, circuit_group
+
+    circuit_label = _safe_text(getattr(circuit_group, "Label", "")) or _safe_text(getattr(circuit_group, "Name", ""))
+    boxes_label = f"Cajas_{circuit_label.strip() or 'Sin_Circuito'}"
+    grp = _ensure_child_group_by_label(doc, circuit_group, boxes_label, prefix="CajaOct")
+    return grp, circuit_group
+
+
+def _find_template_box(*groups):
+    seen = set()
+    for group in groups:
+        if group is None:
+            continue
+        for obj in _iter_non_group_descendants(group):
+            name = _safe_text(getattr(obj, "Name", ""))
+            if name and name in seen:
+                continue
+            if name:
+                seen.add(name)
+            if _is_octagon_box(obj):
+                return obj
+    return None
+
+
+def _selection_objects():
+    if not GUI_UP:
+        return []
+    try:
+        return [obj for obj in (Gui.Selection.getSelection() or []) if obj is not None]
+    except Exception:
+        return []
+
+
+def _object_anchor_world(obj):
+    try:
+        shape = getattr(obj, "Shape", None)
+        if shape is not None and not shape.isNull():
+            bb = shape.BoundBox
+            return App.Vector(
+                0.5 * (bb.XMin + bb.XMax),
+                0.5 * (bb.YMin + bb.YMax),
+                0.5 * (bb.ZMin + bb.ZMax),
+            )
+    except Exception:
+        pass
+    try:
+        return App.Vector(obj.Placement.Base)
+    except Exception:
+        return App.Vector(0.0, 0.0, 0.0)
+
+
+def _ensure_electriccr_on_path():
+    for mod_name in ("ElectricCR", "electriccr"):
+        try:
+            importlib.import_module(mod_name)
+            return True
+        except ImportError:
+            pass
+
+    try:
+        here = Path(__file__).resolve()
+    except Exception:
+        here = None
+
+    cands = []
+    if here is not None:
+        for parent in [here.parent, *here.parents]:
+            pkg = parent / "ElectricCR"
+            if pkg.is_dir():
+                cands.extend([str(pkg.parent), str(pkg)])
+
+    try:
+        base = Path(App.getUserAppDataDir())
+    except Exception:
+        base = Path.home() / "AppData" / "Roaming" / "FreeCAD"
+
+    for folder_name in ("Macro", "Macros"):
+        pkg = base / folder_name / "ElectricCR"
+        if pkg.is_dir():
+            cands.extend([str(pkg.parent), str(pkg)])
+
+    for p in cands:
+        if p and p not in sys.path:
+            sys.path.insert(0, p)
+
+    importlib.invalidate_caches()
+    for mod_name in ("ElectricCR", "electriccr"):
+        try:
+            importlib.import_module(mod_name)
+            return True
+        except ImportError:
+            pass
+    return False
+
+
+def _import_caja_feature():
+    if not _ensure_electriccr_on_path():
+        raise RuntimeError("No se pudo resolver el paquete ElectricCR.")
+    candidates = (
+        "ElectricCR.electriccr.features.caja_emt_octogonal",
+        "electriccr.features.caja_emt_octogonal",
+    )
+    for mod_name in candidates:
+        try:
+            mod = importlib.import_module(mod_name)
+            insert_fn = getattr(mod, "insertar_caja_emt_octogonal_link", None)
+            master_fn = getattr(mod, "crear_caja_emt_octogonal_master", None)
+            if callable(insert_fn) and callable(master_fn):
+                return mod, insert_fn, master_fn
+        except Exception:
+            pass
+    raise RuntimeError("No se pudo importar caja_emt_octogonal.")
+
+
+def _ensure_property(obj, ptype, pname, pgroup, pdesc):
+    try:
+        if pname not in obj.PropertiesList:
+            obj.addProperty(ptype, pname, pgroup, pdesc)
+    except Exception:
+        pass
+
+
+def _copy_template_metadata(box_obj, template_box, ref_obj, circuit_group):
+    circuit_label = ""
+    if circuit_group is not None:
+        circuit_label = _safe_text(getattr(circuit_group, "Label", "")) or _safe_text(getattr(circuit_group, "Name", ""))
+    meta_defs = (
+        ("App::PropertyFloat", "NivelSNPT", "Red", "Cota SNPT objetivo (mm)", float(DEFAULT_SNPT)),
+        ("App::PropertyString", "CircuitoID", "Circuito", "Identificador de circuito", circuit_label),
+        ("App::PropertyString", "Circuito_Grupo", "Circuito", "Grupo de circuito", circuit_label),
+        ("App::PropertyString", "EstadoConexion", "Red", "Estado de conexion de tuberia", "Pendiente"),
+        ("App::PropertyBool", "NodoDerivacion", "Red", "Marca como nodo de derivacion", True),
+    )
+    for ptype, pname, pgroup, pdesc, _value in meta_defs:
+        _ensure_property(box_obj, ptype, pname, pgroup, pdesc)
+    if template_box is not None:
+        for pname, default in (
+            ("NivelSNPT", DEFAULT_SNPT),
+            ("CircuitoID", circuit_label),
+            ("Circuito_Grupo", circuit_label),
+            ("EstadoConexion", "Pendiente"),
+            ("NodoDerivacion", True),
+        ):
+            if pname in getattr(template_box, "PropertiesList", []):
+                try:
+                    setattr(box_obj, pname, getattr(template_box, pname))
+                    continue
+                except Exception:
+                    pass
+            try:
+                setattr(box_obj, pname, default)
+            except Exception:
+                pass
+    else:
+        for _ptype, pname, _pgroup, _pdesc, value in meta_defs:
+            try:
+                setattr(box_obj, pname, value)
+            except Exception:
+                pass
+
+    _ensure_property(box_obj, "App::PropertyString", "ReferenciaGrupoName", "Vinculo", "Grupo relacionado con la seleccion")
+    _ensure_property(box_obj, "App::PropertyString", "ReferenciaObjetoName", "Vinculo", "Objeto usado como referencia")
+    _ensure_property(box_obj, "App::PropertyString", "ReferenciaObjetoLabel", "Vinculo", "Etiqueta del objeto de referencia")
+    try:
+        box_obj.ReferenciaGrupoName = _safe_text(getattr(circuit_group, "Name", ""))
+    except Exception:
+        pass
+    try:
+        box_obj.ReferenciaObjetoName = _safe_text(getattr(ref_obj, "Name", ""))
+    except Exception:
+        pass
+    try:
+        box_obj.ReferenciaObjetoLabel = _safe_text(getattr(ref_obj, "Label", ""))
+    except Exception:
+        pass
+
+
+def _build_box_placement(target_point, anchor_local, rotation, z_level):
+    point = App.Vector(float(target_point.x), float(target_point.y), float(z_level))
+    rot = rotation if rotation is not None else App.Rotation()
+    base = point - rot.multVec(anchor_local)
+    return App.Placement(base, rot)
+
+
+def main():
+    doc = App.ActiveDocument
+    if doc is None:
+        _err("No hay documento activo.")
+        return
+
+    selected = [obj for obj in _selection_objects() if not _is_group(obj)]
+    if not selected:
+        _warn("Seleccione una canalizacion, caja u objeto del circuito.")
+        return
+
+    try:
+        _mod_box, insert_box_link, create_box_master = _import_caja_feature()
+    except Exception as ex:
+        _err(f"No se pudo cargar feature de caja EMT: {ex}")
+        return
+
+    try:
+        master = create_box_master(doc=doc, hide_master=True)
+        m_bb = master.Shape.BoundBox
+        anchor_local = App.Vector(
+            0.5 * (m_bb.XMin + m_bb.XMax),
+            0.5 * (m_bb.YMin + m_bb.YMax),
+            0.5 * (m_bb.ZMin + m_bb.ZMax),
+        )
+    except Exception as ex:
+        _err(f"No se pudo preparar master de caja EMT: {ex}")
+        return
+
+    created = 0
+    skipped = 0
+    try:
+        doc.openTransaction("ElectricCR: insertar caja octogonal en grupo")
+        for ref_obj in selected:
+            target_group, circuit_group = _related_boxes_group(doc, ref_obj)
+            if target_group is None:
+                skipped += 1
+                _warn(f"No se pudo resolver grupo destino para '{_safe_text(getattr(ref_obj, 'Label', ref_obj.Name))}'.")
+                continue
+
+            template_box = _find_template_box(target_group, circuit_group)
+            ref_point = _object_anchor_world(ref_obj)
+            diameter = _as_float(getattr(template_box, "DiametroEMT", DEFAULT_DIAMETER), DEFAULT_DIAMETER) if template_box is not None else DEFAULT_DIAMETER
+            z_level = _as_float(getattr(template_box, "NivelSNPT", ref_point.z), ref_point.z) if template_box is not None else _as_float(ref_point.z, DEFAULT_SNPT)
+            if abs(float(z_level)) <= 1e-6:
+                z_level = float(DEFAULT_SNPT)
+            rotation = None
+            if template_box is not None:
+                try:
+                    rotation = template_box.Placement.Rotation
+                except Exception:
+                    rotation = None
+            if rotation is None:
+                try:
+                    rotation = ref_obj.Placement.Rotation
+                except Exception:
+                    rotation = App.Rotation()
+
+            placement = _build_box_placement(ref_point, anchor_local, rotation, z_level)
+            label_base = _safe_text(getattr(ref_obj, "Label", "")) or _safe_text(getattr(ref_obj, "Name", ""))
+            box = insert_box_link(
+                doc=doc,
+                name_prefix=f"{NAME_PREFIX} - {label_base}",
+                placement=placement,
+                diametro_emt=float(diameter),
+                recompute=False,
+                hide_master=True,
+            )
+            _copy_template_metadata(box, template_box, ref_obj, circuit_group)
+
+            # Sacar del grupo global por defecto y dejarlo en el grupo relacionado.
+            for parent in (getattr(box, "InList", []) or []):
+                if parent is not target_group and _is_group(parent):
+                    _remove_from_group(parent, box)
+            _add_to_group(target_group, box)
+
+            created += 1
+            _log(
+                f"Caja insertada: {box.Label} | grupo={_safe_text(getattr(target_group, 'Label', target_group.Name))} "
+                f"| z={float(z_level):.1f} mm | diametro={float(diameter):.1f} mm"
+            )
+
+        doc.recompute()
+        doc.commitTransaction()
+    except Exception as ex:
+        try:
+            doc.abortTransaction()
+        except Exception:
+            pass
+        _err(f"Fallo general: {ex}")
+        return
+
+    _log(f"Finalizado. Creadas={created}, Omitidas={skipped}, Seleccion={len(selected)}.")
+
+
+if __name__ == "__main__":
+    main()

@@ -60,6 +60,33 @@ def get_parent_group(obj):
                 return padre
     return None
 
+def _col_index(letter):
+    try:
+        return ord(letter.upper()) - 64
+    except Exception:
+        return 0
+
+def _safe_get(sheet, addr, default=""):
+    try:
+        col = _col_index(addr[:1])
+        row = int(addr[1:])
+        if hasattr(sheet, "ColumnCount") and sheet.ColumnCount < col:
+            return default
+        if hasattr(sheet, "RowCount") and sheet.RowCount < row:
+            return default
+        return sheet.get(addr)
+    except Exception:
+        return default
+
+def _warn_if_missing_cols(sheet, min_cols):
+    try:
+        if hasattr(sheet, "ColumnCount") and sheet.ColumnCount < min_cols:
+            FreeCAD.Console.PrintWarning(
+                f"Advertencia: la hoja tiene {sheet.ColumnCount} columnas; se esperaba al menos {min_cols}.\n"
+            )
+    except Exception:
+        pass
+
 doc = FreeCAD.ActiveDocument
 if not doc:
     raise Exception("No hay documento activo.")
@@ -91,6 +118,7 @@ if not spreadsheet:
     raise Exception(f"La hoja '{nombre_hoja}' no existe en este documento.")
 
 FreeCAD.Console.PrintMessage(f"Hoja seleccionada: {spreadsheet.Label}\n")
+_warn_if_missing_cols(spreadsheet, 15)
 
 # --- Leer datos (columna A=Recinto, B=Area, H=Desc, O=Ilum) ---
 #     Guardar en un dict, pero quitando apostrofo al inicio y
@@ -103,7 +131,7 @@ except AttributeError:
 info_por_recinto = {}
 for i in range(2, num_filas+1):
     try:
-        rec = str(spreadsheet.get(f"A{i}") or "").strip()
+        rec = str(_safe_get(spreadsheet, f"A{i}") or "").strip()
     except:
         break
     
@@ -115,9 +143,9 @@ for i in range(2, num_filas+1):
     # Ignorar acentos si deseas normalizar
     rec_norm = remove_accents(rec_sin_ap)
     
-    area = str(spreadsheet.get(f"B{i}") or "").strip()
-    desc = str(spreadsheet.get(f"H{i}") or "").strip()
-    ilum = str(spreadsheet.get(f"O{i}") or "").strip()
+    area = str(_safe_get(spreadsheet, f"B{i}") or "").strip()
+    desc = str(_safe_get(spreadsheet, f"H{i}") or "").strip()
+    ilum = str(_safe_get(spreadsheet, f"O{i}") or "").strip()
 
     info_por_recinto[rec_norm] = (area, desc, ilum)
     FreeCAD.Console.PrintMessage(

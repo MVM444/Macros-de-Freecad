@@ -1,0 +1,438 @@
+# -*- coding: utf-8 -*-
+# MenuText: Colocar Luminarias Link
+# ToolTip: Colocar luminarias por puntos usando App::Link
+# Icon: ColocarLuminarias.svg
+"""
+ColocarLuminarias_Link.FCMacro
+Coloca luminarias mediante instancias livianas App::Link (no clones).
+- Lee prototipos desde registro (OneDrive) y los consolida en electrico/_lib/Luminarias.
+- Por instancia crea un App::Part contenedor con 2 links: 2D (Z=0) y 3D (Z=AlturaRel).
+- 'Horizontal' aplica pitch Y +90° SOLO al link 3D. Yaw (Giro Z) en el contenedor.
+- ModoVisual controla visibilidad de los links sin regenerar geometría.
+
+Selección:
+- Si hay selección: coloca en cada vértice (objetos con Shape) y/o centro de caras.
+- Si no hay selección: coloca una luminaria en (0,0,0).
+
+Autor: Marco + asistente · 2025-09
+"""
+
+import json
+from pathlib import Path
+
+import FreeCAD as App
+import FreeCADGui as Gui
+
+try:
+    from PySide2 import QtCore, QtWidgets
+except Exception:
+    from PySide import QtCore
+    from PySide import QtGui as QtWidgets
+
+
+# ---------------------------
+# Rutas y formatos soportados
+# ---------------------------
+PATH_ONEDRIVE_REG = Path(
+    r"C:\Users\marco\OneDrive - Caja Costarricense de Seguro Social\Documentos\FreeCAD\Macros\Macros-de-Freecad\Resources\registry\registry_electric.json"
+)
+RES_ROOT = Path(
+    r"C:\Users\marco\OneDrive - Caja Costarricense de Seguro Social\Documentos\FreeCAD\Macros\Macros-de-Freecad\Resources\prototypes"
+)
+RES_2D = RES_ROOT / "2d"
+RES_3D = RES_ROOT / "3d"
+
+SUPPORTED_2D = {".step", ".stp", ".dxf", ".iges", ".igs"}
+SUPPORTED_3D = {".step", ".stp"}
+
+MODE_CHOICES = ["Ambos", "Solo2D", "Solo3D"]
+ORIENT_CHOICES = ["Vertical", "Horizontal"]  # Horizontal = pitch Y +90° en el 3D
+
+# ---------------------------
+# Logging
+# ---------------------------
+def _ts():
+    from datetime import datetime
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+def log_i(msg): App.Console.PrintMessage(f"[{_ts()}][LNKLUM][INFO] {msg}\n")
+def log_w(msg): App.Console.PrintWarning(f"[{_ts()}][LNKLUM][WARN] {msg}\n")
+def log_e(msg): App.Console.PrintError(f"[{_ts()}][LNKLUM][ERROR] {msg}\n")
+
+
+# ---------------------------
+# Registro
+# ---------------------------
+def load_registry() -> dict:
+    try:
+        data = json.loads(PATH_ONEDRIVE_REG.read_text(encoding="utf-8-sig"))
+        if isinstance(data, dict) and "types" in data:
+            log_i(f"Registro cargado: {PATH_ONEDRIVE_REG}")
+            return data
+        log_w(f"Registro sin 'types': {PATH_ONEDRIVE_REG}")
+    except Exception as ex:
+        log_w(f"No se pudo leer registro: {ex}")
+    return {"schema": "1.0.0", "types": {}}
+
+def _resolve_resource(name: str) -> str | None:
+    """
+    Devuelve ruta completa si encuentra el archivo 'name' bajo Resources/prototypes.
+    Acepta que 'name' sea sólo el basename definido en el JSON.
+    """
+    if not name:
+        return None
+    base = Path(name).name
+    for folder in (RES_ROOT, RES_2D, RES_3D):
+        cand = folder / base
+        if cand.is_file():
+            return str(cand)
+    return None
+
+
+# ---------------------------
+# Importación de prototipos
+# ---------------------------
+def _read_step(path: str):
+    import Part
+    shp = Part.Shape(); shp.read(path)
+    if shp.isNull():
+        raise ValueError("STEP sin shape")
+    return shp
+
+def _read_dxf(path: str):
+    # Import.insert devuelve objetos; recolectamos Shapes y las borramos
+    import Import, Part
+    doc = App.ActiveDocument
+    before = set(o.Name for o in doc.Objects)
+    Import.insert(path, doc.Name)
+    created = [o for o in doc.Objects if o.Name not in before]
+    shapes = []
+    for o in created:
+        try:
+            if hasattr(o, "Shape") and not o.Shape.isNull():
+                shapes.append(o.Shape.copy())
+        except Exception:
+            pass
+        try:
+            doc.removeObject(o.Name)
+        except Exception:
+            pass
+    if not shapes:
+        raise ValueError("DXF sin geometría utilizable")
+    return Part.makeCompound(shapes)
+
+def _ensure_group(doc, label):
+    grp = doc.getObject(label)
+    if grp: return grp
+    grp = doc.addObject("App::DocumentObjectGroup", label)
+    return grp
+
+def _ensure_part(doc, label):
+    prt = doc.getObject(label)
+    if prt: return prt
+    prt = doc.addObject("App::Part", label)
+    return prt
+
+def _group_has(parent, child):
+    try:
+        return child in (getattr(parent, "Group", []) or [])
+    except Exception:
+        return False
+
+def _proto_labels_for_key(key: str):
+    stem = Path(key).stem
+    return f"Proto_{stem}_2D", f"Proto_{stem}_3D"
+
+def _ensure_prototypes_for_key(doc, key: str, tinfo: dict):
+    """
+    Crea (si faltan) prototipos 2D/3D en electrico/_lib/Luminarias.
+    Retorna (obj2D, obj3D) Part::Feature con Shape fija en origen.
+    """
+    # Estructura: electrico/_lib/Luminarias
+    g_elec = _ensure_group(doc, "electrico")
+    g_lib  = _ensure_group(doc, "_lib")
+    if not _group_has(g_elec, g_lib):
+        try: g_elec.addObject(g_lib)
+        except Exception: pass
+    g_lum  = _ensure_group(doc, "Luminarias")
+    if not _group_has(g_lib, g_lum):
+        try: g_lib.addObject(g_lum)
+        except Exception: pass
+
+    label2d, label3d = _proto_labels_for_key(key)
+    p2 = doc.getObject(label2d)
+    p3 = doc.getObject(label3d)
+
+    # Si ya existen, devolver
+    if p2 and p3:
+        return p2, p3
+
+    # Resolver archivos
+    sym_name = (tinfo or {}).get("symbol2D", "")
+    mdl_name = (tinfo or {}).get("model3D", "")
+    sym_path = _resolve_resource(sym_name) if sym_name else None
+    mdl_path = _resolve_resource(mdl_name) if mdl_name else None
+
+    # Crear 2D si falta
+    if not p2:
+        if not sym_path:
+            log_w(f"No se encontró símbolo 2D para '{key}'. 2D no se creará.")
+        else:
+            ext = Path(sym_path).suffix.lower()
+            try:
+                if ext in (".step", ".stp", ".iges", ".igs"):
+                    shp2 = _read_step(sym_path)
+                elif ext == ".dxf":
+                    shp2 = _read_dxf(sym_path)
+                else:
+                    raise ValueError(f"Extensión 2D no soportada: {ext}")
+                p2 = doc.addObject("Part::Feature", label2d)
+                p2.Label = label2d
+                p2.Shape = shp2
+                # Meter en Luminarias
+                try: g_lum.addObject(p2)
+                except Exception: pass
+                # Asegurar placement identidad
+                p2.Placement = App.Placement()
+            except Exception as ex:
+                log_w(f"Error creando proto 2D '{key}': {ex}")
+
+    # Crear 3D si falta
+    if not p3:
+        if not mdl_path:
+            log_w(f"No se encontró modelo 3D para '{key}'. 3D no se creará.")
+        else:
+            ext = Path(mdl_path).suffix.lower()
+            try:
+                if ext in (".step", ".stp", ".iges", ".igs"):
+                    shp3 = _read_step(mdl_path)
+                else:
+                    raise ValueError(f"Extensión 3D no soportada: {ext}")
+                p3 = doc.addObject("Part::Feature", label3d)
+                p3.Label = label3d
+                p3.Shape = shp3
+                try: g_lum.addObject(p3)
+                except Exception: pass
+                p3.Placement = App.Placement()
+            except Exception as ex:
+                log_w(f"Error creando proto 3D '{key}': {ex}")
+
+    return p2, p3
+
+
+# ---------------------------
+# Colocación por selección
+# ---------------------------
+def _collect_points_from_selection():
+    """
+    Recolecta posiciones de:
+    - Vértices de objetos con Shape.
+    - Centros de caras seleccionadas.
+    Si no hay selección, devuelve [(0,0,0)].
+    """
+    sel = Gui.Selection.getSelectionEx()
+    pts = []
+
+    if not sel:
+        return [App.Vector(0, 0, 0)]
+
+    for s in sel:
+        obj = s.Object
+        try:
+            if hasattr(obj, "Shape") and obj.Shape:
+                # Vértices del objeto completo si no hay subelementos
+                if not s.HasSubObjects:
+                    for v in obj.Shape.Vertexes:
+                        pts.append(v.Point)
+                else:
+                    # Tomar centros de caras seleccionadas
+                    for sub in s.SubObjects:
+                        try:
+                            if sub.ShapeType == "Face":
+                                pts.append(sub.CenterOfMass)
+                            elif sub.ShapeType == "Edge":
+                                v = sub.valueAt(0.5)
+                                pts.append(App.Vector(v.x, v.y, v.z))
+                            elif sub.ShapeType == "Vertex":
+                                pts.append(sub.Point)
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
+    # Deduplicar (aprox)
+    uniq = []
+    seen = set()
+    for p in pts:
+        key = (round(p.x, 3), round(p.y, 3), round(p.z, 3))
+        if key not in seen:
+            seen.add(key)
+            uniq.append(App.Vector(*key))
+    return uniq or [App.Vector(0, 0, 0)]
+
+
+# ---------------------------
+# Creación de instancia (Part + Links)
+# ---------------------------
+def _next_seq(doc, prefix="Luminaria"):
+    i = 1
+    while doc.getObject(f"{prefix}_{i:03d}") is not None:
+        i += 1
+    return f"{prefix}_{i:03d}"
+
+def _place_instance(doc, key: str, tinfo: dict, pt: App.Vector, altura: float,
+                    modo: str, orient: str, yaw_deg: float,
+                    p2_proto, p3_proto):
+    """
+    Crea un App::Part contenedor + dos App::Link a prototipos 2D/3D.
+    - Contenedor (Part) recibe Base XY y yaw (Z).
+    - Link 2D: Z=0 (dentro del contenedor).
+    - Link 3D: Z=altura; si 'Horizontal' -> pitch Y +90° local al 3D.
+    """
+    name = _next_seq(doc, "Luminaria")
+    cont = _ensure_part(doc, name)
+    cont.Label = name
+
+    # Placement del contenedor: XY + yaw
+    base = App.Vector(pt.x, pt.y, 0.0)
+    yaw_rot = App.Rotation(App.Vector(0,0,1), float(yaw_deg))
+    cont.Placement = App.Placement(base, yaw_rot)
+
+    # Links
+    l2d = doc.addObject("App::Link", f"{name}_2D")
+    l3d = doc.addObject("App::Link", f"{name}_3D")
+    try:
+        if not _group_has(cont, l2d):
+            cont.addObject(l2d)
+        if not _group_has(cont, l3d):
+            cont.addObject(l3d)
+    except Exception:
+        pass
+
+    # Enlazar prototipos (si existen)
+    if p2_proto:
+        l2d.LinkedObject = p2_proto
+    else:
+        log_w(f"[{name}] No hay prototipo 2D; el link 2D quedará vacío.")
+    if p3_proto:
+        l3d.LinkedObject = p3_proto
+    else:
+        log_w(f"[{name}] No hay prototipo 3D; el link 3D quedará vacío.")
+
+    # Placement local de los links (relativo al Part)
+    l2d.Placement = App.Placement(App.Vector(0, 0, 0), App.Rotation())
+    # 3D: altura y orientación horizontal (pitch Y +90°)
+    rot3d = App.Rotation()
+    if orient == "Horizontal":
+        rot3d = App.Rotation(App.Vector(0,1,0), 90.0) * rot3d
+    l3d.Placement = App.Placement(App.Vector(0, 0, float(altura)), rot3d)
+
+    # Modo visual (visibilidad)
+    modo = (modo or "Ambos")
+    l2d.Visibility = modo in ("Ambos", "Solo2D")
+    l3d.Visibility = modo in ("Ambos", "Solo3D")
+
+    log_i(f"Instancia {name}: XY={base}, Altura={altura} mm, Modo={modo}, Orient={orient}, Yaw={yaw_deg}°")
+    return cont
+
+
+# ---------------------------
+# Diálogo
+# ---------------------------
+class LumLinkDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Colocar Luminarias (App::Link)")
+        self.setMinimumWidth(420)
+        self.reg = load_registry()
+
+        # Filtrar tipos (opcional): priorizar los que contengan 'lumin'
+        type_names = sorted((self.reg.get("types") or {}).keys())
+        # Poner los 'Lumin' primero
+        type_names = sorted(type_names, key=lambda k: (0 if "lumin" in k.lower() else 1, k.lower()))
+
+        self.cmbTipo = QtWidgets.QComboBox()
+        self.cmbTipo.addItems(type_names or [])
+
+        self.edAltura = QtWidgets.QDoubleSpinBox()
+        self.edAltura.setRange(0, 10000); self.edAltura.setSingleStep(50.0); self.edAltura.setSuffix(" mm")
+
+        self.cmbModo = QtWidgets.QComboBox(); self.cmbModo.addItems(MODE_CHOICES)
+        self.cmbOrient = QtWidgets.QComboBox(); self.cmbOrient.addItems(ORIENT_CHOICES)
+
+        self.edYaw = QtWidgets.QDoubleSpinBox()
+        self.edYaw.setRange(-360, 360); self.edYaw.setSingleStep(5.0); self.edYaw.setSuffix(" °")
+
+        # Defaults desde registro al iniciar
+        self._apply_defaults(self.cmbTipo.currentText())
+        self.cmbTipo.currentTextChanged.connect(self._on_tipo_changed)
+
+        form = QtWidgets.QFormLayout()
+        form.addRow("Tipo:", self.cmbTipo)
+        form.addRow("Altura:", self.edAltura)
+        form.addRow("Modo:", self.cmbModo)
+        form.addRow("Orientación:", self.cmbOrient)
+        form.addRow("Giro (Yaw Z):", self.edYaw)
+
+        btn_ok = QtWidgets.QPushButton("Colocar")
+        btn_cancel = QtWidgets.QPushButton("Cancelar")
+        btn_ok.clicked.connect(self.accept); btn_cancel.clicked.connect(self.reject)
+        btns = QtWidgets.QHBoxLayout(); btns.addStretch(1); btns.addWidget(btn_cancel); btns.addWidget(btn_ok)
+
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.addLayout(form); lay.addStretch(1); lay.addLayout(btns)
+
+    def _apply_defaults(self, key):
+        t = (self.reg.get("types") or {}).get(key, {}) or {}
+        d = t.get("defaults", {}) or {}
+        try:
+            self.edAltura.setValue(float(d.get("altura", 300)))
+        except Exception:
+            self.edAltura.setValue(300.0)
+        modo = (d.get("modo", "Both") or "Both").lower()
+        idx = 0 if modo == "both" else (1 if modo == "solo2d" else 2)
+        self.cmbModo.setCurrentIndex(idx)
+        self.cmbOrient.setCurrentIndex(0)  # Vertical por defecto
+        self.edYaw.setValue(0.0)
+
+    def _on_tipo_changed(self, key):
+        self._apply_defaults(key)
+
+
+# ---------------------------
+# Flujo principal
+# ---------------------------
+def run():
+    doc = App.ActiveDocument or App.newDocument("Electrico")
+    dlg = LumLinkDialog(Gui.getMainWindow())
+    if dlg.exec_() != QtWidgets.QDialog.Accepted:
+        return
+
+    key = dlg.cmbTipo.currentText()
+    reg = load_registry()
+    tinfo = (reg.get("types") or {}).get(key, {}) or {}
+
+    altura = float(dlg.edAltura.value())
+    modo = dlg.cmbModo.currentText()
+    orient = dlg.cmbOrient.currentText()
+    yaw = float(dlg.edYaw.value())
+
+    # Prototipos (se crean si faltan)
+    p2, p3 = _ensure_prototypes_for_key(doc, key, tinfo)
+
+    # Recolectar puntos
+    pts = _collect_points_from_selection()
+
+    # Insertar por cada punto
+    for pt in pts:
+        _place_instance(doc, key, tinfo, pt, altura, modo, orient, yaw, p2, p3)
+
+    try:
+        doc.recompute()
+    except Exception:
+        pass
+
+    log_i(f"Colocación completada: {len(pts)} luminaria(s) del tipo '{key}'.")
+
+if __name__ == "__main__":
+    run()

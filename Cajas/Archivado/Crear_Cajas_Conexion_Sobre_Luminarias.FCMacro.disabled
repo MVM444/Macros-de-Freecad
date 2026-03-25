@@ -1,0 +1,1102 @@
+# -*- coding: utf-8 -*-
+# MenuText: Crear Cajas de Conexion sobre Luminarias
+# Icon: Cajas/Crear_Cajas_Conexion_Sobre_Luminarias.svg
+"""
+Crea cajitas de conexion sobre luminarias, separado de la macro de octogonales.
+
+Reglas:
+- Una cajita por luminaria detectada.
+- No crea octogonales ni conexiones spline.
+- Organiza por:
+  electrico/Iluminacion/<BucketCircuitos>/<Circuito>/<BucketRecintos>/<Recinto>/Cajas_Conexion_Luminarias
+"""
+
+from pathlib import Path
+import importlib
+import math
+import re
+import sys
+import unicodedata
+
+import FreeCAD as App
+import Part
+
+try:
+    import FreeCADGui as Gui
+    GUI_UP = True
+except Exception:
+    Gui = None
+    GUI_UP = False
+
+try:
+    from PySide2 import QtWidgets, QtCore
+except Exception:
+    try:
+        from PySide import QtGui as QtWidgets  # type: ignore
+        from PySide import QtCore  # type: ignore
+    except Exception:
+        QtWidgets = None
+        QtCore = None
+
+
+DEFAULT_SIZE_MM = 80.0
+DEFAULT_Z_OFFSET_MM = 35.0
+DEFAULT_XY_OFFSET_MM = 0.0
+FALLBACK_CIRCUITO = "Sin_Circuito"
+FALLBACK_RECINTO = "Sin_Recinto"
+GENERATED_TAG = "CAJA_LUM_BOX_V1"
+CAJAS_LUM_LABEL = "Cajas_Conexion_Luminarias"
+PARAM_PATH = "User parameter:BaseApp/Preferences/Mod/ElectricCR/CajasConexionLuminarias"
+
+CIRCUIT_ATTRS = ("CircuitoID", "Circuito_Grupo", "Circuito", "CircuitID", "Circuit")
+AREA_ATTRS = ("Recinto", "Area", "AreaID", "AreaNombre", "Habitacion", "Local", "Espacio", "Zona")
+
+GENERIC_NAMES = {
+    "electrico",
+    "iluminacion",
+    "circuitos",
+    "circuitos de iluminacion",
+    "recintos",
+    "areas",
+    "area",
+    "apagadores",
+    "luminarias",
+}
+LIBRARY_HINTS = {
+    "componente",
+    "componentes",
+    "prototipo",
+    "prototype",
+    "catalogo",
+    "catalog",
+    "biblioteca",
+    "resource",
+    "resources",
+    "recurso",
+    "plantilla",
+    "template",
+    "master",
+}
+LUM_HINTS = {
+    "luminaria",
+    "lampara",
+    "luz",
+    "downlight",
+    "spot",
+    "plafon",
+    "plafond",
+    "panel led",
+    "redonda",
+    "redondo",
+    "circular",
+    "round",
+}
+RECINTO_SKIP_HINTS = {
+    "apagador",
+    "switch",
+    "interruptor",
+    "caja",
+    "conexion",
+    "conexiones",
+}
+NON_LUM_HINTS = {
+    "caja",
+    "conexion",
+    "conexiones",
+    "wire",
+    "linea",
+    "line",
+    "canal",
+    "tubo",
+    "emt",
+    "soporte",
+    "apoyo",
+    "inspeccion",
+    "componente",
+    "componentes",
+    "octogonal",
+}
+
+
+def _log(msg):
+    App.Console.PrintMessage(f"[CAJA_LUM_BOX][INFO] {msg}\n")
+
+
+def _warn(msg):
+    App.Console.PrintWarning(f"[CAJA_LUM_BOX][WARN] {msg}\n")
+
+
+def _err(msg):
+    App.Console.PrintError(f"[CAJA_LUM_BOX][ERROR] {msg}\n")
+
+
+def _safe_text(value):
+    try:
+        return str(value or "")
+    except Exception:
+        return ""
+
+
+def _normalize(text):
+    s = _safe_text(text).strip().lower()
+    if not s:
+        return ""
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    s = s.replace("\\", "/")
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _token(text, fallback="obj"):
+    t = _normalize(text)
+    t = re.sub(r"[^0-9a-zA-Z_]+", "_", t)
+    t = re.sub(r"_+", "_", t).strip("_")
+    return t or fallback
+
+
+def _contains_hint(text, hints):
+    n = _normalize(text)
+    if not n:
+        return False
+    return any(h in n for h in hints)
+
+
+def _is_group(obj):
+    return getattr(obj, "TypeId", "") == "App::DocumentObjectGroup"
+
+
+def _is_link(obj):
+    return getattr(obj, "TypeId", "") == "App::Link"
+
+
+def _linked_object(obj):
+    if obj is None:
+        return None
+    for attr in ("LinkedObject", "Link"):
+        try:
+            ref = getattr(obj, attr, None)
+            if ref is not None:
+                return ref
+        except Exception:
+            pass
+    return None
+
+
+def _is_generated_index_link(obj):
+    if not _is_link(obj):
+        return False
+    try:
+        gen = _safe_text(getattr(obj, "GeneradoPor", "")).strip()
+        if gen in {"ORG_LUM_IDX", "CAJA_LUM_CLUSTER_V1", GENERATED_TAG}:
+            return True
+    except Exception:
+        pass
+    name = _normalize(f"{getattr(obj, 'Name', '')} {getattr(obj, 'Label', '')}")
+    return name.startswith("idxlum_")
+
+
+def _iter_doc_groups(doc):
+    for obj in (doc.Objects or []):
+        if _is_group(obj):
+            yield obj
+
+
+def _find_parent_group_linear(doc, obj):
+    for grp in _iter_doc_groups(doc):
+        try:
+            if obj in (getattr(grp, "Group", []) or []):
+                return grp
+        except Exception:
+            continue
+    return None
+
+
+def _get_parent_group(doc, obj):
+    gp = getattr(obj, "getParentGroup", None)
+    if callable(gp):
+        try:
+            p = gp()
+            if p:
+                return p
+        except Exception:
+            pass
+    return _find_parent_group_linear(doc, obj)
+
+
+def _ancestor_groups(doc, obj, max_depth=40):
+    chain = []
+    seen = set()
+    cur = _get_parent_group(doc, obj)
+    while cur is not None and len(chain) < max_depth:
+        gid = getattr(cur, "Name", None) or id(cur)
+        if gid in seen:
+            break
+        seen.add(gid)
+        chain.append(cur)
+        cur = _get_parent_group(doc, cur)
+    return chain
+
+
+def _object_in_lum_context(doc, obj):
+    for grp in _ancestor_groups(doc, obj):
+        txt = _normalize(f"{getattr(grp, 'Label', '')} {getattr(grp, 'Name', '')}")
+        if _contains_hint(txt, LUM_HINTS):
+            return True
+    return False
+
+
+def _unique_doc_name(doc, base_name):
+    name = _token(base_name, "obj")
+    if doc.getObject(name) is None:
+        return name
+    i = 2
+    while True:
+        cand = f"{name}_{i:02d}"
+        if doc.getObject(cand) is None:
+            return cand
+        i += 1
+
+
+def _ensure_group(doc, parent, label, prefix):
+    n_label = _normalize(label)
+    if parent is None:
+        for grp in _iter_doc_groups(doc):
+            if _normalize(getattr(grp, "Label", "")) == n_label:
+                return grp
+        name = _unique_doc_name(doc, prefix + "_" + _token(label, "grupo"))
+        grp = doc.addObject("App::DocumentObjectGroup", name)
+        grp.Label = _safe_text(label).strip() or "Grupo"
+        return grp
+
+    for child in (getattr(parent, "Group", []) or []):
+        if _is_group(child) and _normalize(getattr(child, "Label", "")) == n_label:
+            return child
+    name = _unique_doc_name(doc, prefix + "_" + _token(label, "grupo"))
+    grp = doc.addObject("App::DocumentObjectGroup", name)
+    grp.Label = _safe_text(label).strip() or "Grupo"
+    parent.addObject(grp)
+    return grp
+
+
+def _remove_from_all_groups(doc, obj, keep_group=None):
+    for grp in _iter_doc_groups(doc):
+        if keep_group is not None and grp == keep_group:
+            continue
+        try:
+            if obj in (getattr(grp, "Group", []) or []):
+                grp.removeObject(obj)
+        except Exception:
+            continue
+
+
+def _collect_from_group_recursive(group_obj, out, seen):
+    gid = getattr(group_obj, "Name", None) or id(group_obj)
+    if gid in seen:
+        return
+    seen.add(gid)
+    for child in (getattr(group_obj, "Group", []) or []):
+        if _is_group(child):
+            _collect_from_group_recursive(child, out, seen)
+        else:
+            cid = getattr(child, "Name", None) or id(child)
+            if cid not in seen:
+                seen.add(cid)
+                out.append(child)
+
+
+def _collect_candidates(doc):
+    try:
+        sel = Gui.Selection.getSelection() or [] if GUI_UP else []
+    except Exception:
+        sel = []
+
+    out = []
+    seen = set()
+    if sel:
+        for obj in sel:
+            if _is_group(obj):
+                _collect_from_group_recursive(obj, out, seen)
+            else:
+                oid = getattr(obj, "Name", None) or id(obj)
+                if oid not in seen:
+                    seen.add(oid)
+                    out.append(obj)
+        return out, True
+
+    for obj in (doc.Objects or []):
+        if not _is_group(obj):
+            out.append(obj)
+    return out, False
+
+
+def _collect_document_objects(doc):
+    out = []
+    for obj in (doc.Objects or []):
+        if not _is_group(obj):
+            out.append(obj)
+    return out
+
+
+def _find_iluminacion_scope_group(doc):
+    best = None
+    best_score = -1
+    for grp in _iter_doc_groups(doc):
+        lbl_n = _normalize(getattr(grp, "Label", ""))
+        name_n = _normalize(getattr(grp, "Name", ""))
+        if (lbl_n != "iluminacion") and (name_n != "iluminacion"):
+            continue
+        score = 0
+        if lbl_n == "iluminacion":
+            score += 3
+        if name_n == "iluminacion":
+            score += 1
+        for anc in _ancestor_groups(doc, grp):
+            if _normalize(getattr(anc, "Label", "")) == "electrico":
+                score += 5
+                break
+        try:
+            score += min(3, len(getattr(grp, "Group", []) or []))
+        except Exception:
+            pass
+        if score > best_score:
+            best_score = score
+            best = grp
+    return best
+
+
+def _is_within_scope_group(doc, obj, scope_group):
+    if scope_group is None:
+        return True
+    if obj is None:
+        return False
+    for grp in _ancestor_groups(doc, obj):
+        if grp == scope_group:
+            return True
+    return False
+
+
+def _import_component_type():
+    try:
+        this_dir = Path(__file__).resolve().parent
+    except Exception:
+        this_dir = None
+    if this_dir is not None:
+        con_dir = this_dir.parent / "Conectar"
+        if con_dir.exists() and str(con_dir) not in sys.path:
+            sys.path.insert(0, str(con_dir))
+    try:
+        mod = importlib.import_module("component_classifier")
+        return getattr(mod, "get_component_type", None)
+    except Exception:
+        return None
+
+
+def _is_library_object(doc, obj):
+    if obj is None:
+        return True
+    txt = _normalize(f"{getattr(obj, 'Label', '')} {getattr(obj, 'Name', '')}")
+    if txt in {"componentes", "componente", "resources", "resource", "prototipos", "prototipo"}:
+        return True
+    if _contains_hint(txt, LIBRARY_HINTS):
+        if not any(hasattr(obj, attr) for attr in ("Tipo", "TipoLogico", "Categoria", "KeyRegistro", "CircuitoID")):
+            return True
+    try:
+        if hasattr(obj, "EsPrototipo") and bool(getattr(obj, "EsPrototipo")):
+            return True
+    except Exception:
+        pass
+    for grp in _ancestor_groups(doc, obj):
+        if _contains_hint(getattr(grp, "Label", ""), LIBRARY_HINTS):
+            return True
+    return False
+
+
+def _is_luminaria(doc, obj, get_component_type):
+    if _is_generated_index_link(obj):
+        return False
+
+    base_obj = obj
+    if _is_link(obj):
+        ref = _linked_object(obj)
+        if ref is not None:
+            base_obj = ref
+
+    if _is_library_object(doc, obj):
+        return False
+    if callable(get_component_type):
+        try:
+            ctype = get_component_type(base_obj)
+            if ctype:
+                return ctype == "Luminaria"
+        except Exception:
+            pass
+    txt = _normalize(
+        f"{getattr(base_obj, 'Label', '')} "
+        f"{getattr(base_obj, 'Name', '')} "
+        f"{getattr(base_obj, 'Tipo', '')} "
+        f"{getattr(base_obj, 'TipoLogico', '')} "
+        f"{getattr(base_obj, 'Categoria', '')} "
+        f"{getattr(base_obj, 'KeyRegistro', '')}"
+    )
+    if ("sensor" in txt) or ("humo" in txt) or ("detector" in txt):
+        return False
+    if _contains_hint(txt, NON_LUM_HINTS):
+        return False
+    if any(tok in txt for tok in LUM_HINTS):
+        return True
+    if _object_in_lum_context(doc, obj):
+        try:
+            shp = getattr(obj, "Shape", None)
+            if shp is not None and not shp.isNull():
+                bb = shp.BoundBox
+                if (bb.XLength > 50.0 and bb.YLength > 50.0 and bb.ZLength >= 0.0):
+                    return True
+        except Exception:
+            pass
+    return False
+
+
+def _first_valid_property(obj, attrs):
+    for attr in attrs:
+        try:
+            if hasattr(obj, attr):
+                val = _safe_text(getattr(obj, attr)).strip()
+                if val:
+                    return val
+        except Exception:
+            continue
+    return ""
+
+
+def _valid_group_label(label):
+    txt = _safe_text(label).strip()
+    if not txt:
+        return ""
+    n = _normalize(txt)
+    if n in GENERIC_NAMES:
+        return ""
+    if _contains_hint(n, LUM_HINTS):
+        return ""
+    if _contains_hint(n, {"circuit", "circuito", "tp-", "tp "}):
+        return ""
+    return txt
+
+
+def _resolve_circuito(doc, obj):
+    prop = _first_valid_property(obj, CIRCUIT_ATTRS)
+    if prop:
+        return prop
+
+    chain = _ancestor_groups(doc, obj)
+    for grp in chain:
+        label = _safe_text(getattr(grp, "Label", "")).strip()
+        n = _normalize(label)
+        if re.match(r"^(c|ckt|circuito)\s*[-_ ]*\d+$", n):
+            return label
+
+    for idx, grp in enumerate(chain):
+        n = _normalize(getattr(grp, "Label", ""))
+        if ("circuit" in n) and idx > 0:
+            near = _valid_group_label(getattr(chain[idx - 1], "Label", ""))
+            if near:
+                return near
+
+    for grp in reversed(chain):
+        lbl = _safe_text(getattr(grp, "Label", "")).strip()
+        n = _normalize(lbl)
+        if ("circuit" in n) or n.startswith("tp-") or n.startswith("tp "):
+            return lbl if lbl else FALLBACK_CIRCUITO
+    for grp in reversed(chain):
+        lbl = _safe_text(getattr(grp, "Label", "")).strip()
+        n = _normalize(lbl)
+        if n in GENERIC_NAMES:
+            continue
+        if _contains_hint(n, LUM_HINTS):
+            continue
+        if _contains_hint(n, RECINTO_SKIP_HINTS):
+            continue
+        return lbl
+    return FALLBACK_CIRCUITO
+
+
+def _resolve_recinto(doc, obj):
+    prop = _first_valid_property(obj, AREA_ATTRS)
+    if prop:
+        return prop
+
+    chain = _ancestor_groups(doc, obj)
+    for idx, grp in enumerate(chain):
+        n = _normalize(getattr(grp, "Label", ""))
+        if (("recinto" in n) or ("area" in n) or ("espacio" in n) or ("habitacion" in n) or ("local" in n)) and idx > 0:
+            near = _valid_group_label(getattr(chain[idx - 1], "Label", ""))
+            if near:
+                return near
+
+    for grp in reversed(chain):
+        lbl = _safe_text(getattr(grp, "Label", "")).strip()
+        n = _normalize(lbl)
+        if n in GENERIC_NAMES:
+            continue
+        if _contains_hint(n, LUM_HINTS):
+            continue
+        if _contains_hint(n, {"circuit", "circuito", "tp-", "tp "}):
+            continue
+        if _contains_hint(n, RECINTO_SKIP_HINTS):
+            continue
+        return lbl
+    return FALLBACK_RECINTO
+
+
+def _resolve_rotation(obj):
+    try:
+        rot = obj.Placement.Rotation
+    except Exception:
+        rot = App.Rotation()
+    try:
+        giro = float(getattr(obj, "Giro", 0.0) or 0.0)
+        if abs(giro) > 1e-9:
+            extra = App.Rotation(App.Vector(0.0, 0.0, 1.0), giro)
+            try:
+                rot = rot.multiply(extra)
+            except Exception:
+                rot = rot * extra
+    except Exception:
+        pass
+    return rot
+
+
+def _as_float(value, default=0.0):
+    try:
+        if hasattr(value, "Value"):
+            return float(value.Value)
+        return float(value)
+    except Exception:
+        return float(default)
+
+
+def _luminaria_world_point(obj):
+    def _center_from_bb(bb):
+        return App.Vector(
+            0.5 * (bb.XMin + bb.XMax),
+            0.5 * (bb.YMin + bb.YMax),
+            0.5 * (bb.ZMin + bb.ZMax),
+        )
+
+    try:
+        shape = getattr(obj, "Shape", None)
+        if shape is not None and not shape.isNull():
+            return _center_from_bb(shape.BoundBox)
+    except Exception:
+        pass
+
+    try:
+        base = obj.Placement.Base
+    except Exception:
+        base = App.Vector(0.0, 0.0, 0.0)
+    offx = _as_float(getattr(obj, "OffsetX", 0.0), 0.0)
+    offy = _as_float(getattr(obj, "OffsetY", 0.0), 0.0)
+    altura = _as_float(getattr(obj, "AlturaRel", 0.0), 0.0)
+    local = App.Vector(offx, offy, altura)
+    return base + _resolve_rotation(obj).multVec(local)
+
+
+def _luminaria_identity(obj):
+    oid = _safe_text(getattr(obj, "Name", "")).strip()
+    if oid:
+        return f"OBJ:{oid}"
+    if _is_link(obj):
+        ref = _linked_object(obj)
+        if ref is not None:
+            rid = _safe_text(getattr(ref, "Name", "")).strip()
+            if rid:
+                return f"REF:{rid}|ID:{id(obj)}"
+    return f"ID:{id(obj)}"
+
+
+def _ensure_property(obj, ptype, pname, pgroup, pdesc):
+    try:
+        if pname not in getattr(obj, "PropertiesList", []):
+            obj.addProperty(ptype, pname, pgroup, pdesc)
+    except Exception:
+        pass
+
+
+def _style_box(obj):
+    try:
+        vo = getattr(obj, "ViewObject", None)
+        if vo is None:
+            return
+        try:
+            vo.ShapeColor = (0.95, 0.95, 0.95)
+        except Exception:
+            pass
+        try:
+            vo.LineColor = (0.65, 0.65, 0.65)
+        except Exception:
+            pass
+        try:
+            vo.Transparency = 0
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+def _calc_box_center(lum_obj, lum_point, size_mm, z_offset_mm, xy_offset_mm):
+    h = max(15.0, float(size_mm) * 0.45)
+    p = App.Vector(float(lum_point.x), float(lum_point.y), float(lum_point.z))
+    zoff = max(0.0, float(z_offset_mm))
+
+    try:
+        shp = getattr(lum_obj, "Shape", None)
+        if shp is not None and not shp.isNull():
+            bb = shp.BoundBox
+            p.x = 0.5 * (float(bb.XMin) + float(bb.XMax))
+            p.y = 0.5 * (float(bb.YMin) + float(bb.YMax))
+            p.z = float(bb.ZMax) + zoff + (h * 0.5)
+        else:
+            p.z = float(p.z) + zoff + (h * 0.5)
+    except Exception:
+        p.z = float(p.z) + zoff + (h * 0.5)
+
+    xy = max(0.0, float(xy_offset_mm))
+    if xy > 1e-9:
+        try:
+            d = _resolve_rotation(lum_obj).multVec(App.Vector(1.0, 0.0, 0.0))
+            dxy = math.hypot(float(d.x), float(d.y))
+            if dxy <= 1e-9:
+                d = App.Vector(1.0, 0.0, 0.0)
+                dxy = 1.0
+            p.x = float(p.x + (d.x / dxy) * xy)
+            p.y = float(p.y + (d.y / dxy) * xy)
+        except Exception:
+            p.x = float(p.x + xy)
+    return p, h
+
+
+def _create_lum_box(doc, lum_obj, lum_point, size_mm, z_offset_mm, xy_offset_mm, circuito, recinto, lum_label):
+    size = max(20.0, float(size_mm))
+    center, h = _calc_box_center(lum_obj, lum_point, size, z_offset_mm, xy_offset_mm)
+    base = App.Vector(
+        float(center.x - (size * 0.5)),
+        float(center.y - (size * 0.5)),
+        float(center.z - (h * 0.5)),
+    )
+    try:
+        shape = Part.makeBox(size, size, h, base)
+    except Exception:
+        return None
+
+    name = _unique_doc_name(doc, "Caja_Conexion_Luminaria")
+    obj = doc.addObject("Part::Feature", name)
+    obj.Shape = shape
+    try:
+        obj.Label = f"Caja Conexion {lum_label}"
+    except Exception:
+        pass
+
+    _ensure_property(obj, "App::PropertyString", "GeneradoPor", "ElectricCR", "Macro generadora")
+    _ensure_property(obj, "App::PropertyString", "CircuitoID", "Circuito", "Circuito inferido")
+    _ensure_property(obj, "App::PropertyString", "Recinto", "ElectricCR", "Recinto inferido")
+    _ensure_property(obj, "App::PropertyString", "LuminariaRef", "ElectricCR", "Luminaria de origen")
+    _ensure_property(obj, "App::PropertyString", "TipoConexion", "ElectricCR", "Tipo de conexion")
+    _ensure_property(obj, "App::PropertyFloat", "OffsetZ", "ElectricCR", "Offset en Z aplicado (mm)")
+    try:
+        obj.GeneradoPor = GENERATED_TAG
+    except Exception:
+        pass
+    try:
+        obj.CircuitoID = _safe_text(circuito)
+    except Exception:
+        pass
+    try:
+        obj.Recinto = _safe_text(recinto)
+    except Exception:
+        pass
+    try:
+        obj.LuminariaRef = _safe_text(lum_label)
+    except Exception:
+        pass
+    try:
+        obj.TipoConexion = "CajaConexionLuminaria"
+    except Exception:
+        pass
+    try:
+        obj.OffsetZ = float(z_offset_mm)
+    except Exception:
+        pass
+    _style_box(obj)
+    return obj
+
+
+def _detect_circuit_bucket_label(g_ilum):
+    if g_ilum is None:
+        return "Circuitos"
+    for child in (getattr(g_ilum, "Group", []) or []):
+        if not _is_group(child):
+            continue
+        lbl = _safe_text(getattr(child, "Label", ""))
+        if "circuit" in _normalize(lbl):
+            return lbl
+    return "Circuitos"
+
+
+def _detect_recintos_bucket_label(g_circuito):
+    if g_circuito is None:
+        return "Recintos"
+    for child in (getattr(g_circuito, "Group", []) or []):
+        if not _is_group(child):
+            continue
+        lbl = _safe_text(getattr(child, "Label", ""))
+        n = _normalize(lbl)
+        if ("recinto" in n) or ("area" in n) or ("espacio" in n):
+            return lbl
+    return "Recintos"
+
+
+def _iter_group_tree(root):
+    stack = [root]
+    seen = set()
+    while stack:
+        grp = stack.pop()
+        gid = getattr(grp, "Name", None) or id(grp)
+        if gid in seen:
+            continue
+        seen.add(gid)
+        yield grp
+        for child in (getattr(grp, "Group", []) or []):
+            if _is_group(child):
+                stack.append(child)
+
+
+def _cleanup_previous_generated(doc):
+    to_delete = set()
+    for obj in (doc.Objects or []):
+        if _is_group(obj):
+            continue
+        try:
+            if hasattr(obj, "GeneradoPor") and _safe_text(getattr(obj, "GeneradoPor", "")).strip() == GENERATED_TAG:
+                to_delete.add(obj.Name)
+        except Exception:
+            continue
+
+    g_elec = None
+    for grp in _iter_doc_groups(doc):
+        if _normalize(getattr(grp, "Label", "")) == "electrico":
+            g_elec = grp
+            break
+    if g_elec is not None:
+        for grp in _iter_group_tree(g_elec):
+            if _normalize(getattr(grp, "Label", "")) != _normalize(CAJAS_LUM_LABEL):
+                continue
+            for child in (getattr(grp, "Group", []) or []):
+                if _is_group(child):
+                    continue
+                c_name = _safe_text(getattr(child, "Name", "")).strip()
+                if c_name.startswith("Caja_Conexion_Luminaria"):
+                    to_delete.add(c_name)
+
+    removed = 0
+    for name in sorted(to_delete):
+        try:
+            doc.removeObject(name)
+            removed += 1
+        except Exception:
+            pass
+    return int(removed)
+
+
+def _prefs():
+    try:
+        return App.ParamGet(PARAM_PATH)
+    except Exception:
+        return None
+
+
+def _pref_get_bool(key, default):
+    p = _prefs()
+    if p is None:
+        return bool(default)
+    try:
+        return bool(p.GetBool(str(key), bool(default)))
+    except Exception:
+        return bool(default)
+
+
+def _pref_get_float(key, default):
+    p = _prefs()
+    if p is None:
+        return float(default)
+    try:
+        return float(p.GetFloat(str(key), float(default)))
+    except Exception:
+        return float(default)
+
+
+def _pref_get_str(key, default):
+    p = _prefs()
+    if p is None:
+        return str(default)
+    try:
+        v = p.GetString(str(key), str(default))
+        return str(v) if v is not None else str(default)
+    except Exception:
+        return str(default)
+
+
+def _save_cfg(cfg):
+    p = _prefs()
+    if p is None:
+        return
+    try:
+        p.SetString("scope", str(cfg.get("scope", "document")))
+        p.SetBool("cleanup_prev", bool(cfg.get("cleanup_prev", True)))
+        p.SetFloat("size_mm", float(cfg.get("size_mm", DEFAULT_SIZE_MM)))
+        p.SetFloat("z_offset_mm", float(cfg.get("z_offset_mm", DEFAULT_Z_OFFSET_MM)))
+        p.SetFloat("xy_offset_mm", float(cfg.get("xy_offset_mm", DEFAULT_XY_OFFSET_MM)))
+    except Exception:
+        pass
+
+
+def _default_cfg(has_selection):
+    scope_default = "selection" if has_selection else "document"
+    scope = _pref_get_str("scope", scope_default)
+    if scope not in {"selection", "document"}:
+        scope = scope_default
+    return {
+        "scope": scope,
+        "cleanup_prev": _pref_get_bool("cleanup_prev", True),
+        "size_mm": _pref_get_float("size_mm", DEFAULT_SIZE_MM),
+        "z_offset_mm": _pref_get_float("z_offset_mm", DEFAULT_Z_OFFSET_MM),
+        "xy_offset_mm": _pref_get_float("xy_offset_mm", DEFAULT_XY_OFFSET_MM),
+    }
+
+
+def _run_config_dialog(has_selection):
+    cfg = _default_cfg(bool(has_selection))
+    if (not GUI_UP) or (QtWidgets is None):
+        return cfg
+
+    parent = None
+    try:
+        parent = Gui.getMainWindow()
+    except Exception:
+        parent = None
+
+    dlg = QtWidgets.QDialog(parent)
+    dlg.setWindowTitle("Cajitas de Conexion sobre Luminarias")
+    dlg.setMinimumWidth(460)
+    if QtCore is not None:
+        dlg.setWindowModality(QtCore.Qt.WindowModal)
+
+    info = QtWidgets.QLabel(
+        "Esta macro solo crea cajitas sobre luminarias.\n"
+        "No inserta cajas octogonales ni splines."
+    )
+    info.setWordWrap(True)
+    info.setStyleSheet("color:#4b5563;")
+
+    grp_scope = QtWidgets.QGroupBox("Alcance")
+    rb_doc = QtWidgets.QRadioButton("Todo el documento")
+    rb_sel = QtWidgets.QRadioButton("Solo seleccion actual")
+    rb_sel.setEnabled(bool(has_selection))
+    if bool(has_selection) and cfg.get("scope") == "selection":
+        rb_sel.setChecked(True)
+    else:
+        rb_doc.setChecked(True)
+    lay_scope = QtWidgets.QVBoxLayout(grp_scope)
+    lay_scope.addWidget(rb_doc)
+    lay_scope.addWidget(rb_sel)
+    if not has_selection:
+        msg = QtWidgets.QLabel("No hay seleccion activa; se usara todo el documento.")
+        msg.setWordWrap(True)
+        msg.setStyleSheet("color:#888;")
+        lay_scope.addWidget(msg)
+
+    grp_opt = QtWidgets.QGroupBox("Opciones")
+    chk_cleanup = QtWidgets.QCheckBox("Eliminar cajitas previas generadas por esta macro")
+    chk_cleanup.setChecked(bool(cfg.get("cleanup_prev", True)))
+    sp_size = QtWidgets.QDoubleSpinBox()
+    sp_size.setRange(20.0, 300.0)
+    sp_size.setDecimals(1)
+    sp_size.setSuffix(" mm")
+    sp_size.setValue(float(cfg.get("size_mm", DEFAULT_SIZE_MM)))
+    sp_z = QtWidgets.QDoubleSpinBox()
+    sp_z.setRange(0.0, 500.0)
+    sp_z.setDecimals(1)
+    sp_z.setSuffix(" mm")
+    sp_z.setValue(float(cfg.get("z_offset_mm", DEFAULT_Z_OFFSET_MM)))
+    sp_xy = QtWidgets.QDoubleSpinBox()
+    sp_xy.setRange(0.0, 500.0)
+    sp_xy.setDecimals(1)
+    sp_xy.setSuffix(" mm")
+    sp_xy.setValue(float(cfg.get("xy_offset_mm", DEFAULT_XY_OFFSET_MM)))
+
+    lay_opt = QtWidgets.QVBoxLayout(grp_opt)
+    lay_opt.addWidget(chk_cleanup)
+    form = QtWidgets.QFormLayout()
+    form.addRow("Tamano cajita:", sp_size)
+    form.addRow("Offset Z sobre luminaria:", sp_z)
+    form.addRow("Offset XY (opcional):", sp_xy)
+    lay_opt.addLayout(form)
+
+    buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+    buttons.accepted.connect(dlg.accept)
+    buttons.rejected.connect(dlg.reject)
+
+    lay = QtWidgets.QVBoxLayout(dlg)
+    lay.addWidget(info)
+    lay.addWidget(grp_scope)
+    lay.addWidget(grp_opt)
+    lay.addWidget(buttons)
+
+    if dlg.exec_() != QtWidgets.QDialog.Accepted:
+        return None
+
+    cfg["scope"] = "selection" if (bool(has_selection) and rb_sel.isChecked()) else "document"
+    cfg["cleanup_prev"] = bool(chk_cleanup.isChecked())
+    cfg["size_mm"] = float(sp_size.value())
+    cfg["z_offset_mm"] = float(sp_z.value())
+    cfg["xy_offset_mm"] = float(sp_xy.value())
+    _save_cfg(cfg)
+    return cfg
+
+
+def main():
+    doc = App.ActiveDocument
+    if doc is None:
+        _err("No hay documento activo.")
+        return
+
+    selection_candidates, has_selection = _collect_candidates(doc)
+    cfg = _run_config_dialog(has_selection)
+    if cfg is None:
+        _warn("Operacion cancelada por el usuario.")
+        return
+
+    if cfg.get("scope") == "selection" and has_selection:
+        candidates = selection_candidates
+        from_selection = True
+    else:
+        candidates = _collect_document_objects(doc)
+        from_selection = False
+
+    scope_group = _find_iluminacion_scope_group(doc)
+    scope_group_label = ""
+    omitted_outside_scope = 0
+    if scope_group is not None:
+        scope_group_label = (
+            _safe_text(getattr(scope_group, "Label", "")).strip()
+            or _safe_text(getattr(scope_group, "Name", "")).strip()
+            or "Iluminacion"
+        )
+        before_scope = len(candidates)
+        candidates = [o for o in candidates if _is_within_scope_group(doc, o, scope_group)]
+        omitted_outside_scope = max(0, before_scope - len(candidates))
+        if omitted_outside_scope > 0:
+            _log(
+                f"Filtro de grupo aplicado: grupo={scope_group_label} | fuera_omitidos={omitted_outside_scope}"
+            )
+    else:
+        _warn("No se encontro grupo 'Iluminacion'; se usa el alcance sin filtro de grupo.")
+
+    size_mm = max(20.0, float(cfg.get("size_mm", DEFAULT_SIZE_MM)))
+    z_offset_mm = max(0.0, float(cfg.get("z_offset_mm", DEFAULT_Z_OFFSET_MM)))
+    xy_offset_mm = max(0.0, float(cfg.get("xy_offset_mm", DEFAULT_XY_OFFSET_MM)))
+
+    get_component_type = _import_component_type()
+    luminarias = []
+    seen_lum = set()
+    dup_lum = 0
+    for obj in candidates:
+        if _is_luminaria(doc, obj, get_component_type):
+            key = _luminaria_identity(obj)
+            if key in seen_lum:
+                dup_lum += 1
+                continue
+            seen_lum.add(key)
+            base_obj = _linked_object(obj) if _is_link(obj) else obj
+            if base_obj is None:
+                base_obj = obj
+            luminarias.append(
+                {
+                    "obj": obj,
+                    "point": _luminaria_world_point(obj),
+                    "circuito": _resolve_circuito(doc, base_obj),
+                    "recinto": _resolve_recinto(doc, base_obj),
+                }
+            )
+
+    if not luminarias:
+        _warn("No se detectaron luminarias para procesar.")
+        return
+
+    removed = 0
+    if bool(cfg.get("cleanup_prev", True)):
+        removed = _cleanup_previous_generated(doc)
+
+    created = 0
+    grouped_keys = set()
+    try:
+        doc.openTransaction("ElectricCR: cajas de conexion sobre luminarias")
+        g_elec = _ensure_group(doc, None, "electrico", "GRoot")
+        g_ilum = _ensure_group(doc, g_elec, "Iluminacion", "G01")
+        circuit_bucket = _detect_circuit_bucket_label(g_ilum)
+
+        for item in luminarias:
+            lum_obj = item["obj"]
+            lum_label = _safe_text(getattr(lum_obj, "Label", "")).strip() or _safe_text(getattr(lum_obj, "Name", "")).strip() or "Luminaria"
+            circuito = _safe_text(item["circuito"]).strip() or FALLBACK_CIRCUITO
+            recinto = _safe_text(item["recinto"]).strip() or FALLBACK_RECINTO
+            grouped_keys.add((circuito, recinto))
+
+            g_circuitos = _ensure_group(doc, g_ilum, circuit_bucket, "G02")
+            g_circuito = _ensure_group(doc, g_circuitos, circuito, "G03")
+            recintos_bucket = _detect_recintos_bucket_label(g_circuito)
+            g_recintos = _ensure_group(doc, g_circuito, recintos_bucket, "G04")
+            g_recinto = _ensure_group(doc, g_recintos, recinto, "G05")
+            g_cajas_lum = _ensure_group(doc, g_recinto, CAJAS_LUM_LABEL, "G06")
+
+            box = _create_lum_box(
+                doc=doc,
+                lum_obj=lum_obj,
+                lum_point=item["point"],
+                size_mm=size_mm,
+                z_offset_mm=z_offset_mm,
+                xy_offset_mm=xy_offset_mm,
+                circuito=circuito,
+                recinto=recinto,
+                lum_label=lum_label,
+            )
+            if box is None:
+                continue
+            _remove_from_all_groups(doc, box, keep_group=g_cajas_lum)
+            g_cajas_lum.addObject(box)
+            created += 1
+
+        doc.recompute()
+        doc.commitTransaction()
+    except Exception as ex:
+        try:
+            doc.abortTransaction()
+        except Exception:
+            pass
+        _err(f"Fallo general: {ex}")
+        return
+
+    scope = "seleccion" if from_selection else "documento completo"
+    _log(
+        "Finalizado. "
+        f"Luminarias={len(luminarias)} | grupos={len(grouped_keys)} | "
+        f"cajas_creadas={created} | cajas_previas_eliminadas={removed} | "
+        f"grupo_filtro={scope_group_label or 'NO_ENCONTRADO'} | "
+        f"fuera_grupo_omitidos={omitted_outside_scope} | "
+        f"luminarias_duplicadas_omitidas={dup_lum} | "
+        f"tamano={size_mm:.1f} mm | offset_z={z_offset_mm:.1f} mm | offset_xy={xy_offset_mm:.1f} mm | "
+        f"alcance={scope}"
+    )
+
+
+if __name__ == "__main__":
+    main()

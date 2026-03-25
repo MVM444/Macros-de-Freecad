@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# Icon: medir_distancia_y_dibujar_ruta.svg
 # ------------------------------------------------------------------------
 # NOMBRE MACRO: RutaCritica_WIRE.FCMacro
 # UBICACION: directorio de macros de FreeCAD
@@ -25,8 +26,19 @@ import FreeCADGui
 import Draft
 from PySide import QtGui
 from datetime import datetime
-
+import os
+import sys
+_THIS_DIR = os.path.dirname(__file__) if '__file__' in globals() else ''
+if _THIS_DIR and _THIS_DIR not in sys.path:
+    sys.path.insert(0, _THIS_DIR)
+import importlib
+import conexiones_grouping as _conexiones_grouping_mod
+_conexiones_grouping_mod = importlib.reload(_conexiones_grouping_mod)
+_ensure_conexiones_group_unified = _conexiones_grouping_mod.ensure_conexiones_group
+import component_classifier as _component_classifier_mod
+_component_classifier_mod = importlib.reload(_component_classifier_mod)
 TAG = "[RUTA]"
+WRITE_RESULTS_SHEET = False
 
 def log_info(msg): FreeCAD.Console.PrintMessage(f"{TAG}[INFO] {msg}\n")
 def log_warn(msg): FreeCAD.Console.PrintWarning(f"{TAG}[WARN] {msg}\n")
@@ -126,18 +138,12 @@ def is_conexiones_group(g):
            (isinstance(name, str)  and name.startswith("Conexiones"))
 
 def ensure_conexiones_group(doc, parent_group):
-    if hasattr(parent_group, "Group"):
-        for obj in parent_group.Group:
-            if obj.TypeId == "App::DocumentObjectGroup" and obj.Label == "Conexiones":
-                return obj
-        g = doc.addObject("App::DocumentObjectGroup", "Conexiones")
-        parent_group.addObject(g)
-        log_info(f"Subgrupo 'Conexiones' creado en '{parent_group.Label}'")
-        return g
-    else:
-        g = doc.addObject("App::DocumentObjectGroup", "Conexiones")
-        log_warn("Padre no es grupo; 'Conexiones' creado en raiz")
-        return g
+    g = _ensure_conexiones_group_unified(doc, parent_group=parent_group)
+    try:
+        log_info(f"Destino de conexiones: {getattr(g, 'Label', getattr(g, 'Name', 'Conexiones'))}")
+    except Exception:
+        pass
+    return g
 
 def collect_groups_to_evaluate(grupo):
     if hasattr(grupo, "Group") and len(grupo.Group) > 0:
@@ -148,12 +154,49 @@ def collect_groups_to_evaluate(grupo):
 
 # ------------------------- Geometry helpers -----------------------------
 
+def _to_float(value, default=0.0):
+    try:
+        return float(value)
+    except Exception:
+        pass
+    try:
+        return float(getattr(value, "Value", default))
+    except Exception:
+        return default
+
+def _altura_rel_obj(obj):
+    for prop_name in ("AlturaRel", "Altura", "Elevation", "Elevacion", "Z"):
+        if hasattr(obj, prop_name):
+            try:
+                return _to_float(getattr(obj, prop_name), 0.0)
+            except Exception:
+                pass
+    return 0.0
+
+def get_connection_point(obj):
+    """
+    Punto de conexion base:
+    - X/Y: Placement.Base
+    - Z: Placement.Base.z + altura relativa del objeto (si existe)
+    """
+    if not hasattr(obj, "Placement"):
+        return FreeCAD.Vector(0, 0, 0)
+    p = obj.Placement.Base
+    z = _to_float(p.z, 0.0) + _altura_rel_obj(obj)
+    return FreeCAD.Vector(_to_float(p.x, 0.0), _to_float(p.y, 0.0), z)
+
+def route_z_level(z_height, p_start, p_end):
+    # nunca rutear por debajo de inicio/fin
+    z_req = _to_float(z_height, 0.0)
+    return max(z_req, _to_float(p_start.z, 0.0), _to_float(p_end.z, 0.0))
+
 def ortho_points_path(p_start, p_end, z_height):
+    z_route = route_z_level(z_height, p_start, p_end)
     pts = []
     pts.append(p_start)
-    pts.append(FreeCAD.Vector(p_start.x, p_start.y, z_height))
-    pts.append(FreeCAD.Vector(p_end.x,   p_start.y, z_height))
-    pts.append(FreeCAD.Vector(p_end.x,   p_end.y,   z_height))
+    pts.append(FreeCAD.Vector(p_start.x, p_start.y, z_route))
+    pts.append(FreeCAD.Vector(p_end.x,   p_start.y, z_route))
+    pts.append(FreeCAD.Vector(p_end.x,   p_end.y,   z_route))
     pts.append(p_end)
     return pts
 
@@ -163,14 +206,34 @@ def is_ruta_obj(obj):
     return (isinstance(lab, str) and lab.startswith("Ruta Critica")) or \
            (isinstance(nam, str) and nam.startswith("Ruta_Critica"))
 
+def is_non_socket_annotation(obj):
+    lab = str(getattr(obj, "Label", "") or "").strip().lower()
+    nam = str(getattr(obj, "Name", "") or "").strip().lower()
+    txt = f"{lab} {nam}"
+    if "etiqueta" in txt:
+        return True
+    if txt.startswith("conexion") or " conexion" in txt:
+        return True
+    return False
+
 def get_candidate_tomas(group_like):
     if not hasattr(group_like, "Group"):
         return []
-    out = []
+    out_tomas = []
     for o in group_like.Group:
         if hasattr(o, "Placement") and not hasattr(o, "Group") and not is_ruta_obj(o):
-            out.append(o)
-    return out
+            if is_non_socket_annotation(o):
+                continue
+            try:
+                if _component_classifier_mod.is_toma(o):
+                    out_tomas.append(o)
+            except Exception:
+                # Fallback legacy estricto por nombre/label
+                lbl = str(getattr(o, "Label", "") or "").lower()
+                nam = str(getattr(o, "Name", "") or "").lower()
+                if ("tomacorriente" in lbl) or ("tomacorriente" in nam) or lbl.startswith("toma") or nam.startswith("toma"):
+                    out_tomas.append(o)
+    return out_tomas
 
 # ---------------------- Draft wire compatibility ------------------------
 
@@ -199,6 +262,148 @@ def create_draft_wire(points_list):
 
 # ----------------------------- Main -------------------------------------
 
+def _selected_objects():
+    sel = list(FreeCADGui.Selection.getSelection() or [])
+    if sel:
+        return sel
+    try:
+        sel_ex = FreeCADGui.Selection.getSelectionEx() or []
+        return [s.Object for s in sel_ex if getattr(s, "Object", None)]
+    except Exception:
+        return []
+
+def run_ruta_critica(
+    objeto_inicial,
+    grupo_tomas,
+    altura,
+    hoja=None,
+    base_row=None,
+    recompute=True,
+    update_e1=True,
+    write_sheet=True,
+):
+    doc = FreeCAD.ActiveDocument
+    if doc is None:
+        raise RuntimeError("No hay documento activo")
+    if not hasattr(objeto_inicial, "Placement"):
+        raise RuntimeError("El objeto inicial no tiene Placement")
+    if not hasattr(grupo_tomas, "Group"):
+        raise RuntimeError("El grupo de tomas no es valido")
+
+    if write_sheet and hoja is None:
+        hoja = ensure_results_sheet(doc)
+    grupos = collect_groups_to_evaluate(grupo_tomas)
+    log_info(f"Grupos a evaluar: {len(grupos)}")
+
+    if write_sheet and base_row is None:
+        try:
+            e1_val = hoja.get("E1")
+        except Exception:
+            e1_val = None
+        start_row = _parse_e1_to_row(e1_val)
+        base_row  = find_block_start_row(hoja, start_row, max_scan=10000)
+    if write_sheet:
+        log_info(f"Fila base para esta corrida: {base_row}")
+
+    base0 = get_connection_point(objeto_inicial)
+    wrote = 0
+
+    for subg in grupos:
+        g_label = getattr(subg, "Label", "Grupo")
+        tomas = get_candidate_tomas(subg if hasattr(subg, "Group") else grupo_tomas)
+        if len(tomas) == 0:
+            log_warn(f"Sin objetos candidatos en '{g_label}', se omite")
+            continue
+
+        max_d = -1.0
+        toma_far = None
+        for t in tomas:
+            try:
+                p_toma = get_connection_point(t)
+                d = base0.distanceToPoint(p_toma)
+            except Exception as ex:
+                log_warn(f"Omitiendo '{t.Label}' por error al medir: {ex}")
+                continue
+            if d > max_d:
+                max_d = d
+                toma_far = t
+
+        if toma_far is None:
+            log_warn(f"No se encontro toma valida en '{g_label}'")
+            continue
+
+        row = None
+        if write_sheet:
+            row = base_row + wrote
+            log_info(f"Escribiendo fila {row} para '{g_label}'")
+            try:
+                set_text(hoja, f"A{row}", g_label)
+                set_text(hoja, f"B{row}", toma_far.Label)
+                set_number(hoja, f"C{row}", round(max_d, 2), decimals=2)
+            except Exception as ex:
+                log_err(f"Error escribiendo en fila {row}: {ex}")
+                row = row + 1
+                try:
+                    set_text(hoja, f"A{row}", g_label)
+                    set_text(hoja, f"B{row}", toma_far.Label)
+                    set_number(hoja, f"C{row}", round(max_d, 2), decimals=2)
+                    log_warn(f"Escritura recuperada en fila {row}")
+                except Exception as ex2:
+                    log_err(f"Fallo escritura de respaldo en fila {row}: {ex2}")
+                    continue
+
+        p_end = get_connection_point(toma_far)
+        z_route = route_z_level(altura, base0, p_end)
+        log_info(
+            "Ruta '{}': z_ini={:.2f}, z_fin={:.2f}, z_ruta={:.2f}".format(
+                g_label, base0.z, p_end.z, z_route
+            )
+        )
+        pts = ortho_points_path(base0, p_end, altura)
+        try:
+            wire = create_draft_wire(pts)
+            wire.Label = f"Ruta Critica hacia {toma_far.Label}"
+            if hasattr(wire, "FilletRadius"):
+                try:
+                    wire.FilletRadius = 500.0
+                except Exception as exf:
+                    log_warn(f"No se pudo aplicar FilletRadius: {exf}")
+            g_con = ensure_conexiones_group(doc, subg if hasattr(subg, "Group") else grupo_tomas)
+            try:
+                g_con.addObject(wire)
+            except Exception as ex:
+                log_warn(f"No se pudo mover WIRE a 'Conexiones': {ex}")
+            if write_sheet and row is not None:
+                set_text(hoja, f"D{row}", wire.Name)
+        except Exception as ex:
+            log_err(f"Error al crear WIRE: {ex}")
+            if write_sheet and row is not None:
+                try:
+                    set_text(hoja, f"D{row}", "WIRE_ERROR")
+                except Exception:
+                    pass
+
+        wrote += 1
+
+    next_row = (base_row + wrote) if write_sheet else None
+    if write_sheet and update_e1:
+        bump_e1(hoja, next_row)
+
+    if recompute:
+        try:
+            doc.recompute()
+            log_info("Documento recomputado")
+        except Exception as ex:
+            log_err(f"Error en recompute: {ex}")
+
+    return {
+        "groups": len(grupos),
+        "wrote": wrote,
+        "base_row": base_row,
+        "next_row": next_row,
+        "sheet": hoja if write_sheet else None,
+    }
+
 def medir_distancia_y_dibujar_ruta():
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_info(f"Inicio macro RutaCritica_WIRE - version {ts}")
@@ -208,13 +413,13 @@ def medir_distancia_y_dibujar_ruta():
         log_err("No hay documento activo")
         return
 
-    sel = FreeCADGui.Selection.getSelection()
+    sel = _selected_objects()
     if len(sel) < 2:
         log_err("Seleccione primero el objeto inicial y luego el grupo de tomas")
         return
 
     objeto_inicial = sel[0]
-    grupo_tomas   = sel[1]
+    grupo_tomas = sel[1]
 
     if not hasattr(objeto_inicial, "Placement"):
         log_err("El primer elemento seleccionado no tiene Placement")
@@ -231,103 +436,22 @@ def medir_distancia_y_dibujar_ruta():
         log_warn("Operacion cancelada por el usuario")
         return
 
-    hoja = ensure_results_sheet(doc)
-    grupos = collect_groups_to_evaluate(grupo_tomas)
-    log_info(f"Grupos a evaluar: {len(grupos)}")
-
-    # calcular una sola vez la fila base para esta corrida
     try:
-        e1_val = hoja.get("E1")
-    except Exception:
-        e1_val = None
-    start_row = _parse_e1_to_row(e1_val)
-    base_row  = find_block_start_row(hoja, start_row, max_scan=10000)
-    log_info(f"Fila base para esta corrida: {base_row}")
-
-    base0 = objeto_inicial.Placement.Base
-    wrote = 0  # contador de filas escritas en esta corrida
-
-    for subg in grupos:
-        g_label = getattr(subg, "Label", "Grupo")
-        tomas = get_candidate_tomas(subg if hasattr(subg, "Group") else grupo_tomas)
-        if len(tomas) == 0:
-            log_warn(f"Sin objetos candidatos en '{g_label}', se omite")
-            continue
-
-        # buscar toma mas lejana
-        max_d = -1.0
-        toma_far = None
-        for t in tomas:
-            try:
-                d = base0.distanceToPoint(t.Placement.Base)
-            except Exception as ex:
-                log_warn(f"Omitiendo '{t.Label}' por error al medir: {ex}")
-                continue
-            if d > max_d:
-                max_d = d
-                toma_far = t
-
-        if toma_far is None:
-            log_warn(f"No se encontro toma valida en '{g_label}'")
-            continue
-
-        row = base_row + wrote  # fila contigua dentro del bloque de esta corrida
-        log_info(f"Escribiendo fila {row} para '{g_label}'")
-
-        # escribir hoja
-        try:
-            set_text(hoja, f"A{row}", g_label)
-            set_text(hoja, f"B{row}", toma_far.Label)
-            set_number(hoja, f"C{row}", round(max_d, 2), decimals=2)
-        except Exception as ex:
-            log_err(f"Error escribiendo en fila {row}: {ex}")
-            # intentar una fila abajo
-            row = row + 1
-            try:
-                set_text(hoja, f"A{row}", g_label)
-                set_text(hoja, f"B{row}", toma_far.Label)
-                set_number(hoja, f"C{row}", round(max_d, 2), decimals=2)
-                log_warn(f"Escritura recuperada en fila {row}")
-            except Exception as ex2:
-                log_err(f"Fallo escritura de respaldo en fila {row}: {ex2}")
-                # no contamos esta iteracion
-                continue
-
-        # crear WIRE
-        pts = ortho_points_path(base0, toma_far.Placement.Base, altura)
-        try:
-            wire = create_draft_wire(pts)
-            wire.Label = f"Ruta Critica hacia {toma_far.Label}"
-            if hasattr(wire, "FilletRadius"):
-                try:
-                    wire.FilletRadius = 500.0
-                except Exception as exf:
-                    log_warn(f"No se pudo aplicar FilletRadius: {exf}")
-            # mover a Conexiones
-            g_con = ensure_conexiones_group(doc, subg if hasattr(subg, "Group") else grupo_tomas)
-            try:
-                g_con.addObject(wire)
-            except Exception as ex:
-                log_warn(f"No se pudo mover WIRE a 'Conexiones': {ex}")
-            set_text(hoja, f"D{row}", wire.Name)
-        except Exception as ex:
-            log_err(f"Error al crear WIRE: {ex}")
-            try:
-                set_text(hoja, f"D{row}", "WIRE_ERROR")
-            except Exception:
-                pass
-
-        wrote += 1  # solo si llegamos aqui, contamos la fila
-
-    # actualizar E1: siguiente fila libre despues del bloque
-    bump_e1(hoja, base_row + wrote)
-
-    try:
-        doc.recompute()
-        log_info("Documento recomputado")
+        run_ruta_critica(
+            objeto_inicial,
+            grupo_tomas,
+            altura,
+            hoja=None,
+            base_row=None,
+            recompute=True,
+            update_e1=True,
+            write_sheet=WRITE_RESULTS_SHEET,
+        )
     except Exception as ex:
-        log_err(f"Error en recompute: {ex}")
+        log_err(f"Fallo ejecucion: {ex}")
 
 # Ejecutar macro
 if __name__ == "__main__":
     medir_distancia_y_dibujar_ruta()
+
+

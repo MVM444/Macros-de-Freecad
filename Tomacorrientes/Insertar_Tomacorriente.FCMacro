@@ -1,0 +1,446 @@
+# -*- coding: utf-8 -*-
+# Icon: InsertarTomacorriente.svg
+"""
+Insertar_Tomacorriente.FCMacro (rev 2026-02-10)
+Inserta un tomacorriente usando ElectricCR.electriccr.features.objeto_toma_uno
+con colocacion por vista previa en el mouse (snap libre) usando Draft Snapper.
+
+Reglas:
+- Usa registro (REGISTRO_KEY) para simbolo 2D/3D.
+- Mantiene placement y rotacion segun punto seleccionado o edge.
+"""
+
+import math
+import sys
+import importlib
+import importlib.util
+import importlib.machinery
+from pathlib import Path
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+
+try:
+    from PySide2 import QtWidgets
+except Exception:
+    from PySide import QtGui as QtWidgets
+
+# ----------------------------
+# Configuracion rapida
+# ----------------------------
+REGISTRO_KEY = "Tomacorriente_120V"
+TIPO_LOGICO = "Toma"
+ALTURA_REL = 300.0
+MODO_VISUAL = "Ambos"
+USAR_PUNTO_BRUTO = True  # usa snapinfo x/y/z para suavizar el movimiento
+ALINEAR_CON_BORDE = False  # evita rotacion aleatoria; poner True si se desea
+ROTAR_DESPUES = True  # pedir segundo punto para girar despues de insertar
+USAR_LINK_DESDE_INICIO = True
+
+# ----------------------------
+# Logging
+# ----------------------------
+
+def _log(msg):
+    App.Console.PrintMessage(f"[TOMA][INFO] {msg}\n")
+
+
+def _warn(msg):
+    App.Console.PrintWarning(f"[TOMA][WARN] {msg}\n")
+
+
+def _err(msg):
+    App.Console.PrintError(f"[TOMA][ERROR] {msg}\n")
+
+
+# ----------------------------
+# Resolver paquete ElectricCR
+# ----------------------------
+
+def _this_dir():
+    try:
+        return Path(__file__).resolve().parent
+    except Exception:
+        return None
+
+
+def _candidate_pkg_roots():
+    seen = set()
+    base = _this_dir()
+    if base is not None:
+        macros_dir = base.parent
+        for candidate in (macros_dir / "ElectricCR", macros_dir.parent / "ElectricCR"):
+            if candidate and candidate not in seen:
+                seen.add(candidate)
+                yield candidate
+    try:
+        user_mod = Path(App.getUserAppDataDir()) / "Mod" / "ElectricCR"
+        if user_mod not in seen:
+            seen.add(user_mod)
+            yield user_mod
+    except Exception:
+        pass
+
+
+def _ensure_paths():
+    for root in _candidate_pkg_roots():
+        try:
+            if root.is_dir() and str(root) not in sys.path:
+                sys.path.insert(0, str(root))
+        except Exception:
+            continue
+
+
+def _fallback_loader():
+    for root in _candidate_pkg_roots():
+        try:
+            cand = root / "electriccr" / "features" / "objeto_toma_uno.py"
+        except Exception:
+            continue
+        if cand.is_file():
+            loader = importlib.machinery.SourceFileLoader("objeto_toma_uno_boot", str(cand))
+            spec = importlib.util.spec_from_loader(loader.name, loader)
+            if spec is None:
+                continue
+            module = importlib.util.module_from_spec(spec)
+            loader.exec_module(module)
+            return module
+    return None
+
+
+def _load_toma_module():
+    _ensure_paths()
+    try:
+        module = importlib.import_module("electriccr.features.objeto_toma_uno")
+        importlib.reload(module)
+        return module
+    except Exception:
+        module = _fallback_loader()
+        if module is None:
+            _err("No se pudo cargar objeto_toma_uno")
+            raise
+        return module
+
+
+# ----------------------------
+# Draft Snapper (vista previa)
+# ----------------------------
+
+def _ensure_snapper():
+    try:
+        import DraftTools  # crea Gui.Snapper y Gui.draftToolBar
+        return True
+    except Exception:
+        pass
+    try:
+        import DraftGui
+        from draftguitools import gui_snapper
+        if not hasattr(Gui, "draftToolBar"):
+            Gui.draftToolBar = DraftGui.DraftToolBar()
+        if not hasattr(Gui, "Snapper"):
+            Gui.Snapper = gui_snapper.Snapper()
+        return True
+    except Exception as exc:
+        _err(f"No se pudo iniciar Draft Snapper: {exc}")
+        return False
+
+
+def _edge_from_snapinfo(snapinfo):
+    if not snapinfo:
+        return None
+    try:
+        parent = snapinfo.get("ParentObject", None)
+        if parent:
+            subname = snapinfo.get("SubName") or snapinfo.get("Component")
+            if subname:
+                try:
+                    sub = parent.getSubObject(subname, retType=1)
+                except Exception:
+                    sub = parent.getSubObject(subname)
+                if isinstance(sub, Part.Edge):
+                    return sub
+        obj_name = snapinfo.get("Object")
+        comp = snapinfo.get("Component")
+        if not (obj_name and comp):
+            return None
+        obj = App.ActiveDocument.getObject(obj_name)
+        if not obj:
+            return None
+        try:
+            shape = Part.getShape(obj, comp, needSubElement=True, noElementMap=True)
+            if shape and shape.ShapeType == "Edge":
+                return shape
+        except Exception:
+            pass
+        try:
+            sub = obj.getSubObject(comp, retType=1)
+        except Exception:
+            try:
+                sub = obj.getSubObject(comp)
+            except Exception:
+                sub = None
+        if isinstance(sub, Part.Edge):
+            return sub
+    except Exception:
+        return None
+    return None
+
+
+def _angle_from_edge(edge):
+    try:
+        t = edge.tangentAt(edge.FirstParameter + (edge.LastParameter - edge.FirstParameter) * 0.5)
+    except Exception:
+        t = App.Vector(1, 0, 0)
+    v = App.Vector(t.x, t.y, 0)
+    if v.Length == 0:
+        return 0.0
+    return math.degrees(math.atan2(v.y, v.x))
+
+
+def _angle_from_edge_at_point(edge, point):
+    if not edge or point is None:
+        return None
+    try:
+        param = edge.Curve.parameter(point)
+    except Exception:
+        try:
+            param = edge.Curve.parameterAtPoint(point)
+        except Exception:
+            param = edge.FirstParameter + (edge.LastParameter - edge.FirstParameter) * 0.5
+    try:
+        t = edge.tangentAt(param)
+    except Exception:
+        try:
+            t = edge.tangentAt(edge.FirstParameter + (edge.LastParameter - edge.FirstParameter) * 0.5)
+        except Exception:
+            return None
+    v = App.Vector(t.x, t.y, 0)
+    if v.Length == 0:
+        return None
+    return math.degrees(math.atan2(v.y, v.x))
+
+def _angle_from_vector(vec):
+    try:
+        if vec.Length == 0:
+            return None
+    except Exception:
+        return None
+    return math.degrees(math.atan2(vec.y, vec.x))
+
+def _point_from_snap(pt, snapinfo, use_raw=False):
+    if not (USAR_PUNTO_BRUTO and use_raw):
+        return pt
+    try:
+        if snapinfo and all(k in snapinfo for k in ("x", "y", "z")):
+            return App.Vector(snapinfo["x"], snapinfo["y"], snapinfo["z"])
+    except Exception:
+        pass
+    return pt
+
+
+# ----------------------------
+# Insercion
+# ----------------------------
+
+def _create_toma_instance(doc, module):
+    if USAR_LINK_DESDE_INICIO and hasattr(module, "crear_toma_link"):
+        try:
+            return module.crear_toma_link(
+                doc=doc,
+                name_prefix="Toma_",
+                key_registro=REGISTRO_KEY,
+                tipo_logico=TIPO_LOGICO,
+                placement=App.Placement(),
+                modo_visual=MODO_VISUAL,
+                altura_rel=float(ALTURA_REL),
+                orientacion_pared="Vertical",
+                recompute=False,
+                target_group="Tomacorrientes",
+            )
+        except TypeError:
+            return module.crear_toma_link(
+                doc=doc,
+                name_prefix="Toma_",
+                key_registro=REGISTRO_KEY,
+                tipo_logico=TIPO_LOGICO,
+                placement=App.Placement(),
+                modo_visual=MODO_VISUAL,
+                altura_rel=float(ALTURA_REL),
+                orientacion_pared="Vertical",
+            )
+        except Exception as ex:
+            _warn(f"crear_toma_link fallo, usando modo clasico: {ex}")
+
+    try:
+        return module.crear_toma_uno(
+            doc=doc,
+            name_prefix="Toma_",
+            key_registro=REGISTRO_KEY,
+            tipo_logico=TIPO_LOGICO,
+            recompute=False,
+        )
+    except TypeError:
+        return module.crear_toma_uno(
+            doc=doc,
+            name_prefix="Toma_",
+            key_registro=REGISTRO_KEY,
+            tipo_logico=TIPO_LOGICO,
+        )
+
+
+def insertar_una_toma():
+    doc = App.ActiveDocument or App.newDocument("Electrico")
+    module = _load_toma_module()
+    if not _ensure_snapper():
+        _err("No hay Snapper disponible para vista previa.")
+        return None
+
+    obj = _create_toma_instance(doc, module)
+
+    try:
+        obj.ModoVisual = MODO_VISUAL
+        obj.AlturaRel = float(ALTURA_REL)
+        obj.OrientacionPared = "Vertical"
+    except Exception:
+        pass
+
+    try:
+        doc.recompute()
+    except Exception:
+        pass
+
+    try:
+        vo = obj.ViewObject
+        preview_transparency = getattr(vo, "Transparency", 0)
+        preview_selectable = getattr(vo, "Selectable", True)
+        vo.Transparency = 70
+        try:
+            vo.Selectable = False  # evita que el snap tome la propia geometria
+        except Exception:
+            pass
+    except Exception:
+        preview_transparency = None
+        preview_selectable = None
+
+    state = {
+        "doc": doc,
+        "obj": obj,
+        "last_angle": 0.0,
+        "last_snapinfo": None,
+        "done": False,
+        "preview_transparency": preview_transparency,
+        "preview_selectable": preview_selectable,
+    }
+
+    def _restore_preview_state():
+        try:
+            vo = state["obj"].ViewObject
+            if state["preview_transparency"] is not None:
+                vo.Transparency = state["preview_transparency"]
+            else:
+                vo.Transparency = 0
+            if state["preview_selectable"] is not None:
+                vo.Selectable = state["preview_selectable"]
+        except Exception:
+            pass
+
+    def _apply_placement(pt, snapinfo=None, use_raw=False):
+        pt = _point_from_snap(pt, snapinfo, use_raw=use_raw)
+        if pt is None:
+            return
+        ang = state["last_angle"]
+        if ALINEAR_CON_BORDE:
+            edge = _edge_from_snapinfo(snapinfo)
+            if edge:
+                a = _angle_from_edge_at_point(edge, pt)
+                if a is not None:
+                    ang = a
+                    state["last_angle"] = a
+        rot = App.Rotation(App.Vector(0, 0, 1), float(ang or 0.0))
+        state["obj"].Placement = App.Placement(pt, rot)
+        try:
+            state["obj"].touch()
+        except Exception:
+            pass
+
+    def _on_move(pt, snapinfo=None):
+        if state["done"]:
+            return
+        state["last_snapinfo"] = snapinfo
+        _apply_placement(pt, snapinfo, use_raw=True)
+
+    def _on_click(pt, snapped_obj=None):
+        state["done"] = True
+        if pt is None:
+            try:
+                state["doc"].removeObject(state["obj"].Name)
+            except Exception:
+                pass
+            _warn("Insercion cancelada.")
+            return
+        _apply_placement(pt, state.get("last_snapinfo"), use_raw=False)
+        if not ROTAR_DESPUES:
+            _restore_preview_state()
+            state["doc"].recompute()
+            _log(f"Insertado {state['obj'].Label} en {pt}")
+            return
+
+        base_pt = pt
+
+        def _rotate_move(pt2, snapinfo=None):
+            if pt2 is None:
+                return
+            ang = _angle_from_vector(pt2.sub(base_pt))
+            if ang is None:
+                return
+            state["last_angle"] = ang
+            rot = App.Rotation(App.Vector(0, 0, 1), float(ang))
+            state["obj"].Placement = App.Placement(base_pt, rot)
+            try:
+                state["obj"].touch()
+            except Exception:
+                pass
+
+        def _rotate_click(pt2, snapped_obj2=None):
+            if pt2 is not None:
+                ang = _angle_from_vector(pt2.sub(base_pt))
+                if ang is not None:
+                    state["last_angle"] = ang
+                    rot = App.Rotation(App.Vector(0, 0, 1), float(ang))
+                    state["obj"].Placement = App.Placement(base_pt, rot)
+            _restore_preview_state()
+            state["doc"].recompute()
+            if pt2 is None:
+                _log(f"Insertado {state['obj'].Label} en {base_pt} (rotacion cancelada)")
+            else:
+                _log(f"Insertado {state['obj'].Label} en {base_pt} (rotado)")
+
+        try:
+            Gui.Snapper.getPoint(
+                last=base_pt,
+                callback=_rotate_click,
+                movecallback=_rotate_move,
+                title="Girar tomacorriente"
+            )
+            _log("Seleccione un punto para definir la rotacion (ESC para omitir).")
+        except Exception as exc:
+            _restore_preview_state()
+            state["doc"].recompute()
+            _warn(f"No se pudo iniciar rotacion: {exc}")
+
+    try:
+        Gui.Snapper.getPoint(callback=_on_click, movecallback=_on_move, title="Insertar tomacorriente")
+        _log("Seleccione un punto con el mouse (ESC para cancelar).")
+    except Exception as exc:
+        _err(f"No se pudo iniciar seleccion con Snapper: {exc}")
+        try:
+            doc.removeObject(obj.Name)
+        except Exception:
+            pass
+        return None
+    return obj
+
+
+if __name__ == "__main__":
+    insertar_una_toma()

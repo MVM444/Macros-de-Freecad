@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="bgRuta" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1f4068"/>
+      <stop offset="1" stop-color="#16253a"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="12" fill="url(#bgRuta)"/>
+  <path d="M10 46V18h18v14h16v14h10" fill="none" stroke="#7bd3ff" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="10" y="50" width="44" height="4" rx="2" fill="#f2f6fb"/>
+  <path d="M14 50v-4M20 50v-3M26 50v-4M32 50v-3M38 50v-4M44 50v-3M50 50v-4" stroke="#35516f" stroke-width="1.2"/>
+</svg>

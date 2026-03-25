@@ -20,6 +20,52 @@ if not ok:
 selected_table = available_tables[selected_label]
 source_spreadsheet = doc.getObject(selected_table)
 
+# ----------------------------
+# Spreadsheet helpers
+# ----------------------------
+def _col_index(letter):
+    try:
+        return ord(letter.upper()) - 64
+    except Exception:
+        return 0
+
+def _ensure_min_cols(sheet, min_cols):
+    try:
+        if hasattr(sheet, "ColumnCount") and sheet.ColumnCount < min_cols:
+            sheet.ColumnCount = min_cols
+    except Exception:
+        pass
+
+def _ensure_min_rows(sheet, min_rows):
+    try:
+        if hasattr(sheet, "RowCount") and sheet.RowCount < min_rows:
+            sheet.RowCount = min_rows
+    except Exception:
+        pass
+
+def _safe_get(sheet, addr, default=""):
+    try:
+        col = _col_index(addr[:1])
+        row = int(addr[1:])
+        if hasattr(sheet, "ColumnCount") and sheet.ColumnCount < col:
+            return default
+        if hasattr(sheet, "RowCount") and sheet.RowCount < row:
+            return default
+        return sheet.get(addr)
+    except Exception:
+        return default
+
+def _safe_set(sheet, addr, value):
+    try:
+        col = _col_index(addr[:1])
+        row = int(addr[1:])
+        _ensure_min_cols(sheet, col)
+        _ensure_min_rows(sheet, row)
+        sheet.set(addr, value)
+        return True
+    except Exception:
+        return False
+
 # Crear o reutilizar una hoja de cálculo
 spreadsheet_name = "Tabla Iluminacion"
 if spreadsheet_name in available_tables.values():
@@ -40,9 +86,12 @@ encabezados = ["Recinto", "Area (m2)", "Largo (m)", "Ancho (m)", "Altura (m)", "
                "Cantidad Seleccionada", "Luminaria (Lm)", "Iluminancia Media Deseada (Lux)", "Flujo Luminoso Total (Lumens)", 
                "Numero Luminarias", "E Final (Lux)", "% Iluminacion Recomendada"]
 
+_ensure_min_cols(dest_spreadsheet, len(encabezados))
+_ensure_min_rows(dest_spreadsheet, 2)
+
 for col_index, header in enumerate(encabezados):
     cell = chr(65 + col_index) + "1"
-    dest_spreadsheet.set(cell, header)
+    _safe_set(dest_spreadsheet, cell, header)
 
 # Tabla de iluminancia recomendada
 iluminancia_recomendada = {
@@ -73,12 +122,12 @@ data_range = ["A", "B", "C", "D", "E", "F", "G", "H"]
 row = 2  # Comenzar desde la segunda fila
 
 while True:
-    valor_A = source_spreadsheet.get("A" + str(row))
+    valor_A = _safe_get(source_spreadsheet, "A" + str(row))
     if valor_A is None or valor_A == "":
         break  # Detener si la celda A está vacía
     
     # Validación general de datos antes de leer cada celda
-    fila_vacia = all(source_spreadsheet.get(col + str(row)) in [None, ""] for col in data_range)
+    fila_vacia = all(_safe_get(source_spreadsheet, col + str(row)) in [None, ""] for col in data_range)
     if fila_vacia:
         break  # Detener si la fila está completamente vacía
 
@@ -86,41 +135,45 @@ while True:
     for col_index, col_letter in enumerate(data_range):
         source_cell = col_letter + str(row)
         dest_cell = col_letter + str(row)
-        valor = source_spreadsheet.get(source_cell) if source_spreadsheet.get(source_cell) not in [None, ""] else ""
-        try:
-            dest_spreadsheet.set(dest_cell, str(valor))
-        except Exception as e:
-            print(f"Error al procesar la celda {source_cell}: {e}")
+        valor = _safe_get(source_spreadsheet, source_cell)
+        if valor in [None, ""]:
+            valor = ""
+        if not _safe_set(dest_spreadsheet, dest_cell, str(valor)):
+            print(f"Error al procesar la celda {source_cell}")
 
     # Verificación de valores antes de cálculos
     try:
-        filas = int(source_spreadsheet.get("F" + str(row)) or 1)
-        columnas = int(source_spreadsheet.get("G" + str(row)) or 1)
+        filas = int(_safe_get(source_spreadsheet, "F" + str(row)) or 1)
+        columnas = int(_safe_get(source_spreadsheet, "G" + str(row)) or 1)
     except ValueError:
         filas, columnas = 1, 1
 
-    descripcion = source_spreadsheet.get("H" + str(row))
+    descripcion = _safe_get(source_spreadsheet, "H" + str(row))
     if descripcion is None or descripcion == "":
         print(f"Advertencia: Celda H{row} vacía, se asigna 'Desconocido'")
         descripcion = "Desconocido"
 
     # Escribir cálculos
-    dest_spreadsheet.set("I" + str(row), f"=F{row}*G{row}")  # Cantidad de luminarias
-    dest_spreadsheet.set("J" + str(row), "4000")  # Flujo luminoso por defecto
+    _safe_set(dest_spreadsheet, "I" + str(row), f"=F{row}*G{row}")  # Cantidad de luminarias
+    _safe_set(dest_spreadsheet, "J" + str(row), "4000")  # Flujo luminoso por defecto
     iluminancia = iluminancia_recomendada.get(descripcion, 300)  # Iluminancia recomendada
-    dest_spreadsheet.set("K" + str(row), str(iluminancia))
+    _safe_set(dest_spreadsheet, "K" + str(row), str(iluminancia))
     
     # Cálculo del flujo luminoso total requerido
-    dest_spreadsheet.set("L" + str(row), f"=B{row}*K{row}")  
+    _safe_set(dest_spreadsheet, "L" + str(row), f"=B{row}*K{row}")
     
     # Número de luminarias necesarias
-    dest_spreadsheet.set("M" + str(row), f"=L{row}/J{row}")  
+    _safe_set(dest_spreadsheet, "M" + str(row), f"=L{row}/J{row}")
     
     # Iluminancia final obtenida con factores
-    dest_spreadsheet.set("N" + str(row), f"=(I{row}*J{row}/B{row})*{factor_utilizacion}*{factor_mantenimiento}")  
+    _safe_set(
+        dest_spreadsheet,
+        "N" + str(row),
+        f"=(I{row}*J{row}/B{row})*{factor_utilizacion}*{factor_mantenimiento}",
+    )
     
     # % de iluminación recomendada alcanzada
-    dest_spreadsheet.set("O" + str(row), f"=(N{row}/K{row})*100")  
+    _safe_set(dest_spreadsheet, "O" + str(row), f"=(N{row}/K{row})*100")
     
     row += 1
 

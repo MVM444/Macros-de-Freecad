@@ -1,0 +1,18 @@
+Archivado de archivos legacy y experimentales del caso de alimentadores a tablero
+Fecha: 2026-03-19T13:45:02
+
+Archivos incluidos:
+- Conectar_Cajas_a_Tablero_Auto_v2.FCMacro (ya estaba archivado previamente como legacy)
+- Conectar_Alimentadores_a_Tablero_Auto_v2.svg (ya estaba archivado previamente como legacy)
+- Conectar_Cajas_a_Tablero_Auto.debug.log (movido desde la carpeta de trabajo)
+- Conectar_Cajas_a_Tablero_Auto_Descargas.FCMacro (movido desde la carpeta de trabajo)
+
+Archivo conservado por dependencia activa:
+- Conectar_Cajas_a_Tablero_Auto.FCMacro
+  Motivo: alimentadores_backend.py y ramales_backend.py lo usan como backend legado estable.
+
+Archivos activos que NO se movieron:
+- Conectar_Alimentadores_a_Tablero_Auto.FCMacro
+- alimentadores_backend.py
+- Proponer_Rutas_Guia_Auto.FCMacro
+- Conectar_Circuitos_Ramales_Auto.FCMacro

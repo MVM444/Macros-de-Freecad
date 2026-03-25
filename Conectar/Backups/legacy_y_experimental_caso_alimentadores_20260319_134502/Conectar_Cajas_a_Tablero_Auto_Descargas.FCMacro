@@ -1,0 +1,181 @@
+# Macro: Conectar_Cajas_a_Tablero_Auto_Descargas
+# MenuText: Conectar Cajas a Tablero (Descargas)
+# Icon: Conectar/Conectar_Cajas_a_Tablero_Auto.svg
+# Descripcion: Esta macro se encarga de generar de forma automatica los
+# alimentadores (conduits) que conectan las cajas octagonales de un
+# circuito hacia un tablero o ancla. El objetivo es seguir rutas guia
+# definidas por el usuario, mantener las tuberias paralelas y separadas,
+# evitar cruces y asegurar que la conexion al tablero se haga desde las
+# caras seleccionadas. Esta version es un esqueleto inicial que marca
+# la estructura del algoritmo y deja puntos claros donde debe ser
+# implementada la logica detallada. Se incluyen mensajes de depuracion
+# para facilitar el desarrollo.
+#
+# Fecha: 14-03-2026
+# Hora: 14:00:00
+#
+# Instrucciones importantes para desarrolladores:
+# - No utilice caracteres acentuados ni eñes en nombres de variables o
+#   funciones para evitar problemas con FreeCAD y las expresiones.
+# - Utilice App.Console.PrintMessage y App.Console.PrintError para
+#   mostrar mensajes en la consola de FreeCAD.
+# - Comente cada seccion del codigo para facilitar el mantenimiento.
+# - Mantenga la logica de seleccion de tablero, caras y rutas guia en
+#   funciones separadas para poder reutilizarlas en otras macros.
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+import Draft
+
+
+def obtener_tablero_y_caras():
+    """
+    Funcion de utilidad para solicitar al usuario el tablero (ancla) y
+    las caras activas. En una implementacion futura, esta funcion
+    presentaria un panel con opciones para seleccionar el objeto de
+    tablero y activar/desactivar sus caras. Por el momento, devuelve
+    None para el tablero y una lista vacia de caras. Los valores se
+    deberan completar mediante seleccion manual.
+
+    :return: tupla (tablero, lista_de_caras_activas)
+    """
+    # TODO: Implementar el panel de seleccion de tablero y caras. Por
+    # ahora, se toma el primer objeto seleccionado como tablero.
+    seleccion = Gui.Selection.getSelection()
+    if not seleccion:
+        App.Console.PrintError("Debe seleccionar un objeto de tablero\n")
+        return None, []
+    tablero = seleccion[0]
+    # Para fines de depuracion se asumen todas las caras activas
+    caras = ["North", "South", "East", "West"]
+    App.Console.PrintMessage(f"Tablero seleccionado: {tablero.Name}\n")
+    return tablero, caras
+
+
+def obtener_octagonales_por_circuito():
+    """
+    Recorre el documento activo y agrupa las cajas octagonales por
+    circuito. Cada caja octagonal deberia tener un atributo que
+    identifique el circuito al que pertenece (por ejemplo, un prefijo
+    en su nombre o una propiedad personalizada). Esta funcion devuelve
+    un diccionario donde la clave es el identificador del circuito y el
+    valor es una lista de objetos octagonales.
+
+    :return: dict(circuito: [objetos_octagonales])
+    """
+    doc = App.ActiveDocument
+    circuitos = {}
+    for obj in doc.Objects:
+        # Este ejemplo asume que los objetos octagonales tienen TypeId
+        # 'Part::Feature' y un nombre que contiene 'Octagonal'. Ajuste
+        # estas condiciones segun la estructura real del modelo.
+        if obj.TypeId == 'Part::Feature' and 'Octagonal' in obj.Name:
+            # Extraer circuito desde el nombre, por ejemplo
+            # Circuito1_Octagonal -> 'Circuito1'
+            partes = obj.Name.split('_')
+            circuito = partes[0] if partes else 'CircuitoDesconocido'
+            circuitos.setdefault(circuito, []).append(obj)
+    App.Console.PrintMessage(f"Se encontraron {len(circuitos)} circuitos\n")
+    return circuitos
+
+
+def encontrar_ruta_guia_para_octagonal(octagonal, rutas_guia):
+    """
+    Selecciona la ruta guia mas adecuada para un objeto octagonal. La
+    estrategia puede basarse en la distancia minima entre la
+    octagonal y la ruta guia. Actualmente devuelve la primera ruta.
+
+    :param octagonal: objeto de caja octagonal
+    :param rutas_guia: lista de objetos ruta (polilineas)
+    :return: objeto ruta guia
+    """
+    if not rutas_guia:
+        return None
+    # TODO: calcular distancias y seleccionar la ruta mas cercana
+    return rutas_guia[0]
+
+
+def generar_alimentador(octagonal, ruta_guia, tablero, caras, separacion=50.0, radio=100.0):
+    """
+    Genera la polilinea del alimentador entre la caja octagonal y el
+    tablero siguiendo la ruta guia. Esta implementacion es un
+    bosquejo y debe ser completada con el algoritmo de offsets,
+    ordenamiento para evitar cruces y la entrada perpendicular al
+    tablero.
+
+    :param octagonal: objeto origen
+    :param ruta_guia: objeto de tipo polilinea que sirve de guia
+    :param tablero: objeto destino
+    :param caras: lista de cadenas con caras activas
+    :param separacion: distancia entre alimentadores en mm
+    :param radio: radio minimo de curvatura en mm
+    """
+    doc = App.ActiveDocument
+    if not ruta_guia:
+        App.Console.PrintError("No hay ruta guia disponible\n")
+        return
+    # Recuperar puntos de la ruta guia. Se asume que es una polilinea.
+    puntos = []
+    try:
+        for v in ruta_guia.Shape.Vertexes:
+            puntos.append(v.Point)
+    except Exception:
+        App.Console.PrintError("La ruta guia no es valida\n")
+        return
+    # TODO: aplicar offset a la ruta para la separacion deseada
+    # TODO: ordenar el offset segun la posicion de la octagonal
+    # Por ahora, solo se crea una copia simple de la ruta guia
+    nueva_poly = Part.makePolygon(puntos)
+    nueva_obj = doc.addObject("Part::Feature", f"Alimentador_{octagonal.Name}")
+    nueva_obj.Shape = nueva_poly
+    # Agregar mensaje de depuracion
+    App.Console.PrintMessage(f"Alimentador generado para {octagonal.Name}\n")
+    # TODO: conectar con el tablero usando las caras activas
+
+
+def conectar_cajas_a_tablero_auto():
+    """
+    Funcion principal que coordina la generacion de alimentadores para
+    todas las cajas octagonales agrupadas por circuito. Sigue estos
+    pasos:
+      1. Obtiene el tablero y las caras activas.
+      2. Obtiene las rutas guia seleccionadas (pendiente de
+         implementacion; actualmente no se detectan).
+      3. Agrupa las octagonales por circuito.
+      4. Para cada circuito, selecciona la octagonal pertinente y la
+         ruta guia mas cercana.
+      5. Genera el alimentador correspondiente.
+    """
+    doc = App.ActiveDocument
+    if not doc:
+        App.Console.PrintError("No hay documento activo.\n")
+        return
+    # Paso 1: seleccionar tablero y caras
+    tablero, caras = obtener_tablero_y_caras()
+    if not tablero:
+        return
+    # Paso 2: obtener rutas guia (por ahora se suponen polilineas
+    # seleccionadas por el usuario)
+    rutas_guia = [obj for obj in Gui.Selection.getSelection() if obj != tablero and hasattr(obj, 'Shape')]
+    if not rutas_guia:
+        App.Console.PrintError("No se encontraron rutas guia en la seleccion\n")
+    # Paso 3: agrupar octagonales por circuito
+    circuitos = obtener_octagonales_por_circuito()
+    # Paso 4 y 5: generar alimentadores
+    for circuito, octagonales in circuitos.items():
+        if not octagonales:
+            continue
+        # Seleccionar la octagonal de origen segun la logica espacial. Por
+        # ahora se toma la primera.
+        octogonal = octagonales[0]
+        ruta = encontrar_ruta_guia_para_octagonal(octogonal, rutas_guia)
+        generar_alimentador(octogonal, ruta, tablero, caras)
+    # Recomputation del documento
+    doc.recompute()
+    App.Console.PrintMessage("Proceso completado\n")
+
+
+# Ejecutar la macro directamente si se ejecuta este archivo
+if __name__ == '__main__':
+    conectar_cajas_a_tablero_auto()

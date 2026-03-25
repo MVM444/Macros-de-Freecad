@@ -1,0 +1,519 @@
+# -*- coding: utf-8 -*-
+# Icon: ConectarTomasSnake.svg
+# Macro: Conectar tomas o esquinas con ruta ortogonal tipo "snake"
+# Uso:
+# 1) Seleccione un grupo, un elemento de grupo, o varios objetos.
+# 2) Conecta tomas/vertices/bordes/caras con ruta ortogonal.
+# 3) Se crea un Draft Wire en un grupo "Conexiones".
+# Nota: Fillet por defecto 200 mm.
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Draft
+import Part
+import os
+import sys
+_THIS_DIR = os.path.dirname(__file__) if '__file__' in globals() else ''
+if _THIS_DIR and _THIS_DIR not in sys.path:
+    sys.path.insert(0, _THIS_DIR)
+import importlib
+import conexiones_grouping as _conexiones_grouping_mod
+_conexiones_grouping_mod = importlib.reload(_conexiones_grouping_mod)
+_ensure_conexiones_group_unified = _conexiones_grouping_mod.ensure_conexiones_group
+TAG = "[SNAKE]"
+EPS = 1e-6
+FILLET_RADIUS = 200.0
+MIN_FILLET_RADIUS = 5.0
+# Distancia de la linea paralela respecto al centro del toma (mm).
+# Use 0 si quiere que quede sobre la pared como antes.
+WALL_OFFSET = 0.0
+DEFAULT_ORDER_HV = True
+PARALLEL_DOT = 0.85
+PERP_DOT = 0.3
+
+
+def log_info(msg):
+    App.Console.PrintMessage(f"{TAG} {msg}\n")
+
+
+def log_warn(msg):
+    App.Console.PrintWarning(f"{TAG} {msg}\n")
+
+
+def log_err(msg):
+    App.Console.PrintError(f"{TAG} {msg}\n")
+
+
+def _is_group(obj):
+    return hasattr(obj, "Group")
+
+
+def _is_conexiones_group(obj):
+    label = getattr(obj, "Label", "")
+    name = getattr(obj, "Name", "")
+    return (isinstance(label, str) and label.startswith("Conexiones")) or \
+           (isinstance(name, str) and name.startswith("Conexiones"))
+
+
+def _unit_xy(v):
+    if v is None:
+        return None
+    vv = App.Vector(v.x, v.y, 0.0)
+    if vv.Length < EPS:
+        return None
+    vv.normalize()
+    return vv
+
+
+def _perp_left(v):
+    vv = _unit_xy(v)
+    if vv is None:
+        return None
+    return App.Vector(-vv.y, vv.x, 0.0)
+
+
+def _wall_axes_from_obj(obj):
+    if obj is None or not hasattr(obj, "Placement"):
+        return None, None
+    try:
+        rot = obj.Placement.Rotation
+        t = rot.multVec(App.Vector(1, 0, 0))
+        n = rot.multVec(App.Vector(0, 1, 0))
+        # aplicar Giro local si existe
+        try:
+            giro = float(getattr(obj, "Giro", 0.0))
+        except Exception:
+            giro = 0.0
+        if abs(giro) > EPS:
+            r2 = App.Rotation(App.Vector(0, 0, 1), giro)
+            t = r2.multVec(t)
+            n = r2.multVec(n)
+        t = _unit_xy(t)
+        n = _unit_xy(n)
+        return t, n
+    except Exception:
+        return None, None
+
+
+def _draft_make_wire(points_list):
+    maker = getattr(Draft, "make_wire", None)
+    if maker is None:
+        maker = getattr(Draft, "makeWire", None)
+    if maker is None:
+        raise RuntimeError("No Draft.make_wire ni Draft.makeWire disponible")
+
+    attempts = [
+        lambda: maker(points_list, False, False, None),
+        lambda: maker(points_list, False, False),
+        lambda: maker(points_list, False),
+        lambda: maker(points_list),
+    ]
+    last_err = None
+    for attempt in attempts:
+        try:
+            return attempt()
+        except Exception as ex:
+            last_err = ex
+    raise RuntimeError(f"No se pudo crear Wire: {last_err}")
+
+
+def _find_parent_group(doc, objects):
+    for obj in doc.Objects:
+        if obj.TypeId == "App::DocumentObjectGroup":
+            if all(o in obj.Group for o in objects):
+                return obj
+    return None
+
+
+def _ensure_conexiones_group(doc, parent_group):
+    return _ensure_conexiones_group_unified(doc, parent_group=parent_group)
+
+
+def _add_point(seq, p):
+    if not seq:
+        seq.append(p)
+        return
+    last = seq[-1]
+    if last.distanceToPoint(p) > EPS:
+        seq.append(p)
+
+
+def _orthogonal_points(p1, p2, order_hv=True):
+    pts = []
+    if order_hv:
+        if abs(p1.x - p2.x) > EPS:
+            pts.append(App.Vector(p2.x, p1.y, p1.z))
+        if abs(p1.y - p2.y) > EPS:
+            pts.append(App.Vector(p2.x, p2.y, p1.z))
+    else:
+        if abs(p1.y - p2.y) > EPS:
+            pts.append(App.Vector(p1.x, p2.y, p1.z))
+        if abs(p1.x - p2.x) > EPS:
+            pts.append(App.Vector(p2.x, p2.y, p1.z))
+    pts.append(p2)
+    return pts
+
+
+def _line_intersection_2d(p1, d1, p2, d2):
+    # Solve p1 + t d1 = p2 + u d2
+    if d1 is None or d2 is None:
+        return None
+    a = d1.x
+    b = -d2.x
+    c = d1.y
+    d = -d2.y
+    det = a * d - b * c
+    if abs(det) < EPS:
+        return None
+    dx = p2.x - p1.x
+    dy = p2.y - p1.y
+    t = (dx * d - b * dy) / det
+    return App.Vector(p1.x + t * d1.x, p1.y + t * d1.y, p1.z)
+
+
+def _collect_points_from_selection(sel_ex):
+    points = []
+    labels = []
+    objects = []
+    tangents = []
+    normals = []
+
+    for sel in sel_ex:
+        obj = getattr(sel, "Object", None)
+        if obj and getattr(obj, "TypeId", "") != "App::DocumentObjectGroup":
+            objects.append(obj)
+        elif obj and getattr(obj, "TypeId", "") == "App::DocumentObjectGroup":
+            continue
+        t_axis, n_axis = _wall_axes_from_obj(obj) if obj else (None, None)
+
+        # Prefer subobjects if any
+        if getattr(sel, "SubObjects", None):
+            used = False
+            for sub in sel.SubObjects:
+                if isinstance(sub, Part.Vertex):
+                    points.append(sub.Point)
+                    labels.append(f"{obj.Label}:V" if obj else "Vertex")
+                    tangents.append(t_axis)
+                    normals.append(n_axis)
+                    used = True
+            if used:
+                continue
+            for sub in sel.SubObjects:
+                if isinstance(sub, Part.Edge):
+                    points.append(sub.CenterOfMass)
+                    labels.append(f"{obj.Label}:E" if obj else "Edge")
+                    tangents.append(t_axis)
+                    normals.append(n_axis)
+                    used = True
+                    break
+            if used:
+                continue
+            for sub in sel.SubObjects:
+                if isinstance(sub, Part.Face):
+                    points.append(sub.CenterOfMass)
+                    labels.append(f"{obj.Label}:F" if obj else "Face")
+                    tangents.append(t_axis)
+                    normals.append(n_axis)
+                    used = True
+                    break
+            if used:
+                continue
+
+        # Fallback: object placement or center
+        if obj:
+            if getattr(obj, "TypeId", "") == "App::DocumentObjectGroup":
+                continue
+            if hasattr(obj, "Placement"):
+                points.append(obj.Placement.Base)
+                labels.append(obj.Label)
+                tangents.append(t_axis)
+                normals.append(n_axis)
+            elif hasattr(obj, "Shape"):
+                points.append(obj.Shape.BoundBox.Center)
+                labels.append(obj.Label)
+                tangents.append(t_axis)
+                normals.append(n_axis)
+
+    return points, labels, objects, tangents, normals
+
+
+def _collect_points_from_objects(objs):
+    points = []
+    labels = []
+    objects = []
+    tangents = []
+    normals = []
+    for obj in objs:
+        if getattr(obj, "TypeId", "") == "App::DocumentObjectGroup":
+            continue
+        if hasattr(obj, "Placement"):
+            points.append(obj.Placement.Base)
+            labels.append(obj.Label)
+            objects.append(obj)
+            t_axis, n_axis = _wall_axes_from_obj(obj)
+            tangents.append(t_axis)
+            normals.append(n_axis)
+        elif hasattr(obj, "Shape"):
+            points.append(obj.Shape.BoundBox.Center)
+            labels.append(obj.Label)
+            objects.append(obj)
+            t_axis, n_axis = _wall_axes_from_obj(obj)
+            tangents.append(t_axis)
+            normals.append(n_axis)
+        else:
+            log_warn(f"Objeto sin Placement/Shape: {getattr(obj, 'Label', obj.Name)}")
+    return points, labels, objects, tangents, normals
+
+
+def _natural_key(text):
+    try:
+        import re
+        parts = re.split(r"(\d+)", str(text))
+        out = []
+        for p in parts:
+            if p.isdigit():
+                out.append(int(p))
+            else:
+                out.append(p)
+        return out
+    except Exception:
+        return [str(text)]
+
+
+def _collect_groups_recursive(root_group):
+    if not _is_group(root_group):
+        return []
+    out = []
+    stack = [root_group]
+    while stack:
+        g = stack.pop()
+        if not _is_group(g):
+            continue
+        if _is_conexiones_group(g):
+            continue
+        out.append(g)
+        children = [c for c in getattr(g, "Group", []) if _is_group(c) and not _is_conexiones_group(c)]
+        children = sorted(children, key=lambda o: _natural_key(getattr(o, "Label", "")))
+        for child in reversed(children):
+            stack.append(child)
+    return out
+
+
+def _initial_order(points):
+    if len(points) >= 2:
+        p1 = points[0]
+        p2 = points[1]
+        dx = abs(p1.x - p2.x)
+        dy = abs(p1.y - p2.y)
+        return dx >= dy
+    return DEFAULT_ORDER_HV
+
+
+def _safe_fillet_radius(points):
+    if len(points) < 3:
+        return 0.0
+    lengths = []
+    for i in range(len(points) - 1):
+        try:
+            d = points[i].distanceToPoint(points[i + 1])
+        except Exception:
+            d = 0.0
+        if d > max(EPS, MIN_FILLET_RADIUS * 2.0):
+            lengths.append(d)
+    if not lengths:
+        return 0.0
+    min_len = min(lengths)
+    r = min(FILLET_RADIUS, 0.45 * min_len)
+    if r < MIN_FILLET_RADIUS:
+        return 0.0
+    return r
+
+
+def _segment_route(p1, p2, t1, n1, t2, n2, order_hv):
+    pts = []
+    _add_point(pts, p1)
+    o1 = p1
+    o2 = p2
+    if n1 and abs(WALL_OFFSET) > EPS:
+        o1 = App.Vector(p1.x + n1.x * WALL_OFFSET, p1.y + n1.y * WALL_OFFSET, p1.z)
+        _add_point(pts, o1)
+    if n2 and abs(WALL_OFFSET) > EPS:
+        o2 = App.Vector(p2.x + n2.x * WALL_OFFSET, p2.y + n2.y * WALL_OFFSET, p2.z)
+
+    used_core = False
+    if t1 and t2:
+        dot = abs(t1.dot(t2))
+        if dot > PARALLEL_DOT:
+            t = _unit_xy(t1)
+            n = _unit_xy(n1) if n1 else _perp_left(t)
+            if t and n:
+                d = App.Vector(o2.x - o1.x, o2.y - o1.y, 0.0)
+                dt = d.dot(t)
+                dn = d.dot(n)
+                p_mid = App.Vector(o1.x + t.x * dt, o1.y + t.y * dt, o1.z)
+                _add_point(pts, p_mid)
+                p_mid2 = App.Vector(p_mid.x + n.x * dn, p_mid.y + n.y * dn, p_mid.z)
+                _add_point(pts, p_mid2)
+                _add_point(pts, o2)
+                used_core = True
+        elif dot < PERP_DOT:
+            corner = _line_intersection_2d(o1, t1, o2, t2)
+            if corner:
+                _add_point(pts, corner)
+                _add_point(pts, o2)
+                used_core = True
+
+    if not used_core:
+        if t1:
+            t = _unit_xy(t1)
+            n = _unit_xy(n1) if n1 else _perp_left(t)
+            if t and n:
+                d = App.Vector(o2.x - o1.x, o2.y - o1.y, 0.0)
+                dt = d.dot(t)
+                dn = d.dot(n)
+                p_mid = App.Vector(o1.x + t.x * dt, o1.y + t.y * dt, o1.z)
+                _add_point(pts, p_mid)
+                p_mid2 = App.Vector(p_mid.x + n.x * dn, p_mid.y + n.y * dn, p_mid.z)
+                _add_point(pts, p_mid2)
+                _add_point(pts, o2)
+            else:
+                core = _orthogonal_points(o1, o2, order_hv=order_hv)
+                for p in core:
+                    _add_point(pts, p)
+        else:
+            core = _orthogonal_points(o1, o2, order_hv=order_hv)
+            for p in core:
+                _add_point(pts, p)
+
+    _add_point(pts, p2)
+
+    return pts
+
+
+def _connect_points(doc, points, labels, parent_group, tangents=None, normals=None, name_suffix=""):
+    if len(points) < 2:
+        return False
+
+    tangents = tangents or [None] * len(points)
+    normals = normals or [None] * len(points)
+    order_hv = _initial_order(points)
+
+    g_con = _ensure_conexiones_group(doc, parent_group)
+    made = 0
+
+    for i in range(len(points) - 1):
+        p1 = points[i]
+        p2 = points[i + 1]
+        t1 = tangents[i] if i < len(tangents) else None
+        n1 = normals[i] if i < len(normals) else None
+        t2 = tangents[i + 1] if (i + 1) < len(tangents) else None
+        n2 = normals[i + 1] if (i + 1) < len(normals) else None
+        cur_order_hv = order_hv if (i % 2 == 0) else (not order_hv)
+
+        seg_pts = _segment_route(p1, p2, t1, n1, t2, n2, cur_order_hv)
+        if len(seg_pts) < 2:
+            continue
+
+        try:
+            wire = _draft_make_wire(seg_pts)
+        except Exception as ex:
+            log_err(f"Error creando wire: {ex}")
+            continue
+
+        first_label = labels[i] if i < len(labels) else "A"
+        last_label = labels[i + 1] if (i + 1) < len(labels) else "B"
+        if name_suffix:
+            wire.Label = f"Conexion_Snake_{name_suffix}_{first_label}_{last_label}_{i+1:02d}"
+        else:
+            wire.Label = f"Conexion_Snake_{first_label}_{last_label}_{i+1:02d}"
+
+        if hasattr(wire, "FilletRadius"):
+            try:
+                safe_r = _safe_fillet_radius(seg_pts)
+                wire.FilletRadius = safe_r
+                if hasattr(wire, "Fillet"):
+                    try:
+                        wire.Fillet = True
+                    except Exception:
+                        pass
+                if hasattr(wire, "CornerStyle"):
+                    try:
+                        wire.CornerStyle = "Round"
+                    except Exception:
+                        pass
+            except Exception as ex:
+                log_warn(f"No se pudo aplicar FilletRadius: {ex}")
+
+        try:
+            g_con.addObject(wire)
+        except Exception:
+            pass
+        made += 1
+
+    return made > 0
+
+
+def conectar_tomas_snake():
+    doc = App.ActiveDocument
+    if doc is None:
+        log_err("No hay documento activo")
+        return
+
+    sel_ex = Gui.Selection.getSelectionEx()
+    sel = Gui.Selection.getSelection()
+    if not sel:
+        log_err("Seleccione tomas o esquinas (vertices/bordes/caras) antes de ejecutar.")
+        return
+
+    group = None
+    use_group = False
+
+    if len(sel) == 1 and getattr(sel[0], "TypeId", "") == "App::DocumentObjectGroup":
+        group = sel[0]
+        use_group = True
+        log_info(f"Usando grupo seleccionado: {group.Label}")
+    elif len(sel) == 1:
+        group = _find_parent_group(doc, [sel[0]])
+        if group:
+            use_group = True
+            log_info(f"Usando grupo del elemento: {group.Label}")
+
+    if use_group:
+        groups = _collect_groups_recursive(group)
+        made = 0
+        for g in groups:
+            members = [o for o in getattr(g, "Group", []) if not _is_group(o)]
+            members = sorted(members, key=lambda o: _natural_key(getattr(o, "Label", "")))
+            points, labels, objects, tangents, normals = _collect_points_from_objects(members)
+            if len(points) < 2:
+                continue
+            suffix = getattr(g, "Label", "Grupo")
+            if _connect_points(doc, points, labels, g, tangents=tangents, normals=normals, name_suffix=suffix):
+                made += 1
+        if made == 0:
+            log_err("No hay suficientes tomas en los grupos seleccionados.")
+            return
+    else:
+        if any(getattr(o, "TypeId", "") == "App::DocumentObjectGroup" for o in sel):
+            log_warn("Se ignoran grupos seleccionados. Use solo un grupo o varios objetos.")
+        points, labels, objects, tangents, normals = _collect_points_from_selection(sel_ex)
+        if len(points) < 2:
+            log_err("No hay suficientes puntos para conectar.")
+            return
+        parent_group = _find_parent_group(doc, objects) if objects else None
+        if not _connect_points(doc, points, labels, parent_group, tangents=tangents, normals=normals):
+            log_err("No se genero una ruta valida.")
+            return
+
+    try:
+        doc.recompute()
+    except Exception:
+        pass
+
+    log_info("Ruta(s) creada(s).")
+
+
+if __name__ == "__main__":
+    conectar_tomas_snake()
+
+

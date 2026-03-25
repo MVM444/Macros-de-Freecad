@@ -1,0 +1,431 @@
+# -*- coding: utf-8 -*-
+"""
+Insertar_Dispositivo.FCMacro (rev G)
+Selector genérico desde registro y creación de instancia usando
+ElectricCR.electriccr.features.objeto_toma_uno.crear_toma_uno.
+
+Cambios:
+- Alineado con la API actual de crear_toma_uno(doc, name_prefix, key_registro, tipo_logico).
+- Los recursos 2D/3D se resuelven dentro del objeto desde registry_electric.json.
+- Normalización robusta del modo visual y mejores logs de depuración.
+"""
+
+import json, re, sys, os
+from pathlib import Path
+
+import FreeCAD as App
+import FreeCADGui as Gui
+
+try:
+    from PySide2 import QtWidgets, QtCore
+except Exception:
+    from PySide import QtGui as QtWidgets  # type: ignore
+    from PySide import QtCore  # type: ignore
+
+MODE_CHOICES = [
+    ("Ambos", "Ambos"),
+    ("Solo 2D", "Solo2D"),
+    ("Solo 3D", "Solo3D"),
+]
+USAR_LINK_DESDE_INICIO = True
+
+# ---------------------------- util de entorno ----------------------------
+def _user_appdata_dir() -> Path:
+    try:
+        return Path(App.getUserAppDataDir())
+    except Exception:
+        return Path.home() / "AppData" / "Roaming" / "FreeCAD"
+
+def _user_macro_root() -> Path:
+    base = _user_appdata_dir()
+    for name in ("Macro", "Macros"):
+        candidate = base / name
+        if candidate.exists():
+            return candidate
+    return base / "Macro"
+
+def _ensure_user_resource_tree() -> None:
+    root = _user_macro_root()
+    targets = [
+        root / "Resources",
+        root / "Resources" / "registry",
+        root / "Resources" / "prototypes",
+        root / "Resources" / "prototypes" / "2d",
+        root / "Resources" / "prototypes" / "3d",
+    ]
+    created = []
+    for path in targets:
+        if path.exists(): continue
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            created.append(path)
+        except Exception as ex:
+            App.Console.PrintWarning(f"[INSER][WARN] No se pudo crear {path}: {ex}\n")
+    if created:
+        App.Console.PrintMessage(
+            f"[INSER][INFO] Se crearon carpetas faltantes: {', '.join(map(str,created))}\n"
+        )
+
+# ---------------------------- registro (solo para UI/defaults) ----------------------------
+def _candidate_registry_files() -> list[Path]:
+    _ensure_user_resource_tree()
+    cands: list[Path] = []
+    try:
+        here = Path(__file__).resolve()
+        # Buscar ascendente en el árbol de trabajo (Workbench)
+        for parent in [here.parent, *here.parents]:
+            rj = parent / "Resources" / "registry" / "registry_electric.json"
+            if rj.is_file():
+                cands.append(rj)
+                break
+    except Exception:
+        pass
+    # Registro global de usuario
+    user_reg = _user_macro_root() / "Resources" / "registry" / "registry_electric.json"
+    if user_reg.is_file():
+        cands.append(user_reg)
+    return cands
+
+def _load_registry() -> tuple[str, dict]:
+    merged: dict[str, dict] = {}
+    schema = "1.0.0"
+    found = False
+    for path in _candidate_registry_files():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+            if isinstance(data, dict) and "types" in data:
+                merged.update(data.get("types") or {})
+                schema = data.get("schema", schema)
+                found = True
+                App.Console.PrintMessage(f"[INSER][INFO] Registro detectado: {path}\n")
+        except Exception as ex:
+            App.Console.PrintWarning(f"[INSER][WARN] Registro ilegible en {path}: {ex}\n")
+    if not found:
+        App.Console.PrintWarning(
+            "[INSER][WARN] No se encontró registry_electric.json; usando tipo por defecto.\n"
+        )
+        merged = {
+            "Tomacorriente_120V": {
+                "ifc": "IfcOutlet",
+                "categoria": "Pared",
+                "defaults": {"altura": 300, "modo": "Ambos", "orient2D_sigue_pared": True},
+                "version": "1.0",
+            }
+        }
+    return schema, merged
+
+# ---------------------------- helpers UI ----------------------------
+def _mode_index_from_value(value: object) -> int:
+    norm = str(value or "").strip().lower()
+    for idx, (label, code) in enumerate(MODE_CHOICES):
+        if norm == code.lower() or norm == label.lower():
+            return idx
+    if norm == "both": return 0
+    if norm in {"2d", "solo2d", "solo 2d"}: return 1
+    if norm in {"3d", "solo3d", "solo 3d"}: return 2
+    return 0
+
+def _sanitize_identifier(text: str) -> str:
+    token = re.sub(r"[^0-9A-Za-z]+", "_", str(text or ""))
+    token = token.strip("_")
+    return token or "Proto"
+
+def _logical_tipo(type_key, info):
+    explicit = (info or {}).get('tipo')
+    if explicit: return explicit
+    key = (type_key or '').lower()
+    if 'apagador' in key or 'switch' in key: return 'Apagador'
+    if 'lumin' in key: return 'Luminaria'
+    if 'sensor' in key: return 'Sensor'
+    if 'rociador' in key: return 'Rociador'
+    if 'altavoz' in key: return 'Altavoz'
+    if 'camara' in key: return 'Camara'
+    return 'Toma'
+
+# ---------------------------- localizar paquete ElectricCR ----------------------------
+def _candidate_electriccr_dirs() -> list[Path]:
+    found: list[Path] = []
+    seen: set[Path] = set()
+
+    def push(path: Path) -> None:
+        if not path: return
+        try: real = path.resolve()
+        except Exception: real = path
+        if real in seen: return
+        seen.add(real); found.append(real)
+
+    def check_base(base: Path | None) -> None:
+        if not base: return
+        try: base_resolved = base.resolve()
+        except Exception: base_resolved = base
+        # paquete directo
+        direct = base_resolved / 'electriccr' / 'features' / 'objeto_toma_uno.py'
+        if direct.is_file(): push(base_resolved)
+        # carpeta ElectricCR conteniendo paquete
+        pkg = base_resolved / 'ElectricCR'
+        if (pkg / 'electriccr' / 'features' / 'objeto_toma_uno.py').is_file():
+            push(pkg)
+
+    try:
+        here = Path(__file__).resolve()
+        lineage = [here.parent, *here.parents]
+    except Exception:
+        lineage = []
+    for parent in lineage: check_base(parent)
+    user_root = _user_macro_root()
+    check_base(user_root)
+    try: check_base(user_root.parent)
+    except Exception: pass
+    return found
+
+def _ensure_electriccr_on_path() -> bool:
+    import importlib
+    def _try_import() -> bool:
+        for name in ("ElectricCR", "electriccr"):
+            try:
+                importlib.import_module(name)
+                return True
+            except ImportError:
+                continue
+        return False
+    if _try_import(): return True
+
+    candidates = _candidate_electriccr_dirs()
+    try:
+        here = Path(__file__).resolve()
+        for parent in [here.parent, *here.parents]:
+            cand = parent / 'ElectricCR'
+            if cand.is_dir(): candidates.append(cand)
+    except Exception:
+        pass
+
+    normalized: list[Path] = []
+    seen: set[Path] = set()
+    for entry in candidates:
+        try: real = entry.resolve()
+        except Exception: real = entry
+        if real in seen: continue
+        seen.add(real); normalized.append(real)
+
+    for directory in normalized:
+        for path_candidate in (directory.parent, directory):
+            if not path_candidate: continue
+            sp = str(path_candidate)
+            if sp and sp not in sys.path:
+                sys.path.insert(0, sp)
+        import importlib
+        importlib.invalidate_caches()
+        if _try_import(): return True
+
+    App.Console.PrintWarning(
+        "[INSER][WARN] ElectricCR no encontrado. Revise la ubicación de la carpeta ElectricCR.\n"
+    )
+    return False
+
+# ---------------------------- UI principal ----------------------------
+class InsertarDispositivoDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Insertar dispositivo (MVP)")
+        self.setMinimumWidth(360)
+
+        schema, types = _load_registry()
+        self.types = types
+        self.schema = schema
+
+        self.cmbTipo = QtWidgets.QComboBox()
+        type_names = sorted(types.keys())
+        if type_names:
+            self.cmbTipo.addItems(type_names)
+        else:
+            self.cmbTipo.addItem("Tomacorriente_120V")
+
+        self.spAltura = QtWidgets.QDoubleSpinBox()
+        self.spAltura.setSuffix(" mm")
+        self.spAltura.setRange(0, 10000)
+        self.spAltura.setSingleStep(50.0)
+
+        self.cmbModo = QtWidgets.QComboBox()
+        for label, value in MODE_CHOICES:
+            self.cmbModo.addItem(label, value)
+
+        self.chkOrient2D = QtWidgets.QCheckBox("Rotar símbolo 2D según pared")
+        self.chkOrient2D.setChecked(True)
+
+        self._apply_defaults_for(self.cmbTipo.currentText())
+        self.cmbTipo.currentTextChanged.connect(self._on_tipo_changed)
+
+        btn_ok = QtWidgets.QPushButton("Insertar")
+        btn_cancel = QtWidgets.QPushButton("Cancelar")
+        btn_ok.clicked.connect(self.accept)
+        btn_cancel.clicked.connect(self.reject)
+
+        form = QtWidgets.QFormLayout()
+        form.addRow("Tipo:", self.cmbTipo)
+        form.addRow("Altura:", self.spAltura)
+        form.addRow("Modo visual:", self.cmbModo)
+        form.addRow("", self.chkOrient2D)
+
+        btns = QtWidgets.QHBoxLayout()
+        btns.addStretch(1)
+        btns.addWidget(btn_cancel)
+        btns.addWidget(btn_ok)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addStretch(1)
+        layout.addLayout(btns)
+
+    def selected_mode_code(self) -> str:
+        data = self.cmbModo.currentData()
+        if data:
+            return data
+        idx = max(0, self.cmbModo.currentIndex())
+        return MODE_CHOICES[idx][1]
+
+    def _apply_defaults_for(self, key: str) -> None:
+        info = self.types.get(key, {}) or {}
+        defaults = info.get("defaults", {}) or {}
+        try:
+            altura = float(defaults.get("altura", 300))
+        except Exception:
+            altura = 300.0
+        self.spAltura.setValue(altura)
+        modo = defaults.get("modo", MODE_CHOICES[0][1])
+        self.cmbModo.setCurrentIndex(_mode_index_from_value(modo))
+        orient = defaults.get("orient2D_sigue_pared", True)
+        self.chkOrient2D.setChecked(bool(orient))
+
+    def _on_tipo_changed(self, key: str) -> None:
+        self._apply_defaults_for(key)
+
+# ---------------------------- ejecución ----------------------------
+def _insert_dispositivo_from_dialog() -> None:
+    dialog = InsertarDispositivoDialog(Gui.getMainWindow())
+    if dialog.exec_() != QtWidgets.QDialog.Accepted:
+        return
+
+    tipo = dialog.cmbTipo.currentText().strip()   # clave exacta del registro, p.ej. "Apagador_Simple"
+    altura = float(dialog.spAltura.value())
+    modo = dialog.selected_mode_code()
+    orient2d = dialog.chkOrient2D.isChecked()
+
+    if not _ensure_electriccr_on_path():
+        App.Console.PrintError("[INSER][ERROR] No fue posible localizar la carpeta ElectricCR.\n")
+        return
+
+    try:
+        from ElectricCR.electriccr.features.objeto_toma_uno import crear_toma_uno, crear_toma_link
+    except ImportError:
+        try:
+            from electriccr.features.objeto_toma_uno import crear_toma_uno, crear_toma_link
+        except ImportError:
+            try:
+                from ElectricCR.electriccr.features.objeto_toma_uno import crear_toma_uno
+                crear_toma_link = None  # type: ignore
+            except ImportError:
+                try:
+                    from electriccr.features.objeto_toma_uno import crear_toma_uno
+                    crear_toma_link = None  # type: ignore
+                except ImportError as ex:
+                    App.Console.PrintError(f"[INSER][ERROR] No se pudo importar objeto_toma_uno: {ex}\n")
+                    return
+
+    doc = App.ActiveDocument or App.newDocument("Electrico")
+
+    # Derivar tipo lógico (clasificación visual)
+    schema, types = _load_registry()
+    info = types.get(tipo, {}) or {}
+    tipo_logico = _logical_tipo(tipo, info)
+
+    # Crear instancia: el objeto resolverá symbol2D/model3D leyendo el registro
+    name_prefix = f"{_sanitize_identifier(tipo_logico)}_"
+    objeto = None
+    if USAR_LINK_DESDE_INICIO and callable(globals().get("crear_toma_link", None)):
+        try:
+            objeto = crear_toma_link(
+                doc=doc,
+                name_prefix=name_prefix,
+                key_registro=tipo,
+                tipo_logico=tipo_logico,
+                placement=App.Placement(),
+                modo_visual={"Ambos":"Ambos","Both":"Ambos","Solo2D":"Solo2D","Solo 2D":"Solo2D",
+                             "Solo3D":"Solo3D","Solo 3D":"Solo3D"}.get(str(modo), "Ambos"),
+                altura_rel=float(altura),
+                orientacion_pared="Vertical",
+                recompute=False,
+                target_group="Dispositivos",
+            )
+        except Exception as ex:
+            App.Console.PrintWarning(f"[INSER][WARN] crear_toma_link fallo, usando modo clasico: {ex}\n")
+            objeto = None
+    if objeto is None:
+        objeto = crear_toma_uno(
+            doc=doc,
+            name_prefix=name_prefix,
+            key_registro=tipo,         # ej. "Apagador_Simple"
+            tipo_logico=tipo_logico,   # ej. "Apagador"
+            recompute=False
+        )
+    if objeto is None:
+        App.Console.PrintError("[INSER][ERROR] crear_toma_uno no devolvió una instancia válida.\n")
+        return
+
+    # Aplicar propiedades
+    try:
+        mv = {"Ambos":"Ambos","Both":"Ambos","Solo2D":"Solo2D","Solo 2D":"Solo2D",
+              "Solo3D":"Solo3D","Solo 3D":"Solo3D"}.get(str(modo), "Ambos")
+        objeto.ModoVisual = mv
+    except Exception:
+        App.Console.PrintWarning("[INSER][WARN] No se pudo asignar ModoVisual al objeto.\n")
+    try:
+        objeto.AlturaRel = altura
+    except Exception:
+        App.Console.PrintWarning("[INSER][WARN] No se pudo asignar AlturaRel al objeto.\n")
+    try:
+        objeto.Tipo = tipo_logico
+    except Exception:
+        pass
+    try:
+        objeto.KeyRegistro = tipo
+    except Exception:
+        pass
+
+    # Label inicial basado en tipo lógico (luego podrás renombrarlo por circuito)
+    try:
+        sufijo = objeto.Name.split('_')[-1] if '_' in objeto.Name else objeto.Name
+        objeto.Label = f"{tipo_logico}_{sufijo}"
+    except Exception:
+        try:
+            objeto.Label = tipo
+        except Exception:
+            pass
+
+    # Metadatos adicionales
+    try:
+        if info.get('categoria'):
+            objeto.Categoria = str(info['categoria'])
+    except Exception:
+        pass
+    try:
+        objeto.EtiquetaPlano = tipo
+    except Exception:
+        pass
+
+    # Orientación 2D por defecto (el 3D aplicará pitch +90° en "Horizontal")
+    try:
+        objeto.OrientacionPared = "Vertical" if orient2d else "Vertical"
+    except Exception:
+        pass
+
+    try:
+        doc.recompute()
+    except Exception:
+        pass
+
+    App.Console.PrintMessage(
+        f"[INSER][INFO] Insertado dispositivo '{tipo}' altura={altura:.1f} mm modo={objeto.ModoVisual}\n"
+    )
+
+if __name__ == "__main__":
+    _insert_dispositivo_from_dialog()

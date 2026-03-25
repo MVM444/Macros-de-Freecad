@@ -16,6 +16,55 @@ def safe_str(value):
     except Exception:
         return "ERROR_VALOR"
 
+def _col_index(letter):
+    try:
+        return ord(letter.upper()) - 64
+    except Exception:
+        return 0
+
+def _ensure_min_cols(sheet, min_cols):
+    try:
+        if hasattr(sheet, "ColumnCount") and sheet.ColumnCount < min_cols:
+            sheet.ColumnCount = min_cols
+    except Exception:
+        pass
+
+def _ensure_min_rows(sheet, min_rows):
+    try:
+        if hasattr(sheet, "RowCount") and sheet.RowCount < min_rows:
+            sheet.RowCount = min_rows
+    except Exception:
+        pass
+
+def _safe_get(sheet, addr, default=""):
+    try:
+        col = _col_index(addr[:1])
+        row = int(addr[1:])
+        if hasattr(sheet, "ColumnCount") and sheet.ColumnCount < col:
+            return default
+        if hasattr(sheet, "RowCount") and sheet.RowCount < row:
+            return default
+        return sheet.get(addr)
+    except Exception:
+        return default
+
+def _safe_set(sheet, addr, value):
+    try:
+        col = _col_index(addr[:1])
+        row = int(addr[1:])
+        _ensure_min_cols(sheet, col)
+        _ensure_min_rows(sheet, row)
+        sheet.set(addr, value)
+        return True
+    except Exception:
+        return False
+
+def _as_mm(value):
+    try:
+        return float(getattr(value, "Value", value))
+    except Exception:
+        return 0.0
+
 def calcular_area_y_exportar_a_spreadsheet():
     doc = FreeCAD.ActiveDocument
     selected_objects = FreeCADGui.Selection.getSelection()
@@ -57,14 +106,22 @@ def calcular_area_y_exportar_a_spreadsheet():
     for obj in grupo.Group:
         if hasattr(obj, 'Shape') and obj.Shape and (obj.Shape.Faces or obj.Shape.Edges):
             try:
-                area = obj.Shape.Area / 1000000 if obj.Shape.Faces else 0  # Si no tiene Faces, el área será 0
-                if not obj.Shape.Faces:
-                    FreeCAD.Console.PrintWarning(f"El objeto {obj.Label} no tiene una cara definida. Se recomienda activar 'Make Face' en sus propiedades.\n")
-                
                 bounds = obj.Shape.BoundBox
                 largo = bounds.XLength / 1000  # mm a m
                 ancho = bounds.YLength / 1000  # mm a m
                 altura = bounds.ZLength / 1000  # mm a m
+                area_mm2 = obj.Shape.Area if obj.Shape.Faces else 0.0
+                if not obj.Shape.Faces:
+                    FreeCAD.Console.PrintWarning(
+                        f"El objeto {obj.Label} no tiene una cara definida. Se recomienda activar 'Make Face' en sus propiedades.\n"
+                    )
+                    length = _as_mm(getattr(obj, "Length", 0.0))
+                    height = _as_mm(getattr(obj, "Height", 0.0))
+                    if length > 0.0 and height > 0.0:
+                        area_mm2 = length * height
+                    else:
+                        area_mm2 = bounds.XLength * bounds.YLength
+                area = area_mm2 / 1000000.0
                 rows = getattr(obj, 'Rows', 0)
                 columns = getattr(obj, 'Columns', 0)
 
@@ -91,26 +148,25 @@ def calcular_area_y_exportar_a_spreadsheet():
 
     # Encabezados de la hoja de calculo
     headers = ["Recinto", "Area (m^2)", "Largo (m)", "Ancho (m)", "Altura (m)", "Filas", "Columnas", "Descripcion"]
+    _ensure_min_cols(hoja, len(headers))
+    _ensure_min_rows(hoja, 2)
     for col, header in enumerate(headers, start=1):
-        hoja.set(f"{chr(64 + col)}1", header)
+        _safe_set(hoja, f"{chr(64 + col)}1", header)
 
     # Llenar la hoja de calculo sin borrar la columna Descripcion existente
     for fila, (key, value) in enumerate(data_recintos.items(), start=2):
         try:
-            hoja.set(f"A{fila}", value["Recinto"])
-            hoja.set(f"B{fila}", safe_str(value["Area"]))
-            hoja.set(f"C{fila}", safe_str(value["Largo"]))
-            hoja.set(f"D{fila}", safe_str(value["Ancho"]))
-            hoja.set(f"E{fila}", safe_str(value["Altura"]))
-            hoja.set(f"F{fila}", value["Rows"])
-            hoja.set(f"G{fila}", value["Columns"])
-            # Verificar si la celda existe antes de acceder a ella
-            try:
-                existing_value = hoja.get(f"H{fila}")
-                if existing_value is None:
-                    hoja.set(f"H{fila}", "")
-            except Exception:
-                FreeCAD.Console.PrintWarning(f"No se pudo acceder a la celda H{fila}. Verifique la hoja de calculo.\n")
+            _safe_set(hoja, f"A{fila}", value["Recinto"])
+            _safe_set(hoja, f"B{fila}", safe_str(value["Area"]))
+            _safe_set(hoja, f"C{fila}", safe_str(value["Largo"]))
+            _safe_set(hoja, f"D{fila}", safe_str(value["Ancho"]))
+            _safe_set(hoja, f"E{fila}", safe_str(value["Altura"]))
+            _safe_set(hoja, f"F{fila}", value["Rows"])
+            _safe_set(hoja, f"G{fila}", value["Columns"])
+            existing_value = _safe_get(hoja, f"H{fila}")
+            if existing_value is None:
+                existing_value = ""
+            _safe_set(hoja, f"H{fila}", existing_value)
         except Exception as e:
             FreeCAD.Console.PrintError(f"Error al escribir datos en la fila {fila}: {e}\n")
 

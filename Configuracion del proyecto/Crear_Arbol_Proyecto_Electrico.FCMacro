@@ -1,0 +1,513 @@
+# -*- coding: utf-8 -*-
+# MenuText: Crear arbol proyecto electrico
+# Icon: Organizar_Documento_Electrico.svg
+"""
+Macro: Crear_Arbol_Proyecto_Electrico
+Objetivo:
+- Crear automaticamente un arbol estandar para proyectos electricos.
+- Reejecutable sin duplicar grupos.
+
+Puntos clave:
+- Usa App::DocumentObjectGroup para estructura principal.
+- Crea Spreadsheet_Global como Spreadsheet::Sheet si es posible.
+- Permite opcion para crear subgrupos por recinto en circuitos.
+"""
+
+import re
+import unicodedata
+
+import FreeCAD as App
+
+
+TAG = "[ARBOL_PROY]"
+
+
+ARBOLES_NODOS = [
+    {
+        "label": "00_CONFIG",
+        "type": "group",
+        "children": [
+            {"label": "Spreadsheet_Global", "type": "spreadsheet"},
+            {"label": "Parametros", "type": "group"},
+            {"label": "Normativa", "type": "group"},
+        ],
+    },
+    {
+        "label": "01_ARQUITECTURA_BASE",
+        "type": "group",
+        "children": [
+            {"label": "Niveles", "type": "group"},
+            {"label": "Ejes", "type": "group"},
+            {"label": "Recintos (Areas)", "type": "group"},
+        ],
+    },
+    {
+        "label": "02_ELECTRICO",
+        "type": "group",
+        "children": [
+            {
+                "label": "2.1_LUMINARIAS",
+                "type": "group",
+                "children": [
+                    {"label": "Interior", "type": "group"},
+                    {"label": "Exterior", "type": "group"},
+                    {"label": "Emergencia", "type": "group"},
+                ],
+            },
+            {
+                "label": "2.2_TOMACORRIENTES",
+                "type": "group",
+                "children": [
+                    {"label": "Normal", "type": "group"},
+                    {"label": "Computo", "type": "group"},
+                ],
+            },
+            {
+                "label": "2.3_EQUIPOS",
+                "type": "group",
+                "children": [
+                    {"label": "Aires_Acondicionados", "type": "group"},
+                    {"label": "Extractores", "type": "group"},
+                    {"label": "Especiales", "type": "group"},
+                ],
+            },
+            {
+                "label": "2.4_TABLEROS",
+                "type": "group",
+                "children": [
+                    {"label": "TD", "type": "group"},
+                    {"label": "TDA", "type": "group"},
+                    {"label": "UPS", "type": "group"},
+                ],
+            },
+            {
+                "label": "2.5_CIRCUITOS",
+                "type": "group",
+                "children": [
+                    {"label": "Iluminacion", "type": "group"},
+                    {"label": "Tomas", "type": "group"},
+                    {"label": "Equipos", "type": "group"},
+                ],
+            },
+        ],
+    },
+    {
+        "label": "03_RUTEO",
+        "type": "group",
+        "children": [
+            {"label": "Bandejas", "type": "group"},
+            {"label": "Tuberias", "type": "group"},
+            {"label": "Canalizacion", "type": "group"},
+        ],
+    },
+    {
+        "label": "04_DATOS",
+        "type": "group",
+        "children": [
+            {"label": "Cargas", "type": "group"},
+            {"label": "Balanceo", "type": "group"},
+            {"label": "Calculos", "type": "group"},
+        ],
+    },
+    {
+        "label": "05_ETIQUETAS",
+        "type": "group",
+        "children": [
+            {"label": "Rotulos", "type": "group"},
+            {"label": "Identificacion", "type": "group"},
+        ],
+    },
+    {"label": "99_TEMP", "type": "group", "children": []},
+]
+
+
+COMPONENTES_RECINTO_ILUMINACION = (
+    "Luminarias",
+    "Apagadores",
+    "Ventiladores",
+    "Sensores_Movimiento",
+    "Luces_Salida",
+    "Cajas_Octogonales",
+    "Conexiones_3D",
+    "Conexiones_2D",
+)
+
+
+def _msg(texto):
+    App.Console.PrintMessage(f"{TAG} {texto}\n")
+    print(f"{TAG} {texto}")
+
+
+def _warn(texto):
+    App.Console.PrintWarning(f"{TAG} {texto}\n")
+    print(f"{TAG} WARN: {texto}")
+
+
+def _err(texto):
+    App.Console.PrintError(f"{TAG} {texto}\n")
+    print(f"{TAG} ERROR: {texto}")
+
+
+def _txt(value):
+    try:
+        return str(value or "")
+    except Exception:
+        return ""
+
+
+def _norm_label(texto):
+    s = _txt(texto).strip().lower()
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    s = re.sub(r"[^\w\s\-\.()]+", "_", s)
+    s = re.sub(r"[\s\-]+", "_", s).strip("_")
+    return s
+
+
+def _nombre_interno(texto, prefijo="g"):
+    s = _txt(texto).strip()
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    s = re.sub(r"[^0-9A-Za-z_]+", "_", s)
+    s = re.sub(r"_+", "_", s).strip("_")
+    if not s:
+        s = "item"
+    if s[0].isdigit():
+        s = f"{prefijo}_{s}"
+    return s
+
+
+def _nombre_unico(doc, base):
+    name = _txt(base) or "obj"
+    if doc.getObject(name) is None:
+        return name
+    idx = 1
+    while True:
+        cand = f"{name}_{idx:02d}"
+        if doc.getObject(cand) is None:
+            return cand
+        idx += 1
+
+
+def _is_group(obj):
+    if obj is None:
+        return False
+    type_id = _txt(getattr(obj, "TypeId", ""))
+    if type_id.startswith("App::DocumentObjectGroup"):
+        return True
+    if type_id.startswith("App::Part"):
+        return True
+    return hasattr(obj, "Group")
+
+
+def _parent_group(obj):
+    if obj is None:
+        return None
+    for parent in list(getattr(obj, "InList", []) or []):
+        if _is_group(parent):
+            return parent
+    return None
+
+
+def _children(parent):
+    if parent is None:
+        return []
+    return list(getattr(parent, "Group", []) or [])
+
+
+def _buscar_hijo_por_label(parent, label, solo_grupo=False):
+    wanted = _norm_label(label)
+    for child in _children(parent):
+        if solo_grupo and not _is_group(child):
+            continue
+        c_label = _txt(getattr(child, "Label", "")) or _txt(getattr(child, "Name", ""))
+        if _norm_label(c_label) == wanted:
+            return child
+    return None
+
+
+def _buscar_raiz_por_label(doc, label, solo_grupo=False):
+    wanted = _norm_label(label)
+    for obj in list(doc.Objects or []):
+        if solo_grupo and not _is_group(obj):
+            continue
+        if _parent_group(obj) is not None:
+            continue
+        o_label = _txt(getattr(obj, "Label", "")) or _txt(getattr(obj, "Name", ""))
+        if _norm_label(o_label) == wanted:
+            return obj
+    return None
+
+
+def _adjuntar(parent, obj):
+    if parent is None or obj is None:
+        return
+    try:
+        if obj not in _children(parent):
+            parent.addObject(obj)
+    except Exception as ex:
+        _warn(f"No se pudo adjuntar '{_txt(getattr(obj, 'Label', ''))}' en '{_txt(getattr(parent, 'Label', ''))}': {ex}")
+
+
+def asegurar_grupo(doc, label, parent=None, prefijo="g"):
+    if parent is None:
+        existente = _buscar_raiz_por_label(doc, label, solo_grupo=True)
+        if existente is not None:
+            _msg(f"Existe grupo raiz: {label}")
+            return existente
+    else:
+        existente = _buscar_hijo_por_label(parent, label, solo_grupo=True)
+        if existente is not None:
+            _msg(f"Existe grupo: {_txt(getattr(parent, 'Label', ''))}/{label}")
+            return existente
+
+    base_name = _nombre_interno(label, prefijo=prefijo)
+    obj_name = _nombre_unico(doc, base_name)
+    grp = doc.addObject("App::DocumentObjectGroup", obj_name)
+    grp.Label = label
+    _adjuntar(parent, grp)
+    if parent is None:
+        _msg(f"Creado grupo raiz: {label}")
+    else:
+        _msg(f"Creado grupo: {_txt(getattr(parent, 'Label', ''))}/{label}")
+    return grp
+
+
+def asegurar_spreadsheet(doc, label, parent):
+    existente = _buscar_hijo_por_label(parent, label, solo_grupo=False)
+    if existente is not None:
+        _msg(f"Existe objeto: {_txt(getattr(parent, 'Label', ''))}/{label}")
+        return existente
+
+    base_name = _nombre_interno(label, prefijo="sp")
+    obj_name = _nombre_unico(doc, base_name)
+    try:
+        sheet = doc.addObject("Spreadsheet::Sheet", obj_name)
+        sheet.Label = label
+        _adjuntar(parent, sheet)
+        _msg(f"Creado spreadsheet: {_txt(getattr(parent, 'Label', ''))}/{label}")
+        return sheet
+    except Exception:
+        _warn("No se pudo crear Spreadsheet::Sheet, se crea grupo fallback.")
+        return asegurar_grupo(doc, label, parent=parent, prefijo="sp")
+
+
+def _crear_nodo(doc, parent, node, refs, path):
+    label = _txt(node.get("label", "")).strip()
+    node_type = _txt(node.get("type", "group")).strip().lower() or "group"
+    if not label:
+        return None
+
+    if node_type == "spreadsheet":
+        obj = asegurar_spreadsheet(doc, label, parent)
+    else:
+        obj = asegurar_grupo(doc, label, parent=parent, prefijo="g")
+
+    this_path = f"{path}/{label}" if path else label
+    refs[this_path] = obj
+
+    for child in list(node.get("children", []) or []):
+        _crear_nodo(doc, obj, child, refs, this_path)
+    return obj
+
+
+def _extraer_recintos(grupo_recintos):
+    if grupo_recintos is None:
+        return []
+    nombres = []
+    seen = set()
+    for obj in _children(grupo_recintos):
+        label = _txt(getattr(obj, "Label", "")) or _txt(getattr(obj, "Name", ""))
+        if not label:
+            continue
+        key = _norm_label(label)
+        if not key or key in seen:
+            continue
+        if key.startswith("etiqueta_") or key == "etiquetas":
+            continue
+        seen.add(key)
+        nombres.append(label)
+    return nombres
+
+
+def _normalizar_lista_textos(items):
+    out = []
+    seen = set()
+    for it in list(items or []):
+        txt = _txt(it).strip()
+        if not txt:
+            continue
+        key = _norm_label(txt)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(txt)
+    return out
+
+
+def _detectar_circuitos_en_iluminacion(grupo_iluminacion):
+    if grupo_iluminacion is None:
+        return []
+    out = []
+    seen = set()
+    for child in _children(grupo_iluminacion):
+        if not _is_group(child):
+            continue
+        label = _txt(getattr(child, "Label", "")) or _txt(getattr(child, "Name", ""))
+        if not label:
+            continue
+        key = _norm_label(label)
+        if not key or key in seen:
+            continue
+        if (not key.startswith("circuito")) and (not key.startswith("tp_")):
+            continue
+        seen.add(key)
+        out.append(label)
+    return out
+
+
+def crear_estructura_iluminacion_por_circuito_y_recinto(doc, refs, circuitos=None, usar_recintos_arquitectura=True):
+    """
+    Estructura objetivo:
+    Iluminacion/
+      Circuito_xx/
+        Recinto/
+          Luminarias, Apagadores, Ventiladores, Sensores_Movimiento, Luces_Salida,
+          Cajas_Octogonales, Conexiones_3D, Conexiones_2D
+    """
+    path_iluminacion = "PROYECTO/02_ELECTRICO/2.5_CIRCUITOS/Iluminacion"
+    path_recintos = "PROYECTO/01_ARQUITECTURA_BASE/Recintos (Areas)"
+
+    g_iluminacion = refs.get(path_iluminacion)
+    if g_iluminacion is None:
+        _warn("No existe PROYECTO/02_ELECTRICO/2.5_CIRCUITOS/Iluminacion.")
+        return 0
+
+    circuitos_req = _normalizar_lista_textos(circuitos)
+    if not circuitos_req:
+        circuitos_req = _detectar_circuitos_en_iluminacion(g_iluminacion)
+    if not circuitos_req:
+        circuitos_req = ["Circuito_01"]
+
+    recintos = []
+    if bool(usar_recintos_arquitectura):
+        recintos = _extraer_recintos(refs.get(path_recintos))
+    if not recintos:
+        recintos = ["Sin_Recinto"]
+
+    creados = 0
+    for circuito in circuitos_req:
+        before_c = _buscar_hijo_por_label(g_iluminacion, circuito, solo_grupo=True)
+        g_circuito = asegurar_grupo(doc, circuito, parent=g_iluminacion, prefijo="cir")
+        if before_c is None and g_circuito is not None:
+            creados += 1
+
+        for recinto in recintos:
+            before_r = _buscar_hijo_por_label(g_circuito, recinto, solo_grupo=True)
+            g_recinto = asegurar_grupo(doc, recinto, parent=g_circuito, prefijo="rec")
+            if before_r is None and g_recinto is not None:
+                creados += 1
+
+            for comp in COMPONENTES_RECINTO_ILUMINACION:
+                before_comp = _buscar_hijo_por_label(g_recinto, comp, solo_grupo=True)
+                asegurar_grupo(doc, comp, parent=g_recinto, prefijo="sub")
+                after_comp = _buscar_hijo_por_label(g_recinto, comp, solo_grupo=True)
+                if before_comp is None and after_comp is not None:
+                    creados += 1
+
+    _msg(
+        "Estructura de Iluminacion lista: "
+        f"circuitos={len(circuitos_req)} | recintos={len(recintos)} | nuevos={creados}"
+    )
+    return creados
+
+
+def crear_subgrupos_por_recinto(doc, refs):
+    path_recintos = "PROYECTO/01_ARQUITECTURA_BASE/Recintos (Areas)"
+    path_circuitos = "PROYECTO/02_ELECTRICO/2.5_CIRCUITOS"
+    g_recintos = refs.get(path_recintos)
+    g_circuitos = refs.get(path_circuitos)
+    if g_recintos is None or g_circuitos is None:
+        _warn("No se encontraron grupos base para crear subgrupos por recinto.")
+        return 0
+
+    recintos = _extraer_recintos(g_recintos)
+    if not recintos:
+        _warn("No hay recintos detectados para crear subgrupos.")
+        return 0
+
+    creados = 0
+    for rama in ("Iluminacion", "Tomas", "Equipos"):
+        target = _buscar_hijo_por_label(g_circuitos, rama, solo_grupo=True)
+        if target is None:
+            continue
+        for recinto in recintos:
+            before = _buscar_hijo_por_label(target, recinto, solo_grupo=True)
+            asegurar_grupo(doc, recinto, parent=target, prefijo="rec")
+            after = _buscar_hijo_por_label(target, recinto, solo_grupo=True)
+            if before is None and after is not None:
+                creados += 1
+    _msg(f"Subgrupos por recinto listos. nuevos={creados} | recintos={len(recintos)}")
+    return creados
+
+
+def crear_arbol_proyecto(crear_recintos=False, crear_iluminacion_por_circuito=False, circuitos_iluminacion=None):
+    """
+    Funcion principal solicitada.
+    - crear_recintos=False: solo estructura base.
+    - crear_recintos=True: ademas crea subgrupos por recinto en 2.5_CIRCUITOS.
+    - crear_iluminacion_por_circuito=True: crea Iluminacion/Circuito/Recinto/Componentes.
+    - circuitos_iluminacion=[...]: lista opcional de circuitos de Iluminacion.
+    """
+    doc = App.ActiveDocument
+    if doc is None:
+        doc = App.newDocument("Proyecto_Electrico")
+        _msg("No habia documento activo. Se creo: Proyecto_Electrico")
+
+    refs = {}
+    try:
+        doc.openTransaction("Crear arbol proyecto electrico")
+    except Exception:
+        pass
+
+    root = asegurar_grupo(doc, "PROYECTO", parent=None, prefijo="proy")
+    refs["PROYECTO"] = root
+
+    for node in ARBOLES_NODOS:
+        _crear_nodo(doc, root, node, refs, "PROYECTO")
+
+    extra = 0
+    extra_ilum = 0
+    if bool(crear_recintos):
+        extra = crear_subgrupos_por_recinto(doc, refs)
+    if bool(crear_iluminacion_por_circuito):
+        extra_ilum = crear_estructura_iluminacion_por_circuito_y_recinto(
+            doc,
+            refs,
+            circuitos=circuitos_iluminacion,
+            usar_recintos_arquitectura=True,
+        )
+
+    try:
+        doc.recompute()
+    except Exception:
+        pass
+
+    try:
+        doc.commitTransaction()
+    except Exception:
+        pass
+
+    _msg(
+        "Arbol creado/verificado. "
+        f"nodos={len(refs)} | subgrupos_recinto={extra} | estructura_iluminacion={extra_ilum}"
+    )
+    return refs
+
+
+# Ejecucion directa al correr la macro:
+crear_arbol_proyecto(
+    crear_recintos=False,
+    crear_iluminacion_por_circuito=False,
+    circuitos_iluminacion=None,
+)

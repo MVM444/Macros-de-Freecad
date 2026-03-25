@@ -1,3 +1,4 @@
+# Icon: RenombrarDialogo.svg
 import FreeCAD
 import FreeCADGui
 import re
@@ -28,6 +29,11 @@ class RenombrarDialogo(QtWidgets.QDialog):
         self.input_separador = QtWidgets.QLineEdit(self)
         layout.addWidget(self.label_separador)
         layout.addWidget(self.input_separador)
+
+        # Checkbox para incluir el nombre del grupo (seleccionado por defecto)
+        self.checkbox_nombre_grupo = QtWidgets.QCheckBox("Incluir nombre del grupo", self)
+        self.checkbox_nombre_grupo.setChecked(True)
+        layout.addWidget(self.checkbox_nombre_grupo)
 
         # Checkbox para incluir el nombre original del objeto (deseleccionado por defecto)
         self.checkbox_nombre_original = QtWidgets.QCheckBox("Incluir nombre original del objeto", self)
@@ -88,6 +94,7 @@ class RenombrarDialogo(QtWidgets.QDialog):
     def actualizar_preliminar(self):
         base = self.input_base.text().strip()
         separador = self.input_separador.text().strip()
+        incluir_nombre_grupo = self.checkbox_nombre_grupo.isChecked()
         incluir_nombre_original = self.checkbox_nombre_original.isChecked()
 
         if not base or not separador:
@@ -99,7 +106,10 @@ class RenombrarDialogo(QtWidgets.QDialog):
 
         for i in range(self.lista_objetos.count()):
             obj_label = self.lista_objetos.item(i).text()
-            nuevo_label = f"{self.grupo.Label}{separador}{base}"
+            if incluir_nombre_grupo:
+                nuevo_label = f"{self.grupo.Label}{separador}{base}"
+            else:
+                nuevo_label = f"{base}"
             
             if incluir_nombre_original:
                 nuevo_label += f"{separador}{obj_label}"
@@ -118,6 +128,7 @@ class RenombrarDialogo(QtWidgets.QDialog):
     def aplicar_cambios(self):
         base = self.input_base.text().strip()
         separador = self.input_separador.text().strip()
+        incluir_nombre_grupo = self.checkbox_nombre_grupo.isChecked()
         incluir_nombre_original = self.checkbox_nombre_original.isChecked()
 
         if not base or not separador:
@@ -129,7 +140,10 @@ class RenombrarDialogo(QtWidgets.QDialog):
 
         for i in range(self.lista_objetos.count()):
             obj_label = self.lista_objetos.item(i).text()
-            nuevo_label = f"{self.grupo.Label}{separador}{base}"
+            if incluir_nombre_grupo:
+                nuevo_label = f"{self.grupo.Label}{separador}{base}"
+            else:
+                nuevo_label = f"{base}"
             
             if incluir_nombre_original:
                 nuevo_label += f"{separador}{obj_label}"

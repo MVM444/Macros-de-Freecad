@@ -1,0 +1,1431 @@
+[ARBOL_GRUPOS] Documento: La Cruz 3
+[ARBOL_GRUPOS] Alcance: documento
+[ARBOL_GRUPOS] Grupos raiz: 12
+
+- [G] Clones de Salida | Name=Grupo_Salida | Type=App::DocumentObjectGroup
+  - [O] Salida-01_Salida_002 | Name=Link_Clone116 | Type=App::Link
+  - [O] Salida-02_Salida_003 | Name=Link_Clone117 | Type=App::Link
+  - [O] Salida-03_Salida_004 | Name=Link_Clone118 | Type=App::Link
+  - [O] Salida-04_Salida_005 | Name=Link_Clone119 | Type=App::Link
+  - [O] Salida-05_Salida_006 | Name=Link_Clone120 | Type=App::Link
+  - [O] Salida-06_Salida_007 | Name=Link_Clone121 | Type=App::Link
+  - [O] Salida-07_Salida_008 | Name=Link_Clone122 | Type=App::Link
+  - [O] Salida-08_Salida_009 | Name=Link_Clone123 | Type=App::Link
+  - [O] Salida-09_Salida_010 | Name=Link_Clone124 | Type=App::Link
+  - [O] Salida-10_Salida_011 | Name=Link_Clone125 | Type=App::Link
+  - [G] Salidas | Name=Group003 | Type=App::DocumentObjectGroup
+    - [O] Salida-01 | Name=Rectangle040 | Type=Part::Part2DObjectPython
+    - [O] Salida-02 | Name=Rectangle041 | Type=Part::Part2DObjectPython
+    - [O] Salida-03 | Name=Rectangle042 | Type=Part::Part2DObjectPython
+    - [O] Salida-04 | Name=Rectangle043 | Type=Part::Part2DObjectPython
+    - [O] Salida-05 | Name=Rectangle044 | Type=Part::Part2DObjectPython
+    - [O] Salida-06 | Name=Rectangle045 | Type=Part::Part2DObjectPython
+    - [O] Salida-07 | Name=Rectangle046 | Type=Part::Part2DObjectPython
+    - [O] Salida-08 | Name=Rectangle047 | Type=Part::Part2DObjectPython
+    - [O] Salida-09 | Name=Rectangle048 | Type=Part::Part2DObjectPython
+    - [O] Salida-10 | Name=Rectangle049 | Type=Part::Part2DObjectPython
+
+- [G] Componentes | Name=Group001 | Type=App::DocumentObjectGroup
+  - [O] Exhaust Fan EX-25SC v1 | Name=Exhaust_Fan_EX_25SC_v1 | Type=Mesh::Feature
+  - [O] Exhaust_Fan_EX_25SC | Name=Exhaust_Fan_EX_25SC_v002 | Type=Part::Feature
+  - [O] Gabinete Alarma001 | Name=Solid003 | Type=Part::Feature
+  - [O] J24768 v9 | Name=Compound | Type=Part::Compound2
+  - [O] LED 705 | Name=Part__Feature | Type=Part::Feature
+  - [O] LED HERM\X2\00C9\X0\TICA M\X2\00D3\X0\DULO ANTI POLVO Ref. P25607 Sylvania | Name=Part__Feature001 | Type=Part::Feature
+  - [G] Luminaria 60x60 | Name=Part | Type=App::Part
+    - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+    - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+    - [O] Cubo | Name=Box | Type=Part::Box
+    - [O] Difusor | Name=Box001 | Type=Part::Box
+    - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+  - [G] Panel Redondo | Name=Part001 | Type=App::Part
+    - [O] Cajita Conexión Panel Redondo | Name=Box003 | Type=Part::Box
+    - [O] Cilindro | Name=Cylinder | Type=Part::Cylinder
+    - [O] Fillet | Name=Fillet | Type=Part::Fillet
+    - [O] Panel Redondo Figura | Name=Thickness001 | Type=Part::Thickness
+  - [O] Salida | Name=Feature001 | Type=Part::Feature
+  - [O] Tablero + Área de Trabajo004 | Name=Compound004 | Type=Part::Feature
+  - [O] UPS | Name=Solid004 | Type=Part::Feature
+
+- [G] Conexiones_Huerfanas | Name=Conexiones_Huerfanas | Type=App::DocumentObjectGroup
+  - [O] Line015 | Name=Line015 | Type=Part::Part2DObjectPython
+
+- [G] Cuarto Eléctrico y Servidor | Name=Group002 | Type=App::DocumentObjectGroup
+  - [O] Gabinete Alarma005 | Name=Link_Clone003 | Type=App::Link
+  - [O] Gabinete Alarma006 | Name=Link_Clone004 | Type=App::Link
+  - [O] Gabinete Alarma007 | Name=Link_Clone005 | Type=App::Link
+  - [O] Supercomputador001 | Name=Feature | Type=Part::Feature
+  - [O] Tablero + Área de Trabajo008 | Name=Link_Clone | Type=App::Link
+  - [O] Tablero + Área de Trabajo010 | Name=Link_Clone002 | Type=App::Link
+  - [O] UPS001 | Name=Solid002 | Type=Part::Feature
+
+- [G] electrico | Name=electrico | Type=App::DocumentObjectGroup
+  - [G] _lib | Name=_lib | Type=App::DocumentObjectGroup
+    - [G] _lib_cajas | Name=_lib_cajas | Type=App::DocumentObjectGroup
+      - [O] Master EMT Octagon Box | Name=Master_EMT_Octagon_Box | Type=Part::Feature
+    - [G] _lib_devices | Name=_lib_devices | Type=App::DocumentObjectGroup
+      - [O] Master_Apagador_Simple_Apagador_Ambos_Vertical_1200 | Name=Master_Apagador_Simple_Apagador_Ambos_Vertical_1200 | Type=Part::FeaturePython
+  - [G] Cajas | Name=Cajas | Type=App::DocumentObjectGroup
+    - [O] Caja EMT Octogonal | Name=Link_Caja_EMT_Octogonal | Type=App::Link
+    - [G] Cajas_Octogonales | Name=Cajas_Octogonales | Type=App::DocumentObjectGroup
+      - [G] Apagadores | Name=Cajas_Octogonales_Apagadores | Type=App::DocumentObjectGroup
+        - [O] Apagador-Archivo004-009 | Name=Link_Apagador_Archivo004_009 | Type=App::Link
+        - [O] Apagador-Archivo004-010 | Name=Link_Apagador_Archivo004_010 | Type=App::Link
+        - [O] Apagador-Bóveda-013 | Name=Link_Apagador_B_veda_013 | Type=App::Link
+        - [O] Apagador-Bóveda-015 | Name=Link_Apagador_B_veda_015 | Type=App::Link
+        - [O] Apagador-Caja-018 | Name=Link_Apagador_Caja_018 | Type=App::Link
+        - [O] Apagador-Cobros-003 | Name=Link_Apagador_Cobros_003 | Type=App::Link
+        - [O] Apagador-Cochera-026 | Name=Link_Apagador_Cochera_026 | Type=App::Link
+        - [O] Apagador-Comedor-008 | Name=Link_Apagador_Comedor_008 | Type=App::Link
+        - [O] Apagador-Cuarto de Aseo-006 | Name=Link_Apagador_Cuarto_de_Aseo_006 | Type=App::Link
+        - [O] Apagador-Egresos-016 | Name=Link_Apagador_Egresos_016 | Type=App::Link
+        - [O] Apagador-Frente de Platafoma-027 | Name=Link_Apagador_Frente_de_Platafoma_027 | Type=App::Link
+        - [O] Apagador-Ingresos-017 | Name=Link_Apagador_Ingresos_017 | Type=App::Link
+        - [O] Apagador-Inspección-002 | Name=Link_Apagador_Inspecci_n_002 | Type=App::Link
+        - [O] Apagador-Jefatura-014 | Name=Link_Apagador_Jefatura_014 | Type=App::Link
+        - [O] Apagador-Pasillo001-020 | Name=Link_Apagador_Pasillo001_020 | Type=App::Link
+        - [O] Apagador-Pasillo003-019 | Name=Link_Apagador_Pasillo003_019 | Type=App::Link
+        - [O] Apagador-Pasillo S.S.-007 | Name=Link_Apagador_Pasillo_S_S_007 | Type=App::Link
+        - [O] Apagador-Pensiones-004 | Name=Link_Apagador_Pensiones_004 | Type=App::Link
+        - [O] Apagador-S.S. Familiar-001 | Name=Link_Apagador_S_S_Familiar_001 | Type=App::Link
+        - [O] Apagador-S.S. Funcionarias-025 | Name=Link_Apagador_S_S_Funcionarias_025 | Type=App::Link
+        - [O] Apagador-S.S. Funcionarios-024 | Name=Link_Apagador_S_S_Funcionarios_024 | Type=App::Link
+        - [O] Apagador-Sala de Espera-023 | Name=Link_Apagador_Sala_de_Espera_023 | Type=App::Link
+        - [O] Apagador-Sala de Lactancia-005 | Name=Link_Apagador_Sala_de_Lactancia_005 | Type=App::Link
+        - [O] Apagador-Salida Trasera-021 | Name=Link_Apagador_Salida_Trasera_021 | Type=App::Link
+        - [O] Apagador-Servidor-011 | Name=Link_Apagador_Servidor_011 | Type=App::Link
+        - [O] Apagador-Suministros 2-022 | Name=Link_Apagador_Suministros_2_022 | Type=App::Link
+        - [O] Apagador-Suministros-012 | Name=Link_Apagador_Suministros_012 | Type=App::Link
+        - [O] Sketch apagadores | Name=Sketch | Type=Sketcher::SketchObject
+      - [G] Circuitos | Name=Cajas_Octogonales_Circuitos | Type=App::DocumentObjectGroup
+        - [G] Sin_Circuito001 | Name=Cajas_Circuito_Sin_Circuito | Type=App::DocumentObjectGroup
+          - [G] Apagadores001 | Name=Cajas_Sin_Circuito_Apagadores | Type=App::DocumentObjectGroup
+            - [O] Caja EMT Octogonal - Apagador-Archivo004-009 | Name=Link_Caja_EMT_Octogonal_Apagador_Archivo004_009 | Type=App::Link
+            - [O] Caja EMT Octogonal - Apagador-Archivo004-010 | Name=Link_Caja_EMT_Octogonal_Apagador_Archivo004_010 | Type=App::Link
+            - [O] Caja EMT Octogonal - Apagador-Bóveda-013 | Name=Link_Caja_EMT_Octogonal_Apagador_B__veda_013 | Type=App::Link
+            - [O] Caja EMT Octogonal - Apagador-Bóveda-015 | Name=Link_Caja_EMT_Octogonal_Apagador_B__veda_015 | Type=App::Link
+            - [O] Caja EMT Octogonal - Apagador-Caja-018 | Name=Link_Caja_EMT_Octogonal_Apagador_Caja_018 | Type=App::Link
+            - [O] Caja EMT Octogonal - Apagador-Cobros-003 | Name=Link_Caja_EMT_Octogonal_Apagador_Cobros_003 | Type=App::Link
+            - [O] Caja EMT Octogonal - Apagador-Cochera-026 | Name=Link_Caja_EMT_Octogonal_Apagador_Cochera_026 | Type=App::Link
+            - [O] Caja EMT Octogonal - Apagador-Comedor-008 | Name=Link_Caja_EMT_Octogonal_Apagador_Comedor_008 | Type=App::Link
+            - [O] Caja EMT Octogonal - Apagador-Cuarto de Aseo-006 | Name=Link_Caja_EMT_Octogonal_Apagador_Cuarto_de_Aseo_006 | Type=App::Link
+            - [O] Caja EMT Octogonal - Apagador-Egresos-016 | Name=Link_Caja_EMT_Octogonal_Apagador_Egresos_016 | Type=App::Link
+            - [O] Caja EMT Octogonal - Apagador-Frente de Platafoma-027 | Name=Link_Caja_EMT_Octogonal_Apagador_Frente_de_Platafoma_027 | Type=App::Link
+            - [O] Caja EMT Octogonal - Apagador-Ingresos-017 | Name=Link_Caja_EMT_Octogonal_Apagador_Ingresos_017 | Type=App::Link
+            - [O] Caja EMT Octogonal - Apagador-Inspección-002 | Name=Link_Caja_EMT_Octogonal_Apagador_Inspecci__n_002 | Type=App::Link
+            - [O] Caja EMT Octogonal - Apagador-Jefatura-014 | Name=Link_Caja_EMT_Octogonal_Apagador_Jefatura_014 | Type=App::Link
+            - [O] Caja EMT Octogonal - Apagador-Pasillo001-020 | Name=Link_Caja_EMT_Octogonal_Apagador_Pasillo001_020 | Type=App::Link
+            - [O] Caja EMT Octogonal - Apagador-Pasillo003-019 | Name=Link_Caja_EMT_Octogonal_Apagador_Pasillo003_019 | Type=App::Link
+            - [O] Caja EMT Octogonal - Apagador-Pasillo S.S.-007 | Name=Link_Caja_EMT_Octogonal_Apagador_Pasillo_S_S_007 | Type=App::Link
+            - [O] Caja EMT Octogonal - Apagador-Pensiones-004 | Name=Link_Caja_EMT_Octogonal_Apagador_Pensiones_004 | Type=App::Link
+            - [O] Caja EMT Octogonal - Apagador-S.S. Familiar-001 | Name=Link_Caja_EMT_Octogonal_Apagador_S_S_Familiar_001 | Type=App::Link
+            - [O] Caja EMT Octogonal - Apagador-S.S. Funcionarias-025 | Name=Link_Caja_EMT_Octogonal_Apagador_S_S_Funcionarias_025 | Type=App::Link
+            - [O] Caja EMT Octogonal - Apagador-S.S. Funcionarios-024 | Name=Link_Caja_EMT_Octogonal_Apagador_S_S_Funcionarios_024 | Type=App::Link
+            - [O] Caja EMT Octogonal - Apagador-Sala de Espera-023 | Name=Link_Caja_EMT_Octogonal_Apagador_Sala_de_Espera_023 | Type=App::Link
+            - [O] Caja EMT Octogonal - Apagador-Sala de Lactancia-005 | Name=Link_Caja_EMT_Octogonal_Apagador_Sala_de_Lactancia_005 | Type=App::Link
+            - [O] Caja EMT Octogonal - Apagador-Salida Trasera-021 | Name=Link_Caja_EMT_Octogonal_Apagador_Salida_Trasera_021 | Type=App::Link
+            - [O] Caja EMT Octogonal - Apagador-Servidor-011 | Name=Link_Caja_EMT_Octogonal_Apagador_Servidor_011 | Type=App::Link
+            - [O] Caja EMT Octogonal - Apagador-Suministros 2-022 | Name=Link_Caja_EMT_Octogonal_Apagador_Suministros_2_022 | Type=App::Link
+            - [O] Caja EMT Octogonal - Apagador-Suministros-012 | Name=Link_Caja_EMT_Octogonal_Apagador_Suministros_012 | Type=App::Link
+      - [G] Tomacorrientes001 | Name=Cajas_Octogonales_Tomacorrientes | Type=App::DocumentObjectGroup
+  - [G] Conexiones041 | Name=Conexiones041 | Type=App::DocumentObjectGroup
+  - [G] Iluminacion | Name=g01_iluminacion | Type=App::DocumentObjectGroup
+    - [G] Circuitos Iluminación | Name=g02_circuitos | Type=App::DocumentObjectGroup
+      - [G] Circuito 1 | Name=g04_recintos | Type=App::DocumentObjectGroup
+        - [G] Apoyo002 | Name=Apoyo | Type=App::DocumentObjectGroup
+          - [G] Apoyo_Luminaria 60x60_018 | Name=Link_Clone019 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+          - [G] Apoyo_Luminaria 60x60_019 | Name=Link_Clone020 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+          - [G] Apoyo_Luminaria 60x60_020 | Name=Link_Clone021 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+          - [G] Apoyo_Luminaria 60x60_021 | Name=Link_Clone022 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+          - [O] Pasillo001_Panel Redondo_002 | Name=Link_Clone087 | Type=App::Link
+          - [O] Pasillo002_Panel Redondo_003 | Name=Link_Clone088 | Type=App::Link
+        - [G] Archivo007 | Name=g05_archivo002 | Type=App::DocumentObjectGroup
+          - [G] Archivo001_Luminaria 60x60_007 | Name=Link_Clone108 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+          - [G] Archivo001_Luminaria 60x60_008 | Name=Link_Clone109 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+          - [G] Archivo002_Luminaria 60x60_009 | Name=Link_Clone110 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+          - [G] Archivo003_Luminaria 60x60_011 | Name=Link_Clone112 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+          - [G] Archivo003_Luminaria 60x60_012 | Name=Link_Clone113 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+          - [G] Archivo004_Luminaria 60x60_013 | Name=Link_Clone114 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+          - [G] Archivo004_Luminaria 60x60_014 | Name=Link_Clone115 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+          - [G] Archivo005_Luminaria 60x60_003 | Name=Link_Clone104 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+          - [G] Archivo005_Luminaria 60x60_004 | Name=Link_Clone105 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+          - [G] Archivo_Luminaria 60x60_005 | Name=Link_Clone106 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+          - [G] Archivo_Luminaria 60x60_006 | Name=Link_Clone107 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+        - [G] Caja002 | Name=Caja | Type=App::DocumentObjectGroup
+          - [G] Caja_Luminaria 60x60_038 | Name=Link_Clone041 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+          - [G] Caja_Luminaria 60x60_039 | Name=Link_Clone042 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+        - [G] Cobros002 | Name=Cobros | Type=App::DocumentObjectGroup
+          - [G] Cobros_Luminaria 60x60_007 | Name=Link_Clone010 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+          - [G] Cobros_Luminaria 60x60_008 | Name=Link_Clone011 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+        - [G] Cochera002 | Name=Cochera | Type=App::DocumentObjectGroup
+          - [O] Cochera_J24768 v9_003 | Name=Link_Clone126 | Type=App::Link
+          - [O] Cochera_J24768 v9_004 | Name=Link_Clone127 | Type=App::Link
+        - [G] Comedor002 | Name=Comedor | Type=App::DocumentObjectGroup
+          - [G] Comedor_Luminaria 60x60_023 | Name=Link_Clone025 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+          - [G] Comedor_Luminaria 60x60_024 | Name=Link_Clone026 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+          - [G] Comedor_Luminaria 60x60_025 | Name=Link_Clone027 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+        - [G] Cuarto de Aseo002 | Name=Cuarto_de_Aseo | Type=App::DocumentObjectGroup
+          - [G] Cuarto de Aseo_Luminaria 60x60_011 | Name=Link_Clone015 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+        - [G] Inspeccion | Name=Inspeccion | Type=App::DocumentObjectGroup
+          - [G] Inspección_Luminaria 60x60_005 | Name=Link_Clone008 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+          - [G] Inspección_Luminaria 60x60_006 | Name=Link_Clone009 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+        - [G] Jefatura002 | Name=Jefatura | Type=App::DocumentObjectGroup
+          - [O] Bóveda_Panel Redondo_011 | Name=Link_Clone065 | Type=App::Link
+          - [G] Jefatura_Luminaria 60x60_035 | Name=Link_Clone037 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+          - [G] Jefatura_Luminaria 60x60_036 | Name=Link_Clone038 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+          - [G] Jefatura_Luminaria 60x60_037 | Name=Link_Clone039 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+        - [G] Pasillo012 | Name=Pasillo004 | Type=App::DocumentObjectGroup
+          - [O] Pasillo003_Panel Redondo_005 | Name=Link_Clone058 | Type=App::Link
+          - [O] Pasillo003_Panel Redondo_006 | Name=Link_Clone059 | Type=App::Link
+        - [G] Pensiones002 | Name=Pensiones | Type=App::DocumentObjectGroup
+          - [G] Pensiones_Luminaria 60x60_009 | Name=Link_Clone012 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+          - [G] Pensiones_Luminaria 60x60_010 | Name=Link_Clone013 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+        - [G] Plataforma001 | Name=Frente_de_Platafoma | Type=App::DocumentObjectGroup
+          - [G] Egresos_Luminaria 60x60_040 | Name=Link_Clone044 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+          - [G] Ingresos_Luminaria 60x60_039 | Name=Link_Clone043 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+          - [O] Pasillo004_Panel Redondo_007 | Name=Link_Clone060 | Type=App::Link
+          - [O] Pasillo004_Panel Redondo_008 | Name=Link_Clone061 | Type=App::Link
+          - [O] Pasillo005_Panel Redondo_002 | Name=Link_Clone101 | Type=App::Link
+        - [G] S.S. Familiar002 | Name=S_S__Familiar | Type=App::DocumentObjectGroup
+          - [G] S.S. Familiar_Luminaria 60x60_036 | Name=Link_Clone040 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+        - [G] S.S. Funcionarios002 | Name=S_S__Funcionarios | Type=App::DocumentObjectGroup
+          - [O] Pasillo S.S._Panel Redondo_003 | Name=Link_Clone085 | Type=App::Link
+          - [O] Pasillo S.S._Panel Redondo_004 | Name=Link_Clone086 | Type=App::Link
+          - [O] S.S. Funcionarias_Panel Redondo_003 | Name=Link_Clone057 | Type=App::Link
+          - [O] S.S. Funcionarios_Panel Redondo_002 | Name=Link_Clone056 | Type=App::Link
+        - [G] Sala de Espera002 | Name=Sala_de_Espera | Type=App::DocumentObjectGroup
+          - [G] Frente de Platafoma_Luminaria 60x60_042 | Name=Link_Clone045 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+          - [G] Frente de Platafoma_Luminaria 60x60_043 | Name=Link_Clone046 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+          - [G] Sala de Espera_Luminaria 60x60_044 | Name=Link_Clone047 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+          - [G] Sala de Espera_Luminaria 60x60_045 | Name=Link_Clone048 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+        - [G] Sala de Lactancia002 | Name=Sala_de_Lactancia | Type=App::DocumentObjectGroup
+          - [G] Sala de Lactancia_Luminaria 60x60_010 | Name=Link_Clone014 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+        - [G] Salida Trasera002 | Name=Salida_Trasera | Type=App::DocumentObjectGroup
+          - [O] Salida Trasera_Panel Redondo_010 | Name=Link_Clone064 | Type=App::Link
+        - [G] Servidor002 | Name=Servidor | Type=App::DocumentObjectGroup
+          - [G] Servidor_Luminaria 60x60_029 | Name=Link_Clone032 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+          - [G] Servidor_Luminaria 60x60_030 | Name=Link_Clone033 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+        - [G] Suministros002 | Name=Suministros | Type=App::DocumentObjectGroup
+          - [O] Exhaust_Fan_EX_25SC002 | Name=Link_Clone128 | Type=App::Link
+          - [O] Suministros 2_Panel Redondo_009 | Name=Link_Clone062 | Type=App::Link
+          - [O] Suministros 2_Panel Redondo_010 | Name=Link_Clone063 | Type=App::Link
+        - [G] Suministros 004 | Name=Suministros_2 | Type=App::DocumentObjectGroup
+          - [G] Suministros_Luminaria 60x60_002 | Name=Link_Clone102 | Type=App::Link
+            - [O] Cajita Conexión L60x60 | Name=Box004 | Type=Part::Box
+            - [O] Chamfer | Name=Chamfer | Type=Part::Chamfer
+            - [O] Cubo | Name=Box | Type=Part::Box
+            - [O] Difusor | Name=Box001 | Type=Part::Box
+            - [O] Housing Luminaria 60x60 | Name=Thickness | Type=Part::Thickness
+        - [G] Tableros Electricos | Name=Tableros_Electricos | Type=App::DocumentObjectGroup
+          - [O] Tableros Eléctricos_Panel Redondo_002 | Name=Link_Clone103 | Type=App::Link
+      - [G] Componentes001 | Name=g03_componentes | Type=App::DocumentObjectGroup
+        - [G] Recintos001 | Name=g04_recintos_03 | Type=App::DocumentObjectGroup
+          - [G] Componentes002 | Name=g05_componentes | Type=App::DocumentObjectGroup
+            - [G] Cajas_Conexion_Luminarias001 | Name=g06_cajas_conexion_luminarias_02 | Type=App::DocumentObjectGroup
+      - [G] Componentes003 | Name=g03_componentes_02 | Type=App::DocumentObjectGroup
+        - [G] Recintos002 | Name=g04_recintos_04 | Type=App::DocumentObjectGroup
+          - [G] Componentes004 | Name=g05_componentes_02 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Conexion_Luminarias002 | Name=g06_cajas_conexion_luminarias_03 | Type=App::DocumentObjectGroup
+      - [G] Componentes005 | Name=g03_componentes_03 | Type=App::DocumentObjectGroup
+        - [G] Recintos003 | Name=g04_recintos_05 | Type=App::DocumentObjectGroup
+          - [G] Componentes006 | Name=g05_componentes_03 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales001 | Name=g06_cajas_octogonales | Type=App::DocumentObjectGroup
+            - [G] Conexiones_Luminarias_Cajas | Name=g07_conexiones_luminarias_cajas | Type=App::DocumentObjectGroup
+      - [G] Componentes007 | Name=g03_componentes_04 | Type=App::DocumentObjectGroup
+        - [G] Recintos004 | Name=g04_recintos_06 | Type=App::DocumentObjectGroup
+          - [G] Componentes008 | Name=g05_componentes_04 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales003 | Name=g06_cajas_octogonales_03 | Type=App::DocumentObjectGroup
+            - [G] Conexiones_Luminarias_Cajas002 | Name=g07_conexiones_luminarias_cajas_03 | Type=App::DocumentObjectGroup
+      - [G] Componentes009 | Name=g03_componentes_05 | Type=App::DocumentObjectGroup
+        - [G] Recintos005 | Name=g04_recintos_07 | Type=App::DocumentObjectGroup
+          - [G] Componentes010 | Name=g05_componentes_05 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales005 | Name=g06_cajas_octogonales_05 | Type=App::DocumentObjectGroup
+            - [G] Conexiones_Luminarias_Cajas004 | Name=g07_conexiones_luminarias_cajas_05 | Type=App::DocumentObjectGroup
+      - [G] Componentes011 | Name=g03_componentes_06 | Type=App::DocumentObjectGroup
+        - [G] Recintos006 | Name=g04_recintos_08 | Type=App::DocumentObjectGroup
+          - [G] Componentes012 | Name=g05_componentes_06 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales007 | Name=g06_cajas_octogonales_07 | Type=App::DocumentObjectGroup
+            - [G] Conexiones_Luminarias_Cajas006 | Name=g07_conexiones_luminarias_cajas_07 | Type=App::DocumentObjectGroup
+      - [G] Componentes013 | Name=g03_componentes_07 | Type=App::DocumentObjectGroup
+        - [G] Recintos007 | Name=g04_recintos_09 | Type=App::DocumentObjectGroup
+          - [G] Componentes014 | Name=g05_componentes_07 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales008 | Name=g06_cajas_octogonales_08 | Type=App::DocumentObjectGroup
+            - [G] Conexiones_Luminarias_Cajas007 | Name=g07_conexiones_luminarias_cajas_08 | Type=App::DocumentObjectGroup
+      - [G] Componentes015 | Name=g03_componentes_08 | Type=App::DocumentObjectGroup
+        - [G] Recintos008 | Name=g04_recintos_10 | Type=App::DocumentObjectGroup
+          - [G] Componentes016 | Name=g05_componentes_08 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales009 | Name=g06_cajas_octogonales_09 | Type=App::DocumentObjectGroup
+            - [G] Conexiones_Luminarias_Cajas008 | Name=g07_conexiones_luminarias_cajas_09 | Type=App::DocumentObjectGroup
+      - [G] Componentes017 | Name=g03_componentes_09 | Type=App::DocumentObjectGroup
+        - [G] Recintos009 | Name=g04_recintos_11 | Type=App::DocumentObjectGroup
+          - [G] Componentes018 | Name=g05_componentes_09 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales010 | Name=g06_cajas_octogonales_10 | Type=App::DocumentObjectGroup
+            - [G] Conexiones_Luminarias_Cajas009 | Name=g07_conexiones_luminarias_cajas_10 | Type=App::DocumentObjectGroup
+      - [G] Componentes019 | Name=g03_componentes_10 | Type=App::DocumentObjectGroup
+        - [G] Recintos010 | Name=g04_recintos_12 | Type=App::DocumentObjectGroup
+          - [G] Componentes020 | Name=g05_componentes_10 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales011 | Name=g06_cajas_octogonales_11 | Type=App::DocumentObjectGroup
+            - [G] Conexiones_Luminarias_Cajas010 | Name=g07_conexiones_luminarias_cajas_11 | Type=App::DocumentObjectGroup
+      - [G] Componentes021 | Name=g03_componentes_11 | Type=App::DocumentObjectGroup
+        - [G] Recintos011 | Name=g04_recintos_13 | Type=App::DocumentObjectGroup
+          - [G] Componentes022 | Name=g05_componentes_11 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales012 | Name=g06_cajas_octogonales_12 | Type=App::DocumentObjectGroup
+            - [G] Conexiones_Luminarias_Cajas011 | Name=g07_conexiones_luminarias_cajas_12 | Type=App::DocumentObjectGroup
+      - [G] Componentes023 | Name=g03_componentes_12 | Type=App::DocumentObjectGroup
+        - [G] Recintos012 | Name=g04_recintos_14 | Type=App::DocumentObjectGroup
+          - [G] Componentes024 | Name=g05_componentes_12 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales013 | Name=g06_cajas_octogonales_13 | Type=App::DocumentObjectGroup
+            - [G] Conexiones_Luminarias_Cajas012 | Name=g07_conexiones_luminarias_cajas_13 | Type=App::DocumentObjectGroup
+      - [G] Componentes025 | Name=g03_componentes_13 | Type=App::DocumentObjectGroup
+        - [G] Recintos013 | Name=g04_recintos_15 | Type=App::DocumentObjectGroup
+          - [G] Componentes026 | Name=g05_componentes_13 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales014 | Name=g06_cajas_octogonales_14 | Type=App::DocumentObjectGroup
+            - [G] Conexiones_Luminarias_Cajas013 | Name=g07_conexiones_luminarias_cajas_14 | Type=App::DocumentObjectGroup
+      - [G] Componentes027 | Name=g03_componentes_14 | Type=App::DocumentObjectGroup
+        - [G] Recintos014 | Name=g04_recintos_16 | Type=App::DocumentObjectGroup
+          - [G] Componentes028 | Name=g05_componentes_14 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales015 | Name=g06_cajas_octogonales_15 | Type=App::DocumentObjectGroup
+            - [G] Conexiones_Luminarias_Cajas014 | Name=g07_conexiones_luminarias_cajas_15 | Type=App::DocumentObjectGroup
+      - [G] Componentes029 | Name=g03_componentes_15 | Type=App::DocumentObjectGroup
+        - [G] Recintos015 | Name=g04_recintos_17 | Type=App::DocumentObjectGroup
+          - [G] Componentes030 | Name=g05_componentes_15 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales016 | Name=g06_cajas_octogonales_16 | Type=App::DocumentObjectGroup
+            - [G] Conexiones_Luminarias_Cajas015 | Name=g07_conexiones_luminarias_cajas_16 | Type=App::DocumentObjectGroup
+      - [G] Componentes031 | Name=g03_componentes_16 | Type=App::DocumentObjectGroup
+        - [G] Recintos016 | Name=g04_recintos_18 | Type=App::DocumentObjectGroup
+          - [G] Componentes032 | Name=g05_componentes_16 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales017 | Name=g06_cajas_octogonales_17 | Type=App::DocumentObjectGroup
+            - [G] Conexiones_Luminarias_Cajas016 | Name=g07_conexiones_luminarias_cajas_17 | Type=App::DocumentObjectGroup
+      - [G] Componentes033 | Name=g03_componentes_17 | Type=App::DocumentObjectGroup
+        - [G] Recintos017 | Name=g04_recintos_19 | Type=App::DocumentObjectGroup
+          - [G] Componentes034 | Name=g05_componentes_17 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales018 | Name=g06_cajas_octogonales_18 | Type=App::DocumentObjectGroup
+            - [G] Conexiones_Luminarias_Cajas017 | Name=g07_conexiones_luminarias_cajas_18 | Type=App::DocumentObjectGroup
+      - [G] Componentes035 | Name=g03_componentes_18 | Type=App::DocumentObjectGroup
+        - [G] Recintos018 | Name=g04_recintos_20 | Type=App::DocumentObjectGroup
+          - [G] Componentes036 | Name=g05_componentes_18 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales019 | Name=g06_cajas_octogonales_19 | Type=App::DocumentObjectGroup
+            - [G] Conexiones_Luminarias_Cajas018 | Name=g07_conexiones_luminarias_cajas_19 | Type=App::DocumentObjectGroup
+      - [G] Componentes037 | Name=g03_componentes_19 | Type=App::DocumentObjectGroup
+        - [G] Recintos019 | Name=g04_recintos_21 | Type=App::DocumentObjectGroup
+          - [G] Componentes038 | Name=g05_componentes_19 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales020 | Name=g06_cajas_octogonales_20 | Type=App::DocumentObjectGroup
+            - [G] Conexiones_Luminarias_Cajas019 | Name=g07_conexiones_luminarias_cajas_20 | Type=App::DocumentObjectGroup
+      - [G] Componentes039 | Name=g03_componentes_20 | Type=App::DocumentObjectGroup
+        - [G] Recintos020 | Name=g04_recintos_22 | Type=App::DocumentObjectGroup
+          - [G] Componentes040 | Name=g05_componentes_20 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales021 | Name=g06_cajas_octogonales_21 | Type=App::DocumentObjectGroup
+            - [G] Conexiones_Luminarias_Cajas020 | Name=g07_conexiones_luminarias_cajas_21 | Type=App::DocumentObjectGroup
+      - [G] Componentes041 | Name=g03_componentes_21 | Type=App::DocumentObjectGroup
+        - [G] Recintos021 | Name=g04_recintos_23 | Type=App::DocumentObjectGroup
+          - [G] Componentes042 | Name=g05_componentes_21 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales031 | Name=g06_cajas_octogonales_31 | Type=App::DocumentObjectGroup
+              - [O] Caja EMT Octogonal Componentes 01 | Name=Link_Caja_EMT_Octogonal_Componentes_01 | Type=App::Link
+              - [O] Caja EMT Octogonal Componentes 02 | Name=Link_Caja_EMT_Octogonal_Componentes_02 | Type=App::Link
+            - [G] Conexiones_Luminarias_Cajas030 | Name=g07_conexiones_luminarias_cajas_31 | Type=App::DocumentObjectGroup
+              - [O] Conexion Apoyo_Luminaria 60x60_018 -> Caja 01 | Name=conexion_lum_caja | Type=Part::Feature
+              - [O] Conexion Apoyo_Luminaria 60x60_019 -> Caja 01 | Name=conexion_lum_caja_02 | Type=Part::Feature
+              - [O] Conexion Apoyo_Luminaria 60x60_020 -> Caja 02 | Name=conexion_lum_caja_03 | Type=Part::Feature
+              - [O] Conexion Apoyo_Luminaria 60x60_021 -> Caja 02 | Name=conexion_lum_caja_04 | Type=Part::Feature
+      - [G] Componentes043 | Name=g03_componentes_22 | Type=App::DocumentObjectGroup
+        - [G] Recintos022 | Name=g04_recintos_24 | Type=App::DocumentObjectGroup
+          - [G] Componentes044 | Name=g05_componentes_22 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales032 | Name=g06_cajas_octogonales_32 | Type=App::DocumentObjectGroup
+              - [O] Caja EMT Octogonal Componentes 003 | Name=Link_Caja_EMT_Octogonal_Componentes_003 | Type=App::Link
+            - [G] Conexiones_Luminarias_Cajas031 | Name=g07_conexiones_luminarias_cajas_32 | Type=App::DocumentObjectGroup
+              - [O] Conexion Caja_Luminaria 60x60_038 -> Caja 01 | Name=conexion_lum_caja_05 | Type=Part::Feature
+              - [O] Conexion Caja_Luminaria 60x60_039 -> Caja 01 | Name=conexion_lum_caja_06 | Type=Part::Feature
+      - [G] Componentes045 | Name=g03_componentes_23 | Type=App::DocumentObjectGroup
+        - [G] Recintos023 | Name=g04_recintos_25 | Type=App::DocumentObjectGroup
+          - [G] Componentes046 | Name=g05_componentes_23 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales033 | Name=g06_cajas_octogonales_33 | Type=App::DocumentObjectGroup
+              - [O] Caja EMT Octogonal Componentes 004 | Name=Link_Caja_EMT_Octogonal_Componentes_004 | Type=App::Link
+            - [G] Conexiones_Luminarias_Cajas032 | Name=g07_conexiones_luminarias_cajas_33 | Type=App::DocumentObjectGroup
+              - [O] Conexion Cobros_Luminaria 60x60_007 -> Caja 01 | Name=conexion_lum_caja_08 | Type=Part::Feature
+              - [O] Conexion Cobros_Luminaria 60x60_008 -> Caja 01 | Name=conexion_lum_caja_07 | Type=Part::Feature
+      - [G] Componentes047 | Name=g03_componentes_24 | Type=App::DocumentObjectGroup
+        - [G] Recintos024 | Name=g04_recintos_26 | Type=App::DocumentObjectGroup
+          - [G] Componentes048 | Name=g05_componentes_24 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales034 | Name=g06_cajas_octogonales_34 | Type=App::DocumentObjectGroup
+              - [O] Caja EMT Octogonal Componentes 005 | Name=Link_Caja_EMT_Octogonal_Componentes_005 | Type=App::Link
+              - [O] Caja EMT Octogonal Componentes 006 | Name=Link_Caja_EMT_Octogonal_Componentes_006 | Type=App::Link
+            - [G] Conexiones_Luminarias_Cajas033 | Name=g07_conexiones_luminarias_cajas_34 | Type=App::DocumentObjectGroup
+              - [O] Conexion Comedor_Luminaria 60x60_023 -> Caja 02 | Name=conexion_lum_caja_11 | Type=Part::Feature
+              - [O] Conexion Comedor_Luminaria 60x60_024 -> Caja 01 | Name=conexion_lum_caja_10 | Type=Part::Feature
+              - [O] Conexion Comedor_Luminaria 60x60_025 -> Caja 01 | Name=conexion_lum_caja_09 | Type=Part::Feature
+      - [G] Componentes049 | Name=g03_componentes_25 | Type=App::DocumentObjectGroup
+        - [G] Recintos025 | Name=g04_recintos_27 | Type=App::DocumentObjectGroup
+          - [G] Componentes050 | Name=g05_componentes_25 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales035 | Name=g06_cajas_octogonales_35 | Type=App::DocumentObjectGroup
+              - [O] Caja EMT Octogonal Componentes 007 | Name=Link_Caja_EMT_Octogonal_Componentes_007 | Type=App::Link
+            - [G] Conexiones_Luminarias_Cajas034 | Name=g07_conexiones_luminarias_cajas_35 | Type=App::DocumentObjectGroup
+              - [O] Conexion Cuarto de Aseo_Luminaria 60x60_011 -> Caja 01 | Name=conexion_lum_caja_12 | Type=Part::Feature
+      - [G] Componentes051 | Name=g03_componentes_26 | Type=App::DocumentObjectGroup
+        - [G] Recintos026 | Name=g04_recintos_28 | Type=App::DocumentObjectGroup
+          - [G] Componentes052 | Name=g05_componentes_26 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales036 | Name=g06_cajas_octogonales_36 | Type=App::DocumentObjectGroup
+              - [O] Caja EMT Octogonal Componentes 008 | Name=Link_Caja_EMT_Octogonal_Componentes_008 | Type=App::Link
+            - [G] Conexiones_Luminarias_Cajas035 | Name=g07_conexiones_luminarias_cajas_36 | Type=App::DocumentObjectGroup
+              - [O] Conexion Egresos_Luminaria 60x60_040 -> Caja 01 | Name=conexion_lum_caja_14 | Type=Part::Feature
+              - [O] Conexion Ingresos_Luminaria 60x60_039 -> Caja 01 | Name=conexion_lum_caja_13 | Type=Part::Feature
+      - [G] Componentes053 | Name=g03_componentes_27 | Type=App::DocumentObjectGroup
+        - [G] Recintos027 | Name=g04_recintos_29 | Type=App::DocumentObjectGroup
+          - [G] Componentes054 | Name=g05_componentes_27 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales037 | Name=g06_cajas_octogonales_37 | Type=App::DocumentObjectGroup
+              - [O] Caja EMT Octogonal Componentes 03 | Name=Link_Caja_EMT_Octogonal_Componentes_03 | Type=App::Link
+              - [O] Caja EMT Octogonal Componentes 04 | Name=Link_Caja_EMT_Octogonal_Componentes_04 | Type=App::Link
+              - [O] Caja EMT Octogonal Componentes 05 | Name=Link_Caja_EMT_Octogonal_Componentes_05 | Type=App::Link
+              - [O] Caja EMT Octogonal Componentes 06 | Name=Link_Caja_EMT_Octogonal_Componentes_06 | Type=App::Link
+              - [O] Caja EMT Octogonal Componentes 009 | Name=Link_Caja_EMT_Octogonal_Componentes_009 | Type=App::Link
+              - [O] Caja EMT Octogonal Componentes 010 | Name=Link_Caja_EMT_Octogonal_Componentes_010 | Type=App::Link
+            - [G] Conexiones_Luminarias_Cajas036 | Name=g07_conexiones_luminarias_cajas_37 | Type=App::DocumentObjectGroup
+              - [O] Conexion Archivo001_Luminaria 60x60_007 -> Caja 02 | Name=conexion_lum_caja_18 | Type=Part::Feature
+              - [O] Conexion Archivo001_Luminaria 60x60_008 -> Caja 05 | Name=conexion_lum_caja_24 | Type=Part::Feature
+              - [O] Conexion Archivo002_Luminaria 60x60_009 -> Caja 03 | Name=conexion_lum_caja_19 | Type=Part::Feature
+              - [O] Conexion Archivo003_Luminaria 60x60_011 -> Caja 03 | Name=conexion_lum_caja_20 | Type=Part::Feature
+              - [O] Conexion Archivo003_Luminaria 60x60_012 -> Caja 06 | Name=conexion_lum_caja_25 | Type=Part::Feature
+              - [O] Conexion Archivo004_Luminaria 60x60_013 -> Caja 01 | Name=conexion_lum_caja_15 | Type=Part::Feature
+              - [O] Conexion Archivo004_Luminaria 60x60_014 -> Caja 04 | Name=conexion_lum_caja_21 | Type=Part::Feature
+              - [O] Conexion Archivo005_Luminaria 60x60_003 -> Caja 01 | Name=conexion_lum_caja_16 | Type=Part::Feature
+              - [O] Conexion Archivo005_Luminaria 60x60_004 -> Caja 04 | Name=conexion_lum_caja_22 | Type=Part::Feature
+              - [O] Conexion Archivo_Luminaria 60x60_005 -> Caja 02 | Name=conexion_lum_caja_17 | Type=Part::Feature
+              - [O] Conexion Archivo_Luminaria 60x60_006 -> Caja 05 | Name=conexion_lum_caja_23 | Type=Part::Feature
+      - [G] Componentes055 | Name=g03_componentes_28 | Type=App::DocumentObjectGroup
+        - [G] Recintos028 | Name=g04_recintos_30 | Type=App::DocumentObjectGroup
+          - [G] Componentes056 | Name=g05_componentes_28 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales038 | Name=g06_cajas_octogonales_38 | Type=App::DocumentObjectGroup
+              - [O] Caja EMT Octogonal Componentes 011 | Name=Link_Caja_EMT_Octogonal_Componentes_011 | Type=App::Link
+            - [G] Conexiones_Luminarias_Cajas037 | Name=g07_conexiones_luminarias_cajas_38 | Type=App::DocumentObjectGroup
+              - [O] Conexion Inspección_Luminaria 60x60_005 -> Caja 01 | Name=conexion_lum_caja_27 | Type=Part::Feature
+              - [O] Conexion Inspección_Luminaria 60x60_006 -> Caja 01 | Name=conexion_lum_caja_26 | Type=Part::Feature
+      - [G] Componentes057 | Name=g03_componentes_29 | Type=App::DocumentObjectGroup
+        - [G] Recintos029 | Name=g04_recintos_31 | Type=App::DocumentObjectGroup
+          - [G] Componentes058 | Name=g05_componentes_29 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales039 | Name=g06_cajas_octogonales_39 | Type=App::DocumentObjectGroup
+              - [O] Caja EMT Octogonal Componentes 012 | Name=Link_Caja_EMT_Octogonal_Componentes_012 | Type=App::Link
+              - [O] Caja EMT Octogonal Componentes 013 | Name=Link_Caja_EMT_Octogonal_Componentes_013 | Type=App::Link
+            - [G] Conexiones_Luminarias_Cajas038 | Name=g07_conexiones_luminarias_cajas_39 | Type=App::DocumentObjectGroup
+              - [O] Conexion Jefatura_Luminaria 60x60_035 -> Caja 01 | Name=conexion_lum_caja_28 | Type=Part::Feature
+              - [O] Conexion Jefatura_Luminaria 60x60_036 -> Caja 01 | Name=conexion_lum_caja_29 | Type=Part::Feature
+              - [O] Conexion Jefatura_Luminaria 60x60_037 -> Caja 02 | Name=conexion_lum_caja_30 | Type=Part::Feature
+      - [G] Componentes059 | Name=g03_componentes_30 | Type=App::DocumentObjectGroup
+        - [G] Recintos030 | Name=g04_recintos_32 | Type=App::DocumentObjectGroup
+          - [G] Componentes060 | Name=g05_componentes_30 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales040 | Name=g06_cajas_octogonales_40 | Type=App::DocumentObjectGroup
+              - [O] Caja EMT Octogonal Componentes 014 | Name=Link_Caja_EMT_Octogonal_Componentes_014 | Type=App::Link
+            - [G] Conexiones_Luminarias_Cajas039 | Name=g07_conexiones_luminarias_cajas_40 | Type=App::DocumentObjectGroup
+              - [O] Conexion Pensiones_Luminaria 60x60_009 -> Caja 01 | Name=conexion_lum_caja_32 | Type=Part::Feature
+              - [O] Conexion Pensiones_Luminaria 60x60_010 -> Caja 01 | Name=conexion_lum_caja_31 | Type=Part::Feature
+      - [G] Componentes061 | Name=g03_componentes_31 | Type=App::DocumentObjectGroup
+        - [G] Recintos031 | Name=g04_recintos_33 | Type=App::DocumentObjectGroup
+          - [G] Componentes062 | Name=g05_componentes_31 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales041 | Name=g06_cajas_octogonales_41 | Type=App::DocumentObjectGroup
+              - [O] Caja EMT Octogonal Componentes 015 | Name=Link_Caja_EMT_Octogonal_Componentes_015 | Type=App::Link
+            - [G] Conexiones_Luminarias_Cajas040 | Name=g07_conexiones_luminarias_cajas_41 | Type=App::DocumentObjectGroup
+              - [O] Conexion S.S. Familiar_Luminaria 60x60_036 -> Caja 01 | Name=conexion_lum_caja_33 | Type=Part::Feature
+      - [G] Componentes063 | Name=g03_componentes_32 | Type=App::DocumentObjectGroup
+        - [G] Recintos032 | Name=g04_recintos_34 | Type=App::DocumentObjectGroup
+          - [G] Componentes064 | Name=g05_componentes_32 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales042 | Name=g06_cajas_octogonales_42 | Type=App::DocumentObjectGroup
+              - [O] Caja EMT Octogonal Componentes 016 | Name=Link_Caja_EMT_Octogonal_Componentes_016 | Type=App::Link
+              - [O] Caja EMT Octogonal Componentes 017 | Name=Link_Caja_EMT_Octogonal_Componentes_017 | Type=App::Link
+            - [G] Conexiones_Luminarias_Cajas041 | Name=g07_conexiones_luminarias_cajas_42 | Type=App::DocumentObjectGroup
+              - [O] Conexion Frente de Platafoma_Luminaria 60x60_042 -> Caja 01 | Name=conexion_lum_caja_35 | Type=Part::Feature
+              - [O] Conexion Frente de Platafoma_Luminaria 60x60_043 -> Caja 02 | Name=conexion_lum_caja_37 | Type=Part::Feature
+              - [O] Conexion Sala de Espera_Luminaria 60x60_044 -> Caja 01 | Name=conexion_lum_caja_34 | Type=Part::Feature
+              - [O] Conexion Sala de Espera_Luminaria 60x60_045 -> Caja 02 | Name=conexion_lum_caja_36 | Type=Part::Feature
+      - [G] Componentes065 | Name=g03_componentes_33 | Type=App::DocumentObjectGroup
+        - [G] Recintos033 | Name=g04_recintos_35 | Type=App::DocumentObjectGroup
+          - [G] Componentes066 | Name=g05_componentes_33 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales043 | Name=g06_cajas_octogonales_43 | Type=App::DocumentObjectGroup
+              - [O] Caja EMT Octogonal Componentes 018 | Name=Link_Caja_EMT_Octogonal_Componentes_018 | Type=App::Link
+            - [G] Conexiones_Luminarias_Cajas042 | Name=g07_conexiones_luminarias_cajas_43 | Type=App::DocumentObjectGroup
+              - [O] Conexion Sala de Lactancia_Luminaria 60x60_010 -> Caja 01 | Name=conexion_lum_caja_38 | Type=Part::Feature
+      - [G] Componentes067 | Name=g03_componentes_34 | Type=App::DocumentObjectGroup
+        - [G] Recintos034 | Name=g04_recintos_36 | Type=App::DocumentObjectGroup
+          - [G] Componentes068 | Name=g05_componentes_34 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales044 | Name=g06_cajas_octogonales_44 | Type=App::DocumentObjectGroup
+              - [O] Caja EMT Octogonal Componentes 019 | Name=Link_Caja_EMT_Octogonal_Componentes_019 | Type=App::Link
+            - [G] Conexiones_Luminarias_Cajas043 | Name=g07_conexiones_luminarias_cajas_44 | Type=App::DocumentObjectGroup
+              - [O] Conexion Servidor_Luminaria 60x60_029 -> Caja 01 | Name=conexion_lum_caja_39 | Type=Part::Feature
+              - [O] Conexion Servidor_Luminaria 60x60_030 -> Caja 01 | Name=conexion_lum_caja_40 | Type=Part::Feature
+      - [G] Componentes069 | Name=g03_componentes_35 | Type=App::DocumentObjectGroup
+        - [G] Recintos035 | Name=g04_recintos_37 | Type=App::DocumentObjectGroup
+          - [G] Componentes070 | Name=g05_componentes_35 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales045 | Name=g06_cajas_octogonales_45 | Type=App::DocumentObjectGroup
+              - [O] Caja EMT Octogonal Componentes 020 | Name=Link_Caja_EMT_Octogonal_Componentes_020 | Type=App::Link
+            - [G] Conexiones_Luminarias_Cajas044 | Name=g07_conexiones_luminarias_cajas_45 | Type=App::DocumentObjectGroup
+              - [O] Conexion Suministros_Luminaria 60x60_002 -> Caja 01 | Name=conexion_lum_caja_41 | Type=Part::Feature
+      - [G] Sin_Circuito | Name=g03_sin_circuito | Type=App::DocumentObjectGroup
+        - [G] Recintos | Name=g04_recintos_02 | Type=App::DocumentObjectGroup
+          - [G] Sin_Recinto | Name=g05_sin_recinto | Type=App::DocumentObjectGroup
+            - [G] Cajas_Conexion_Luminarias | Name=g06_cajas_conexion_luminarias | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales002 | Name=g06_cajas_octogonales_02 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales004 | Name=g06_cajas_octogonales_04 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales006 | Name=g06_cajas_octogonales_06 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales022 | Name=g06_cajas_octogonales_22 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales023 | Name=g06_cajas_octogonales_23 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales024 | Name=g06_cajas_octogonales_24 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales025 | Name=g06_cajas_octogonales_25 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales026 | Name=g06_cajas_octogonales_26 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales027 | Name=g06_cajas_octogonales_27 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales028 | Name=g06_cajas_octogonales_28 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales029 | Name=g06_cajas_octogonales_29 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales030 | Name=g06_cajas_octogonales_30 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales046 | Name=g06_cajas_octogonales_46 | Type=App::DocumentObjectGroup
+            - [G] Cajas_Octogonales047 | Name=g06_cajas_octogonales_47 | Type=App::DocumentObjectGroup
+              - [O] Caja EMT Octogonal Sin_Recinto 002 | Name=Link_Caja_EMT_Octogonal_Sin_Recinto_002 | Type=App::Link
+            - [G] Cajas_Octogonales048 | Name=g06_cajas_octogonales_48 | Type=App::DocumentObjectGroup
+              - [O] Caja EMT Octogonal Sin_Recinto 02 | Name=Link_Caja_EMT_Octogonal_Sin_Recinto_02 | Type=App::Link
+              - [O] Caja EMT Octogonal Sin_Recinto 003 | Name=Link_Caja_EMT_Octogonal_Sin_Recinto_003 | Type=App::Link
+            - [G] Cajas_Octogonales049 | Name=g06_cajas_octogonales_49 | Type=App::DocumentObjectGroup
+              - [O] Caja EMT Octogonal Sin_Recinto 004 | Name=Link_Caja_EMT_Octogonal_Sin_Recinto_004 | Type=App::Link
+            - [G] Cajas_Octogonales050 | Name=g06_cajas_octogonales_50 | Type=App::DocumentObjectGroup
+              - [O] Caja EMT Octogonal Sin_Recinto 005 | Name=Link_Caja_EMT_Octogonal_Sin_Recinto_005 | Type=App::Link
+            - [G] Cajas_Octogonales051 | Name=g06_cajas_octogonales_51 | Type=App::DocumentObjectGroup
+              - [O] Caja EMT Octogonal Sin_Recinto 006 | Name=Link_Caja_EMT_Octogonal_Sin_Recinto_006 | Type=App::Link
+              - [O] Caja EMT Octogonal Sin_Recinto 007 | Name=Link_Caja_EMT_Octogonal_Sin_Recinto_007 | Type=App::Link
+            - [G] Cajas_Octogonales052 | Name=g06_cajas_octogonales_52 | Type=App::DocumentObjectGroup
+              - [O] Caja EMT Octogonal Sin_Recinto 008 | Name=Link_Caja_EMT_Octogonal_Sin_Recinto_008 | Type=App::Link
+            - [G] Cajas_Octogonales053 | Name=g06_cajas_octogonales_53 | Type=App::DocumentObjectGroup
+              - [O] Caja EMT Octogonal Sin_Recinto 009 | Name=Link_Caja_EMT_Octogonal_Sin_Recinto_009 | Type=App::Link
+            - [G] Cajas_Octogonales054 | Name=g06_cajas_octogonales_54 | Type=App::DocumentObjectGroup
+              - [O] Caja EMT Octogonal Sin_Recinto 010 | Name=Link_Caja_EMT_Octogonal_Sin_Recinto_010 | Type=App::Link
+            - [G] Conexiones_Luminarias_Cajas001 | Name=g07_conexiones_luminarias_cajas_02 | Type=App::DocumentObjectGroup
+            - [G] Conexiones_Luminarias_Cajas003 | Name=g07_conexiones_luminarias_cajas_04 | Type=App::DocumentObjectGroup
+            - [G] Conexiones_Luminarias_Cajas005 | Name=g07_conexiones_luminarias_cajas_06 | Type=App::DocumentObjectGroup
+            - [G] Conexiones_Luminarias_Cajas021 | Name=g07_conexiones_luminarias_cajas_22 | Type=App::DocumentObjectGroup
+            - [G] Conexiones_Luminarias_Cajas022 | Name=g07_conexiones_luminarias_cajas_23 | Type=App::DocumentObjectGroup
+            - [G] Conexiones_Luminarias_Cajas023 | Name=g07_conexiones_luminarias_cajas_24 | Type=App::DocumentObjectGroup
+            - [G] Conexiones_Luminarias_Cajas024 | Name=g07_conexiones_luminarias_cajas_25 | Type=App::DocumentObjectGroup
+            - [G] Conexiones_Luminarias_Cajas025 | Name=g07_conexiones_luminarias_cajas_26 | Type=App::DocumentObjectGroup
+            - [G] Conexiones_Luminarias_Cajas026 | Name=g07_conexiones_luminarias_cajas_27 | Type=App::DocumentObjectGroup
+            - [G] Conexiones_Luminarias_Cajas027 | Name=g07_conexiones_luminarias_cajas_28 | Type=App::DocumentObjectGroup
+            - [G] Conexiones_Luminarias_Cajas028 | Name=g07_conexiones_luminarias_cajas_29 | Type=App::DocumentObjectGroup
+            - [G] Conexiones_Luminarias_Cajas029 | Name=g07_conexiones_luminarias_cajas_30 | Type=App::DocumentObjectGroup
+            - [G] Conexiones_Luminarias_Cajas045 | Name=g07_conexiones_luminarias_cajas_46 | Type=App::DocumentObjectGroup
+            - [G] Conexiones_Luminarias_Cajas046 | Name=g07_conexiones_luminarias_cajas_47 | Type=App::DocumentObjectGroup
+              - [O] Conexion Pasillo001_Panel Redondo_002 -> Caja 01 | Name=conexion_lum_caja_44 | Type=Part::Feature
+              - [O] Conexion Pasillo002_Panel Redondo_003 -> Caja 01 | Name=conexion_lum_caja_43 | Type=Part::Feature
+            - [G] Conexiones_Luminarias_Cajas047 | Name=g07_conexiones_luminarias_cajas_48 | Type=App::DocumentObjectGroup
+              - [O] Conexion Pasillo004_Panel Redondo_007 -> Caja 01 | Name=conexion_lum_caja_46 | Type=Part::Feature
+              - [O] Conexion Pasillo004_Panel Redondo_008 -> Caja 01 | Name=conexion_lum_caja_45 | Type=Part::Feature
+              - [O] Conexion Pasillo005_Panel Redondo_002 -> Caja 02 | Name=conexion_lum_caja_47 | Type=Part::Feature
+            - [G] Conexiones_Luminarias_Cajas048 | Name=g07_conexiones_luminarias_cajas_49 | Type=App::DocumentObjectGroup
+              - [O] Conexion Bóveda_Panel Redondo_011 -> Caja 01 | Name=conexion_lum_caja_48 | Type=Part::Feature
+            - [G] Conexiones_Luminarias_Cajas049 | Name=g07_conexiones_luminarias_cajas_50 | Type=App::DocumentObjectGroup
+              - [O] Conexion Pasillo003_Panel Redondo_005 -> Caja 01 | Name=conexion_lum_caja_49 | Type=Part::Feature
+              - [O] Conexion Pasillo003_Panel Redondo_006 -> Caja 01 | Name=conexion_lum_caja_50 | Type=Part::Feature
+            - [G] Conexiones_Luminarias_Cajas050 | Name=g07_conexiones_luminarias_cajas_51 | Type=App::DocumentObjectGroup
+              - [O] Conexion Pasillo S.S._Panel Redondo_003 -> Caja 01 | Name=conexion_lum_caja_52 | Type=Part::Feature
+              - [O] Conexion Pasillo S.S._Panel Redondo_004 -> Caja 02 | Name=conexion_lum_caja_54 | Type=Part::Feature
+              - [O] Conexion S.S. Funcionarias_Panel Redondo_003 -> Caja 02 | Name=conexion_lum_caja_53 | Type=Part::Feature
+              - [O] Conexion S.S. Funcionarios_Panel Redondo_002 -> Caja 01 | Name=conexion_lum_caja_51 | Type=Part::Feature
+            - [G] Conexiones_Luminarias_Cajas051 | Name=g07_conexiones_luminarias_cajas_52 | Type=App::DocumentObjectGroup
+              - [O] Conexion Salida Trasera_Panel Redondo_010 -> Caja 01 | Name=conexion_lum_caja_55 | Type=Part::Feature
+            - [G] Conexiones_Luminarias_Cajas052 | Name=g07_conexiones_luminarias_cajas_53 | Type=App::DocumentObjectGroup
+              - [O] Conexion Suministros 2_Panel Redondo_009 -> Caja 01 | Name=conexion_lum_caja_57 | Type=Part::Feature
+              - [O] Conexion Suministros 2_Panel Redondo_010 -> Caja 01 | Name=conexion_lum_caja_56 | Type=Part::Feature
+            - [G] Conexiones_Luminarias_Cajas053 | Name=g07_conexiones_luminarias_cajas_54 | Type=App::DocumentObjectGroup
+              - [O] Conexion Tableros Eléctricos_Panel Redondo_002 -> Caja 01 | Name=conexion_lum_caja_58 | Type=Part::Feature
+  - [G] Rutas_Guia_2D | Name=RutasGuia_electrico_Rutas_Guia_2D | Type=App::DocumentObjectGroup
+    - [O] Ruta Guia 001 Der | Name=Line017 | Type=Part::Part2DObjectPython
+    - [O] Ruta Guia 001 Izq | Name=Wire108 | Type=Part::Part2DObjectPython
+    - [O] Ruta Guia 003 Arr | Name=Wire106 | Type=Part::Part2DObjectPython
+  - [G] Sensor | Name=Sensor | Type=App::DocumentObjectGroup
+    - [O] Apoyo001_Sensor_09 | Name=Part__FeaturePython008 | Type=Part::FeaturePython
+    - [O] Archivo006_Sensor_24 | Name=Part__FeaturePython023 | Type=Part::FeaturePython
+    - [O] Archivo006_Sensor_25 | Name=Part__FeaturePython024 | Type=Part::FeaturePython
+    - [O] Bóveda001_Sensor_11 | Name=Part__FeaturePython010 | Type=Part::FeaturePython
+    - [O] Caja001_Sensor_17 | Name=Part__FeaturePython016 | Type=Part::FeaturePython
+    - [O] Cobros001_Sensor_20 | Name=Part__FeaturePython019 | Type=Part::FeaturePython
+    - [O] Cochera001_Sensor_19 | Name=Part__FeaturePython018 | Type=Part::FeaturePython
+    - [O] Comedor001_Sensor_10 | Name=Part__FeaturePython009 | Type=Part::FeaturePython
+    - [O] Cuarto de Aseo001_Sensor_06 | Name=Part__FeaturePython005 | Type=Part::FeaturePython
+    - [O] Inspección001_Sensor_18 | Name=Part__FeaturePython017 | Type=Part::FeaturePython
+    - [O] Jefatura001_Sensor_12 | Name=Part__FeaturePython011 | Type=Part::FeaturePython
+    - [O] Pasillo007_Sensor_13 | Name=Part__FeaturePython012 | Type=Part::FeaturePython
+    - [O] Pasillo008_Sensor_02 | Name=Part__FeaturePython001 | Type=Part::FeaturePython
+    - [O] Pasillo S.S.001_Sensor_08 | Name=Part__FeaturePython007 | Type=Part::FeaturePython
+    - [O] Pensiones001_Sensor_04 | Name=Part__FeaturePython003 | Type=Part::FeaturePython
+    - [O] Plataforma_Sensor_22 | Name=Part__FeaturePython021 | Type=Part::FeaturePython
+    - [O] S.S. Familiar001_Sensor_16 | Name=Part__FeaturePython015 | Type=Part::FeaturePython
+    - [O] S.S. Funcionarias001_Sensor_07 | Name=Part__FeaturePython006 | Type=Part::FeaturePython
+    - [O] S.S. Funcionarios001_Sensor_03 | Name=Part__FeaturePython002 | Type=Part::FeaturePython
+    - [O] Sala de Espera001_Sensor_23 | Name=Part__FeaturePython022 | Type=Part::FeaturePython
+    - [O] Sala de Lactancia001_Sensor_05 | Name=Part__FeaturePython004 | Type=Part::FeaturePython
+    - [O] Salida Trasera001_Sensor_21 | Name=Part__FeaturePython020 | Type=Part::FeaturePython
+    - [O] Servidor001_Sensor_14 | Name=Part__FeaturePython013 | Type=Part::FeaturePython
+    - [O] Suministros001_Sensor_15 | Name=Part__FeaturePython014 | Type=Part::FeaturePython
+    - [O] Suministros 003_Sensor_01 | Name=Part__FeaturePython | Type=Part::FeaturePython
+  - [G] Tomacorrientes | Name=Tomacorrientes | Type=App::DocumentObjectGroup
+    - [G] Conexiones021 | Name=Conexiones021 | Type=App::DocumentObjectGroup
+      - [O] Conexion_C_Circuito 4 Apoyo-Toma-06_Circuito 4 Apoyo-Toma-08 | Name=Wire072 | Type=Part::Part2DObjectPython
+      - [O] Conexion_C_Circuito 5 Sala de Espera-Toma-04_Circuito 5 Sala de Espera-Toma-03 | Name=Wire056 | Type=Part::Part2DObjectPython
+      - [O] Conexion_C_Circuito 8 Suministro 2-Toma-03_Circuito 8 Suministro 2-Toma-04 | Name=Wire075 | Type=Part::Part2DObjectPython
+      - [O] Conexion_C_Circuito Servidor-Toma-07_Circuito Servidor-Toma-06 | Name=Wire066 | Type=Part::Part2DObjectPython
+      - [O] Conexion_C_Toma_002_Toma_065 | Name=Wire080 | Type=Part::Part2DObjectPython
+      - [O] Conexion_C_Toma_003_Toma_004 | Name=Wire079 | Type=Part::Part2DObjectPython
+      - [O] Conexion_C_Toma_005_Toma_064 | Name=Wire078 | Type=Part::Part2DObjectPython
+      - [O] Conexion_C_Toma_160_Toma_063 | Name=Wire076 | Type=Part::Part2DObjectPython
+    - [G] Tomas de Computo 1 | Name=Circuito009 | Type=App::DocumentObjectGroup
+      - [O] Circuito 01 Inspeccion-Toma-013 | Name=Part__FeaturePython119 | Type=Part::FeaturePython
+      - [O] Circuito 01 Inspeccion-Toma-014 | Name=Part__FeaturePython120 | Type=Part::FeaturePython
+      - [O] Circuito 03 Pensiones-Toma-011 | Name=Part__FeaturePython121 | Type=Part::FeaturePython
+    - [G] TP-01 Inspeccion | Name=Circuito006 | Type=App::DocumentObjectGroup
+      - [G] Alimentadores_EMT006 | Name=Alimentadores_Circuito006_Alimentadores_EMT | Type=App::DocumentObjectGroup
+        - [O] EMT_TP_01_Inspeccion: Caja EMT Octogonal - Circuito 01 Inspeccion-Toma-008 -> Tablero_3D | Name=Wire560 | Type=Part::Part2DObjectPython
+      - [G] Cajas_TP-01 Inspeccion | Name=CajaOct_Circuito006_Cajas_TP_01_Inspeccion | Type=App::DocumentObjectGroup
+        - [O] Caja EMT Octogonal - Circuito 01 Inspeccion-Toma-008 | Name=Link_Caja_EMT_Octogonal_Circuito_01_Inspeccion_Toma_008 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito 01 Inspeccion-Toma-009 | Name=Link_Caja_EMT_Octogonal_Circuito_01_Inspeccion_Toma_009 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito 01 Inspeccion-Toma-010 | Name=Link_Caja_EMT_Octogonal_Circuito_01_Inspeccion_Toma_010 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito 01 Inspeccion-Toma-011 | Name=Link_Caja_EMT_Octogonal_Circuito_01_Inspeccion_Toma_011 | Type=App::Link
+      - [O] Circuito 01 Inspeccion-Toma-007 | Name=Part__FeaturePython046 | Type=Part::FeaturePython
+      - [O] Circuito 01 Inspeccion-Toma-008 | Name=Part__FeaturePython047 | Type=Part::FeaturePython
+      - [O] Circuito 01 Inspeccion-Toma-009 | Name=Part__FeaturePython048 | Type=Part::FeaturePython
+      - [O] Circuito 01 Inspeccion-Toma-010 | Name=Part__FeaturePython049 | Type=Part::FeaturePython
+      - [O] Circuito 01 Inspeccion-Toma-011 | Name=Part__FeaturePython050 | Type=Part::FeaturePython
+      - [O] Circuito 01 Inspeccion-Toma-012 | Name=Part__FeaturePython051 | Type=Part::FeaturePython
+      - [G] Conexiones001 | Name=Conexiones001 | Type=App::DocumentObjectGroup
+        - [O] Conexion_Snake_Circuito 01 Inspeccion_Circuito 01 Inspeccion-Toma-01_Circuito 01 Inspeccion-Toma-06 | Name=Wire001 | Type=Part::Part2DObjectPython
+        - [O] Etiqueta_TP-01 Inspeccion | Name=EtiquetaCircuito | Type=Part::Feature
+        - [O] Ruta Critica hacia Circuito 01 Inspeccion-Toma-009 | Name=Wire084 | Type=Part::Part2DObjectPython
+      - [G] Ramales_EMT | Name=Ramales_EMT | Type=App::DocumentObjectGroup
+        - [O] EMT_TP_01_Inspeccion: Caja EMT Octogonal - Circuito 01 Inspeccion-Toma-009 -> Caja EMT Octogonal - Circuito 01 Inspeccion-Toma-008 | Name=Wire117 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_01_Inspeccion: Caja EMT Octogonal - Circuito 01 Inspeccion-Toma-010 -> Caja EMT Octogonal - Circuito 01 Inspeccion-Toma-009 | Name=Wire116 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_01_Inspeccion: Caja EMT Octogonal - Circuito 01 Inspeccion-Toma-011 -> Caja EMT Octogonal - Circuito 01 Inspeccion-Toma-010 | Name=Wire115 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_01_Inspeccion: Circuito 01 Inspeccion-Toma-007 -> Circuito 01 Inspeccion-Toma-008 | Name=Wire113 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_01_Inspeccion: Circuito 01 Inspeccion-Toma-008 -> Caja EMT Octogonal - Circuito 01 Inspeccion-Toma-008 | Name=Wire109 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_01_Inspeccion: Circuito 01 Inspeccion-Toma-009 -> Caja EMT Octogonal - Circuito 01 Inspeccion-Toma-009 | Name=Wire110 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_01_Inspeccion: Circuito 01 Inspeccion-Toma-010 -> Caja EMT Octogonal - Circuito 01 Inspeccion-Toma-010 | Name=Wire111 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_01_Inspeccion: Circuito 01 Inspeccion-Toma-011 -> Caja EMT Octogonal - Circuito 01 Inspeccion-Toma-011 | Name=Wire112 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_01_Inspeccion: Circuito 01 Inspeccion-Toma-012 -> Circuito 01 Inspeccion-Toma-011 | Name=Wire114 | Type=Part::Part2DObjectPython
+    - [G] TP-02 Cobros | Name=Circuito007 | Type=App::DocumentObjectGroup
+      - [G] Alimentadores_EMT231 | Name=Alimentadores_Circuito007_Alimentadores_EMT_02 | Type=App::DocumentObjectGroup
+        - [O] EMT_TP_02_Cobros: Caja EMT Octogonal - Circuito 02 Cobros-Toma-011 -> Tablero_3D | Name=Wire561 | Type=Part::Part2DObjectPython
+      - [G] Cajas_TP-02 Cobros | Name=CajaOct_Circuito007_Cajas_TP_02_Cobros | Type=App::DocumentObjectGroup
+        - [O] Caja EMT Octogonal - Circuito 02 Cobros-Toma-008 | Name=Link_Caja_EMT_Octogonal_Circuito_02_Cobros_Toma_008 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito 02 Cobros-Toma-010 | Name=Link_Caja_EMT_Octogonal_Circuito_02_Cobros_Toma_010 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito 02 Cobros-Toma-011 | Name=Link_Caja_EMT_Octogonal_Circuito_02_Cobros_Toma_011 | Type=App::Link
+      - [O] Circuito 02 Cobros-Toma-007 | Name=Part__FeaturePython052 | Type=Part::FeaturePython
+      - [O] Circuito 02 Cobros-Toma-008 | Name=Part__FeaturePython053 | Type=Part::FeaturePython
+      - [O] Circuito 02 Cobros-Toma-009 | Name=Part__FeaturePython054 | Type=Part::FeaturePython
+      - [O] Circuito 02 Cobros-Toma-010 | Name=Part__FeaturePython055 | Type=Part::FeaturePython
+      - [O] Circuito 02 Cobros-Toma-011 | Name=Part__FeaturePython056 | Type=Part::FeaturePython
+      - [O] Circuito 02 Cobros-Toma-012 | Name=Part__FeaturePython057 | Type=Part::FeaturePython
+      - [G] Conexiones | Name=Conexiones | Type=App::DocumentObjectGroup
+        - [O] Acometida_Pedestal_Acometida_Tablero_rea_de_Trabajo006 | Name=Wire105 | Type=Part::Part2DObjectPython
+        - [O] Conexion_C_Circuito Archivo-Tomas-02_Toma_ | Name=Wire081 | Type=Part::Part2DObjectPython
+        - [O] Conexion_C_Circuito Archivo-Tomas-03_Circuito Archivo-Tomas-04 | Name=Wire083 | Type=Part::Part2DObjectPython
+        - [O] Conexion_C_Toma__Circuito Archivo-Tomas-03 | Name=Wire082 | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito 02 Cobros_Circuito 02 Cobros-Toma-01_Circuito 02 Cobros-Toma-06 | Name=Wire | Type=Part::Part2DObjectPython
+        - [O] Etiqueta_TP-02 Cobros | Name=EtiquetaCircuito010 | Type=Part::Feature
+        - [O] Ruta Critica hacia Circuito 02 Cobros-Toma-007 | Name=Wire085 | Type=Part::Part2DObjectPython
+      - [G] Ramales_EMT001 | Name=Ramales_EMT001 | Type=App::DocumentObjectGroup
+        - [O] EMT_TP_02_Cobros: Caja EMT Octogonal - Circuito 02 Cobros-Toma-010 -> Caja EMT Octogonal - Circuito 02 Cobros-Toma-008 | Name=Wire124 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_02_Cobros: Caja EMT Octogonal - Circuito 02 Cobros-Toma-011 -> Caja EMT Octogonal - Circuito 02 Cobros-Toma-010 | Name=Wire123 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_02_Cobros: Circuito 02 Cobros-Toma-007 -> Circuito 02 Cobros-Toma-008 | Name=Line018 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_02_Cobros: Circuito 02 Cobros-Toma-008 -> Caja EMT Octogonal - Circuito 02 Cobros-Toma-008 | Name=Wire118 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_02_Cobros: Circuito 02 Cobros-Toma-009 -> Circuito 02 Cobros-Toma-010 | Name=Wire121 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_02_Cobros: Circuito 02 Cobros-Toma-010 -> Caja EMT Octogonal - Circuito 02 Cobros-Toma-010 | Name=Wire119 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_02_Cobros: Circuito 02 Cobros-Toma-011 -> Caja EMT Octogonal - Circuito 02 Cobros-Toma-011 | Name=Wire120 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_02_Cobros: Circuito 02 Cobros-Toma-012 -> Circuito 02 Cobros-Toma-011 | Name=Wire122 | Type=Part::Part2DObjectPython
+    - [G] TP-03 Pensiones | Name=Circuito002 | Type=App::DocumentObjectGroup
+      - [G] Alimentadores_EMT008 | Name=Alimentadores_Circuito002_Alimentadores_EMT | Type=App::DocumentObjectGroup
+        - [O] EMT_TP_03_Pensiones: Caja EMT Octogonal - Circuito 03 Pensiones-Toma-010 -> Tablero_3D | Name=Wire562 | Type=Part::Part2DObjectPython
+      - [G] Cajas_TP-03 Pensiones | Name=CajaOct_Circuito002_Cajas_TP_03_Pensiones | Type=App::DocumentObjectGroup
+        - [O] Caja EMT Octogonal - Circuito 03 Pensiones-Toma-007 | Name=Link_Caja_EMT_Octogonal_Circuito_03_Pensiones_Toma_007 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito 03 Pensiones-Toma-009 | Name=Link_Caja_EMT_Octogonal_Circuito_03_Pensiones_Toma_009 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito 03 Pensiones-Toma-010 | Name=Link_Caja_EMT_Octogonal_Circuito_03_Pensiones_Toma_010 | Type=App::Link
+      - [O] Circuito 03 Pensiones-Toma-006 | Name=Part__FeaturePython058 | Type=Part::FeaturePython
+      - [O] Circuito 03 Pensiones-Toma-007 | Name=Part__FeaturePython059 | Type=Part::FeaturePython
+      - [O] Circuito 03 Pensiones-Toma-008 | Name=Part__FeaturePython060 | Type=Part::FeaturePython
+      - [O] Circuito 03 Pensiones-Toma-009 | Name=Part__FeaturePython061 | Type=Part::FeaturePython
+      - [O] Circuito 03 Pensiones-Toma-010 | Name=Part__FeaturePython062 | Type=Part::FeaturePython
+      - [G] Conexiones002 | Name=Conexiones002 | Type=App::DocumentObjectGroup
+        - [O] Conexion_Snake_Circuito 03 Pensiones_Circuito 03 Pensiones-Toma-01_Circuito 03 Pensiones-Toma-02_01 | Name=Wire002 | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito 03 Pensiones_Circuito 03 Pensiones-Toma-02_Circuito 03 Pensiones-Toma-03_02 | Name=Wire003 | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito 03 Pensiones_Circuito 03 Pensiones-Toma-03_Circuito 03 Pensiones-Toma-04_03 | Name=Line | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito 03 Pensiones_Circuito 03 Pensiones-Toma-04_Circuito 03 Pensiones-Toma-05_04 | Name=Wire004 | Type=Part::Part2DObjectPython
+        - [O] Etiqueta_TP-03 Pensiones | Name=EtiquetaCircuito031 | Type=Part::Feature
+        - [O] Ruta Critica hacia Circuito 03 Pensiones-Toma-006 | Name=Wire086 | Type=Part::Part2DObjectPython
+      - [G] Ramales_EMT002 | Name=Ramales_EMT002 | Type=App::DocumentObjectGroup
+        - [O] EMT_TP_03_Pensiones: Caja EMT Octogonal - Circuito 03 Pensiones-Toma-009 -> Caja EMT Octogonal - Circuito 03 Pensiones-Toma-007 | Name=Wire130 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_03_Pensiones: Caja EMT Octogonal - Circuito 03 Pensiones-Toma-010 -> Caja EMT Octogonal - Circuito 03 Pensiones-Toma-009 | Name=Wire129 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_03_Pensiones: Circuito 03 Pensiones-Toma-006 -> Circuito 03 Pensiones-Toma-007 | Name=Line019 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_03_Pensiones: Circuito 03 Pensiones-Toma-007 -> Caja EMT Octogonal - Circuito 03 Pensiones-Toma-007 | Name=Wire125 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_03_Pensiones: Circuito 03 Pensiones-Toma-008 -> Circuito 03 Pensiones-Toma-009 | Name=Wire128 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_03_Pensiones: Circuito 03 Pensiones-Toma-009 -> Caja EMT Octogonal - Circuito 03 Pensiones-Toma-009 | Name=Wire126 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_03_Pensiones: Circuito 03 Pensiones-Toma-010 -> Caja EMT Octogonal - Circuito 03 Pensiones-Toma-010 | Name=Wire127 | Type=Part::Part2DObjectPython
+    - [G] TP-04 Sala de Lactancia | Name=Circuito003 | Type=App::DocumentObjectGroup
+      - [G] Alimentadores_EMT009 | Name=Alimentadores_Circuito003_Alimentadores_EMT | Type=App::DocumentObjectGroup
+        - [O] EMT_TP_04_Sala_de_Lactancia: Caja EMT Octogonal - Circuito 04 Sala de Lactancia-Toma-009 -> Tablero_3D | Name=Wire563 | Type=Part::Part2DObjectPython
+      - [G] Cajas_TP-04 Sala de Lactancia | Name=CajaOct_Circuito003_Cajas_TP_04_Sala_de_Lactancia | Type=App::DocumentObjectGroup
+        - [O] Caja EMT Octogonal - Circuito 04 Sala de Lactancia-Toma-006 | Name=Link_Caja_EMT_Octogonal_Circuito_04_Sala_de_Lactancia_Toma_006 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito 04 Sala de Lactancia-Toma-007 | Name=Link_Caja_EMT_Octogonal_Circuito_04_Sala_de_Lactancia_Toma_007 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito 04 Sala de Lactancia-Toma-009 | Name=Link_Caja_EMT_Octogonal_Circuito_04_Sala_de_Lactancia_Toma_009 | Type=App::Link
+      - [O] Circuito 04 Sala de Lactancia-Toma-006 | Name=Part__FeaturePython063 | Type=Part::FeaturePython
+      - [O] Circuito 04 Sala de Lactancia-Toma-007 | Name=Part__FeaturePython064 | Type=Part::FeaturePython
+      - [O] Circuito 04 Sala de Lactancia-Toma-008 | Name=Part__FeaturePython065 | Type=Part::FeaturePython
+      - [O] Circuito 04 Sala de Lactancia-Toma-009 | Name=Part__FeaturePython066 | Type=Part::FeaturePython
+      - [G] Conexiones003 | Name=Conexiones003 | Type=App::DocumentObjectGroup
+        - [O] Conexion_Snake_Circuito 04 Sala de Lactancia_Circuito 04 Sala de Lactancia-Toma-01_Circuito 04 Sala de Lactancia-Toma-02_01 | Name=Wire009 | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito 04 Sala de Lactancia_Circuito 04 Sala de Lactancia-Toma-02_Circuito 04 Sala de Lactancia-Toma-03_02 | Name=Line004 | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito 04 Sala de Lactancia_Circuito 04 Sala de Lactancia-Toma-03_Circuito 04 Sala de Lactancia-Toma-04_03 | Name=Wire010 | Type=Part::Part2DObjectPython
+        - [O] Etiqueta_TP-04 Sala de Lactancia | Name=EtiquetaCircuito032 | Type=Part::Feature
+        - [O] Ruta Critica hacia Circuito 04 Sala de Lactancia-Toma-006 | Name=Wire087 | Type=Part::Part2DObjectPython
+      - [G] Ramales_EMT003 | Name=Ramales_EMT003 | Type=App::DocumentObjectGroup
+        - [O] EMT_TP_04_Sala_de_Lactancia: Caja EMT Octogonal - Circuito 04 Sala de Lactancia-Toma-007 -> Caja EMT Octogonal - Circuito 04 Sala de Lactancia-Toma-006 | Name=Wire136 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_04_Sala_de_Lactancia: Caja EMT Octogonal - Circuito 04 Sala de Lactancia-Toma-009 -> Caja EMT Octogonal - Circuito 04 Sala de Lactancia-Toma-007 | Name=Wire135 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_04_Sala_de_Lactancia: Circuito 04 Sala de Lactancia-Toma-006 -> Caja EMT Octogonal - Circuito 04 Sala de Lactancia-Toma-006 | Name=Wire131 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_04_Sala_de_Lactancia: Circuito 04 Sala de Lactancia-Toma-007 -> Caja EMT Octogonal - Circuito 04 Sala de Lactancia-Toma-007 | Name=Wire132 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_04_Sala_de_Lactancia: Circuito 04 Sala de Lactancia-Toma-008 -> Circuito 04 Sala de Lactancia-Toma-007 | Name=Wire134 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_04_Sala_de_Lactancia: Circuito 04 Sala de Lactancia-Toma-009 -> Caja EMT Octogonal - Circuito 04 Sala de Lactancia-Toma-009 | Name=Wire133 | Type=Part::Part2DObjectPython
+    - [G] TP-05 Cuarto de Aseo | Name=Circuito_1 | Type=App::DocumentObjectGroup
+      - [G] Alimentadores_EMT010 | Name=Alimentadores_Circuito_1_Alimentadores_EMT | Type=App::DocumentObjectGroup
+        - [O] EMT_TP_05_Cuarto_de_Aseo: Caja EMT Octogonal -> Tablero_3D | Name=Wire564 | Type=Part::Part2DObjectPython
+      - [G] Cajas_TP-05 Cuarto de Aseo | Name=CajaOct_Circuito_1_Cajas_TP_05_Cuarto_de_Aseo | Type=App::DocumentObjectGroup
+        - [O] Caja EMT Octogonal - Circuito 05 - Cuarto de Aseo-Tomas-006 | Name=Link_Caja_EMT_Octogonal_Circuito_05_Cuarto_de_Aseo_Tomas_006 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito 05 - Cuarto de Aseo-Tomas-007 | Name=Link_Caja_EMT_Octogonal_Circuito_05_Cuarto_de_Aseo_Tomas_007 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito 05 - Cuarto de Aseo-Tomas-008 | Name=Link_Caja_EMT_Octogonal_Circuito_05_Cuarto_de_Aseo_Tomas_008 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito 05 - Cuarto de Aseo-Tomas-009 | Name=Link_Caja_EMT_Octogonal_Circuito_05_Cuarto_de_Aseo_Tomas_009 | Type=App::Link
+        - [G] Conexiones040 | Name=Conexiones040 | Type=App::DocumentObjectGroup
+      - [O] Circuito 05 - Cuarto de Aseo-Tomas-006 | Name=Part__FeaturePython067 | Type=Part::FeaturePython
+      - [O] Circuito 05 - Cuarto de Aseo-Tomas-007 | Name=Part__FeaturePython068 | Type=Part::FeaturePython
+      - [O] Circuito 05 - Cuarto de Aseo-Tomas-008 | Name=Part__FeaturePython069 | Type=Part::FeaturePython
+      - [O] Circuito 05 - Cuarto de Aseo-Tomas-009 | Name=Part__FeaturePython070 | Type=Part::FeaturePython
+      - [O] Circuito 05 - Cuarto de Aseo-Tomas-010 | Name=Part__FeaturePython071 | Type=Part::FeaturePython
+      - [G] Conexiones004 | Name=Conexiones004 | Type=App::DocumentObjectGroup
+        - [O] Conexion_Snake_Circuito 05 - Cuarto de Aseo_Circuito 05 - Cuarto de Aseo-Tomas-01_Circuito 05 - Cuarto de Aseo-Tomas-02_01 | Name=Wire005 | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito 05 - Cuarto de Aseo_Circuito 05 - Cuarto de Aseo-Tomas-02_Circuito 05 - Cuarto de Aseo-Tomas-03_02 | Name=Wire006 | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito 05 - Cuarto de Aseo_Circuito 05 - Cuarto de Aseo-Tomas-03_Circuito 05 - Cuarto de Aseo-Tomas-04_03 | Name=Wire007 | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito 05 - Cuarto de Aseo_Circuito 05 - Cuarto de Aseo-Tomas-04_Circuito 05 - Cuarto de Aseo-Tomas-05_04 | Name=Line001 | Type=Part::Part2DObjectPython
+        - [O] Etiqueta_TP-05 Cuarto de Aseo001 | Name=EtiquetaCircuito016 | Type=Part::Feature
+        - [O] Ruta Critica hacia Circuito 05 - Cuarto de Aseo-Tomas-006 | Name=Wire088 | Type=Part::Part2DObjectPython
+      - [G] Ramales_EMT004 | Name=Ramales_EMT004 | Type=App::DocumentObjectGroup
+        - [O] EMT_TP_05_Cuarto_de_Aseo: Caja EMT Octogonal - Circuito 05 - Cuarto de Aseo-Tomas-006 -> Caja EMT Octogonal - Circuito 05 - Cuarto de Aseo-Tomas-008 | Name=Wire571 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_05_Cuarto_de_Aseo: Caja EMT Octogonal - Circuito 05 - Cuarto de Aseo-Tomas-007 -> Caja EMT Octogonal001 | Name=Line038 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_05_Cuarto_de_Aseo: Caja EMT Octogonal - Circuito 05 - Cuarto de Aseo-Tomas-009 -> Caja EMT Octogonal - Circuito 05 - Cuarto de Aseo-Tomas-008 | Name=Wire144 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_05_Cuarto_de_Aseo: Caja EMT Octogonal -> Caja EMT Octogonal - Circuito 05 - Cuarto de Aseo-Tomas-009 | Name=Line020 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_05_Cuarto_de_Aseo: Circuito 05 - Cuarto de Aseo-Tomas-006 -> Caja EMT Octogonal - Circuito 05 - Cuarto de Aseo-Tomas-006 | Name=Wire137 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_05_Cuarto_de_Aseo: Circuito 05 - Cuarto de Aseo-Tomas-007 -> Caja EMT Octogonal - Circuito 05 - Cuarto de Aseo-Tomas-007 | Name=Wire138 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_05_Cuarto_de_Aseo: Circuito 05 - Cuarto de Aseo-Tomas-008 -> Caja EMT Octogonal - Circuito 05 - Cuarto de Aseo-Tomas-008 | Name=Wire139 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_05_Cuarto_de_Aseo: Circuito 05 - Cuarto de Aseo-Tomas-009 -> Caja EMT Octogonal - Circuito 05 - Cuarto de Aseo-Tomas-009 | Name=Wire140 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_05_Cuarto_de_Aseo: Circuito 05 - Cuarto de Aseo-Tomas-010 -> Circuito 05 - Cuarto de Aseo-Tomas-009 | Name=Wire141 | Type=Part::Part2DObjectPython
+    - [G] TP-06 Sala de Espera | Name=Circuito_5 | Type=App::DocumentObjectGroup
+      - [G] Alimentadores_EMT001 | Name=Alimentadores_Circuito_5_Alimentadores_EMT | Type=App::DocumentObjectGroup
+        - [O] EMT_TP_06_Sala_de_Espera: Caja EMT Octogonal - Circuito 5 Sala de Espera-Toma-009 -> Tablero_3D | Name=Wire555 | Type=Part::Part2DObjectPython
+      - [G] Cajas_TP-06 Sala de Espera | Name=CajaOct_Circuito_5_Cajas_TP_06_Sala_de_Espera | Type=App::DocumentObjectGroup
+        - [O] Caja EMT Octogonal - Circuito 5 Sala de Espera-Toma-007 | Name=Link_Caja_EMT_Octogonal_Circuito_5_Sala_de_Espera_Toma_007 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito 5 Sala de Espera-Toma-008 | Name=Link_Caja_EMT_Octogonal_Circuito_5_Sala_de_Espera_Toma_008 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito 5 Sala de Espera-Toma-009 | Name=Link_Caja_EMT_Octogonal_Circuito_5_Sala_de_Espera_Toma_009 | Type=App::Link
+      - [O] Circuito 5 Sala de Espera-Toma-006 | Name=Part__FeaturePython072 | Type=Part::FeaturePython
+      - [O] Circuito 5 Sala de Espera-Toma-007 | Name=Part__FeaturePython073 | Type=Part::FeaturePython
+      - [O] Circuito 5 Sala de Espera-Toma-008 | Name=Part__FeaturePython074 | Type=Part::FeaturePython
+      - [O] Circuito 5 Sala de Espera-Toma-009 | Name=Part__FeaturePython075 | Type=Part::FeaturePython
+      - [O] Circuito 5 Sala de Espera-Toma-010 | Name=Part__FeaturePython076 | Type=Part::FeaturePython
+      - [G] Conexiones015 | Name=Conexiones015 | Type=App::DocumentObjectGroup
+        - [O] Conexion_Snake_Circuito 5 Sala de Espera_Circuito 5 Sala de Espera-Toma-01_Circuito 5 Sala de Espera-Toma-02_01 | Name=Line011 | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito 5 Sala de Espera_Circuito 5 Sala de Espera-Toma-02_Circuito 5 Sala de Espera-Toma-03_02 | Name=Wire042 | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito 5 Sala de Espera_Circuito 5 Sala de Espera-Toma-04_Circuito 5 Sala de Espera-Toma-05_04 | Name=Wire044 | Type=Part::Part2DObjectPython
+        - [O] Etiqueta_TP-06 Sala de Espera | Name=EtiquetaCircuito022 | Type=Part::Feature
+        - [O] Ruta Critica hacia Circuito 5 Sala de Espera-Toma-006 | Name=Wire089 | Type=Part::Part2DObjectPython
+      - [G] Ramales_EMT005 | Name=Ramales_EMT005 | Type=App::DocumentObjectGroup
+        - [O] EMT_TP_06_Sala_de_Espera: Caja EMT Octogonal - Circuito 5 Sala de Espera-Toma-007 -> Caja EMT Octogonal - Circuito 5 Sala de Espera-Toma-008 | Name=Wire149 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_06_Sala_de_Espera: Caja EMT Octogonal - Circuito 5 Sala de Espera-Toma-008 -> Caja EMT Octogonal - Circuito 5 Sala de Espera-Toma-009 | Name=Wire150 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_06_Sala_de_Espera: Circuito 5 Sala de Espera-Toma-006 -> Circuito 5 Sala de Espera-Toma-008 | Name=Wire574 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_06_Sala_de_Espera: Circuito 5 Sala de Espera-Toma-007 -> Caja EMT Octogonal - Circuito 5 Sala de Espera-Toma-007 | Name=Wire145 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_06_Sala_de_Espera: Circuito 5 Sala de Espera-Toma-008 -> Caja EMT Octogonal - Circuito 5 Sala de Espera-Toma-008 | Name=Wire146 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_06_Sala_de_Espera: Circuito 5 Sala de Espera-Toma-009 -> Caja EMT Octogonal - Circuito 5 Sala de Espera-Toma-009 | Name=Wire147 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_06_Sala_de_Espera: Circuito 5 Sala de Espera-Toma-010 -> Circuito 5 Sala de Espera-Toma-009 | Name=Wire148 | Type=Part::Part2DObjectPython
+    - [G] TP-07 Caja | Name=Circuito_2 | Type=App::DocumentObjectGroup
+      - [G] Alimentadores_EMT005 | Name=Alimentadores_Circuito_2_Alimentadores_EMT | Type=App::DocumentObjectGroup
+        - [O] EMT_TP_07_Caja: Caja EMT Octogonal - Circuito 2 Caja-Toma-008 -> Tablero_3D | Name=Wire559 | Type=Part::Part2DObjectPython
+      - [G] Cajas_TP-07 Caja | Name=CajaOct_Circuito_2_Cajas_TP_07_Caja | Type=App::DocumentObjectGroup
+        - [O] Caja EMT Octogonal - Circuito 2 Caja-Toma-008 | Name=Link_Caja_EMT_Octogonal_Circuito_2_Caja_Toma_008 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito 2 Caja-Toma-009 | Name=Link_Caja_EMT_Octogonal_Circuito_2_Caja_Toma_009 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito 2 Caja-Toma-011 | Name=Link_Caja_EMT_Octogonal_Circuito_2_Caja_Toma_011 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito 2 Caja-Toma-013 | Name=Link_Caja_EMT_Octogonal_Circuito_2_Caja_Toma_013 | Type=App::Link
+      - [O] Circuito 2 Caja-Toma-01 | Name=Part__FeaturePython030 | Type=Part::FeaturePython
+      - [O] Circuito 2 Caja-Toma-008 | Name=Part__FeaturePython077 | Type=Part::FeaturePython
+      - [O] Circuito 2 Caja-Toma-009 | Name=Part__FeaturePython078 | Type=Part::FeaturePython
+      - [O] Circuito 2 Caja-Toma-010 | Name=Part__FeaturePython079 | Type=Part::FeaturePython
+      - [O] Circuito 2 Caja-Toma-011 | Name=Part__FeaturePython080 | Type=Part::FeaturePython
+      - [O] Circuito 2 Caja-Toma-012 | Name=Part__FeaturePython081 | Type=Part::FeaturePython
+      - [O] Circuito 2 Caja-Toma-013 | Name=Part__FeaturePython082 | Type=Part::FeaturePython
+      - [G] Conexiones016 | Name=Conexiones016 | Type=App::DocumentObjectGroup
+        - [O] Conexion_Snake_Circuito 2 Caja_Circuito 2 Caja-Toma-01_Circuito 2 Caja-Toma-02_01 | Name=Wire045 | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito 2 Caja_Circuito 2 Caja-Toma-02_Circuito 2 Caja-Toma-03_02 | Name=Wire046 | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito 2 Caja_Circuito 2 Caja-Toma-03_Circuito 2 Caja-Toma-04_03 | Name=Line012 | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito 2 Caja_Circuito 2 Caja-Toma-04_Circuito 2 Caja-Toma-05_04 | Name=Wire047 | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito 2 Caja_Circuito 2 Caja-Toma-05_Circuito 2 Caja-Toma-06_05 | Name=Wire048 | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito 2 Caja_Circuito 2 Caja-Toma-06_Circuito 2 Caja-Toma-07_06 | Name=Wire049 | Type=Part::Part2DObjectPython
+        - [O] Etiqueta_TP-07 Caja | Name=EtiquetaCircuito018 | Type=Part::Feature
+        - [O] Ruta Critica hacia Circuito 2 Caja-Toma-011 | Name=Wire090 | Type=Part::Part2DObjectPython
+      - [G] Ramales_EMT006 | Name=Ramales_EMT006 | Type=App::DocumentObjectGroup
+        - [O] EMT_TP_07_Caja: Caja EMT Octogonal - Circuito 2 Caja-Toma-009 -> Caja EMT Octogonal - Circuito 2 Caja-Toma-008 | Name=Wire158 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_07_Caja: Caja EMT Octogonal - Circuito 2 Caja-Toma-011 -> Caja EMT Octogonal - Circuito 2 Caja-Toma-009 | Name=Wire157 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_07_Caja: Caja EMT Octogonal - Circuito 2 Caja-Toma-013 -> Caja EMT Octogonal - Circuito 2 Caja-Toma-011 | Name=Wire156 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_07_Caja: Circuito 2 Caja-Toma-01 -> Circuito 2 Caja-Toma-008 | Name=Line022 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_07_Caja: Circuito 2 Caja-Toma-008 -> Caja EMT Octogonal - Circuito 2 Caja-Toma-008 | Name=Wire151 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_07_Caja: Circuito 2 Caja-Toma-009 -> Caja EMT Octogonal - Circuito 2 Caja-Toma-009 | Name=Wire152 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_07_Caja: Circuito 2 Caja-Toma-010 -> Circuito 2 Caja-Toma-009 | Name=Wire155 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_07_Caja: Circuito 2 Caja-Toma-011 -> Caja EMT Octogonal - Circuito 2 Caja-Toma-011 | Name=Wire153 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_07_Caja: Circuito 2 Caja-Toma-012 -> Circuito 2 Caja-Toma-013 | Name=Line023 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_07_Caja: Circuito 2 Caja-Toma-013 -> Caja EMT Octogonal - Circuito 2 Caja-Toma-013 | Name=Wire154 | Type=Part::Part2DObjectPython
+    - [G] TP-08 Plataforma | Name=Circuito_3 | Type=App::DocumentObjectGroup
+      - [G] Alimentadores_EMT | Name=Alimentadores_Circuito_3_Alimentadores_EMT | Type=App::DocumentObjectGroup
+        - [O] EMT_TP_08_Plataforma: Caja EMT Octogonal - Circuito 3 Plataforma-Toma-012 -> Tablero_3D | Name=Wire554 | Type=Part::Part2DObjectPython
+      - [G] Cajas_TP-08 Plataforma | Name=CajaOct_Circuito_3_Cajas_TP_08_Plataforma | Type=App::DocumentObjectGroup
+        - [O] Caja EMT Octogonal - Circuito 3 Plataforma-Toma-007 | Name=Link_Caja_EMT_Octogonal_Circuito_3_Plataforma_Toma_007 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito 3 Plataforma-Toma-009 | Name=Link_Caja_EMT_Octogonal_Circuito_3_Plataforma_Toma_009 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito 3 Plataforma-Toma-010 | Name=Link_Caja_EMT_Octogonal_Circuito_3_Plataforma_Toma_010 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito 3 Plataforma-Toma-012 | Name=Link_Caja_EMT_Octogonal_Circuito_3_Plataforma_Toma_012 | Type=App::Link
+      - [O] Circuito 3 Plataforma-Toma-007 | Name=Part__FeaturePython083 | Type=Part::FeaturePython
+      - [O] Circuito 3 Plataforma-Toma-008 | Name=Part__FeaturePython084 | Type=Part::FeaturePython
+      - [O] Circuito 3 Plataforma-Toma-009 | Name=Part__FeaturePython085 | Type=Part::FeaturePython
+      - [O] Circuito 3 Plataforma-Toma-010 | Name=Part__FeaturePython086 | Type=Part::FeaturePython
+      - [O] Circuito 3 Plataforma-Toma-011 | Name=Part__FeaturePython087 | Type=Part::FeaturePython
+      - [O] Circuito 3 Plataforma-Toma-012 | Name=Part__FeaturePython088 | Type=Part::FeaturePython
+      - [G] Conexiones017 | Name=Conexiones017 | Type=App::DocumentObjectGroup
+        - [O] Conexion_Snake_Circuito 3 Plataforma_Circuito 3 Plataforma-Toma-01_Circuito 3 Plataforma-Toma-02_01 | Name=Wire057 | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito 3 Plataforma_Circuito 3 Plataforma-Toma-02_Circuito 3 Plataforma-Toma-03_02 | Name=Wire058 | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito 3 Plataforma_Circuito 3 Plataforma-Toma-03_Circuito 3 Plataforma-Toma-04_03 | Name=Wire059 | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito 3 Plataforma_Circuito 3 Plataforma-Toma-04_Circuito 3 Plataforma-Toma-05_04 | Name=Wire060 | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito 3 Plataforma_Circuito 3 Plataforma-Toma-05_Circuito 3 Plataforma-Toma-06_05 | Name=Wire061 | Type=Part::Part2DObjectPython
+        - [O] Etiqueta_TP-08 Plataforma | Name=EtiquetaCircuito020 | Type=Part::Feature
+        - [O] Ruta Critica hacia Circuito 3 Plataforma-Toma-007 | Name=Wire091 | Type=Part::Part2DObjectPython
+      - [G] Ramales_EMT007 | Name=Ramales_EMT007 | Type=App::DocumentObjectGroup
+        - [O] EMT_TP_08_Plataforma: Caja EMT Octogonal - Circuito 3 Plataforma-Toma-007 -> Caja EMT Octogonal - Circuito 3 Plataforma-Toma-010 | Name=Line027 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_08_Plataforma: Caja EMT Octogonal - Circuito 3 Plataforma-Toma-009 -> Caja EMT Octogonal - Circuito 3 Plataforma-Toma-007 | Name=Wire163 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_08_Plataforma: Caja EMT Octogonal - Circuito 3 Plataforma-Toma-012 -> Caja EMT Octogonal - Circuito 3 Plataforma-Toma-009 | Name=Line026 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_08_Plataforma: Circuito 3 Plataforma-Toma-007 -> Caja EMT Octogonal - Circuito 3 Plataforma-Toma-007 | Name=Wire159 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_08_Plataforma: Circuito 3 Plataforma-Toma-008 -> Circuito 3 Plataforma-Toma-009 | Name=Line024 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_08_Plataforma: Circuito 3 Plataforma-Toma-009 -> Caja EMT Octogonal - Circuito 3 Plataforma-Toma-009 | Name=Wire160 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_08_Plataforma: Circuito 3 Plataforma-Toma-010 -> Caja EMT Octogonal - Circuito 3 Plataforma-Toma-010 | Name=Wire161 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_08_Plataforma: Circuito 3 Plataforma-Toma-011 -> Circuito 3 Plataforma-Toma-012 | Name=Line025 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_08_Plataforma: Circuito 3 Plataforma-Toma-012 -> Caja EMT Octogonal - Circuito 3 Plataforma-Toma-012 | Name=Wire162 | Type=Part::Part2DObjectPython
+    - [G] TP-09 Apoyo | Name=Circuito_4 | Type=App::DocumentObjectGroup
+      - [G] Alimentadores_EMT004 | Name=Alimentadores_Circuito_4_Alimentadores_EMT | Type=App::DocumentObjectGroup
+        - [O] EMT_TP_09_Apoyo: Caja EMT Octogonal - Circuito 4 Apoyo-Toma-013 -> Tablero_3D | Name=Wire558 | Type=Part::Part2DObjectPython
+      - [G] Cajas_TP-09 Apoyo | Name=CajaOct_Circuito_4_Cajas_TP_09_Apoyo | Type=App::DocumentObjectGroup
+        - [O] Caja EMT Octogonal - Circuito 4 Apoyo-Toma-009 | Name=Link_Caja_EMT_Octogonal_Circuito_4_Apoyo_Toma_009 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito 4 Apoyo-Toma-010 | Name=Link_Caja_EMT_Octogonal_Circuito_4_Apoyo_Toma_010 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito 4 Apoyo-Toma-012 | Name=Link_Caja_EMT_Octogonal_Circuito_4_Apoyo_Toma_012 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito 4 Apoyo-Toma-013 | Name=Link_Caja_EMT_Octogonal_Circuito_4_Apoyo_Toma_013 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito 4 Apoyo-Toma-014 | Name=Link_Caja_EMT_Octogonal_Circuito_4_Apoyo_Toma_014 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito 4 Apoyo-Toma-016 | Name=Link_Caja_EMT_Octogonal_Circuito_4_Apoyo_Toma_016 | Type=App::Link
+      - [O] Circuito 4 Apoyo-Toma-009 | Name=Part__FeaturePython089 | Type=Part::FeaturePython
+      - [O] Circuito 4 Apoyo-Toma-010 | Name=Part__FeaturePython090 | Type=Part::FeaturePython
+      - [O] Circuito 4 Apoyo-Toma-011 | Name=Part__FeaturePython091 | Type=Part::FeaturePython
+      - [O] Circuito 4 Apoyo-Toma-012 | Name=Part__FeaturePython092 | Type=Part::FeaturePython
+      - [O] Circuito 4 Apoyo-Toma-013 | Name=Part__FeaturePython093 | Type=Part::FeaturePython
+      - [O] Circuito 4 Apoyo-Toma-014 | Name=Part__FeaturePython094 | Type=Part::FeaturePython
+      - [O] Circuito 4 Apoyo-Toma-015 | Name=Part__FeaturePython095 | Type=Part::FeaturePython
+      - [O] Circuito 4 Apoyo-Toma-016 | Name=Part__FeaturePython096 | Type=Part::FeaturePython
+      - [G] Conexiones019 | Name=Conexiones019 | Type=App::DocumentObjectGroup
+        - [O] Conexion_Snake_Circuito 4 Apoyo_Circuito 4 Apoyo-Toma-01_Circuito 4 Apoyo-Toma-02_01 | Name=Wire067 | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito 4 Apoyo_Circuito 4 Apoyo-Toma-02_Circuito 4 Apoyo-Toma-03_02 | Name=Wire068 | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito 4 Apoyo_Circuito 4 Apoyo-Toma-03_Circuito 4 Apoyo-Toma-04_03 | Name=Wire069 | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito 4 Apoyo_Circuito 4 Apoyo-Toma-04_Circuito 4 Apoyo-Toma-05_04 | Name=Line014 | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito 4 Apoyo_Circuito 4 Apoyo-Toma-05_Circuito 4 Apoyo-Toma-06_05 | Name=Wire070 | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito 4 Apoyo_Circuito 4 Apoyo-Toma-06_Circuito 4 Apoyo-Toma-07_06 | Name=Wire071 | Type=Part::Part2DObjectPython
+        - [O] Etiqueta_TP-09 Apoyo001 | Name=EtiquetaCircuito019 | Type=Part::Feature
+        - [O] Ruta Critica hacia Circuito 4 Apoyo-Toma-010 | Name=Wire092 | Type=Part::Part2DObjectPython
+      - [G] Ramales_EMT008 | Name=Ramales_EMT008 | Type=App::DocumentObjectGroup
+        - [O] EMT_TP_09_Apoyo: Caja EMT Octogonal - Circuito 4 Apoyo-Toma-010 -> Caja EMT Octogonal - Circuito 4 Apoyo-Toma-009 | Name=Wire173 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_09_Apoyo: Caja EMT Octogonal - Circuito 4 Apoyo-Toma-012 -> Caja EMT Octogonal - Circuito 4 Apoyo-Toma-010 | Name=Wire172 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_09_Apoyo: Caja EMT Octogonal - Circuito 4 Apoyo-Toma-013 -> Caja EMT Octogonal - Circuito 4 Apoyo-Toma-012 | Name=Line030 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_09_Apoyo: Caja EMT Octogonal - Circuito 4 Apoyo-Toma-014 -> Caja EMT Octogonal - Circuito 4 Apoyo-Toma-013 | Name=Wire171 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_09_Apoyo: Caja EMT Octogonal - Circuito 4 Apoyo-Toma-016 -> Caja EMT Octogonal - Circuito 4 Apoyo-Toma-014 | Name=Wire170 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_09_Apoyo: Circuito 4 Apoyo-Toma-009 -> Caja EMT Octogonal - Circuito 4 Apoyo-Toma-009 | Name=Wire164 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_09_Apoyo: Circuito 4 Apoyo-Toma-010 -> Caja EMT Octogonal - Circuito 4 Apoyo-Toma-010 | Name=Wire165 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_09_Apoyo: Circuito 4 Apoyo-Toma-011 -> Circuito 4 Apoyo-Toma-012 | Name=Line028 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_09_Apoyo: Circuito 4 Apoyo-Toma-012 -> Caja EMT Octogonal - Circuito 4 Apoyo-Toma-012 | Name=Wire166 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_09_Apoyo: Circuito 4 Apoyo-Toma-013 -> Caja EMT Octogonal - Circuito 4 Apoyo-Toma-013 | Name=Wire167 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_09_Apoyo: Circuito 4 Apoyo-Toma-014 -> Caja EMT Octogonal - Circuito 4 Apoyo-Toma-014 | Name=Wire168 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_09_Apoyo: Circuito 4 Apoyo-Toma-015 -> Circuito 4 Apoyo-Toma-014 | Name=Line029 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_09_Apoyo: Circuito 4 Apoyo-Toma-016 -> Caja EMT Octogonal - Circuito 4 Apoyo-Toma-016 | Name=Wire169 | Type=Part::Part2DObjectPython
+    - [G] TP-10 Suministro 2 | Name=Circuito_8 | Type=App::DocumentObjectGroup
+      - [G] Alimentadores_EMT011 | Name=Alimentadores_Circuito_8_Alimentadores_EMT | Type=App::DocumentObjectGroup
+        - [O] EMT_TP_10_Suministro_2: Caja EMT Octogonal - Circuito 8 Suministro 2-Toma-007 -> Tablero_3D | Name=Wire565 | Type=Part::Part2DObjectPython
+      - [G] Cajas_TP-10 Suministro 2 | Name=CajaOct_Circuito_8_Cajas_TP_10_Suministro_2 | Type=App::DocumentObjectGroup
+        - [O] Caja EMT Octogonal - Circuito 8 Suministro 2-Toma-007 | Name=Link_Caja_EMT_Octogonal_Circuito_8_Suministro_2_Toma_007 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito 8 Suministro 2-Toma-008 | Name=Link_Caja_EMT_Octogonal_Circuito_8_Suministro_2_Toma_008 | Type=App::Link
+      - [O] Circuito 8 Suministro 2-Toma-006 | Name=Part__FeaturePython097 | Type=Part::FeaturePython
+      - [O] Circuito 8 Suministro 2-Toma-007 | Name=Part__FeaturePython098 | Type=Part::FeaturePython
+      - [O] Circuito 8 Suministro 2-Toma-008 | Name=Part__FeaturePython099 | Type=Part::FeaturePython
+      - [O] Circuito 8 Suministro 2-Toma-009 | Name=Part__FeaturePython100 | Type=Part::FeaturePython
+      - [G] Conexiones009 | Name=Conexiones009 | Type=App::DocumentObjectGroup
+        - [O] Conexion_Snake_Circuito 8 Suministro 2_Circuito 8 Suministro 2-Toma-01_Circuito 8 Suministro 2-Toma-02_01 | Name=Wire073 | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito 8 Suministro 2_Circuito 8 Suministro 2-Toma-02_Circuito 8 Suministro 2-Toma-03_02 | Name=Wire074 | Type=Part::Part2DObjectPython
+        - [O] Etiqueta_TP-10 Suministro 003 | Name=EtiquetaCircuito025 | Type=Part::Feature
+        - [O] Ruta Critica hacia Circuito 8 Suministro 2-Toma-009 | Name=Wire093 | Type=Part::Part2DObjectPython
+      - [G] Ramales_EMT009 | Name=Ramales_EMT009 | Type=App::DocumentObjectGroup
+        - [O] EMT_TP_10_Suministro_2: Caja EMT Octogonal - Circuito 8 Suministro 2-Toma-007 -> Caja EMT Octogonal - Circuito 8 Suministro 2-Toma-008 | Name=Wire178 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_10_Suministro_2: Circuito 8 Suministro 2-Toma-006 -> Circuito 8 Suministro 2-Toma-007 | Name=Wire176 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_10_Suministro_2: Circuito 8 Suministro 2-Toma-007 -> Caja EMT Octogonal - Circuito 8 Suministro 2-Toma-007 | Name=Wire174 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_10_Suministro_2: Circuito 8 Suministro 2-Toma-008 -> Caja EMT Octogonal - Circuito 8 Suministro 2-Toma-008 | Name=Wire175 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_10_Suministro_2: Circuito 8 Suministro 2-Toma-009 -> Circuito 8 Suministro 2-Toma-008 | Name=Wire177 | Type=Part::Part2DObjectPython
+    - [G] TP-11 Comedor Refri | Name=Group006 | Type=App::DocumentObjectGroup
+      - [G] Alimentadores_EMT015 | Name=Alimentadores_Group006_Alimentadores_EMT | Type=App::DocumentObjectGroup
+        - [O] EMT_TP_11_Comedor_Refri: Caja EMT Octogonal - Toma_160 -> Tablero_3D | Name=Wire569 | Type=Part::Part2DObjectPython
+      - [G] Cajas_TP-11 Comedor Refri | Name=CajaOct_Group006_Cajas_TP_11_Comedor_Refri | Type=App::DocumentObjectGroup
+        - [O] Caja EMT Octogonal - Toma_160 | Name=Link_Caja_EMT_Octogonal_Toma_160 | Type=App::Link
+        - [O] Caja EMT Octogonal - Toma_161 | Name=Link_Caja_EMT_Octogonal_Toma_161 | Type=App::Link
+      - [G] Conexiones023 | Name=Conexiones023 | Type=App::DocumentObjectGroup
+        - [O] Etiqueta_TP-11 Comedor Refri | Name=EtiquetaCircuito024 | Type=Part::Feature
+        - [O] Ruta Critica hacia Toma_161 | Name=Wire094 | Type=Part::Part2DObjectPython
+      - [G] Ramales_EMT010 | Name=Ramales_EMT010 | Type=App::DocumentObjectGroup
+        - [O] EMT_TP_11_Comedor_Refri: Caja EMT Octogonal - Toma_160 -> Caja EMT Octogonal - Toma_161 | Name=Wire181 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_11_Comedor_Refri: Toma_160 -> Caja EMT Octogonal - Toma_160 | Name=Wire179 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_11_Comedor_Refri: Toma_161 -> Caja EMT Octogonal - Toma_161 | Name=Wire180 | Type=Part::Part2DObjectPython
+      - [O] Toma_160 | Name=Part__FeaturePython039 | Type=Part::FeaturePython
+      - [O] Toma_161 | Name=Part__FeaturePython101 | Type=Part::FeaturePython
+    - [G] TP-12 Comedor 3 | Name=Grupo | Type=App::DocumentObjectGroup
+      - [G] Alimentadores_EMT014 | Name=Alimentadores_Grupo_Alimentadores_EMT | Type=App::DocumentObjectGroup
+        - [O] EMT_TP_12_Comedor_3: Caja EMT Octogonal - Toma_162 -> Tablero_3D | Name=Wire568 | Type=Part::Part2DObjectPython
+      - [G] Cajas_TP-12 Comedor 3 | Name=CajaOct_Grupo_Cajas_TP_12_Comedor_3 | Type=App::DocumentObjectGroup
+        - [O] Caja EMT Octogonal - Toma_162 | Name=Link_Caja_EMT_Octogonal_Toma_162 | Type=App::Link
+      - [G] Conexiones036 | Name=Conexiones036 | Type=App::DocumentObjectGroup
+        - [O] Etiqueta_TP-12 Comedor 3 | Name=EtiquetaCircuito035 | Type=Part::Feature
+        - [O] Ruta Critica hacia Toma_005 | Name=Wire095 | Type=Part::Part2DObjectPython
+      - [G] Ramales_EMT011 | Name=Ramales_EMT011 | Type=App::DocumentObjectGroup
+        - [O] EMT_TP_12_Comedor_3: Toma_005 -> Caja EMT Octogonal - Toma_162 | Name=Wire183 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_12_Comedor_3: Toma_162 -> Caja EMT Octogonal - Toma_162 | Name=Wire182 | Type=Part::Part2DObjectPython
+      - [O] Toma_005 | Name=Part__FeaturePython044 | Type=Part::FeaturePython
+      - [O] Toma_162 | Name=Part__FeaturePython102 | Type=Part::FeaturePython
+    - [G] TP-13 Comedor 2 | Name=Grupo001 | Type=App::DocumentObjectGroup
+      - [G] Alimentadores_EMT013 | Name=Alimentadores_Grupo001_Alimentadores_EMT | Type=App::DocumentObjectGroup
+        - [O] EMT_TP_13_Comedor_2: Caja EMT Octogonal - Toma_004 -> Tablero_3D | Name=Wire567 | Type=Part::Part2DObjectPython
+      - [G] Cajas_TP-13 Comedor 2 | Name=CajaOct_Grupo001_Cajas_TP_13_Comedor_2 | Type=App::DocumentObjectGroup
+        - [O] Caja EMT Octogonal - Toma_004 | Name=Link_Caja_EMT_Octogonal_Toma_004 | Type=App::Link
+      - [G] Conexiones037 | Name=Conexiones037 | Type=App::DocumentObjectGroup
+        - [O] Etiqueta_TP-13 Comedor 2 | Name=EtiquetaCircuito033 | Type=Part::Feature
+        - [O] Ruta Critica hacia Toma_003 | Name=Wire096 | Type=Part::Part2DObjectPython
+      - [G] Ramales_EMT012 | Name=Ramales_EMT012 | Type=App::DocumentObjectGroup
+        - [O] EMT_TP_13_Comedor_2: Toma_003 -> Toma_004 | Name=Line031 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_13_Comedor_2: Toma_004 -> Caja EMT Octogonal - Toma_004 | Name=Wire184 | Type=Part::Part2DObjectPython
+      - [O] Toma_003 | Name=Part__FeaturePython042 | Type=Part::FeaturePython
+      - [O] Toma_004 | Name=Part__FeaturePython043 | Type=Part::FeaturePython
+    - [G] TP-14 Comedor 1 | Name=Circuito_9 | Type=App::DocumentObjectGroup
+      - [G] Alimentadores_EMT012 | Name=Alimentadores_Circuito_9_Alimentadores_EMT | Type=App::DocumentObjectGroup
+        - [O] EMT_TP_14_Comedor_1: Caja EMT Octogonal - Toma_002 -> Tablero_3D | Name=Wire566 | Type=Part::Part2DObjectPython
+      - [G] Cajas_TP-14 Comedor 1 | Name=CajaOct_Circuito_9_Cajas_TP_14_Comedor_1 | Type=App::DocumentObjectGroup
+        - [O] Caja EMT Octogonal - Toma_002 | Name=Link_Caja_EMT_Octogonal_Toma_002 | Type=App::Link
+      - [G] Conexiones038 | Name=Conexiones038 | Type=App::DocumentObjectGroup
+        - [O] Etiqueta_TP-14 Comedor 1 | Name=EtiquetaCircuito034 | Type=Part::Feature
+        - [O] Ruta Critica hacia Toma_163 | Name=Wire097 | Type=Part::Part2DObjectPython
+      - [G] Ramales_EMT013 | Name=Ramales_EMT013 | Type=App::DocumentObjectGroup
+        - [O] EMT_TP_14_Comedor_1: Toma_002 -> Caja EMT Octogonal - Toma_002 | Name=Wire185 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_14_Comedor_1: Toma_163 -> Caja EMT Octogonal - Toma_002 | Name=Wire186 | Type=Part::Part2DObjectPython
+      - [O] Toma_002 | Name=Part__FeaturePython041 | Type=Part::FeaturePython
+      - [O] Toma_163 | Name=Part__FeaturePython103 | Type=Part::FeaturePython
+    - [G] TP-15 Archivo | Name=Circuito008 | Type=App::DocumentObjectGroup
+      - [G] Alimentadores_EMT016 | Name=Alimentadores_Circuito008_Alimentadores_EMT | Type=App::DocumentObjectGroup
+        - [O] EMT_TP_15_Archivo: Caja EMT Octogonal - Circuito Archivo-Tomas-02 -> Tablero_3D | Name=Wire570 | Type=Part::Part2DObjectPython
+      - [G] Cajas_TP-15 Archivo | Name=CajaOct_Circuito008_Cajas_TP_15_Archivo | Type=App::DocumentObjectGroup
+        - [O] Caja EMT Octogonal - Circuito Archivo-Tomas-01 | Name=Link_Caja_EMT_Octogonal_Circuito_Archivo_Tomas_01 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito Archivo-Tomas-02 | Name=Link_Caja_EMT_Octogonal_Circuito_Archivo_Tomas_02 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito Archivo-Tomas-04 | Name=Link_Caja_EMT_Octogonal_Circuito_Archivo_Tomas_04 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito Archivo-Tomas-05 | Name=Link_Caja_EMT_Octogonal_Circuito_Archivo_Tomas_05 | Type=App::Link
+        - [G] Conexiones042 | Name=Conexiones042 | Type=App::DocumentObjectGroup
+      - [O] Circuito Archivo-Tomas-01 | Name=Part__FeaturePython036 | Type=Part::FeaturePython
+      - [O] Circuito Archivo-Tomas-02 | Name=Part__FeaturePython031 | Type=Part::FeaturePython
+      - [O] Circuito Archivo-Tomas-03 | Name=Part__FeaturePython045 | Type=Part::FeaturePython
+      - [O] Circuito Archivo-Tomas-04 | Name=Part__FeaturePython037 | Type=Part::FeaturePython
+      - [O] Circuito Archivo-Tomas-05 | Name=Part__FeaturePython038 | Type=Part::FeaturePython
+      - [G] Conexiones005 | Name=Conexiones005 | Type=App::DocumentObjectGroup
+        - [O] Conexion_Snake_Circuito Archivo_Circuito Archivo-Tomas-01_Circuito Archivo-Tomas-02_01 | Name=Wire008 | Type=Part::Part2DObjectPython
+        - [O] Etiqueta_TP-15 Archivo | Name=EtiquetaCircuito030 | Type=Part::Feature
+        - [O] Ruta Critica hacia Circuito Archivo-Tomas-01 | Name=Wire098 | Type=Part::Part2DObjectPython
+      - [G] Ramales_EMT014 | Name=Ramales_EMT014 | Type=App::DocumentObjectGroup
+        - [O] EMT_TP_15_Archivo: Caja EMT Octogonal - Circuito Archivo-Tomas-01 -> Caja EMT Octogonal - Circuito Archivo-Tomas-003 | Name=Wire573 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_15_Archivo: Caja EMT Octogonal - Circuito Archivo-Tomas-02 -> Caja EMT Octogonal - Circuito Archivo-Tomas-04 | Name=Line032 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_15_Archivo: Caja EMT Octogonal - Circuito Archivo-Tomas-04 -> Caja EMT Octogonal - Circuito Archivo-Tomas-05 | Name=Line033 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_15_Archivo: Circuito Archivo-Tomas-01 -> Caja EMT Octogonal - Circuito Archivo-Tomas-01 | Name=Wire187 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_15_Archivo: Circuito Archivo-Tomas-02 -> Caja EMT Octogonal - Circuito Archivo-Tomas-02 | Name=Wire188 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_15_Archivo: Circuito Archivo-Tomas-03 -> Circuito Archivo-Tomas-02 | Name=Wire191 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_15_Archivo: Circuito Archivo-Tomas-04 -> Caja EMT Octogonal - Circuito Archivo-Tomas-04 | Name=Wire189 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_15_Archivo: Circuito Archivo-Tomas-05 -> Caja EMT Octogonal - Circuito Archivo-Tomas-05 | Name=Wire190 | Type=Part::Part2DObjectPython
+    - [G] TP-16 Jefatura | Name=Circuito_6 | Type=App::DocumentObjectGroup
+      - [G] Alimentadores_EMT002 | Name=Alimentadores_Circuito_6_Alimentadores_EMT | Type=App::DocumentObjectGroup
+        - [O] EMT_TP_16_Jefatura: Caja EMT Octogonal - Circuito 6 Jefatura-Toma-010 -> Tablero_3D | Name=Wire556 | Type=Part::Part2DObjectPython
+      - [G] Cajas_TP-16 Jefatura | Name=CajaOct_Circuito_6_Cajas_TP_16_Jefatura | Type=App::DocumentObjectGroup
+        - [O] Caja EMT Octogonal - Circuito 6 Jefatura-Toma-010 | Name=Link_Caja_EMT_Octogonal_Circuito_6_Jefatura_Toma_010 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito 6 Jefatura-Toma-011 | Name=Link_Caja_EMT_Octogonal_Circuito_6_Jefatura_Toma_011 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito 6 Jefatura-Toma-013 | Name=Link_Caja_EMT_Octogonal_Circuito_6_Jefatura_Toma_013 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito 6 Jefatura-Toma-014 | Name=Link_Caja_EMT_Octogonal_Circuito_6_Jefatura_Toma_014 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito 6 Jefatura-Toma-015 | Name=Link_Caja_EMT_Octogonal_Circuito_6_Jefatura_Toma_015 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito 6 Jefatura-Toma-017 | Name=Link_Caja_EMT_Octogonal_Circuito_6_Jefatura_Toma_017 | Type=App::Link
+      - [O] Circuito 6 Jefatura-Toma-010 | Name=Part__FeaturePython104 | Type=Part::FeaturePython
+      - [O] Circuito 6 Jefatura-Toma-011 | Name=Part__FeaturePython105 | Type=Part::FeaturePython
+      - [O] Circuito 6 Jefatura-Toma-012 | Name=Part__FeaturePython106 | Type=Part::FeaturePython
+      - [O] Circuito 6 Jefatura-Toma-013 | Name=Part__FeaturePython107 | Type=Part::FeaturePython
+      - [O] Circuito 6 Jefatura-Toma-014 | Name=Part__FeaturePython108 | Type=Part::FeaturePython
+      - [O] Circuito 6 Jefatura-Toma-015 | Name=Part__FeaturePython109 | Type=Part::FeaturePython
+      - [O] Circuito 6 Jefatura-Toma-016 | Name=Part__FeaturePython110 | Type=Part::FeaturePython
+      - [O] Circuito 6 Jefatura-Toma-017 | Name=Part__FeaturePython111 | Type=Part::FeaturePython
+      - [G] Conexiones012 | Name=Conexiones012 | Type=App::DocumentObjectGroup
+        - [O] Conexion_Snake_Circuito 6 Jefatura_Circuito 6 Jefatura-Toma-01_Circuito 6 Jefatura-Toma-02_01 | Name=Wire036 | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito 6 Jefatura_Circuito 6 Jefatura-Toma-02_Circuito 6 Jefatura-Toma-03_02 | Name=Wire026 | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito 6 Jefatura_Circuito 6 Jefatura-Toma-02_Circuito 6 Jefatura-Toma-03_003 | Name=Wire037 | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito 6 Jefatura_Circuito 6 Jefatura-Toma-03_Circuito 6 Jefatura-Toma-04_03 | Name=Wire038 | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito 6 Jefatura_Circuito 6 Jefatura-Toma-04_Circuito 6 Jefatura-Toma-05_04 | Name=Line010 | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito 6 Jefatura_Circuito 6 Jefatura-Toma-05_Circuito 6 Jefatura-Toma-06_05 | Name=Wire039 | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito 6 Jefatura_Circuito 6 Jefatura-Toma-06_Circuito 6 Jefatura-Toma-07_06 | Name=Wire029 | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito 6 Jefatura_Circuito 6 Jefatura-Toma-06_Circuito 6 Jefatura-Toma-07_007 | Name=Wire040 | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito 6 Jefatura_Circuito 6 Jefatura-Toma-07_Circuito 6 Jefatura-Toma-09_07 | Name=Wire041 | Type=Part::Part2DObjectPython
+        - [O] Etiqueta_TP-16 Jefatura | Name=EtiquetaCircuito021 | Type=Part::Feature
+        - [O] Ruta Critica hacia Circuito 6 Jefatura-Toma-016 | Name=Wire099 | Type=Part::Part2DObjectPython
+      - [G] Ramales_EMT015 | Name=Ramales_EMT015 | Type=App::DocumentObjectGroup
+        - [O] EMT_TP_16_Jefatura: Caja EMT Octogonal - Circuito 6 Jefatura-Toma-010 -> Caja EMT Octogonal - Circuito 6 Jefatura-Toma-017 | Name=Line036 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_16_Jefatura: Caja EMT Octogonal - Circuito 6 Jefatura-Toma-011 -> Caja EMT Octogonal - Circuito 6 Jefatura-Toma-010 | Name=Wire201 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_16_Jefatura: Caja EMT Octogonal - Circuito 6 Jefatura-Toma-013 -> Caja EMT Octogonal - Circuito 6 Jefatura-Toma-011 | Name=Wire200 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_16_Jefatura: Caja EMT Octogonal - Circuito 6 Jefatura-Toma-014 -> Caja EMT Octogonal - Circuito 6 Jefatura-Toma-013 | Name=Line035 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_16_Jefatura: Caja EMT Octogonal - Circuito 6 Jefatura-Toma-017 -> Caja EMT Octogonal - Circuito 6 Jefatura-Toma-015 | Name=Wire202 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_16_Jefatura: Circuito 6 Jefatura-Toma-010 -> Caja EMT Octogonal - Circuito 6 Jefatura-Toma-010 | Name=Wire193 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_16_Jefatura: Circuito 6 Jefatura-Toma-011 -> Caja EMT Octogonal - Circuito 6 Jefatura-Toma-011 | Name=Wire194 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_16_Jefatura: Circuito 6 Jefatura-Toma-012 -> Circuito 6 Jefatura-Toma-011 | Name=Wire199 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_16_Jefatura: Circuito 6 Jefatura-Toma-013 -> Caja EMT Octogonal - Circuito 6 Jefatura-Toma-013 | Name=Wire195 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_16_Jefatura: Circuito 6 Jefatura-Toma-014 -> Caja EMT Octogonal - Circuito 6 Jefatura-Toma-014 | Name=Wire196 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_16_Jefatura: Circuito 6 Jefatura-Toma-015 -> Caja EMT Octogonal - Circuito 6 Jefatura-Toma-015 | Name=Wire197 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_16_Jefatura: Circuito 6 Jefatura-Toma-016 -> Circuito 6 Jefatura-Toma-015 | Name=Line034 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_16_Jefatura: Circuito 6 Jefatura-Toma-017 -> Caja EMT Octogonal - Circuito 6 Jefatura-Toma-017 | Name=Wire198 | Type=Part::Part2DObjectPython
+    - [G] TP-17 Servidor | Name=Circuito | Type=App::DocumentObjectGroup
+      - [G] Alimentadores_EMT003 | Name=Alimentadores_Circuito_Alimentadores_EMT | Type=App::DocumentObjectGroup
+        - [O] EMT_TP_17_Servidor: Caja EMT Octogonal - Circuito Servidor-Toma-009 -> Tablero_3D | Name=Wire557 | Type=Part::Part2DObjectPython
+      - [G] Cajas_TP-17 Servidor | Name=CajaOct_Circuito_Cajas_TP_17_Servidor | Type=App::DocumentObjectGroup
+        - [O] Caja EMT Octogonal - Circuito Servidor-Toma-008 | Name=Link_Caja_EMT_Octogonal_Circuito_Servidor_Toma_008 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito Servidor-Toma-009 | Name=Link_Caja_EMT_Octogonal_Circuito_Servidor_Toma_009 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito Servidor-Toma-010 | Name=Link_Caja_EMT_Octogonal_Circuito_Servidor_Toma_010 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito Servidor-Toma-011 | Name=Link_Caja_EMT_Octogonal_Circuito_Servidor_Toma_011 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito Servidor-Toma-012 | Name=Link_Caja_EMT_Octogonal_Circuito_Servidor_Toma_012 | Type=App::Link
+        - [O] Caja EMT Octogonal - Circuito Servidor-Toma-013 | Name=Link_Caja_EMT_Octogonal_Circuito_Servidor_Toma_013 | Type=App::Link
+        - [G] Conexiones043 | Name=Conexiones043 | Type=App::DocumentObjectGroup
+      - [O] Circuito Servidor-Toma-008 | Name=Part__FeaturePython112 | Type=Part::FeaturePython
+      - [O] Circuito Servidor-Toma-009 | Name=Part__FeaturePython113 | Type=Part::FeaturePython
+      - [O] Circuito Servidor-Toma-010 | Name=Part__FeaturePython114 | Type=Part::FeaturePython
+      - [O] Circuito Servidor-Toma-011 | Name=Part__FeaturePython115 | Type=Part::FeaturePython
+      - [O] Circuito Servidor-Toma-012 | Name=Part__FeaturePython116 | Type=Part::FeaturePython
+      - [O] Circuito Servidor-Toma-013 | Name=Part__FeaturePython117 | Type=Part::FeaturePython
+      - [O] Circuito Servidor-Toma-014 | Name=Part__FeaturePython118 | Type=Part::FeaturePython
+      - [G] Conexiones018 | Name=Conexiones018 | Type=App::DocumentObjectGroup
+        - [O] Conexion_Snake_Circuito Servidor_Circuito Servidor-Toma-01_Circuito Servidor-Toma-02_01 | Name=Wire062 | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito Servidor_Circuito Servidor-Toma-02_Circuito Servidor-Toma-03_02 | Name=Wire063 | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito Servidor_Circuito Servidor-Toma-03_Circuito Servidor-Toma-04_03 | Name=Wire064 | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito Servidor_Circuito Servidor-Toma-04_Circuito Servidor-Toma-05_04 | Name=Line013 | Type=Part::Part2DObjectPython
+        - [O] Conexion_Snake_Circuito Servidor_Circuito Servidor-Toma-05_Circuito Servidor-Toma-06_05 | Name=Wire065 | Type=Part::Part2DObjectPython
+        - [O] Etiqueta_TP-17 Servidor | Name=EtiquetaCircuito023 | Type=Part::Feature
+        - [O] Ruta Critica hacia Circuito Servidor-Toma-012 | Name=Wire100 | Type=Part::Part2DObjectPython
+      - [G] Ramales_EMT016 | Name=Ramales_EMT016 | Type=App::DocumentObjectGroup
+        - [O] EMT_TP_17_Servidor: Caja EMT Octogonal - Circuito Servidor-Toma-008 -> Caja EMT Octogonal - Circuito Servidor-Toma-014 | Name=Wire572 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_17_Servidor: Caja EMT Octogonal - Circuito Servidor-Toma-009 -> Caja EMT Octogonal - Circuito Servidor-Toma-008 | Name=Wire210 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_17_Servidor: Caja EMT Octogonal - Circuito Servidor-Toma-011 -> Caja EMT Octogonal - Circuito Servidor-Toma-010 | Name=Wire213 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_17_Servidor: Caja EMT Octogonal - Circuito Servidor-Toma-012 -> Caja EMT Octogonal - Circuito Servidor-Toma-011 | Name=Line037 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_17_Servidor: Caja EMT Octogonal - Circuito Servidor-Toma-013 -> Caja EMT Octogonal - Circuito Servidor-Toma-012 | Name=Wire212 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_17_Servidor: Circuito Servidor-Toma-008 -> Caja EMT Octogonal - Circuito Servidor-Toma-008 | Name=Wire203 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_17_Servidor: Circuito Servidor-Toma-009 -> Caja EMT Octogonal - Circuito Servidor-Toma-009 | Name=Wire204 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_17_Servidor: Circuito Servidor-Toma-010 -> Caja EMT Octogonal - Circuito Servidor-Toma-010 | Name=Wire205 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_17_Servidor: Circuito Servidor-Toma-011 -> Caja EMT Octogonal - Circuito Servidor-Toma-011 | Name=Wire206 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_17_Servidor: Circuito Servidor-Toma-012 -> Caja EMT Octogonal - Circuito Servidor-Toma-012 | Name=Wire207 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_17_Servidor: Circuito Servidor-Toma-013 -> Caja EMT Octogonal - Circuito Servidor-Toma-013 | Name=Wire208 | Type=Part::Part2DObjectPython
+        - [O] EMT_TP_17_Servidor: Circuito Servidor-Toma-014 -> Circuito Servidor-Toma-013 | Name=Wire209 | Type=Part::Part2DObjectPython
+
+- [G] Grupo | Name=Group004 | Type=App::DocumentObjectGroup
+  - [O] Shape2DView | Name=Shape2DView | Type=Part::Part2DObjectPython
+  - [O] Shape2DView001 | Name=Shape2DView001 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView002 | Name=Shape2DView002 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView003 | Name=Shape2DView003 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView004 | Name=Shape2DView004 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView005 | Name=Shape2DView005 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView006 | Name=Shape2DView006 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView007 | Name=Shape2DView007 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView008 | Name=Shape2DView008 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView009 | Name=Shape2DView009 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView010 | Name=Shape2DView010 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView011 | Name=Shape2DView011 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView012 | Name=Shape2DView012 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView013 | Name=Shape2DView013 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView014 | Name=Shape2DView014 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView015 | Name=Shape2DView015 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView016 | Name=Shape2DView016 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView017 | Name=Shape2DView017 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView018 | Name=Shape2DView018 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView019 | Name=Shape2DView019 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView020 | Name=Shape2DView020 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView021 | Name=Shape2DView021 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView022 | Name=Shape2DView022 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView023 | Name=Shape2DView023 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView024 | Name=Shape2DView024 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView025 | Name=Shape2DView025 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView026 | Name=Shape2DView026 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView027 | Name=Shape2DView027 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView028 | Name=Shape2DView028 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView029 | Name=Shape2DView029 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView030 | Name=Shape2DView030 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView031 | Name=Shape2DView031 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView032 | Name=Shape2DView032 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView033 | Name=Shape2DView033 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView034 | Name=Shape2DView034 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView035 | Name=Shape2DView035 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView036 | Name=Shape2DView036 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView037 | Name=Shape2DView037 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView038 | Name=Shape2DView038 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView039 | Name=Shape2DView039 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView040 | Name=Shape2DView040 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView041 | Name=Shape2DView041 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView042 | Name=Shape2DView042 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView043 | Name=Shape2DView043 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView044 | Name=Shape2DView044 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView045 | Name=Shape2DView045 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView046 | Name=Shape2DView046 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView047 | Name=Shape2DView047 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView048 | Name=Shape2DView048 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView049 | Name=Shape2DView049 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView050 | Name=Shape2DView050 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView051 | Name=Shape2DView051 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView052 | Name=Shape2DView052 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView053 | Name=Shape2DView053 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView054 | Name=Shape2DView054 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView055 | Name=Shape2DView055 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView056 | Name=Shape2DView056 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView057 | Name=Shape2DView057 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView058 | Name=Shape2DView058 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView059 | Name=Shape2DView059 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView060 | Name=Shape2DView060 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView061 | Name=Shape2DView061 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView062 | Name=Shape2DView062 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView063 | Name=Shape2DView063 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView064 | Name=Shape2DView064 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView065 | Name=Shape2DView065 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView066 | Name=Shape2DView066 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView067 | Name=Shape2DView067 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView068 | Name=Shape2DView068 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView069 | Name=Shape2DView069 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView070 | Name=Shape2DView070 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView071 | Name=Shape2DView071 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView072 | Name=Shape2DView072 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView073 | Name=Shape2DView073 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView074 | Name=Shape2DView074 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView075 | Name=Shape2DView075 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView076 | Name=Shape2DView076 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView077 | Name=Shape2DView077 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView078 | Name=Shape2DView078 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView079 | Name=Shape2DView079 | Type=Part::Part2DObjectPython
+  - [O] Shape2DView080 | Name=Shape2DView080 | Type=Part::Part2DObjectPython
+
+- [G] Origen de coordenadas | Name=Origin | Type=App::Origin
+
+- [G] Origen de coordenadas001 | Name=Origin001 | Type=App::Origin
+
+- [G] Proyecto_Acometida | Name=Proyecto_Acometida | Type=App::DocumentObjectGroup
+  - [O] Acometida001 | Name=Wire103 | Type=Part::Part2DObjectPython
+  - [G] Conexiones039 | Name=Conexiones039 | Type=App::DocumentObjectGroup
+  - [O] Pedestal Acometida | Name=Body001 | Type=Part::Feature
+  - [O] Tablero + Área de Trabajo009 | Name=Link_Clone001 | Type=App::Link
+  - [O] Área del Proyecto | Name=Wire104 | Type=Part::Part2DObjectPython
+
+- [G] Tablero_Electrico | Name=Tablero_Electrico | Type=App::DocumentObjectGroup
+  - [O] Tablero_3D | Name=Tablero_3D | Type=Part::Feature
+  - [O] Tablero_Icono_Piso | Name=Wire107 | Type=Part::Part2DObjectPython
+
+- [G] Área de Sensores de Humo | Name=Group005 | Type=App::DocumentObjectGroup
+  - [O] Apoyo001 | Name=Rectangle059 | Type=Part::Part2DObjectPython
+  - [O] Archivo006 | Name=Rectangle015 | Type=Part::Part2DObjectPython
+  - [O] Bóveda001 | Name=Rectangle066 | Type=Part::Part2DObjectPython
+  - [O] Caja001 | Name=Rectangle069 | Type=Part::Part2DObjectPython
+  - [O] Cobros001 | Name=Rectangle052 | Type=Part::Part2DObjectPython
+  - [O] Cochera001 | Name=Rectangle050 | Type=Part::Part2DObjectPython
+  - [O] Comedor001 | Name=Rectangle062 | Type=Part::Part2DObjectPython
+  - [O] Cuarto de Aseo001 | Name=Rectangle055 | Type=Part::Part2DObjectPython
+  - [O] Inspección001 | Name=Rectangle051 | Type=Part::Part2DObjectPython
+  - [O] Jefatura001 | Name=Rectangle067 | Type=Part::Part2DObjectPython
+  - [O] Pasillo007 | Name=Rectangle061 | Type=Part::Part2DObjectPython
+  - [O] Pasillo008 | Name=Rectangle074 | Type=Part::Part2DObjectPython
+  - [O] Pasillo S.S.001 | Name=Rectangle058 | Type=Part::Part2DObjectPython
+  - [O] Pensiones001 | Name=Rectangle053 | Type=Part::Part2DObjectPython
+  - [O] Plataforma | Name=Rectangle077 | Type=Part::Part2DObjectPython
+  - [O] S.S. Familiar001 | Name=Rectangle068 | Type=Part::Part2DObjectPython
+  - [O] S.S. Funcionarias001 | Name=Rectangle057 | Type=Part::Part2DObjectPython
+  - [O] S.S. Funcionarios001 | Name=Rectangle056 | Type=Part::Part2DObjectPython
+  - [O] Sala de Espera001 | Name=Rectangle078 | Type=Part::Part2DObjectPython
+  - [O] Sala de Lactancia001 | Name=Rectangle054 | Type=Part::Part2DObjectPython
+  - [O] Salida Trasera001 | Name=Rectangle076 | Type=Part::Part2DObjectPython
+  - [O] Servidor001 | Name=Rectangle063 | Type=Part::Part2DObjectPython
+  - [O] Suministros001 | Name=Rectangle065 | Type=Part::Part2DObjectPython
+  - [O] Suministros 003 | Name=Rectangle075 | Type=Part::Part2DObjectPython
+
+- [G] Áreas | Name=Group | Type=App::DocumentObjectGroup
+  - [O] Apoyo | Name=Rectangle010 | Type=Part::Part2DObjectPython
+  - [O] Archivo | Name=Rectangle035 | Type=Part::Part2DObjectPython
+  - [O] Archivo001 | Name=Rectangle036 | Type=Part::Part2DObjectPython
+  - [O] Archivo002 | Name=Rectangle037 | Type=Part::Part2DObjectPython
+  - [O] Archivo003 | Name=Rectangle038 | Type=Part::Part2DObjectPython
+  - [O] Archivo004 | Name=Rectangle039 | Type=Part::Part2DObjectPython
+  - [O] Archivo005 | Name=Rectangle034 | Type=Part::Part2DObjectPython
+  - [O] Bóveda | Name=Rectangle019 | Type=Part::Part2DObjectPython
+  - [O] Caja | Name=Rectangle022 | Type=Part::Part2DObjectPython
+  - [O] Cobros | Name=Rectangle002 | Type=Part::Part2DObjectPython
+  - [O] Cochera | Name=Rectangle | Type=Part::Part2DObjectPython
+  - [O] Comedor | Name=Rectangle014 | Type=Part::Part2DObjectPython
+  - [O] Cuarto de Aseo | Name=Rectangle005 | Type=Part::Part2DObjectPython
+  - [O] Egresos | Name=Rectangle025 | Type=Part::Part2DObjectPython
+  - [G] Etiquetas | Name=Etiquetas | Type=App::DocumentObjectGroup
+    - [G] Circuito001 | Name=Circuito001 | Type=App::DocumentObjectGroup
+      - [O] Etiqueta_Pensiones | Name=Text003 | Type=App::FeaturePython
+    - [O] Etiqueta_Apoyo | Name=Text009 | Type=App::FeaturePython
+    - [O] Etiqueta_Archivo | Name=Text029 | Type=App::FeaturePython
+    - [O] Etiqueta_Archivo001 | Name=Text030 | Type=App::FeaturePython
+    - [O] Etiqueta_Archivo002 | Name=Text031 | Type=App::FeaturePython
+    - [O] Etiqueta_Archivo003 | Name=Text032 | Type=App::FeaturePython
+    - [O] Etiqueta_Archivo004 | Name=Text033 | Type=App::FeaturePython
+    - [O] Etiqueta_Archivo005 | Name=Text034 | Type=App::FeaturePython
+    - [O] Etiqueta_Bóveda | Name=Text016 | Type=App::FeaturePython
+    - [O] Etiqueta_Caja | Name=Text019 | Type=App::FeaturePython
+    - [O] Etiqueta_Cobros | Name=Text002 | Type=App::FeaturePython
+    - [O] Etiqueta_Cochera | Name=Text | Type=App::FeaturePython
+    - [O] Etiqueta_Comedor | Name=Text012 | Type=App::FeaturePython
+    - [O] Etiqueta_Cuarto de Aseo | Name=Text005 | Type=App::FeaturePython
+    - [O] Etiqueta_Egresos | Name=Text021 | Type=App::FeaturePython
+    - [O] Etiqueta_Frente de Platafoma | Name=Text022 | Type=App::FeaturePython
+    - [O] Etiqueta_Ingresos | Name=Text020 | Type=App::FeaturePython
+    - [O] Etiqueta_Inspección | Name=Text001 | Type=App::FeaturePython
+    - [O] Etiqueta_Jefatura | Name=Text017 | Type=App::FeaturePython
+    - [O] Etiqueta_Pasillo001 | Name=Text011 | Type=App::FeaturePython
+    - [O] Etiqueta_Pasillo002 | Name=Text010 | Type=App::FeaturePython
+    - [O] Etiqueta_Pasillo003 | Name=Text024 | Type=App::FeaturePython
+    - [O] Etiqueta_Pasillo004 | Name=Text026 | Type=App::FeaturePython
+    - [O] Etiqueta_Pasillo005 | Name=Text027 | Type=App::FeaturePython
+    - [O] Etiqueta_Pasillo S.S. | Name=Text008 | Type=App::FeaturePython
+    - [O] Etiqueta_S.S. Familiar | Name=Text018 | Type=App::FeaturePython
+    - [O] Etiqueta_S.S. Funcionarias | Name=Text007 | Type=App::FeaturePython
+    - [O] Etiqueta_S.S. Funcionarios | Name=Text006 | Type=App::FeaturePython
+    - [O] Etiqueta_Sala de Espera | Name=Text023 | Type=App::FeaturePython
+    - [O] Etiqueta_Sala de Lactancia | Name=Text004 | Type=App::FeaturePython
+    - [O] Etiqueta_Salida Trasera | Name=Text028 | Type=App::FeaturePython
+    - [O] Etiqueta_Servidor | Name=Text013 | Type=App::FeaturePython
+    - [O] Etiqueta_Suministros | Name=Text015 | Type=App::FeaturePython
+    - [O] Etiqueta_Suministros 2 | Name=Text025 | Type=App::FeaturePython
+    - [O] Etiqueta_Tableros Eléctricos | Name=Text014 | Type=App::FeaturePython
+  - [O] Frente de Platafoma | Name=Rectangle026 | Type=Part::Part2DObjectPython
+  - [O] Ingresos | Name=Rectangle024 | Type=Part::Part2DObjectPython
+  - [O] Inspección | Name=Rectangle001 | Type=Part::Part2DObjectPython
+  - [O] Jefatura | Name=Rectangle020 | Type=Part::Part2DObjectPython
+  - [O] Pasillo001 | Name=Rectangle012 | Type=Part::Part2DObjectPython
+  - [O] Pasillo002 | Name=Rectangle011 | Type=Part::Part2DObjectPython
+  - [O] Pasillo003 | Name=Rectangle028 | Type=Part::Part2DObjectPython
+  - [O] Pasillo004 | Name=Rectangle031 | Type=Part::Part2DObjectPython
+  - [O] Pasillo005 | Name=Rectangle032 | Type=Part::Part2DObjectPython
+  - [O] Pasillo S.S. | Name=Rectangle008 | Type=Part::Part2DObjectPython
+  - [O] Pensiones | Name=Rectangle003 | Type=Part::Part2DObjectPython
+  - [O] S.S. Familiar | Name=Rectangle021 | Type=Part::Part2DObjectPython
+  - [O] S.S. Funcionarias | Name=Rectangle007 | Type=Part::Part2DObjectPython
+  - [O] S.S. Funcionarios | Name=Rectangle006 | Type=Part::Part2DObjectPython
+  - [O] Sala de Espera | Name=Rectangle027 | Type=Part::Part2DObjectPython
+  - [O] Sala de Lactancia | Name=Rectangle004 | Type=Part::Part2DObjectPython
+  - [O] Salida Trasera | Name=Rectangle033 | Type=Part::Part2DObjectPython
+  - [O] Servidor | Name=Rectangle016 | Type=Part::Part2DObjectPython
+  - [O] Suministros | Name=Rectangle018 | Type=Part::Part2DObjectPython
+  - [O] Suministros 2 | Name=Rectangle029 | Type=Part::Part2DObjectPython
+  - [O] Tableros Eléctricos | Name=Rectangle017 | Type=Part::Part2DObjectPython

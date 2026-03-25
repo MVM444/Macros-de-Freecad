@@ -1,35 +1,418 @@
-import FreeCAD
-import FreeCADGui
+# -*- coding: utf-8 -*-
+"""
+Herramientas_Varias_Mover.FCMacro
+Version: 2025-09-25 15:10 (CR)
 
-def mover_tomacorrientes_a_grupo(nombre_grupo_base):
-    doc = FreeCAD.ActiveDocument
-    selection = FreeCADGui.Selection.getSelection()
-    
-    # Verificar si el grupo ya existe y encontrar un nombre consecutivo
-    grupo = None
-    grupo_nombre = nombre_grupo_base
-    contador = 1
+Descripcion / Instrucciones:
+- Regla solicitada:
+  * Si se selecciona un GRUPO, mover las tomas dentro de ese grupo a un SUBGRUPO destino
+    (en el mismo padre del grupo si existe; si no, en electrico/<SUBGRUPO_DESTINO>).
+  * Si se seleccionan OBJETOS, y ya pertenecen a un grupo, crear/usar un SUBGRUPO dentro de ese MISMO grupo
+    con el nombre indicado y mover ahi el objeto.
+  * Si un objeto no pertenece a ningun grupo, asegurar 'electrico' y crear/usar electrico/<SUBGRUPO_DESTINO>.
+- Sin tildes; mensajes de depuracion [MOVER].
+- Pensado para tomacorrientes, aplicable a otros objetos.
+
+Configuracion rapida:
+- Cambie SUBGRUPO_DESTINO en la cabecera, p. ej. "Circuito", "Tomacorrientes", etc.
+- Si desea preguntar el nombre, se abre un dialogo (si hay GUI).
+
+Uso:
+- Seleccione objetos y ejecute la macro.
+- Opcional: llamar mover_tomacorrientes_a_subgrupo("OtroNombre") para ignorar la constante.
+
+Notas:
+- Todas las macros del proyecto deben residir en el directorio de macros de FreeCAD o subdirectorios.
+- Proposito final: integrar en un Workbench para FreeCAD.
+"""
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import sys
+from pathlib import Path
+
+try:
+    from PySide2 import QtWidgets
+except Exception:
+    try:
+        from PySide import QtGui as QtWidgets
+    except Exception:
+        QtWidgets = None
+
+try:
+    import importlib
+    import component_classifier as _component_classifier_mod
+    _component_classifier_mod = importlib.reload(_component_classifier_mod)
+except Exception:
+    try:
+        this_dir = Path(__file__).resolve().parent
+        con_dir = this_dir.parent / "Conectar"
+        if str(con_dir) not in sys.path:
+            sys.path.insert(0, str(con_dir))
+        import importlib
+        import component_classifier as _component_classifier_mod
+        _component_classifier_mod = importlib.reload(_component_classifier_mod)
+    except Exception:
+        _component_classifier_mod = None
+
+# ------------------------------------------------------------
+# Configuracion
+# ------------------------------------------------------------
+SUBGRUPO_DESTINO = "Circuito"  # Cambiar aqui el nombre por defecto del subgrupo
+SOLO_TOMAS = False  # False: mover todos los componentes ElectricCR reconocidos
+CREAR_SUBGRUPO_NUEVO = True  # siempre crea un subgrupo nuevo (con sufijo)
+DESTINO_GRUPO_LABEL = "Tomacorrientes"  # subgrupo bajo 'electrico' donde se crean los circuitos
+FORZAR_DESTINO_ELECTRICO = True  # si True, ignora el padre original y mueve a electrico/DESTINO_GRUPO_LABEL
+
+# ------------------------------------------------------------
+# Log helpers (sin tildes)
+# ------------------------------------------------------------
+def _info(msg):
+    try:
+        App.Console.PrintMessage(f"[MOVER][INFO] {msg}\n")
+    except Exception:
+        pass
+
+def _warn(msg):
+    try:
+        App.Console.PrintWarning(f"[MOVER][WARN] {msg}\n")
+    except Exception:
+        pass
+
+def _error(msg):
+    try:
+        App.Console.PrintError(f"[MOVER][ERROR] {msg}\n")
+    except Exception:
+        pass
+
+# ------------------------------------------------------------
+# Group helpers
+# ------------------------------------------------------------
+def _ensure_group_electrico(doc):
+    """Asegura el grupo raiz 'electrico'."""
+    grp = doc.getObject("electrico")
+    if grp is None:
+        try:
+            grp = doc.addObject("App::DocumentObjectGroup", "electrico")
+            grp.Label = "electrico"
+            _info("creado grupo electrico")
+        except Exception as ex:
+            _error(f"no se pudo crear grupo electrico: {ex}")
+            return None
+    return grp
+
+def _ensure_destino_parent(doc):
+    electrico = _ensure_group_electrico(doc)
+    if electrico is None:
+        return None
+    label = (DESTINO_GRUPO_LABEL or "").strip()
+    if not label:
+        return electrico
+    return _ensure_child_group_exact(doc, electrico, label)
+
+def _find_child_group_by_label(parent, label):
+    """Devuelve hijo directo cuyo Label coincide exactamente."""
+    for child in (getattr(parent, "Group", []) or []):
+        if getattr(child, "Label", "") == label:
+            return child
+    return None
+
+def _ensure_child_group_exact(doc, parent, label_exacto):
+    """Crea (si no existe) un hijo de 'parent' con Label EXACTO = label_exacto."""
+    label = (label_exacto or "Circuito").strip() or "Circuito"
+    found = _find_child_group_by_label(parent, label)
+    if found:
+        return found
+    try:
+        grp = doc.addObject("App::DocumentObjectGroup", label)
+        grp.Label = label
+        parent.addObject(grp)
+        _info(f"creado subgrupo '{label}' dentro de '{getattr(parent,'Label','?')}'")
+        return grp
+    except Exception as ex:
+        _error(f"no se pudo crear subgrupo '{label}' dentro de '{getattr(parent,'Label','?')}': {ex}")
+        return None
+
+def _unique_label(parent, base_label):
+    label = (base_label or "Circuito").strip() or "Circuito"
+    existing = set(getattr(child, "Label", "") for child in (getattr(parent, "Group", []) or []))
+    if label not in existing:
+        return label
+    # Si el label termina en numero (ej: "Circuito 1"), continuar numeracion
+    try:
+        import re
+        m = re.match(r"^(.*?)(?:\\s+(\\d+))$", label)
+    except Exception:
+        m = None
+    if m:
+        base = (m.group(1) or "").strip() or label
+        start = int(m.group(2))
+    else:
+        base = label
+        start = 1
+    n = start
     while True:
-        grupo = None
-        for obj in doc.Objects:
-            if obj.TypeId == 'App::DocumentObjectGroup' and obj.Label == grupo_nombre:
-                grupo = obj
-                break
-        if grupo is None:
-            break
-        contador += 1
-        grupo_nombre = f"{nombre_grupo_base}_{contador}"
-    
-    # Crear el grupo
-    grupo = doc.addObject('App::DocumentObjectGroup', grupo_nombre)
-    grupo.Label = grupo_nombre
-    
-    # Mover los tomacorrientes seleccionados al grupo
-    for tomacorriente in selection:
-        grupo.addObject(tomacorriente)
-    
-    doc.recompute()
-    FreeCAD.Console.PrintMessage(f"{len(selection)} tomacorrientes movidos al grupo '{grupo_nombre}'.\n")
+        cand = f"{base} {n}"
+        if cand not in existing:
+            return cand
+        n += 1
 
-# Ejecuta la función para mover tomacorrientes al grupo especificado
-mover_tomacorrientes_a_grupo("Circuito")  # Cambia "Circuito" por el nombre base de tu grupo
+def _create_child_group_unique(doc, parent, base_label):
+    label = _unique_label(parent, base_label)
+    try:
+        grp = doc.addObject("App::DocumentObjectGroup", label)
+        grp.Label = label
+        parent.addObject(grp)
+        _info(f"creado subgrupo '{label}' dentro de '{getattr(parent,'Label','?')}'")
+        return grp
+    except Exception as ex:
+        _error(f"no se pudo crear subgrupo '{label}' dentro de '{getattr(parent,'Label','?')}': {ex}")
+        return None
+
+def _find_parent_group_linear(doc, obj):
+    """Obtiene el grupo padre directo inspeccionando todos los grupos (fallback)."""
+    for o in doc.Objects:
+        if getattr(o, "TypeId", "") == "App::DocumentObjectGroup":
+            if obj in (getattr(o, "Group", []) or []):
+                return o
+    return None
+
+def _detach_from_any_parent(doc, obj):
+    """Remueve obj de cualquier grupo donde este para evitar duplicidad."""
+    for o in doc.Objects:
+        if getattr(o, "TypeId", "") == "App::DocumentObjectGroup":
+            try:
+                if obj in (getattr(o, "Group", []) or []):
+                    o.removeObject(obj)
+            except Exception:
+                pass
+
+def _ask_subgrupo_name(default_name):
+    if QtWidgets is None:
+        return default_name
+    try:
+        name, ok = QtWidgets.QInputDialog.getText(
+            None,
+            "Mover tomacorrientes",
+            "Nombre del subgrupo destino:",
+            QtWidgets.QLineEdit.Normal,
+            default_name or "Circuito",
+        )
+        if not ok:
+            return None
+        return (name or "").strip() or default_name
+    except Exception:
+        return default_name
+
+def _is_group(obj):
+    return getattr(obj, "TypeId", "") == "App::DocumentObjectGroup"
+
+def _looks_like_toma(obj):
+    if obj is None:
+        return False
+    try:
+        if _component_classifier_mod is not None:
+            ctype = _component_classifier_mod.get_component_type(obj)
+            if ctype:
+                return (ctype == "Toma") if SOLO_TOMAS else True
+    except Exception:
+        pass
+    try:
+        if hasattr(obj, "Tipo"):
+            t = str(obj.Tipo)
+            return (t == "Toma") if SOLO_TOMAS else bool(t)
+    except Exception:
+        pass
+    lbl = getattr(obj, "Label", "") or ""
+    name = getattr(obj, "Name", "") or ""
+    tag = f"{lbl} {name}".lower()
+    if SOLO_TOMAS:
+        if "toma" in tag or "tomacorriente" in tag:
+            return True
+    else:
+        for key in ("toma", "tomacorriente", "apagador", "interruptor", "luminaria", "sensor", "rociador", "altavoz", "camara"):
+            if key in tag:
+                return True
+    return False
+
+def _iter_objects_in_group(grp):
+    for child in (getattr(grp, "Group", []) or []):
+        if _is_group(child):
+            if "Conexiones" in getattr(child, "Label", ""):
+                continue
+            for sub in _iter_objects_in_group(child):
+                yield sub
+        else:
+            yield child
+
+# ------------------------------------------------------------
+# Principal
+# ------------------------------------------------------------
+def mover_tomacorrientes_a_subgrupo(nombre_subgrupo=None):
+    """
+    Para cada seleccionado:
+      - Si tiene grupo padre: mover a subgrupo 'nombre_subgrupo' (o SUBGRUPO_DESTINO) dentro del MISMO padre.
+      - Si no tiene padre: mover a electrico/nombre_subgrupo.
+    """
+    doc = App.ActiveDocument
+    if doc is None:
+        _error("no hay documento activo")
+        return
+
+    try:
+        selection = Gui.Selection.getSelection()
+    except Exception:
+        selection = []
+
+    if not selection:
+        _error("no hay objetos seleccionados")
+        return
+
+    base = (nombre_subgrupo if nombre_subgrupo is not None else SUBGRUPO_DESTINO)
+    base = (base or "Circuito").strip() or "Circuito"
+
+    # Pre-asegurar electrico por si hay objetos sin grupo
+    electrico = _ensure_group_electrico(doc)
+    if electrico is None:
+        return
+
+    destino_forzado = _ensure_destino_parent(doc) if FORZAR_DESTINO_ELECTRICO else None
+    if FORZAR_DESTINO_ELECTRICO and destino_forzado is None:
+        _error("no se pudo asegurar electrico/DESTINO_GRUPO_LABEL")
+        return
+
+    # Cache de subgrupos por padre para no recrear multiples veces
+    subgroups_cache = {}  # key: parent_obj (o 'electrico_root'), value: subgroup
+
+    movidos = 0
+    grupos_sel = [o for o in selection if _is_group(o)]
+    objs_sel = [o for o in selection if not _is_group(o)]
+
+    if grupos_sel:
+        base = _ask_subgrupo_name(base)
+        if base is None:
+            _warn("operacion cancelada por el usuario")
+            return
+
+        for grp in grupos_sel:
+            # Determinar padre del grupo seleccionado
+            parent_group = None
+            gp = getattr(grp, "getParentGroup", None)
+            if callable(gp):
+                try:
+                    parent_group = gp()
+                except Exception:
+                    parent_group = None
+            if parent_group is None:
+                parent_group = _find_parent_group_linear(doc, grp)
+
+            # Destino
+            if FORZAR_DESTINO_ELECTRICO:
+                parent_group = destino_forzado
+            if parent_group:
+                cache_key = parent_group
+                if cache_key not in subgroups_cache:
+                    subgrp = _create_child_group_unique(doc, parent_group, base) if CREAR_SUBGRUPO_NUEVO else _ensure_child_group_exact(doc, parent_group, base)
+                    if subgrp is None:
+                        _warn(f"no se pudo asegurar subgrupo '{base}' en '{getattr(parent_group,'Label','?')}', omitiendo grupo")
+                        continue
+                    subgroups_cache[cache_key] = subgrp
+                destino = subgroups_cache[cache_key]
+                destino_path = f"{getattr(parent_group,'Label','?')}/{destino.Label}"
+            else:
+                cache_key = "electrico_root"
+            if cache_key not in subgroups_cache:
+                subgrp_root = _create_child_group_unique(doc, electrico, base) if CREAR_SUBGRUPO_NUEVO else _ensure_child_group_exact(doc, electrico, base)
+                if subgrp_root is None:
+                    _warn(f"no se pudo asegurar subgrupo '{base}' en 'electrico', omitiendo grupo")
+                    continue
+                subgroups_cache[cache_key] = subgrp_root
+                destino = subgroups_cache[cache_key]
+                destino_path = f"electrico/{destino.Label}"
+
+            # Mover objetos dentro del grupo seleccionado
+            for obj in _iter_objects_in_group(grp):
+                if SOLO_TOMAS and (not _looks_like_toma(obj)):
+                    continue
+                if obj in (getattr(destino, "Group", []) or []):
+                    continue
+                _detach_from_any_parent(doc, obj)
+                try:
+                    destino.addObject(obj)
+                    movidos += 1
+                    _info(f"movido {getattr(obj,'Label','(sin label)')} -> {destino_path}")
+                except Exception as ex:
+                    _warn(f"no se pudo mover {getattr(obj,'Label','(sin label)')} a {destino_path}: {ex}")
+
+    # Procesar objetos seleccionados (no grupos)
+    for obj in objs_sel:
+        # Omitir si es un grupo
+        if getattr(obj, "TypeId", "") == "App::DocumentObjectGroup":
+            _warn(f"omitiendo grupo seleccionado: {getattr(obj,'Label','(sin label)')}")
+            continue
+        if SOLO_TOMAS and (not _looks_like_toma(obj)):
+            _warn(f"omitiendo no-toma: {getattr(obj,'Label','(sin label)')}")
+            continue
+
+        # Determinar padre directo
+        parent_group = None
+        gp = getattr(obj, "getParentGroup", None)
+        if callable(gp):
+            try:
+                parent_group = gp()
+            except Exception:
+                parent_group = None
+        if parent_group is None:
+            parent_group = _find_parent_group_linear(doc, obj)
+
+        # Definir destino: subgrupo dentro del mismo padre o electrico/base si no hay padre
+        if FORZAR_DESTINO_ELECTRICO:
+            parent_group = destino_forzado
+        if parent_group:
+            cache_key = parent_group
+            if cache_key not in subgroups_cache:
+                subgrp = _create_child_group_unique(doc, parent_group, base) if CREAR_SUBGRUPO_NUEVO else _ensure_child_group_exact(doc, parent_group, base)
+                if subgrp is None:
+                    _warn(f"no se pudo asegurar subgrupo '{base}' en '{getattr(parent_group,'Label','?')}', omitiendo objeto")
+                    continue
+                subgroups_cache[cache_key] = subgrp
+            destino = subgroups_cache[cache_key]
+            destino_path = f"{getattr(parent_group,'Label','?')}/{destino.Label}"
+        else:
+            cache_key = "electrico_root"
+            if cache_key not in subgroups_cache:
+                subgrp_root = _create_child_group_unique(doc, electrico, base) if CREAR_SUBGRUPO_NUEVO else _ensure_child_group_exact(doc, electrico, base)
+                if subgrp_root is None:
+                    _warn(f"no se pudo asegurar subgrupo '{base}' en 'electrico', omitiendo objeto")
+                    continue
+                subgroups_cache[cache_key] = subgrp_root
+            destino = subgroups_cache[cache_key]
+            destino_path = f"electrico/{destino.Label}"
+
+        # Si ya esta en el destino, omitir
+        if obj in (getattr(destino, "Group", []) or []):
+            _info(f"ya estaba en {destino_path}: {getattr(obj,'Label','(sin label)')}")
+            continue
+
+        # Mover
+        _detach_from_any_parent(doc, obj)
+        try:
+            destino.addObject(obj)
+            movidos += 1
+            _info(f"movido {getattr(obj,'Label','(sin label)')} -> {destino_path}")
+        except Exception as ex:
+            _warn(f"no se pudo mover {getattr(obj,'Label','(sin label)')} a {destino_path}: {ex}")
+
+    try:
+        doc.recompute()
+    except Exception as ex:
+        _warn(f"recompute con advertencia: {ex}")
+
+    _info(f"{movidos} objeto(s) movidos segun reglas de subgrupo dentro del mismo grupo o a electrico/{base}.")
+
+# ------------------------------------------------------------
+# Ejecucion directa (puede comentarse si se importa desde otra macro)
+# ------------------------------------------------------------
+if __name__ == "__main__":
+    # Usa la constante global; para forzar otro nombre, pase una cadena: mover_tomacorrientes_a_subgrupo("Otro")
+    mover_tomacorrientes_a_subgrupo()

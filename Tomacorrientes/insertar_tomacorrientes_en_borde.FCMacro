@@ -1,55 +1,275 @@
-#!/usr/bin/env python
 # -*- coding: utf-8 -*-
-# =============================================================================
-# Insertar tomacorrientes en borde (wrapper v1)
-# Usa la fabrica InsertarTomacorriente para crear TomacorrienteHibrido.
-# Mantiene UI: intervalo, altura y direccion (Adelante/Atras) con offset 60 mm.
-# =============================================================================
+"""
+insertar_tomacorrientes_en_borde.FCMacro (rev 2026-02-10)
+Inserta tomacorrientes distribuidos a lo largo de bordes/lineas seleccionadas
+usando ElectricCR.electriccr.features.objeto_toma_uno.
+"""
+
+import math
+import sys
+import importlib
+import importlib.util
+import importlib.machinery
+from pathlib import Path
 
 import FreeCAD as App
 import FreeCADGui as Gui
 import Part
-import os
-import datetime
-import math
 
 try:
     from PySide2.QtWidgets import QInputDialog, QMessageBox
-except ImportError:
+except Exception:
     from PySide.QtGui import QInputDialog, QMessageBox
 
-LOG = "[TOMA23D]"
+# ----------------------------
+# Configuracion
+# ----------------------------
+REGISTRO_KEY = "Tomacorriente_120V"
+TIPO_LOGICO = "Toma"
+MODO_VISUAL = "Ambos"
+OFFSET_MM_DEFAULT = 0.0  # 0 = sobre la linea/borde
+USAR_LINK_DESDE_INICIO = True
 
-def _info(m): App.Console.PrintMessage(f"{LOG}[INFO] {m}\n")
-def _err(m): App.Console.PrintError(f"{LOG}[ERROR] {m}\n")
+# ----------------------------
+# Logging
+# ----------------------------
+
+def _info(m):
+    App.Console.PrintMessage(f"[BORDE][INFO] {m}\n")
 
 
-def _ensure_factory_loaded():
-    if 'InsertarTomacorriente' in globals():
-        return True
+def _err(m):
+    App.Console.PrintError(f"[BORDE][ERROR] {m}\n")
+
+
+# ----------------------------
+# Resolver paquete ElectricCR
+# ----------------------------
+
+def _this_dir():
     try:
-        here = os.path.dirname(os.path.abspath(__file__))
-        path = os.path.join(here, 'Insertar_Tomacorriente_Fabrica.FCMacro')
-        if os.path.exists(path):
-            with open(path, 'r', encoding='utf-8') as f:
-                code = f.read()
-            exec(compile(code, path, 'exec'), globals())
-            return 'InsertarTomacorriente' in globals()
-    except Exception as e:
-        _err(f"Factory load failed: {e}")
-    return False
+        return Path(__file__).resolve().parent
+    except Exception:
+        return None
 
 
-def insertar_tomacorrientes():
-    ahora = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    _info(f"Ejecutando insertar_tomacorrientes_en_borde: {ahora}")
+def _candidate_pkg_roots():
+    seen = set()
+    base = _this_dir()
+    if base is not None:
+        macros_dir = base.parent
+        for candidate in (macros_dir / "ElectricCR", macros_dir.parent / "ElectricCR"):
+            if candidate and candidate not in seen:
+                seen.add(candidate)
+                yield candidate
+    try:
+        user_mod = Path(App.getUserAppDataDir()) / "Mod" / "ElectricCR"
+        if user_mod not in seen:
+            seen.add(user_mod)
+            yield user_mod
+    except Exception:
+        pass
 
-    if not _ensure_factory_loaded():
-        _err('Factory not available. Ensure Insertar_Tomacorriente_Fabrica.FCMacro exists in same folder.')
-        return
 
-    # Inputs
-    intervalo_mm, ok = QInputDialog.getInt(None, "Intervalo", "Distancia entre tomacorrientes (mm):", 1800, 1, 100000)
+def _ensure_paths():
+    for root in _candidate_pkg_roots():
+        try:
+            if root.is_dir() and str(root) not in sys.path:
+                sys.path.insert(0, str(root))
+        except Exception:
+            continue
+
+
+def _fallback_loader():
+    for root in _candidate_pkg_roots():
+        try:
+            cand = root / "electriccr" / "features" / "objeto_toma_uno.py"
+        except Exception:
+            continue
+        if cand.is_file():
+            loader = importlib.machinery.SourceFileLoader("objeto_toma_uno_boot", str(cand))
+            spec = importlib.util.spec_from_loader(loader.name, loader)
+            if spec is None:
+                continue
+            module = importlib.util.module_from_spec(spec)
+            loader.exec_module(module)
+            return module
+    return None
+
+
+def _load_toma_module():
+    _ensure_paths()
+    try:
+        module = importlib.import_module("electriccr.features.objeto_toma_uno")
+        importlib.reload(module)
+        return module
+    except Exception:
+        module = _fallback_loader()
+        if module is None:
+            _err("No se pudo cargar objeto_toma_uno")
+            raise
+        return module
+
+
+# ----------------------------
+# Grupo destino
+# ----------------------------
+
+def _ensure_group(doc, label="Tomacorrientes"):
+    group = doc.getObject(label)
+    if group:
+        return group
+    parent = doc.getObject("electrico")
+    if parent is None:
+        try:
+            parent = doc.addObject("App::DocumentObjectGroup", "electrico")
+        except Exception:
+            parent = None
+    try:
+        group = doc.addObject("App::DocumentObjectGroup", label)
+        if parent and hasattr(parent, "addObject"):
+            parent.addObject(group)
+        return group
+    except Exception:
+        return None
+
+
+# ----------------------------
+# Insercion
+# ----------------------------
+
+def _unit(v):
+    vv = App.Vector(v)
+    if vv.Length == 0:
+        return None
+    vv.normalize()
+    return vv
+
+
+def _create_toma_instance(doc, module, group, name_prefix, placement, altura_mm):
+    if USAR_LINK_DESDE_INICIO and hasattr(module, "crear_toma_link"):
+        try:
+            return module.crear_toma_link(
+                doc=doc,
+                name_prefix=name_prefix,
+                key_registro=REGISTRO_KEY,
+                tipo_logico=TIPO_LOGICO,
+                placement=placement,
+                modo_visual=MODO_VISUAL,
+                altura_rel=float(altura_mm),
+                orientacion_pared="Vertical",
+                recompute=False,
+                target_group=group,
+            )
+        except TypeError:
+            return module.crear_toma_link(
+                doc=doc,
+                name_prefix=name_prefix,
+                key_registro=REGISTRO_KEY,
+                tipo_logico=TIPO_LOGICO,
+                placement=placement,
+                modo_visual=MODO_VISUAL,
+                altura_rel=float(altura_mm),
+                orientacion_pared="Vertical",
+            )
+        except Exception as ex:
+            _info(f"crear_toma_link no disponible, se usa modo clasico: {ex}")
+
+    try:
+        obj = module.crear_toma_uno(
+            doc=doc,
+            name_prefix=name_prefix,
+            key_registro=REGISTRO_KEY,
+            tipo_logico=TIPO_LOGICO,
+            recompute=False,
+        )
+    except TypeError:
+        obj = module.crear_toma_uno(
+            doc=doc,
+            name_prefix=name_prefix,
+            key_registro=REGISTRO_KEY,
+            tipo_logico=TIPO_LOGICO,
+        )
+
+    if group and hasattr(group, "addObject"):
+        try:
+            if obj not in (group.Group or []):
+                group.addObject(obj)
+        except Exception:
+            pass
+    try:
+        obj.ModoVisual = MODO_VISUAL
+        obj.AlturaRel = float(altura_mm)
+        obj.OrientacionPared = "Vertical"
+        obj.Placement = placement
+        obj.Giro = 0.0
+        obj.touch()
+    except Exception:
+        pass
+    return obj
+
+
+def _insert_on_edge(doc, module, group, edge, intervalo_mm, altura_mm, offset_mm, inside, start_index, created):
+    index = start_index
+    L = edge.Length
+    count = max(1, int(L // intervalo_mm))
+    for i in range(count):
+        t = (i + 1) / (count + 1)
+        param = edge.FirstParameter + t * (edge.LastParameter - edge.FirstParameter)
+        p = edge.valueAt(param)
+        try:
+            tan = edge.tangentAt(param)
+        except Exception:
+            tan = App.Vector(1, 0, 0)
+        direction = _unit(tan)
+        if direction is None:
+            continue
+        normal = App.Vector(direction.y, -direction.x, 0)
+        normal = _unit(normal)
+        if normal is None:
+            continue
+        if not inside:
+            normal = App.Vector(-normal.x, -normal.y, -normal.z)
+        pos = App.Vector(p.x + normal.x * offset_mm, p.y + normal.y * offset_mm, p.z)
+        angle = math.degrees(math.atan2(normal.y, normal.x)) - 90.0
+
+        placement = App.Placement(pos, App.Rotation(App.Vector(0, 0, 1), angle))
+        obj = _create_toma_instance(
+            doc=doc,
+            module=module,
+            group=group,
+            name_prefix=f"Toma_{index:03d}",
+            placement=placement,
+            altura_mm=altura_mm,
+        )
+        created.append(obj)
+        index += 1
+    return index
+
+
+def _iter_selected_edges(sel_ex):
+    for item in sel_ex or []:
+        got_subedge = False
+        for sub in (getattr(item, "SubObjects", []) or []):
+            if isinstance(sub, Part.Edge):
+                got_subedge = True
+                yield sub
+        if got_subedge:
+            continue
+        obj = getattr(item, "Object", None)
+        shp = getattr(obj, "Shape", None)
+        if shp is None:
+            continue
+        for edge in (getattr(shp, "Edges", []) or []):
+            if isinstance(edge, Part.Edge):
+                yield edge
+
+
+def insertar_tomacorrientes_en_borde():
+    doc = App.ActiveDocument or App.newDocument("Electrico")
+    module = _load_toma_module()
+
+    intervalo_mm, ok = QInputDialog.getInt(None, "Intervalo", "Distancia entre tomas (mm):", 1800, 1, 100000)
     if not ok:
         _err("Operacion cancelada: sin intervalo.")
         return
@@ -57,84 +277,57 @@ def insertar_tomacorrientes():
     if not ok:
         _err("Operacion cancelada: sin altura.")
         return
+    offset_mm, ok = QInputDialog.getDouble(
+        None,
+        "Offset",
+        "Offset perpendicular desde la linea (mm, 0 = sobre linea):",
+        float(OFFSET_MM_DEFAULT),
+        0.0,
+        10000.0,
+        1,
+    )
+    if not ok:
+        _err("Operacion cancelada: sin offset.")
+        return
 
     msg = QMessageBox()
     msg.setWindowTitle("Direccion")
-    msg.setText("Selecciona direccion del offset perpendicular:")
+    msg.setText("Selecciona orientacion perpendicular:")
     btnA = msg.addButton("Adelante", QMessageBox.AcceptRole)
     btnB = msg.addButton("Atras", QMessageBox.RejectRole)
     msg.exec_()
-    adelante = (msg.clickedButton() == btnA)
+    inside = (msg.clickedButton() == btnA)
 
-    despl_mm = 60
-    off = -despl_mm if adelante else despl_mm
-
-    doc = App.ActiveDocument or App.newDocument("PlanoElectricos")
     sel = Gui.Selection.getSelectionEx()
     if not sel:
-        _err("Selecciona al menos un borde o linea.")
+        _err("Seleccione al menos un borde o linea.")
         return
 
-    creados = 0
-    for item in sel:
-        for edge in item.SubObjects:
-            if isinstance(edge, Part.Edge):
-                L = edge.Length
-                count = max(1, int(L // intervalo_mm))
-                _info(f"Arista {L:.2f} mm -> {count} tomacorrientes")
-                for i in range(count):
-                    # Parametro y punto
-                    t = (i + 1) / (count + 1)
-                    param = edge.FirstParameter + t * (edge.LastParameter - edge.FirstParameter)
-                    p = edge.valueAt(param)
-                    # Tangente y normal 2D
-                    tg = edge.tangentAt(param); tg.normalize()
-                    normal = App.Vector(tg.y, -tg.x, 0); normal.normalize()
-                    # Posicion en XY (plano de trabajo) con offset perpendicular
-                    pos = App.Vector(p.x + normal.x * off, p.y + normal.y * off, 0)
-                    # Rotacion yaw: normal +90 y +180 si atras
-                    base_angle = math.degrees(math.atan2(normal.y, normal.x))
-                    angle = (base_angle + 90 + (0 if adelante else 180)) % 360
-                    rot = App.Rotation(App.Vector(0, 0, 1), angle)
-
-                    # Crear mediante fabrica (sin depender de la seleccion actual)
-                    try:
-                        Gui.Selection.clearSelection()
-                    except Exception:
-                        pass
-                    parent = InsertarTomacorriente({'Tipo':'NEMA5-15_duplex', 'Altura': altura_mm, 'ModoVisual':'Ambos'})
-
-                    # Colocar: XY+Yaw en el padre; Altura ya aplicada al 3D por la fabrica
-                    pl = parent.Placement
-                    pl.Base = pos
-                    pl.Rotation = rot
-                    parent.Placement = pl
-
-                    # Asegurar altura del 3D si la sesion no cargo _apply_transform
-                    try:
-                        if '_apply_transform' in globals():
-                            _apply_transform(parent)
-                        else:
-                            # fallback: subir el hijo 3D
-                            rep3d = None
-                            for ch in getattr(parent, 'Group', []):
-                                if ch.Label == getattr(parent, 'Rep3DName', 'Rep3D'):
-                                    rep3d = ch; break
-                            if rep3d:
-                                pl3 = rep3d.Placement
-                                pl3.Base = App.Vector(pl3.Base.x, pl3.Base.y, float(altura_mm))
-                                rep3d.Placement = pl3
-                    except Exception:
-                        pass
-                    creados += 1
+    group = _ensure_group(doc)
+    index = 1
+    created = []
+    for edge in _iter_selected_edges(sel):
+        index = _insert_on_edge(doc, module, group, edge, intervalo_mm, altura_mm, offset_mm, inside, index, created)
 
     try:
         doc.recompute()
     except Exception:
         pass
-    _info(f"Insercion completada. Creados: {creados}")
+
+    # agrupar (opcional)
+    if group and created:
+        try:
+            for obj in created:
+                if obj not in (group.Group or []):
+                    group.addObject(obj)
+        except Exception:
+            pass
+
+    if not created:
+        _err("No se encontraron bordes validos para insertar tomacorrientes.")
+        return
+    _info(f"Insercion completada. Objetos: {len(created)} | Offset: {float(offset_mm):.1f} mm")
 
 
-if __name__ == '__main__':
-    insertar_tomacorrientes()
-
+if __name__ == "__main__":
+    insertar_tomacorrientes_en_borde()

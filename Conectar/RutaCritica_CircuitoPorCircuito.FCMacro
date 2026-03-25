@@ -1,0 +1,174 @@
+# -*- coding: utf-8 -*-
+# MenuText: Ruta critica circuito por circuito
+# Icon: medir_distancia_y_dibujar_ruta.svg
+
+import os
+import importlib.util
+import importlib.machinery
+
+import FreeCAD
+import FreeCADGui
+
+try:
+    from PySide2 import QtWidgets as QtGui
+except Exception:
+    from PySide import QtGui
+
+
+TAG = "[RUTA-SEQ]"
+USE_RESULTS_SHEET = False
+
+
+def log_info(msg):
+    FreeCAD.Console.PrintMessage(f"{TAG}[INFO] {msg}\n")
+
+
+def log_warn(msg):
+    FreeCAD.Console.PrintWarning(f"{TAG}[WARN] {msg}\n")
+
+
+def log_err(msg):
+    FreeCAD.Console.PrintError(f"{TAG}[ERROR] {msg}\n")
+
+
+def _selected_objects():
+    sel = list(FreeCADGui.Selection.getSelection() or [])
+    if sel:
+        return sel
+    try:
+        sel_ex = FreeCADGui.Selection.getSelectionEx() or []
+        return [s.Object for s in sel_ex if getattr(s, "Object", None)]
+    except Exception:
+        return []
+
+
+def _is_group(obj):
+    return hasattr(obj, "Group")
+
+
+def _is_conexiones_group(obj):
+    label = str(getattr(obj, "Label", "") or "").strip().lower()
+    name = str(getattr(obj, "Name", "") or "").strip().lower()
+    return label.startswith("conexiones") or name.startswith("conexiones")
+
+
+def _direct_subgroups(grp):
+    out = []
+    if not hasattr(grp, "Group"):
+        return out
+    for child in grp.Group:
+        if not _is_group(child):
+            continue
+        if _is_conexiones_group(child):
+            continue
+        out.append(child)
+    return out
+
+
+def _load_base_macro():
+    this_dir = os.path.dirname(__file__) if "__file__" in globals() else ""
+    path = os.path.join(this_dir, "medir_distancia_y_dibujar_ruta.FCMacro")
+    if not os.path.isfile(path):
+        raise RuntimeError(f"No se encontro macro base: {path}")
+
+    name = "ruta_critica_base_macro"
+    loader = importlib.machinery.SourceFileLoader(name, path)
+    spec = importlib.util.spec_from_loader(name, loader)
+    if spec is None:
+        raise RuntimeError("No se pudo crear spec para macro base")
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+def ruta_critica_circuito_por_circuito():
+    doc = FreeCAD.ActiveDocument
+    if doc is None:
+        log_err("No hay documento activo")
+        return
+
+    sel = _selected_objects()
+    if len(sel) < 2:
+        log_err("Seleccione primero el objeto inicial y luego el grupo principal de circuitos")
+        return
+
+    objeto_inicial = sel[0]
+    grupo_principal = sel[1]
+
+    if not hasattr(objeto_inicial, "Placement"):
+        log_err("El primer elemento seleccionado no tiene Placement")
+        return
+    if not _is_group(grupo_principal):
+        log_err("El segundo elemento seleccionado debe ser un grupo")
+        return
+
+    circuitos = _direct_subgroups(grupo_principal)
+    if not circuitos:
+        if _is_conexiones_group(grupo_principal):
+            log_err("Seleccione un grupo principal de circuitos, no 'Conexiones'")
+            return
+        circuitos = [grupo_principal]
+
+    altura, ok = QtGui.QInputDialog.getDouble(
+        None, "Altura", "Ingrese altura Z de las rutas (mm):",
+        3000, -100000, 100000, 2
+    )
+    if not ok:
+        log_warn("Operacion cancelada por el usuario")
+        return
+
+    try:
+        base = _load_base_macro()
+    except Exception as ex:
+        log_err(f"No se pudo cargar macro base: {ex}")
+        return
+
+    runner = getattr(base, "run_ruta_critica", None)
+    if runner is None:
+        log_err("La macro base no expone run_ruta_critica(). Actualice medir_distancia_y_dibujar_ruta.FCMacro")
+        return
+
+    hoja = base.ensure_results_sheet(doc) if USE_RESULTS_SHEET else None
+    next_row = None if USE_RESULTS_SHEET else 2
+    total_wires = 0
+
+    log_info(f"Circuitos a procesar: {len(circuitos)}")
+    for idx, circuito in enumerate(circuitos, 1):
+        c_label = getattr(circuito, "Label", getattr(circuito, "Name", "Circuito"))
+        log_info(f"[{idx}/{len(circuitos)}] Procesando '{c_label}'")
+        try:
+            res = runner(
+                objeto_inicial=objeto_inicial,
+                grupo_tomas=circuito,
+                altura=altura,
+                hoja=hoja,
+                base_row=next_row,
+                recompute=False,
+                update_e1=False,
+                write_sheet=USE_RESULTS_SHEET,
+            )
+            wrote = int(res.get("wrote", 0))
+            if USE_RESULTS_SHEET:
+                next_row = res.get("next_row", next_row)
+            total_wires += max(0, wrote)
+            if wrote == 0:
+                log_warn(f"Sin ruta creada en '{c_label}'")
+        except Exception as ex:
+            log_err(f"Fallo en '{c_label}': {ex}")
+
+    if USE_RESULTS_SHEET and next_row is not None and hoja is not None:
+        try:
+            base.bump_e1(hoja, next_row)
+        except Exception as ex:
+            log_warn(f"No se pudo actualizar E1: {ex}")
+
+    try:
+        doc.recompute()
+    except Exception as ex:
+        log_warn(f"Error en recompute: {ex}")
+
+    log_info(f"Listo. Rutas creadas: {total_wires}")
+
+
+if __name__ == "__main__":
+    ruta_critica_circuito_por_circuito()

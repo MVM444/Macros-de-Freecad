@@ -1,0 +1,1736 @@
+# -*- coding: utf-8 -*-
+# MenuText: Importar Luminarias CSV
+# ToolTip: Importa luminarias App::Link desde CSV
+# Icon: ColocarLuminarias.svg
+"""
+Importar_Luminarias_CSV_ElectricCR.FCMacro
+
+Importa luminarias desde CSV y crea instancias App::Link en el documento activo.
+Pensado para flujo ElectricCR:
+  electrico/Iluminacion/Luminarias_Importadas
+
+CSV esperado:
+  Nombre,X,Y,Z
+"""
+
+import csv
+import importlib
+import io
+import json
+import os
+import unicodedata
+
+import FreeCAD as App
+
+try:
+    from PySide2 import QtWidgets
+except Exception:
+    try:
+        from PySide import QtGui as QtWidgets
+    except Exception:
+        QtWidgets = None
+
+try:
+    from pathlib import Path
+except Exception:
+    Path = None
+
+
+# -------------------- Configuracion editable --------------------
+CSV_PATH = r"C:\Users\marco\OneDrive - Caja Costarricense de Seguro Social\2026\03-Marzo-2026\La Cruz\1411-04 Luminarias y Ejes La Cruz.csv"
+SHOW_IMPORT_FORM = True
+SELECT_CSV_WITH_DIALOG = True
+PREFER_PROJECT_DIR = True
+REGISTRY_PATH = r"C:\Users\marco\OneDrive - Caja Costarricense de Seguro Social\Documentos\FreeCAD\Macros\Macros-de-Freecad\Resources\registry\registry_electric.json"
+SHOW_TYPE_MAPPING_FORM = True
+
+BASE_OBJECT_NAME = ""                 # Name o Label de fallback (opcional)
+SCALE_FACTOR = 1.0                    # 0.001 si CSV en mm y modelo en m
+USE_CSV_NAME_AS_OBJECT_TYPE = True    # Usa campo Nombre para decidir que objeto insertar
+MISSING_TYPE_POLICY = "skip"          # fallback | skip
+USE_DEVICE_CREATOR_FOR_REGISTRY_TYPES = True
+SWAP_XY = False
+INVERT_X = False
+INVERT_Y = False
+INVERT_Z = False
+OFFSET_X = 0.0
+OFFSET_Y = 0.0
+OFFSET_Z = 0.0
+ALIGN_FIRST_POINT_TO_SELECTION = False
+ALIGN_MODE = "none"                  # none | first | centroid
+NAME_TO_BASE_OBJECT = {
+    # "NombreCSV": "NombreObjetoBaseEnFreeCAD",
+    # "lamp emerg": "Luminaria_Emergencia_Base",
+}
+CSV_NAME_TO_REGISTRY_KEY = {
+    # Alias de nombres de CSV a claves del registry_electric.json
+    "lamp emerg": "Luminaria 60x60",
+    "panel led p27540-36": "Luminaria 60x60",
+    "luminaria hermetica": "Luminaria 60x60",
+    "cascada": "Luminaria 60x60",
+    "apagador sencillo": "Apagador_Simple",
+    "apagador doble": "Apagador_Simple",
+    "sensor pir": "Sensor_Humo",
+    "rotulo salida": "Etiqueta_Circuito",
+}
+
+AUTO_DETECT_BASE_OBJECT = True
+USE_SELECTED_OBJECT_AS_BASE = False
+REQUIRE_BASE_IN_ELECTRICO_TREE = True
+BASE_KEYWORDS = ("luminaria", "proto", "lum")
+STRICT_BASE_CANDIDATES = True
+STRICT_BASE_HINTS = ("master", "proto", "base", "plantilla", "symbol", "modelo")
+USE_PLACEHOLDER_IF_MISSING = False
+PLACEHOLDER_KIND = "cube"            # cube | rectangle
+PLACEHOLDER_SIZE_X = 600.0
+PLACEHOLDER_SIZE_Y = 600.0
+PLACEHOLDER_SIZE_Z = 200.0
+PLACEHOLDER_GROUP_LABEL = "Placeholders_Importacion"
+USE_SKETCH_POINTS_IF_MISSING = True
+SKETCH_POINTS_GROUP_LABEL = "Puntos_CSV_por_Tipo"
+SKETCH_NAME_PREFIX = "PtsCSV"
+SKETCH_POINT_FORCE_Z0 = True
+SKETCH_Z_WARN_EPS = 0.001
+
+WORKBENCH_ID = "ElectricCRWorkbench"
+REQUIRE_ELECTRICCR_WORKBENCH = True
+
+ELECTRICO_LABEL = "electrico"
+ELECTRICO_NAME = "electrico"
+ILUMINACION_LABEL = "Iluminacion"
+ILUMINACION_NAME = "Iluminacion"
+IMPORT_GROUP_LABEL = "Luminarias_Importadas"
+IMPORT_GROUP_NAME = "Luminarias_Importadas"
+
+LINK_NAME_PREFIX = "Luminaria"
+USE_CSV_NAME_AS_LABEL = True
+
+CSV_ENCODING = "utf-8-sig"
+CSV_ENCODING_FALLBACKS = ("utf-8", "cp1252", "latin-1")
+CSV_DELIMITER = None                  # None = autodetect
+# ----------------------------------------------------------------
+
+
+def log(msg):
+    App.Console.PrintMessage(str(msg) + "\n")
+
+
+def to_ascii(text):
+    if text is None:
+        return ""
+    normalized = unicodedata.normalize("NFKD", str(text))
+    return normalized.encode("ascii", "ignore").decode("ascii")
+
+
+def normalize_key(text):
+    raw = to_ascii(text).lower()
+    return "".join(ch for ch in raw if ch.isalnum())
+
+
+def normalize_header(text):
+    return normalize_key(text)
+
+
+def load_registry_types():
+    path = (REGISTRY_PATH or "").strip()
+    if not path:
+        return {}
+    try:
+        if Path is not None:
+            data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+        else:
+            with open(path, "r", encoding="utf-8-sig") as f:
+                data = json.load(f)
+        if isinstance(data, dict) and isinstance(data.get("types"), dict):
+            return data.get("types") or {}
+    except Exception as ex:
+        log("[WARN] No se pudo cargar registro ElectricCR: {}".format(ex))
+    return {}
+
+
+def type_keys_sorted_for_matching(types_dict):
+    keys = list((types_dict or {}).keys())
+    keys.sort(key=lambda k: (0 if "lumin" in str(k).lower() else 1, str(k).lower()))
+    return keys
+
+
+def resolve_registry_key(csv_name, registry_keys):
+    if not csv_name:
+        return ""
+    target_norm = normalize_key(csv_name)
+    target_low = str(csv_name).strip().lower()
+    if not target_norm:
+        return ""
+
+    # 0) Alias manual CSV -> registry key
+    if CSV_NAME_TO_REGISTRY_KEY:
+        direct = CSV_NAME_TO_REGISTRY_KEY.get(csv_name)
+        if direct:
+            return str(direct).strip()
+        for k, v in CSV_NAME_TO_REGISTRY_KEY.items():
+            if normalize_key(k) == target_norm:
+                return str(v).strip()
+
+    # 1) Exact
+    for key in registry_keys:
+        key_s = str(key)
+        if key_s.lower() == target_low:
+            return key_s
+        if normalize_key(key_s) == target_norm:
+            return key_s
+
+    # 2) Similar
+    best_key = ""
+    best_score = 0
+    for key in registry_keys:
+        key_s = str(key)
+        key_norm = normalize_key(key_s)
+        score = 0
+        if target_norm in key_norm:
+            score += 30
+        if key_norm in target_norm:
+            score += 20
+        if key_norm.startswith(target_norm) or target_norm.startswith(key_norm):
+            score += 25
+        if "lumin" in key_norm and ("lamp" in target_norm or "lumin" in target_norm):
+            score += 8
+        if score > best_score:
+            best_score = score
+            best_key = key_s
+    return best_key if best_score >= 25 else ""
+
+
+def ensure_electriccr_on_path():
+    for mod_name in ("ElectricCR", "electriccr"):
+        try:
+            importlib.import_module(mod_name)
+            return True
+        except Exception:
+            continue
+
+    try:
+        here = os.path.abspath(__file__)
+    except Exception:
+        here = ""
+
+    candidates = []
+    if here:
+        base = os.path.dirname(here)
+        for _ in range(7):
+            if not base:
+                break
+            pkg = os.path.join(base, "ElectricCR")
+            if os.path.isdir(pkg):
+                candidates.append(base)
+                candidates.append(pkg)
+            parent = os.path.dirname(base)
+            if parent == base:
+                break
+            base = parent
+
+    try:
+        user_dir = App.getUserAppDataDir()
+        if user_dir:
+            for folder in ("Macro", "Macros"):
+                root = os.path.join(user_dir, folder)
+                pkg = os.path.join(root, "ElectricCR")
+                if os.path.isdir(pkg):
+                    candidates.append(root)
+                    candidates.append(pkg)
+    except Exception:
+        pass
+
+    for p in candidates:
+        if p and p not in os.sys.path:
+            os.sys.path.insert(0, p)
+
+    importlib.invalidate_caches()
+    for mod_name in ("ElectricCR", "electriccr"):
+        try:
+            importlib.import_module(mod_name)
+            return True
+        except Exception:
+            continue
+    return False
+
+
+def get_crear_toma_uno():
+    if not ensure_electriccr_on_path():
+        return None
+    for mod_name in (
+        "ElectricCR.electriccr.features.objeto_toma_uno",
+        "electriccr.features.objeto_toma_uno",
+    ):
+        try:
+            mod = importlib.import_module(mod_name)
+            fn = getattr(mod, "crear_toma_uno", None)
+            if callable(fn):
+                return fn
+        except Exception:
+            continue
+    return None
+
+
+def sanitize_name(text, fallback):
+    raw = to_ascii(text).strip()
+    clean = []
+    for ch in raw:
+        if ch.isalnum() or ch == "_":
+            clean.append(ch)
+        else:
+            clean.append("_")
+    name = "".join(clean).strip("_")
+    if not name:
+        name = fallback
+    if name[0].isdigit():
+        name = "{}_{}".format(fallback, name)
+    return name
+
+
+def unique_value(base, used_set):
+    candidate = base
+    idx = 1
+    while candidate in used_set:
+        candidate = "{}_{:03d}".format(base, idx)
+        idx += 1
+    used_set.add(candidate)
+    return candidate
+
+
+def is_group_container(obj):
+    if obj is None:
+        return False
+    type_id = getattr(obj, "TypeId", "")
+    if type_id.startswith("App::DocumentObjectGroup"):
+        return True
+    return hasattr(obj, "addObject") and hasattr(obj, "Group")
+
+
+def is_candidate_base_object(obj):
+    if obj is None:
+        return False
+    if is_group_container(obj):
+        return False
+    if getattr(obj, "TypeId", "") == "App::Link":
+        return False
+    # Evitar geometrias Draft 2D usadas para trazado (rectangulos, lineas, etc.).
+    proxy = getattr(obj, "Proxy", None)
+    ptype = str(getattr(proxy, "Type", "") or "").lower()
+    if ptype in {"rectangle", "wire", "line", "circle", "arc", "ellipse", "bspline", "bezcurve"}:
+        return False
+    return True
+
+
+def find_object_by_name_or_label(doc, token):
+    if not token:
+        return None
+    obj = doc.getObject(token)
+    if obj is not None:
+        return obj
+    for item in doc.Objects:
+        if getattr(item, "Label", "") == token:
+            return item
+    return None
+
+
+def linked_object_of(link_obj):
+    if hasattr(link_obj, "LinkedObject"):
+        return getattr(link_obj, "LinkedObject")
+    if hasattr(link_obj, "Link"):
+        return getattr(link_obj, "Link")
+    return None
+
+
+def object_matches_keywords(obj, keywords):
+    key = "{} {}".format(getattr(obj, "Name", ""), getattr(obj, "Label", "")).lower()
+    for kw in keywords:
+        if kw and kw.lower() in key:
+            return True
+    return False
+
+
+def _log_candidate_list(title, items):
+    if not items:
+        return
+    log(title)
+    for idx, obj in enumerate(items, start=1):
+        log("  {}. Name='{}' | Label='{}' | Type={}".format(
+            idx, getattr(obj, "Name", "?"), getattr(obj, "Label", "?"), getattr(obj, "TypeId", "?")
+        ))
+
+
+def _base_from_selection():
+    if not USE_SELECTED_OBJECT_AS_BASE:
+        return None
+    if not getattr(App, "GuiUp", False):
+        return None
+    try:
+        import FreeCADGui as Gui
+        selection = Gui.Selection.getSelection() or []
+    except Exception:
+        return None
+    if not selection:
+        return None
+    chosen = selection[0]
+    if getattr(chosen, "TypeId", "") == "App::Link":
+        linked = linked_object_of(chosen)
+        if linked is not None:
+            return linked
+    return chosen
+
+
+def resolve_base_object(doc, preferred_token=""):
+    token = (preferred_token or "").strip()
+    if token:
+        base_obj = find_object_by_name_or_label(doc, token)
+        if base_obj is not None:
+            return base_obj
+        log("[WARN] Objeto base indicado no encontrado: {}".format(token))
+
+    if not AUTO_DETECT_BASE_OBJECT:
+        return None
+
+    selected = _base_from_selection()
+    if is_candidate_base_object(selected):
+        log("[INFO] Base tomada desde seleccion: {} ({})".format(selected.Label, selected.Name))
+        return selected
+
+    linked_candidates = []
+    link_obj_by_name = {}
+    link_count = {}
+    for obj in doc.Objects:
+        if getattr(obj, "TypeId", "") != "App::Link":
+            continue
+        linked = linked_object_of(obj)
+        if linked is None or not is_candidate_base_object(linked):
+            continue
+        key = getattr(linked, "Name", "")
+        if not key:
+            continue
+        if key not in link_obj_by_name:
+            link_obj_by_name[key] = linked
+            linked_candidates.append(linked)
+        link_count[key] = link_count.get(key, 0) + 1
+    if len(linked_candidates) == 1:
+        picked = linked_candidates[0]
+        log("[INFO] Base tomada desde links existentes: {} ({})".format(picked.Label, picked.Name))
+        return picked
+    if len(linked_candidates) > 1:
+        ranked = sorted(link_count.items(), key=lambda kv: (-kv[1], kv[0]))
+        filtered_ranked = [
+            (name, cnt) for name, cnt in ranked
+            if object_matches_keywords(link_obj_by_name.get(name), BASE_KEYWORDS)
+        ]
+        use_ranked = filtered_ranked if filtered_ranked else ranked
+        if use_ranked:
+            best_name, best_count = use_ranked[0]
+            second_count = use_ranked[1][1] if len(use_ranked) > 1 else -1
+            if len(use_ranked) == 1 or best_count > second_count:
+                picked = link_obj_by_name.get(best_name)
+                if picked is not None:
+                    log("[INFO] Base tomada desde links (mas usada, {} refs): {} ({})".format(
+                        best_count, picked.Label, picked.Name
+                    ))
+                    return picked
+
+    keyword_candidates = []
+    for obj in doc.Objects:
+        if not is_candidate_base_object(obj):
+            continue
+        if object_matches_keywords(obj, BASE_KEYWORDS):
+            keyword_candidates.append(obj)
+    if len(keyword_candidates) == 1:
+        picked = keyword_candidates[0]
+        log("[INFO] Base autodetectada: {} ({})".format(picked.Label, picked.Name))
+        return picked
+
+    if linked_candidates:
+        log("[INFO] Candidatos base desde links (conteo):")
+        for key, count in sorted(link_count.items(), key=lambda kv: (-kv[1], kv[0]))[:15]:
+            obj = link_obj_by_name.get(key)
+            if obj is None:
+                continue
+            log("  - Name='{}' | Label='{}' | refs={}".format(obj.Name, obj.Label, count))
+    if keyword_candidates:
+        _log_candidate_list("[INFO] Candidatos base por nombre:", keyword_candidates[:15])
+    return None
+
+
+def find_child_group(parent_group, label=None, name=None):
+    for child in getattr(parent_group, "Group", []) or []:
+        if not is_group_container(child):
+            continue
+        if label is not None and getattr(child, "Label", "") == label:
+            return child
+        if name is not None and getattr(child, "Name", "") == name:
+            return child
+    return None
+
+
+def object_in_group_tree(obj, wanted_label):
+    wanted = str(wanted_label or "").strip().lower()
+    if not wanted:
+        return False
+
+    visited = set()
+
+    def walk(node):
+        if node is None:
+            return False
+        key = getattr(node, "Name", None)
+        if key and key in visited:
+            return False
+        if key:
+            visited.add(key)
+
+        if is_group_container(node):
+            if str(getattr(node, "Label", "")).strip().lower() == wanted:
+                return True
+
+        for parent in getattr(node, "InList", []) or []:
+            if walk(parent):
+                return True
+        return False
+
+    return walk(obj)
+
+
+def make_unique_object_name(doc, base_name):
+    candidate = base_name
+    idx = 1
+    while doc.getObject(candidate) is not None:
+        candidate = "{}_{:02d}".format(base_name, idx)
+        idx += 1
+    return candidate
+
+
+def create_group(doc, label, preferred_name, parent=None):
+    base_name = sanitize_name(preferred_name or label, "Group")
+    object_name = make_unique_object_name(doc, base_name)
+    grp = doc.addObject("App::DocumentObjectGroup", object_name)
+    grp.Label = label
+    if parent is not None:
+        parent.addObject(grp)
+    return grp
+
+
+def ensure_root_group(doc, label, preferred_name):
+    by_name = doc.getObject(preferred_name) if preferred_name else None
+    if is_group_container(by_name):
+        return by_name
+
+    for obj in doc.Objects:
+        if is_group_container(obj) and getattr(obj, "Label", "") == label:
+            return obj
+
+    grp = create_group(doc, label, preferred_name, parent=None)
+    log("[INFO] Grupo creado: {}".format(label))
+    return grp
+
+
+def ensure_child_group(doc, parent_group, label, preferred_name):
+    child = find_child_group(parent_group, label=label)
+    if child is not None:
+        return child
+
+    child = find_child_group(parent_group, name=preferred_name)
+    if child is not None:
+        if getattr(child, "Label", "") != label:
+            child.Label = label
+        return child
+
+    child = create_group(doc, label, preferred_name, parent=parent_group)
+    log("[INFO] Subgrupo creado: {}/{}".format(parent_group.Label, label))
+    return child
+
+
+def ensure_placeholder_group(doc, g_electrico):
+    g_lib = ensure_child_group(doc, g_electrico, "_lib", "_lib")
+    preferred_name = sanitize_name(PLACEHOLDER_GROUP_LABEL, "Placeholders_Importacion")
+    return ensure_child_group(doc, g_lib, PLACEHOLDER_GROUP_LABEL, preferred_name)
+
+
+def make_placeholder_shape():
+    try:
+        import Part
+    except Exception as ex:
+        raise RuntimeError("Part no disponible para placeholders: {}".format(ex))
+
+    sx = max(float(PLACEHOLDER_SIZE_X), 1.0)
+    sy = max(float(PLACEHOLDER_SIZE_Y), 1.0)
+    sz = max(float(PLACEHOLDER_SIZE_Z), 1.0)
+    kind = str(PLACEHOLDER_KIND or "cube").strip().lower()
+
+    if kind == "rectangle":
+        # Face plana en XY para representar una caja 2D.
+        return Part.makePlane(sx, sy)
+    # Default: cubo/caja 3D.
+    return Part.makeBox(sx, sy, sz)
+
+
+def ensure_placeholder_for_type(doc, g_placeholder, type_name):
+    safe_type = type_name or "Generico"
+    base_name = sanitize_name("ProtoPlaceholder_" + safe_type, "ProtoPlaceholder")
+    obj = doc.getObject(base_name)
+    if obj is not None and hasattr(obj, "Shape"):
+        return obj
+
+    object_name = base_name
+    if obj is not None:
+        object_name = make_unique_object_name(doc, base_name)
+
+    shape = make_placeholder_shape()
+    obj = doc.addObject("Part::Feature", object_name)
+    obj.Shape = shape
+    obj.Label = "Placeholder {}".format(safe_type)
+    g_placeholder.addObject(obj)
+    log("[WARN] Placeholder creado para tipo '{}': {} ({})".format(
+        safe_type, obj.Label, obj.Name
+    ))
+    return obj
+
+
+def ensure_sketch_points_group(doc, g_iluminacion):
+    preferred_name = sanitize_name(SKETCH_POINTS_GROUP_LABEL, "Puntos_CSV_por_Tipo")
+    return ensure_child_group(doc, g_iluminacion, SKETCH_POINTS_GROUP_LABEL, preferred_name)
+
+
+def ensure_sketch_for_type(doc, g_sketch_points, type_name):
+    safe_type = type_name or "Generico"
+    label = "Puntos {}".format(safe_type)
+
+    for child in getattr(g_sketch_points, "Group", []) or []:
+        if getattr(child, "TypeId", "") == "Sketcher::SketchObject" and getattr(child, "Label", "") == label:
+            return child
+
+    base_name = sanitize_name("{}_{}".format(SKETCH_NAME_PREFIX, safe_type), SKETCH_NAME_PREFIX)
+    existing = doc.getObject(base_name)
+    if existing is not None and getattr(existing, "TypeId", "") == "Sketcher::SketchObject":
+        if existing not in (getattr(g_sketch_points, "Group", []) or []):
+            g_sketch_points.addObject(existing)
+        existing.Label = label
+        return existing
+
+    obj_name = base_name if existing is None else make_unique_object_name(doc, base_name)
+    sketch = doc.addObject("Sketcher::SketchObject", obj_name)
+    sketch.Label = label
+    g_sketch_points.addObject(sketch)
+    log("[WARN] Sketch de puntos creado para tipo '{}': {} ({})".format(
+        safe_type, sketch.Label, sketch.Name
+    ))
+    return sketch
+
+
+def add_point_to_type_sketch(sketch, x, y, z, type_name, z_warned_types):
+    try:
+        import Part
+    except Exception as ex:
+        raise RuntimeError("Part no disponible para puntos de sketch: {}".format(ex))
+
+    px = float(x)
+    py = float(y)
+    pz = float(z)
+    if SKETCH_POINT_FORCE_Z0:
+        if abs(pz) > float(SKETCH_Z_WARN_EPS):
+            key = str(type_name or "Generico")
+            if key not in z_warned_types:
+                z_warned_types.add(key)
+                log("[WARN] Tipo '{}': Z distinto de 0 detectado ({}). Sketch usa Z=0.".format(
+                    key, pz
+                ))
+        pz = 0.0
+
+    sketch.addGeometry(Part.Point(App.Vector(px, py, pz)), False)
+
+
+def create_device_from_registry(doc, crear_toma_uno, registry_key, csv_name, x, y, z, used_labels):
+    if not callable(crear_toma_uno):
+        raise RuntimeError("crear_toma_uno no disponible")
+    if not registry_key:
+        raise RuntimeError("registry_key vacio")
+
+    prefix = sanitize_name(csv_name if csv_name else registry_key, "Dispositivo")
+    if not prefix.endswith("_"):
+        prefix = prefix + "_"
+
+    obj = crear_toma_uno(
+        doc,
+        name_prefix=prefix,
+        key_registro=registry_key,
+        tipo_logico="Dispositivo",
+    )
+    if obj is None:
+        raise RuntimeError("crear_toma_uno devolvio None")
+
+    target_placement = App.Placement(App.Vector(float(x), float(y), float(z)), App.Rotation())
+    try:
+        obj.Placement = target_placement
+    except Exception:
+        try:
+            obj.BasePlacement = target_placement
+        except Exception:
+            pass
+
+    label_seed = csv_name if csv_name else registry_key
+    try:
+        obj.Label = unique_value(label_seed, used_labels)
+    except Exception:
+        pass
+
+    return obj
+
+
+def parse_number(value, field_name, row_number):
+    text = str(value).strip() if value is not None else ""
+    if text == "":
+        raise ValueError("fila {}: {} vacio".format(row_number, field_name))
+    text = text.replace(",", ".")
+    try:
+        return float(text)
+    except Exception:
+        raise ValueError("fila {}: {} invalido ({})".format(row_number, field_name, text))
+
+
+def transform_point(x, y, z, transform_cfg):
+    tx = float(x)
+    ty = float(y)
+    tz = float(z)
+
+    cfg = transform_cfg or {}
+    if bool(cfg.get("swap_xy", False)):
+        tx, ty = ty, tx
+    if bool(cfg.get("invert_x", False)):
+        tx = -tx
+    if bool(cfg.get("invert_y", False)):
+        ty = -ty
+    if bool(cfg.get("invert_z", False)):
+        tz = -tz
+
+    tx += float(cfg.get("offset_x", 0.0))
+    ty += float(cfg.get("offset_y", 0.0))
+    tz += float(cfg.get("offset_z", 0.0))
+    return tx, ty, tz
+
+
+def normalize_align_mode(value):
+    mode = str(value or "").strip().lower()
+    if mode in ("first", "centroid", "none"):
+        return mode
+    if mode in ("true", "1", "yes", "si"):
+        return "first"
+    if mode in ("false", "0", "no"):
+        return "none"
+    return "none"
+
+
+def align_mode_from_config():
+    mode = normalize_align_mode(ALIGN_MODE)
+    if mode != "none":
+        return mode
+    return "first" if bool(ALIGN_FIRST_POINT_TO_SELECTION) else "none"
+
+
+def _vector_from_subobject(sub_obj):
+    if sub_obj is None:
+        return None
+    if hasattr(sub_obj, "Point"):
+        p = sub_obj.Point
+        return App.Vector(float(p.x), float(p.y), float(p.z))
+    if hasattr(sub_obj, "CenterOfMass"):
+        p = sub_obj.CenterOfMass
+        return App.Vector(float(p.x), float(p.y), float(p.z))
+    if isinstance(sub_obj, App.Vector):
+        return App.Vector(float(sub_obj.x), float(sub_obj.y), float(sub_obj.z))
+    return None
+
+
+def get_selection_anchor_vector():
+    if not getattr(App, "GuiUp", False):
+        return None
+    try:
+        import FreeCADGui as Gui
+    except Exception:
+        return None
+
+    try:
+        selection_ex = Gui.Selection.getSelectionEx() or []
+    except Exception:
+        selection_ex = []
+
+    for s_ex in selection_ex:
+        for sub_obj in getattr(s_ex, "SubObjects", []) or []:
+            vec = _vector_from_subobject(sub_obj)
+            if vec is not None:
+                return vec
+
+    try:
+        selection = Gui.Selection.getSelection() or []
+    except Exception:
+        selection = []
+    if not selection:
+        return None
+
+    obj = selection[0]
+    shape = getattr(obj, "Shape", None)
+    if shape is not None:
+        try:
+            if hasattr(shape, "CenterOfMass"):
+                c = shape.CenterOfMass
+                return App.Vector(float(c.x), float(c.y), float(c.z))
+        except Exception:
+            pass
+        try:
+            bb = shape.BoundBox
+            return App.Vector(
+                float(bb.XMin + (bb.XLength / 2.0)),
+                float(bb.YMin + (bb.YLength / 2.0)),
+                float(bb.ZMin + (bb.ZLength / 2.0)),
+            )
+        except Exception:
+            pass
+
+    pl = getattr(obj, "Placement", None)
+    if pl is not None:
+        base = getattr(pl, "Base", None)
+        if base is not None:
+            return App.Vector(float(base.x), float(base.y), float(base.z))
+    return None
+
+
+def align_rows_to_anchor(rows_data, anchor_vec, mode):
+    if not rows_data or anchor_vec is None:
+        return None
+    mode = normalize_align_mode(mode)
+    if mode == "centroid":
+        cx = sum(float(it["x"]) for it in rows_data) / float(len(rows_data))
+        cy = sum(float(it["y"]) for it in rows_data) / float(len(rows_data))
+        cz = sum(float(it["z"]) for it in rows_data) / float(len(rows_data))
+    else:
+        first = rows_data[0]
+        cx = float(first["x"])
+        cy = float(first["y"])
+        cz = float(first["z"])
+
+    dx = float(anchor_vec.x) - cx
+    dy = float(anchor_vec.y) - cy
+    dz = float(anchor_vec.z) - cz
+    for item in rows_data:
+        item["x"] = float(item["x"]) + dx
+        item["y"] = float(item["y"]) + dy
+        item["z"] = float(item["z"]) + dz
+    return dx, dy, dz
+
+
+def _unique_encodings(first_encoding):
+    out = []
+    for enc in [first_encoding, "utf-8-sig", "utf-8", "cp1252", "latin-1"] + list(CSV_ENCODING_FALLBACKS):
+        enc_s = str(enc or "").strip()
+        if not enc_s:
+            continue
+        if enc_s.lower() not in [e.lower() for e in out]:
+            out.append(enc_s)
+    return out
+
+
+def open_csv_dict_reader(path, encoding, delimiter):
+    with open(path, "rb") as f:
+        raw = f.read()
+
+    text = None
+    used_encoding = None
+    tried = []
+    for enc in _unique_encodings(encoding):
+        try:
+            text = raw.decode(enc)
+            used_encoding = enc
+            break
+        except Exception as ex:
+            tried.append("{} ({})".format(enc, ex))
+            continue
+
+    if text is None:
+        raise RuntimeError("no se pudo decodificar CSV. Intentos: {}".format("; ".join(tried)))
+
+    file_obj = io.StringIO(text)
+    active_delimiter = delimiter
+    if active_delimiter is None:
+        sample = text[:4096]
+        try:
+            dialect = csv.Sniffer().sniff(sample, delimiters=",;|\t")
+            active_delimiter = dialect.delimiter
+        except Exception:
+            active_delimiter = ","
+    reader = csv.DictReader(file_obj, delimiter=active_delimiter)
+    return file_obj, reader, used_encoding
+
+
+def validate_headers(reader):
+    if not reader.fieldnames:
+        raise RuntimeError("CSV sin encabezados")
+
+    reader.fieldnames = [(h or "").strip() for h in reader.fieldnames]
+    header_map_norm = {}
+    for h in reader.fieldnames:
+        if not h:
+            continue
+        nk = normalize_header(h)
+        if nk and nk not in header_map_norm:
+            header_map_norm[nk] = h
+
+    def find_header(aliases, partials=None):
+        partials = partials or []
+        for alias in aliases:
+            key = normalize_header(alias)
+            if key in header_map_norm:
+                return header_map_norm[key]
+        for norm, original in header_map_norm.items():
+            for part in partials:
+                p = normalize_header(part)
+                if p and p in norm:
+                    return original
+        return None
+
+    key_nombre = find_header(
+        aliases=["nombre", "name", "blockname", "nombredelbloque", "nombrebloque"],
+        partials=["name", "nombre"]
+    )
+    key_x = find_header(
+        aliases=["x", "positionx", "posicionx", "insertionx", "coordenadax", "puntox"],
+        partials=["positionx", "posicionx", "insertionx", "coordenadax"]
+    )
+    key_y = find_header(
+        aliases=["y", "positiony", "posiciony", "insertiony", "coordenaday", "puntoy"],
+        partials=["positiony", "posiciony", "insertiony", "coordenaday"]
+    )
+    key_z = find_header(
+        aliases=["z", "positionz", "posicionz", "insertionz", "coordenadaz", "puntoz"],
+        partials=["positionz", "posicionz", "insertionz", "coordenadaz"]
+    )
+
+    missing = []
+    if key_x is None:
+        missing.append("X")
+    if key_y is None:
+        missing.append("Y")
+    if key_z is None:
+        missing.append("Z")
+    if missing:
+        raise RuntimeError(
+            "faltan encabezados requeridos: {} | detectados: {}".format(
+                ",".join(missing), ", ".join([h for h in reader.fieldnames if h])
+            )
+        )
+
+    return key_nombre, key_x, key_y, key_z
+
+
+def ensure_electriccr_workbench():
+    if not REQUIRE_ELECTRICCR_WORKBENCH:
+        return True
+
+    if not getattr(App, "GuiUp", False):
+        log("[WARN] GUI no disponible. No se puede validar workbench.")
+        return True
+
+    try:
+        import FreeCADGui as Gui
+    except Exception as ex:
+        log("[ERROR] No se pudo importar FreeCADGui: {}".format(ex))
+        return False
+
+    try:
+        workbenches = Gui.listWorkbenches() or {}
+    except Exception as ex:
+        log("[ERROR] No se pudo listar workbenches: {}".format(ex))
+        return False
+
+    if WORKBENCH_ID not in workbenches:
+        log("[ERROR] Workbench '{}' no esta cargado.".format(WORKBENCH_ID))
+        log("[ERROR] Ejecute ElectricCRLoader y vuelva a correr la macro.")
+        return False
+
+    try:
+        Gui.activateWorkbench(WORKBENCH_ID)
+        log("[INFO] Workbench activo: {}".format(WORKBENCH_ID))
+    except Exception as ex:
+        log("[ERROR] No se pudo activar '{}': {}".format(WORKBENCH_ID, ex))
+        return False
+
+    return True
+
+
+def get_project_dir(doc):
+    file_name = getattr(doc, "FileName", "") or ""
+    if not file_name:
+        return ""
+    try:
+        return os.path.dirname(os.path.abspath(file_name))
+    except Exception:
+        return ""
+
+
+def default_csv_path(doc):
+    cfg_path = (CSV_PATH or "").strip()
+    if not cfg_path:
+        return ""
+    if os.path.isabs(cfg_path):
+        return cfg_path
+    project_dir = get_project_dir(doc) if PREFER_PROJECT_DIR else ""
+    if project_dir:
+        return os.path.join(project_dir, cfg_path)
+    return os.path.abspath(cfg_path)
+
+
+def pick_csv_path(initial_dir):
+    if not SELECT_CSV_WITH_DIALOG:
+        return ""
+    if QtWidgets is None:
+        return ""
+    if not getattr(App, "GuiUp", False):
+        return ""
+    try:
+        import FreeCADGui as Gui
+        parent = Gui.getMainWindow()
+    except Exception:
+        parent = None
+    try:
+        selected, _flt = QtWidgets.QFileDialog.getOpenFileName(
+            parent,
+            "Seleccionar CSV de luminarias",
+            initial_dir or "",
+            "CSV (*.csv);;Todos (*.*)"
+        )
+        return selected or ""
+    except Exception:
+        return ""
+
+
+def resolve_csv_path(doc, allow_dialog=True):
+    default_path = default_csv_path(doc)
+    if allow_dialog:
+        initial_dir = get_project_dir(doc) if PREFER_PROJECT_DIR else ""
+        if not initial_dir and default_path:
+            initial_dir = os.path.dirname(default_path)
+        selected = pick_csv_path(initial_dir)
+        if selected:
+            return selected
+    return default_path
+
+
+def list_base_candidates(doc):
+    candidates = []
+    for obj in doc.Objects:
+        if not is_candidate_base_object(obj):
+            continue
+        if REQUIRE_BASE_IN_ELECTRICO_TREE and not object_in_group_tree(obj, ELECTRICO_LABEL):
+            continue
+        if STRICT_BASE_CANDIDATES:
+            key = "{} {}".format(getattr(obj, "Name", ""), getattr(obj, "Label", "")).lower()
+            hint_ok = any(h in key for h in STRICT_BASE_HINTS)
+            in_lib = object_in_group_tree(obj, "_lib")
+            if not (hint_ok or in_lib):
+                continue
+        candidates.append(obj)
+
+    def score(obj):
+        pts = 0
+        if object_matches_keywords(obj, BASE_KEYWORDS):
+            pts += 10
+        if str(getattr(obj, "TypeId", "")).startswith("Part::"):
+            pts += 2
+        return (-pts, str(getattr(obj, "Label", "")).lower(), str(getattr(obj, "Name", "")).lower())
+
+    candidates.sort(key=score)
+    return candidates
+
+
+def auto_pick_fallback_base(base_candidates):
+    if not base_candidates:
+        return None
+
+    ranked = []
+    for obj in base_candidates:
+        text = "{} {}".format(getattr(obj, "Name", ""), getattr(obj, "Label", "")).lower()
+        score = 0
+        if object_matches_keywords(obj, BASE_KEYWORDS):
+            score += 50
+        if "proto" in text:
+            score += 20
+        if str(getattr(obj, "TypeId", "")).startswith("Part::"):
+            score += 10
+        if object_in_group_tree(obj, "_lib"):
+            score += 8
+        ranked.append((score, obj))
+
+    ranked.sort(key=lambda it: (-it[0], getattr(it[1], "Name", "")))
+    if not ranked:
+        return None
+    if len(ranked) == 1:
+        return ranked[0][1]
+    if ranked[0][0] > ranked[1][0]:
+        return ranked[0][1]
+    return None
+
+
+def lookup_replacement_token(csv_name):
+    if not NAME_TO_BASE_OBJECT:
+        return ""
+    if csv_name in NAME_TO_BASE_OBJECT:
+        return str(NAME_TO_BASE_OBJECT[csv_name]).strip()
+    low = str(csv_name).strip().lower()
+    key_norm = normalize_key(csv_name)
+    for key, value in NAME_TO_BASE_OBJECT.items():
+        k = str(key)
+        if k.lower() == low:
+            return str(value).strip()
+        if normalize_key(k) == key_norm:
+            return str(value).strip()
+    return ""
+
+
+def find_best_base_for_csv_name(csv_name, base_candidates):
+    if not csv_name:
+        return None
+    raw = str(csv_name).strip()
+    low = raw.lower()
+    norm = normalize_key(raw)
+
+    # 1) exact Name/Label case-insensitive
+    for obj in base_candidates:
+        if getattr(obj, "Name", "").lower() == low:
+            return obj
+        if getattr(obj, "Label", "").lower() == low:
+            return obj
+
+    # 2) normalized exact
+    for obj in base_candidates:
+        if normalize_key(getattr(obj, "Name", "")) == norm:
+            return obj
+        if normalize_key(getattr(obj, "Label", "")) == norm:
+            return obj
+
+    # 3) contains heuristic
+    matches = []
+    for obj in base_candidates:
+        n_name = normalize_key(getattr(obj, "Name", ""))
+        n_label = normalize_key(getattr(obj, "Label", ""))
+        if not norm:
+            continue
+        if norm in n_name or norm in n_label or n_name in norm or n_label in norm:
+            score = 0
+            if norm == n_name or norm == n_label:
+                score += 100
+            if n_name.startswith(norm) or n_label.startswith(norm):
+                score += 30
+            if norm in n_name:
+                score += 10
+            if norm in n_label:
+                score += 10
+            matches.append((score, obj))
+    if not matches:
+        return None
+    matches.sort(key=lambda it: (-it[0], getattr(it[1], "Name", "")))
+    return matches[0][1]
+
+
+def build_type_map(doc, type_names, base_candidates, default_base_obj, missing_policy, registry_keys):
+    mapping = {}
+    unresolved = []
+    for type_name in type_names:
+        base_obj = None
+        resolved_by = ""
+
+        replace_token = lookup_replacement_token(type_name)
+        if replace_token:
+            base_obj = find_object_by_name_or_label(doc, replace_token)
+            if base_obj is None:
+                log("[WARN] Reemplazo no encontrado para '{}': '{}'".format(type_name, replace_token))
+            else:
+                resolved_by = "mapa manual"
+
+        if base_obj is None:
+            base_obj = find_best_base_for_csv_name(type_name, base_candidates)
+            if base_obj is not None:
+                resolved_by = "match directo"
+
+        reg_key = ""
+        if base_obj is None and registry_keys:
+            reg_key = resolve_registry_key(type_name, registry_keys)
+            if reg_key:
+                # Si el tipo del CSV no existe literal, intentar con la clave del registro.
+                base_obj = find_best_base_for_csv_name(reg_key, base_candidates)
+                if base_obj is not None:
+                    resolved_by = "registro ({})".format(reg_key)
+
+        if base_obj is None:
+            if missing_policy == "fallback" and default_base_obj is not None:
+                base_obj = default_base_obj
+                log("[WARN] Tipo '{}' sin base. Usando fallback '{}'".format(type_name, default_base_obj.Name))
+                resolved_by = "fallback"
+            else:
+                unresolved.append(type_name)
+
+        if base_obj is not None:
+            mapping[type_name] = base_obj
+            if resolved_by:
+                log("[INFO] Tipo '{}' resuelto por {} -> '{}'".format(
+                    type_name, resolved_by, getattr(base_obj, "Name", "?")
+                ))
+
+    return mapping, unresolved
+
+
+class ImportCsvDialog(QtWidgets.QDialog):
+    def __init__(self, doc, csv_default, base_default, parent=None):
+        super(ImportCsvDialog, self).__init__(parent)
+        self.setWindowTitle("Importar luminarias CSV")
+        self.setMinimumWidth(760)
+        self._doc = doc
+
+        self.le_csv = QtWidgets.QLineEdit(csv_default or "")
+        self.btn_csv = QtWidgets.QPushButton("...")
+        self.btn_csv.setFixedWidth(36)
+        self.btn_csv.clicked.connect(self._on_pick_csv)
+
+        csv_row = QtWidgets.QHBoxLayout()
+        csv_row.addWidget(self.le_csv)
+        csv_row.addWidget(self.btn_csv)
+
+        self.cmb_base = QtWidgets.QComboBox()
+        self.cmb_base.setEditable(True)
+        self._fill_base_candidates(base_default)
+
+        self.sp_scale = QtWidgets.QDoubleSpinBox()
+        self.sp_scale.setDecimals(8)
+        self.sp_scale.setRange(0.00000001, 1000000000.0)
+        self.sp_scale.setValue(float(SCALE_FACTOR))
+
+        self.chk_use_name_type = QtWidgets.QCheckBox("Usar Nombre CSV para elegir objeto base")
+        self.chk_use_name_type.setChecked(bool(USE_CSV_NAME_AS_OBJECT_TYPE))
+
+        self.cmb_missing_policy = QtWidgets.QComboBox()
+        self.cmb_missing_policy.addItem("Usar base por defecto", "fallback")
+        self.cmb_missing_policy.addItem("Omitir fila", "skip")
+        policy_idx = 0 if str(MISSING_TYPE_POLICY).lower() != "skip" else 1
+        self.cmb_missing_policy.setCurrentIndex(policy_idx)
+
+        self.chk_label = QtWidgets.QCheckBox("Usar campo Nombre como Label")
+        self.chk_label.setChecked(bool(USE_CSV_NAME_AS_LABEL))
+
+        self.chk_swap_xy = QtWidgets.QCheckBox("Intercambiar X/Y")
+        self.chk_swap_xy.setChecked(bool(SWAP_XY))
+
+        self.chk_inv_x = QtWidgets.QCheckBox("Invertir X")
+        self.chk_inv_x.setChecked(bool(INVERT_X))
+        self.chk_inv_y = QtWidgets.QCheckBox("Invertir Y")
+        self.chk_inv_y.setChecked(bool(INVERT_Y))
+        self.chk_inv_z = QtWidgets.QCheckBox("Invertir Z")
+        self.chk_inv_z.setChecked(bool(INVERT_Z))
+
+        self.sp_off_x = QtWidgets.QDoubleSpinBox()
+        self.sp_off_x.setDecimals(4)
+        self.sp_off_x.setRange(-1000000000.0, 1000000000.0)
+        self.sp_off_x.setValue(float(OFFSET_X))
+        self.sp_off_y = QtWidgets.QDoubleSpinBox()
+        self.sp_off_y.setDecimals(4)
+        self.sp_off_y.setRange(-1000000000.0, 1000000000.0)
+        self.sp_off_y.setValue(float(OFFSET_Y))
+        self.sp_off_z = QtWidgets.QDoubleSpinBox()
+        self.sp_off_z.setDecimals(4)
+        self.sp_off_z.setRange(-1000000000.0, 1000000000.0)
+        self.sp_off_z.setValue(float(OFFSET_Z))
+
+        self.cmb_align_mode = QtWidgets.QComboBox()
+        self.cmb_align_mode.addItem("No alinear", "none")
+        self.cmb_align_mode.addItem("Alinear primer punto CSV a seleccion", "first")
+        self.cmb_align_mode.addItem("Alinear centro CSV a seleccion", "centroid")
+        current_align_mode = align_mode_from_config()
+        idx_align = self.cmb_align_mode.findData(current_align_mode)
+        if idx_align >= 0:
+            self.cmb_align_mode.setCurrentIndex(idx_align)
+
+        inv_row = QtWidgets.QHBoxLayout()
+        inv_row.addWidget(self.chk_inv_x)
+        inv_row.addWidget(self.chk_inv_y)
+        inv_row.addWidget(self.chk_inv_z)
+        inv_row.addStretch(1)
+
+        off_row = QtWidgets.QHBoxLayout()
+        off_row.addWidget(QtWidgets.QLabel("X"))
+        off_row.addWidget(self.sp_off_x)
+        off_row.addWidget(QtWidgets.QLabel("Y"))
+        off_row.addWidget(self.sp_off_y)
+        off_row.addWidget(QtWidgets.QLabel("Z"))
+        off_row.addWidget(self.sp_off_z)
+
+        form = QtWidgets.QFormLayout()
+        form.addRow("Archivo CSV:", csv_row)
+        form.addRow("Base por defecto:", self.cmb_base)
+        form.addRow("Factor escala:", self.sp_scale)
+        form.addRow("", self.chk_use_name_type)
+        form.addRow("Si no existe tipo:", self.cmb_missing_policy)
+        form.addRow("", self.chk_label)
+        form.addRow("", self.chk_swap_xy)
+        form.addRow("Invertir ejes:", inv_row)
+        form.addRow("Offset XYZ:", off_row)
+        form.addRow("Alineacion:", self.cmb_align_mode)
+
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.addLayout(form)
+        lay.addWidget(buttons)
+
+    def _fill_base_candidates(self, base_default):
+        candidates = list_base_candidates(self._doc)
+        default_index = -1
+        for idx, obj in enumerate(candidates):
+            text = "{} ({}) [{}]".format(
+                getattr(obj, "Label", "") or getattr(obj, "Name", ""),
+                getattr(obj, "Name", ""),
+                getattr(obj, "TypeId", "")
+            )
+            self.cmb_base.addItem(text, getattr(obj, "Name", ""))
+            if base_default and (
+                getattr(obj, "Name", "") == base_default or getattr(obj, "Label", "") == base_default
+            ):
+                default_index = idx
+        if default_index >= 0:
+            self.cmb_base.setCurrentIndex(default_index)
+        elif base_default:
+            self.cmb_base.setEditText(base_default)
+
+    def _on_pick_csv(self):
+        start = self.le_csv.text().strip()
+        if not start:
+            start = get_project_dir(self._doc)
+        elif os.path.isfile(start):
+            start = os.path.dirname(start)
+        elif os.path.isdir(start):
+            pass
+        else:
+            start = os.path.dirname(start)
+        picked = pick_csv_path(start)
+        if picked:
+            self.le_csv.setText(picked)
+
+    def values(self):
+        csv_path = self.le_csv.text().strip()
+        idx = self.cmb_base.currentIndex()
+        base_data = self.cmb_base.itemData(idx) if idx >= 0 else None
+        base_token = str(base_data).strip() if base_data else self.cmb_base.currentText().strip()
+        scale = float(self.sp_scale.value())
+        use_name_type = bool(self.chk_use_name_type.isChecked())
+        missing_policy = str(self.cmb_missing_policy.currentData() or "fallback")
+        use_label = bool(self.chk_label.isChecked())
+        transform_cfg = {
+            "swap_xy": bool(self.chk_swap_xy.isChecked()),
+            "invert_x": bool(self.chk_inv_x.isChecked()),
+            "invert_y": bool(self.chk_inv_y.isChecked()),
+            "invert_z": bool(self.chk_inv_z.isChecked()),
+            "offset_x": float(self.sp_off_x.value()),
+            "offset_y": float(self.sp_off_y.value()),
+            "offset_z": float(self.sp_off_z.value()),
+        }
+        align_mode = str(self.cmb_align_mode.currentData() or "none")
+        return (
+            csv_path,
+            base_token,
+            scale,
+            use_name_type,
+            missing_policy,
+            use_label,
+            transform_cfg,
+            align_mode,
+        )
+
+
+def gather_runtime_inputs(doc):
+    if SHOW_IMPORT_FORM and QtWidgets is not None and getattr(App, "GuiUp", False):
+        try:
+            import FreeCADGui as Gui
+            parent = Gui.getMainWindow()
+        except Exception:
+            parent = None
+        dlg = ImportCsvDialog(doc, resolve_csv_path(doc, allow_dialog=False), BASE_OBJECT_NAME, parent)
+        if dlg.exec_() != QtWidgets.QDialog.Accepted:
+            log("[INFO] Importacion cancelada por usuario.")
+            return None
+        (
+            csv_path,
+            base_token,
+            scale_factor,
+            use_name_type,
+            missing_policy,
+            use_csv_name_label,
+            transform_cfg,
+            align_mode,
+        ) = dlg.values()
+    else:
+        csv_path = resolve_csv_path(doc, allow_dialog=True)
+        base_token = BASE_OBJECT_NAME
+        scale_factor = float(SCALE_FACTOR)
+        use_name_type = bool(USE_CSV_NAME_AS_OBJECT_TYPE)
+        missing_policy = str(MISSING_TYPE_POLICY).lower().strip() or "fallback"
+        use_csv_name_label = bool(USE_CSV_NAME_AS_LABEL)
+        transform_cfg = {
+            "swap_xy": bool(SWAP_XY),
+            "invert_x": bool(INVERT_X),
+            "invert_y": bool(INVERT_Y),
+            "invert_z": bool(INVERT_Z),
+            "offset_x": float(OFFSET_X),
+            "offset_y": float(OFFSET_Y),
+            "offset_z": float(OFFSET_Z),
+        }
+        align_mode = align_mode_from_config()
+
+    missing_policy = "skip" if str(missing_policy).lower() == "skip" else "fallback"
+    return {
+        "csv_path": csv_path,
+        "base_token": base_token,
+        "scale_factor": scale_factor,
+        "use_name_type": use_name_type,
+        "missing_policy": missing_policy,
+        "use_csv_name_label": use_csv_name_label,
+        "transform_cfg": transform_cfg,
+        "align_mode": normalize_align_mode(align_mode),
+    }
+
+
+def import_luminarias_csv():
+    doc = App.ActiveDocument
+    if doc is None:
+        log("[ERROR] No hay documento activo.")
+        return
+
+    if not ensure_electriccr_workbench():
+        return
+
+    params = gather_runtime_inputs(doc)
+    if params is None:
+        return
+
+    csv_path = params["csv_path"]
+    base_token = params["base_token"]
+    scale_factor = float(params["scale_factor"])
+    use_name_type = bool(params["use_name_type"])
+    missing_policy = str(params["missing_policy"])
+    use_csv_name_label = bool(params["use_csv_name_label"])
+    transform_cfg = params.get("transform_cfg") or {}
+    align_mode = normalize_align_mode(params.get("align_mode", "none"))
+
+    if not csv_path:
+        log("[ERROR] No se selecciono archivo CSV.")
+        return
+
+    if not os.path.isfile(csv_path):
+        log("[ERROR] Archivo CSV no encontrado: {}".format(csv_path))
+        return
+
+    base_candidates = list_base_candidates(doc)
+    if not base_candidates:
+        log("[ERROR] No hay objetos base disponibles en el documento.")
+        return
+
+    registry_types = load_registry_types()
+    registry_keys = type_keys_sorted_for_matching(registry_types)
+    if registry_keys:
+        log("[INFO] Registro ElectricCR cargado: {} tipo(s)".format(len(registry_keys)))
+
+    default_base_obj = resolve_base_object(doc, base_token)
+    if default_base_obj is None:
+        auto_default = auto_pick_fallback_base(base_candidates)
+        if auto_default is not None:
+            default_base_obj = auto_default
+            log("[INFO] Base fallback autodetectada: '{}' ({})".format(
+                default_base_obj.Label, default_base_obj.Name
+            ))
+
+    if (
+        not use_name_type
+        and default_base_obj is None
+        and not USE_PLACEHOLDER_IF_MISSING
+        and not USE_SKETCH_POINTS_IF_MISSING
+    ):
+        log("[ERROR] No se pudo resolver base por defecto.")
+        log("[ERROR] Configure BASE_OBJECT_NAME o seleccione un objeto base valido.")
+        return
+
+    log("[INFO] Inicio importacion CSV luminarias")
+    log("[INFO] CSV: {}".format(csv_path))
+    if default_base_obj is not None:
+        log("[INFO] Base fallback: '{}' ({})".format(default_base_obj.Label, default_base_obj.Name))
+    log("[INFO] Scale factor: {}".format(scale_factor))
+    log("[INFO] Modo tipo por Nombre: {} | Missing policy: {}".format(use_name_type, missing_policy))
+    log("[INFO] Placeholders activos: {} (kind={})".format(USE_PLACEHOLDER_IF_MISSING, PLACEHOLDER_KIND))
+    log("[INFO] Sketch por tipo activo: {}".format(USE_SKETCH_POINTS_IF_MISSING))
+    log("[INFO] Transformacion: swap_xy={} inv=({},{},{})".format(
+        bool(transform_cfg.get("swap_xy", False)),
+        bool(transform_cfg.get("invert_x", False)),
+        bool(transform_cfg.get("invert_y", False)),
+        bool(transform_cfg.get("invert_z", False)),
+    ))
+    log("[INFO] Offset: X={} Y={} Z={}".format(
+        float(transform_cfg.get("offset_x", 0.0)),
+        float(transform_cfg.get("offset_y", 0.0)),
+        float(transform_cfg.get("offset_z", 0.0)),
+    ))
+    log("[INFO] Alineacion a seleccion: {}".format(align_mode))
+
+    rows_data = []
+    parse_skipped = 0
+    file_obj, reader, used_csv_encoding = open_csv_dict_reader(csv_path, CSV_ENCODING, CSV_DELIMITER)
+    log("[INFO] CSV encoding detectado: {}".format(used_csv_encoding))
+    try:
+        key_nombre, key_x, key_y, key_z = validate_headers(reader)
+        for row_number, row in enumerate(reader, start=2):
+            try:
+                raw_x = parse_number(row.get(key_x), "X", row_number) * scale_factor
+                raw_y = parse_number(row.get(key_y), "Y", row_number) * scale_factor
+                raw_z = parse_number(row.get(key_z), "Z", row_number) * scale_factor
+                x, y, z = transform_point(raw_x, raw_y, raw_z, transform_cfg)
+                csv_name = (row.get(key_nombre) or "").strip() if key_nombre is not None else ""
+                rows_data.append({
+                    "row_number": row_number,
+                    "csv_name": csv_name,
+                    "x": x,
+                    "y": y,
+                    "z": z,
+                })
+            except Exception as row_error:
+                parse_skipped += 1
+                log("[WARN] Fila {} omitida por parseo: {}".format(row_number, row_error))
+    finally:
+        file_obj.close()
+
+    if not rows_data:
+        log("[WARN] No hay filas validas para importar.")
+        return
+
+    if align_mode != "none":
+        anchor = get_selection_anchor_vector()
+        if anchor is None:
+            log("[WARN] Alineacion solicitada, pero no hay punto/objeto seleccionado.")
+        else:
+            delta = align_rows_to_anchor(rows_data, anchor, align_mode)
+            if delta is not None:
+                if align_mode == "centroid":
+                    log("[INFO] Alineacion aplicada centro CSV -> seleccion: dX={} dY={} dZ={}".format(
+                        delta[0], delta[1], delta[2]
+                    ))
+                else:
+                    log("[INFO] Alineacion aplicada primer punto CSV -> seleccion: dX={} dY={} dZ={}".format(
+                        delta[0], delta[1], delta[2]
+                    ))
+
+    first_row = rows_data[0]
+    log("[INFO] Primer punto final: X={} Y={} Z={}".format(
+        first_row["x"], first_row["y"], first_row["z"]
+    ))
+
+    type_map = {}
+    type_registry_map = {}
+    unresolved_types = []
+    if use_name_type:
+        type_names = sorted(set(item["csv_name"] for item in rows_data if item["csv_name"]))
+        if type_names:
+            for tname in type_names:
+                rkey = resolve_registry_key(tname, registry_keys)
+                if rkey:
+                    type_registry_map[tname] = rkey
+
+            type_map, unresolved_types = build_type_map(
+                doc, type_names, base_candidates, default_base_obj, missing_policy, registry_keys
+            )
+            if unresolved_types and missing_policy == "fallback" and default_base_obj is None:
+                auto_default = auto_pick_fallback_base(base_candidates)
+                if auto_default is not None:
+                    default_base_obj = auto_default
+                    log("[INFO] Base fallback autodetectada para tipos faltantes: '{}' ({})".format(
+                        default_base_obj.Label, default_base_obj.Name
+                    ))
+                    type_map, unresolved_types = build_type_map(
+                        doc, type_names, base_candidates, default_base_obj, missing_policy, registry_keys
+                    )
+            for type_name in sorted(type_map.keys()):
+                obj = type_map[type_name]
+                log("[INFO] Tipo '{}' -> '{}' ({})".format(type_name, obj.Label, obj.Name))
+            for type_name in sorted(type_registry_map.keys()):
+                if type_name not in type_map:
+                    log("[INFO] Tipo '{}' compatible con registry '{}'".format(
+                        type_name, type_registry_map[type_name]
+                    ))
+        else:
+            log("[INFO] El CSV no trae valores en Nombre; se usara base fallback.")
+            if default_base_obj is None:
+                log("[ERROR] CSV sin Nombre y sin base fallback. No se puede importar.")
+                return
+
+    if unresolved_types:
+        log("[WARN] Tipos sin objeto base: {}".format(", ".join(unresolved_types)))
+        if USE_SKETCH_POINTS_IF_MISSING:
+            log("[WARN] Se crearan sketches de puntos por tipo para faltantes.")
+        elif USE_PLACEHOLDER_IF_MISSING:
+            log("[WARN] Se intentara crear placeholder para tipos faltantes.")
+        elif missing_policy == "skip":
+            log("[WARN] Esas filas se omitiran.")
+        elif missing_policy == "fallback" and default_base_obj is None:
+            log("[ERROR] Missing policy=fallback pero no hay base fallback disponible.")
+            return
+
+    created = 0
+    skipped = parse_skipped
+    used_names = set(obj.Name for obj in doc.Objects)
+    used_labels = set(obj.Label for obj in doc.Objects)
+    crear_toma_uno = None
+    if USE_DEVICE_CREATOR_FOR_REGISTRY_TYPES and use_name_type:
+        crear_toma_uno = get_crear_toma_uno()
+        if crear_toma_uno is None:
+            log("[WARN] crear_toma_uno no disponible. Tipos de dispositivos se iran a link/sketch/placeholder.")
+        else:
+            log("[INFO] Modo Insertar_Dispositivo activo para tipos con registry.")
+
+    doc.openTransaction("ElectricCR: importar luminarias CSV")
+    try:
+        g_electrico = ensure_root_group(doc, ELECTRICO_LABEL, ELECTRICO_NAME)
+        g_iluminacion = ensure_child_group(doc, g_electrico, ILUMINACION_LABEL, ILUMINACION_NAME)
+        g_importadas = ensure_child_group(doc, g_iluminacion, IMPORT_GROUP_LABEL, IMPORT_GROUP_NAME)
+        g_placeholder = None
+        g_sketch_points = None
+        z_warned_types = set()
+
+        if USE_SKETCH_POINTS_IF_MISSING:
+            g_sketch_points = ensure_sketch_points_group(doc, g_iluminacion)
+
+        if USE_PLACEHOLDER_IF_MISSING:
+            g_placeholder = ensure_placeholder_group(doc, g_electrico)
+
+            if not use_name_type and default_base_obj is None:
+                default_base_obj = ensure_placeholder_for_type(doc, g_placeholder, "Generico")
+
+            if unresolved_types:
+                still_unresolved = []
+                for type_name in unresolved_types:
+                    try:
+                        ph_obj = ensure_placeholder_for_type(doc, g_placeholder, type_name)
+                        if ph_obj is not None:
+                            type_map[type_name] = ph_obj
+                    except Exception as ph_err:
+                        log("[WARN] No se pudo crear placeholder para '{}': {}".format(type_name, ph_err))
+                        still_unresolved.append(type_name)
+                unresolved_types = still_unresolved
+                if unresolved_types:
+                    log("[WARN] Tipos aun sin resolver despues de placeholder: {}".format(
+                        ", ".join(unresolved_types)
+                    ))
+
+        for item in rows_data:
+            link_obj = None
+            device_obj = None
+            row_number = item["row_number"]
+            csv_name = item["csv_name"]
+            row_base = default_base_obj
+
+            if use_name_type and csv_name:
+                row_base = type_map.get(csv_name)
+
+            if row_base is None and use_name_type and csv_name and callable(crear_toma_uno):
+                reg_key = type_registry_map.get(csv_name, "")
+                if reg_key:
+                    try:
+                        device_obj = create_device_from_registry(
+                            doc, crear_toma_uno, reg_key, csv_name,
+                            item["x"], item["y"], item["z"], used_labels
+                        )
+                        g_importadas.addObject(device_obj)
+                        created += 1
+                        continue
+                    except Exception as dev_err:
+                        log("[WARN] Fila {}: fallo Insertar_Dispositivo para '{}': {}".format(
+                            row_number, csv_name, dev_err
+                        ))
+
+            if row_base is None:
+                if USE_SKETCH_POINTS_IF_MISSING and g_sketch_points is not None:
+                    sk_type = csv_name if (use_name_type and csv_name) else "Generico"
+                    try:
+                        sk = ensure_sketch_for_type(doc, g_sketch_points, sk_type)
+                        add_point_to_type_sketch(
+                            sk, item["x"], item["y"], item["z"], sk_type, z_warned_types
+                        )
+                        created += 1
+                        continue
+                    except Exception as sk_err:
+                        log("[WARN] Fila {}: no se pudo agregar punto a sketch '{}': {}".format(
+                            row_number, sk_type, sk_err
+                        ))
+
+            if row_base is None:
+                if USE_PLACEHOLDER_IF_MISSING and g_placeholder is not None:
+                    ph_type = csv_name if (use_name_type and csv_name) else "Generico"
+                    try:
+                        row_base = ensure_placeholder_for_type(doc, g_placeholder, ph_type)
+                        if use_name_type and csv_name and row_base is not None:
+                            type_map[csv_name] = row_base
+                    except Exception as ph_err:
+                        log("[WARN] Fila {} sin base y placeholder fallido: {}".format(row_number, ph_err))
+
+            if row_base is None:
+                skipped += 1
+                log("[WARN] Fila {} omitida: tipo '{}' sin objeto base".format(row_number, csv_name))
+                continue
+
+            try:
+                base_name = sanitize_name(csv_name if csv_name else LINK_NAME_PREFIX, LINK_NAME_PREFIX)
+                object_name = unique_value(base_name, used_names)
+
+                link_obj = doc.addObject("App::Link", object_name)
+                if hasattr(link_obj, "LinkedObject"):
+                    link_obj.LinkedObject = row_base
+                else:
+                    link_obj.Link = row_base
+
+                link_obj.Placement = App.Placement(
+                    App.Vector(item["x"], item["y"], item["z"]),
+                    App.Rotation()
+                )
+
+                if use_csv_name_label and csv_name:
+                    label_seed = csv_name
+                else:
+                    label_seed = object_name
+                link_obj.Label = unique_value(label_seed, used_labels)
+
+                g_importadas.addObject(link_obj)
+                created += 1
+
+            except Exception as row_error:
+                skipped += 1
+                if link_obj is not None:
+                    try:
+                        doc.removeObject(link_obj.Name)
+                    except Exception:
+                        pass
+                if device_obj is not None:
+                    try:
+                        doc.removeObject(device_obj.Name)
+                    except Exception:
+                        pass
+                log("[WARN] Fila {} omitida: {}".format(row_number, row_error))
+
+        doc.recompute()
+        doc.commitTransaction()
+
+    except Exception as ex:
+        doc.abortTransaction()
+        log("[ERROR] Importacion cancelada: {}".format(ex))
+        return
+
+    log("[INFO] Importacion finalizada. Creados: {}. Omitidos: {}.".format(created, skipped))
+
+
+import_luminarias_csv()

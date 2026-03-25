@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   viewBox="0 0 24 24"
+   width="24"
+   height="24"
+   stroke-linecap="round"
+   stroke-linejoin="round"
+   stroke-width="1.8"
+   fill="none"
+   version="1.1"
+   id="svg2"
+   sodipodi:docname="InsertarTomacorrientesenPoligonos_objet_toma.svg"
+   inkscape:version="1.4.2 (ebf0e94, 2025-05-08)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs2" />
+  <sodipodi:namedview
+     id="namedview2"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="35.031248"
+     inkscape:cx="8.2640503"
+     inkscape:cy="13.487958"
+     inkscape:window-width="2560"
+     inkscape:window-height="1369"
+     inkscape:window-x="1912"
+     inkscape:window-y="-8"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg2" />
+  <rect
+     x="5"
+     y="4"
+     width="14"
+     height="16"
+     rx="2.5"
+     stroke="#1F2A44"
+     id="rect1"
+     style="fill:#ffffff" />
+  <circle
+     cx="9.4576273"
+     cy="8.1730595"
+     r="0.89999998"
+     fill="#1f2a44"
+     id="circle1" />
+  <circle
+     cx="15.0562"
+     cy="8.1445141"
+     r="0.89999998"
+     fill="#1f2a44"
+     id="circle2" />
+  <rect
+     x="9"
+     y="13"
+     width="6"
+     height="3.2"
+     rx="0.8"
+     stroke="#1F2A44"
+     id="rect2" />
+  <path
+     d="M 3.2331252,5.7360491 6.2489841,2.7201902 11.275415,3.7254765 13.285988,7.7466217 10.270129,11.767766 5.2436978,10.76248 Z"
+     stroke="#2e86ff"
+     id="path2"
+     style="stroke-width:1.80952" />
+</svg>

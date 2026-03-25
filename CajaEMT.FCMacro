@@ -1,0 +1,167 @@
+# Macro CajaEMT
+#
+# Description:
+#   This macro creates a parametric octagon EMT box with knockouts
+#   for 1/2" and 3/4" conduit.  It is designed to be used as part
+#   of an electrical workbench in FreeCAD.  The resulting solid
+#   can be inserted on top of outlet boxes or used in an array
+#   for luminaires.  Each knockout is oriented horizontally so
+#   pipes can be attached automatically via their ports.
+#
+# Instructions:
+#   • Save this file in your FreeCAD macros directory.
+#   • Open FreeCAD and run the macro from the Macros dialog.
+#   • Adjust the parameters in the create_caja() call at the end
+#     of the file if you need different dimensions.  Values are
+#     given in millimetres.
+#   • Avoid using accent characters in parameter names or comments
+#     as FreeCAD expressions may fail with such characters.
+#
+# Version: 1.0
+# Date: 2026-03-12
+# Author: ChatGPT
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+import Draft
+import math
+
+
+def debug(msg):
+    """Print a debug message to the FreeCAD console."""
+    App.Console.PrintMessage("[CajaEMT] {}\n".format(msg))
+
+
+def create_caja(box_diameter=101.6,
+                box_depth=38.0,
+                wall_thickness=1.6,
+                ko_diam_small=22.2,
+                ko_diam_large=28.6,
+                doc_name="CajaEMT"):
+    """
+    Create a parametric octagon EMT box.
+
+    Parameters
+    ----------
+    box_diameter : float
+        Distance between two parallel faces of the octagon (mm).
+    box_depth : float
+        Total depth of the box (mm).
+    wall_thickness : float
+        Thickness of the box walls (mm).
+    ko_diam_small : float
+        Diameter of the 1/2" knockout (mm).
+    ko_diam_large : float
+        Diameter of the 3/4" knockout (mm).
+    doc_name : str
+        Name for the document if a new one is created.
+    """
+
+    # Get or create document
+    doc = App.ActiveDocument
+    if doc is None:
+        doc = App.newDocument(doc_name)
+        debug("Created new document: {}".format(doc_name))
+    else:
+        debug("Using existing active document: {}".format(doc.Name))
+
+    # Compute side length and circumscribed radius for the octagon
+    side_len = box_diameter / (1.0 + math.sqrt(2.0))
+    radius = side_len / (2.0 * math.sin(math.pi / 8.0))
+    debug("Computed side length: {:.2f} mm".format(side_len))
+    debug("Computed circumscribed radius: {:.2f} mm".format(radius))
+
+    # Define points for the outer octagon in the XY plane
+    outer_points = []
+    for i in range(8):
+        angle = (math.pi / 4.0) * i + (math.pi / 8.0)
+        x = radius * math.cos(angle)
+        y = radius * math.sin(angle)
+        outer_points.append(App.Vector(x, y, 0.0))
+
+    # Create a filled polygon from the points
+    outer_polygon = Draft.makePolygon(outer_points, closed=True, face=True)
+    outer_polygon.Label = "OctagonFace"
+    doc.recompute()
+
+    # Extrude the outer polygon to make the outer shell
+    outer_extrude = doc.addObject("Part::Extrusion", "OuterExtrude")
+    outer_extrude.Base = outer_polygon
+    outer_extrude.Dir = App.Vector(0.0, 0.0, box_depth)
+    outer_extrude.Solid = True
+    doc.recompute()
+    debug("Created outer extrusion")
+
+    # Create the inner polygon for the cavity
+    inner_radius = radius - wall_thickness
+    inner_points = []
+    for i in range(8):
+        angle = (math.pi / 4.0) * i + (math.pi / 8.0)
+        x = inner_radius * math.cos(angle)
+        y = inner_radius * math.sin(angle)
+        inner_points.append(App.Vector(x, y, 0.0))
+    inner_polygon = Draft.makePolygon(inner_points, closed=True, face=True)
+    inner_polygon.Label = "InnerFace"
+    doc.recompute()
+
+    # Extrude the inner polygon to make the void (cavity)
+    inner_extrude = doc.addObject("Part::Extrusion", "InnerExtrude")
+    inner_extrude.Base = inner_polygon
+    inner_extrude.Dir = App.Vector(0.0, 0.0, box_depth - wall_thickness)
+    # Lift the inner extrusion so the cavity starts after the wall thickness
+    inner_extrude.Placement.Base = App.Vector(0.0, 0.0, wall_thickness)
+    inner_extrude.Solid = True
+    doc.recompute()
+    debug("Created inner extrusion (cavity)")
+
+    # Subtract inner cavity from outer shell
+    base_cut = doc.addObject("Part::Cut", "ShellCut")
+    base_cut.Base = outer_extrude
+    base_cut.Tool = inner_extrude
+    doc.recompute()
+    debug("Subtracted inner cavity from outer shell")
+
+    # Calculate positions for side knockouts (N, S, E, W)
+    ko_z = box_depth / 2.0
+    # Offset from edge so the cylinder intersects the wall
+    offset = wall_thickness / 2.0
+    positions = {
+        "N": App.Vector(0.0, 0.5 * box_diameter - offset, ko_z),
+        "S": App.Vector(0.0, -0.5 * box_diameter + offset, ko_z),
+        "E": App.Vector(0.5 * box_diameter - offset, 0.0, ko_z),
+        "W": App.Vector(-0.5 * box_diameter + offset, 0.0, ko_z),
+    }
+
+    # Create cylinders for each knockout and subtract them
+    current_obj = base_cut
+    for direction, pos in positions.items():
+        # Choose diameter based on direction: N & S small, E & W large
+        diameter = ko_diam_small if direction in ["N", "S"] else ko_diam_large
+        cylinder = doc.addObject("Part::Cylinder", "KO_{}".format(direction))
+        cylinder.Radius = diameter / 2.0
+        cylinder.Height = wall_thickness * 2.0  # Extend beyond the wall
+        # Rotate the cylinder so it lies horizontally
+        cylinder.Placement.Base = App.Vector(pos.x, pos.y, pos.z - wall_thickness)
+        cylinder.Placement.Rotation = App.Rotation(App.Vector(1.0, 0.0, 0.0), 90.0)
+        doc.recompute()
+
+        # Subtract the knockout from the current object
+        cut = doc.addObject("Part::Cut", "Cut_{}".format(direction))
+        cut.Base = current_obj
+        cut.Tool = cylinder
+        current_obj = cut
+        doc.recompute()
+        debug("Added knockout {} with diameter {:.1f} mm".format(direction, diameter))
+
+    current_obj.Label = "CajaEMT"
+    debug("Finished building CajaEMT solid")
+    return current_obj
+
+
+if __name__ == "__main__":
+    # Create a sample box using default parameters
+    create_caja()
+    # Recompute to finalize changes
+    App.ActiveDocument.recompute()
+    debug("Macro finished.\n")

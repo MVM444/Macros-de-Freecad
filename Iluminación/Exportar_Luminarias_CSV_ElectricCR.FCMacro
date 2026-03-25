@@ -1,0 +1,255 @@
+# -*- coding: utf-8 -*-
+# MenuText: Exportar Luminarias CSV
+# ToolTip: Exporta luminarias App::Link a CSV
+# Icon: Exportar_DXF_DWG_Plano_Trabajo.svg
+"""
+Exportar_Luminarias_CSV_ElectricCR.FCMacro
+
+Exporta luminarias App::Link a un CSV con columnas:
+  Nombre,X,Y,Z
+
+Flujo ElectricCR:
+  electrico/Iluminacion/Luminarias_Importadas
+"""
+
+import csv
+import os
+
+import FreeCAD as App
+
+
+# -------------------- Configuracion editable --------------------
+CSV_EXPORT_PATH = r"C:\Users\marco\OneDrive - Caja Costarricense de Seguro Social\2026\03-Marzo-2026\La Cruz\1411-04 Luminarias y Ejes La Cruz_export.csv"
+BASE_OBJECT_NAME = "Luminaria_Base"  # Name o Label (vacio = sin filtro por base)
+SCALE_FACTOR = 1.0                   # 1000 si desea exportar en mm desde un modelo en m
+
+WORKBENCH_ID = "ElectricCRWorkbench"
+REQUIRE_ELECTRICCR_WORKBENCH = True
+
+ELECTRICO_LABEL = "electrico"
+ILUMINACION_LABEL = "Iluminacion"
+SOURCE_GROUP_LABEL = "Luminarias_Importadas"
+INCLUDE_SUBGROUPS = True
+
+EXPORT_NAME_FIELD = "Label"          # Label o Name
+CSV_ENCODING = "utf-8-sig"
+CSV_DELIMITER = ","
+CSV_DECIMALS = 6
+# ----------------------------------------------------------------
+
+
+def log(msg):
+    App.Console.PrintMessage(str(msg) + "\n")
+
+
+def is_group_container(obj):
+    if obj is None:
+        return False
+    type_id = getattr(obj, "TypeId", "")
+    if type_id.startswith("App::DocumentObjectGroup"):
+        return True
+    return hasattr(obj, "Group") and hasattr(obj, "addObject")
+
+
+def is_link_object(obj):
+    return getattr(obj, "TypeId", "") == "App::Link"
+
+
+def linked_object_of(link_obj):
+    if hasattr(link_obj, "LinkedObject"):
+        return getattr(link_obj, "LinkedObject")
+    if hasattr(link_obj, "Link"):
+        return getattr(link_obj, "Link")
+    return None
+
+
+def find_object_by_name_or_label(doc, token):
+    if not token:
+        return None
+    obj = doc.getObject(token)
+    if obj is not None:
+        return obj
+    for item in doc.Objects:
+        if getattr(item, "Label", "") == token:
+            return item
+    return None
+
+
+def find_group_by_label(doc, label):
+    for obj in doc.Objects:
+        if is_group_container(obj) and getattr(obj, "Label", "") == label:
+            return obj
+    return None
+
+
+def find_child_group(parent_group, label):
+    for child in getattr(parent_group, "Group", []) or []:
+        if is_group_container(child) and getattr(child, "Label", "") == label:
+            return child
+    return None
+
+
+def ensure_electriccr_workbench():
+    if not REQUIRE_ELECTRICCR_WORKBENCH:
+        return True
+
+    if not getattr(App, "GuiUp", False):
+        log("[WARN] GUI no disponible. Se omite validacion de workbench.")
+        return True
+
+    try:
+        import FreeCADGui as Gui
+    except Exception as ex:
+        log("[ERROR] No se pudo importar FreeCADGui: {}".format(ex))
+        return False
+
+    try:
+        workbenches = Gui.listWorkbenches() or {}
+    except Exception as ex:
+        log("[ERROR] No se pudo listar workbenches: {}".format(ex))
+        return False
+
+    if WORKBENCH_ID not in workbenches:
+        log("[ERROR] Workbench '{}' no esta cargado.".format(WORKBENCH_ID))
+        return False
+
+    try:
+        Gui.activateWorkbench(WORKBENCH_ID)
+    except Exception as ex:
+        log("[ERROR] No se pudo activar '{}': {}".format(WORKBENCH_ID, ex))
+        return False
+
+    return True
+
+
+def collect_links_recursive(group_obj, include_subgroups):
+    out = []
+    visited_groups = set()
+
+    def walk(g):
+        if g is None:
+            return
+        key = getattr(g, "Name", "")
+        if key in visited_groups:
+            return
+        visited_groups.add(key)
+        for item in getattr(g, "Group", []) or []:
+            if is_link_object(item):
+                out.append(item)
+            elif include_subgroups and is_group_container(item):
+                walk(item)
+
+    walk(group_obj)
+    return out
+
+
+def format_number(value, decimals):
+    text = ("{0:." + str(int(decimals)) + "f}").format(float(value))
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text if text else "0"
+
+
+def resolve_source_group(doc):
+    g_electrico = find_group_by_label(doc, ELECTRICO_LABEL)
+    if g_electrico is None:
+        return None
+    g_iluminacion = find_child_group(g_electrico, ILUMINACION_LABEL)
+    if g_iluminacion is None:
+        return None
+    return find_child_group(g_iluminacion, SOURCE_GROUP_LABEL)
+
+
+def export_luminarias_csv():
+    doc = App.ActiveDocument
+    if doc is None:
+        log("[ERROR] No hay documento activo.")
+        return
+
+    if not ensure_electriccr_workbench():
+        return
+
+    export_dir = os.path.dirname(CSV_EXPORT_PATH)
+    if export_dir and not os.path.isdir(export_dir):
+        log("[ERROR] Carpeta de salida no existe: {}".format(export_dir))
+        return
+
+    base_obj = None
+    if BASE_OBJECT_NAME.strip():
+        base_obj = find_object_by_name_or_label(doc, BASE_OBJECT_NAME)
+        if base_obj is None:
+            log("[ERROR] No existe objeto base para filtro: {}".format(BASE_OBJECT_NAME))
+            return
+
+    source_group = resolve_source_group(doc)
+    if source_group is None:
+        log("[ERROR] No se encontro el grupo destino: electrico/Iluminacion/{}".format(SOURCE_GROUP_LABEL))
+        return
+
+    links = collect_links_recursive(source_group, INCLUDE_SUBGROUPS)
+    if not links:
+        log("[WARN] No hay objetos App::Link en el grupo '{}'.".format(SOURCE_GROUP_LABEL))
+        return
+
+    rows = []
+    skipped = 0
+    used_names = set()
+
+    for obj in links:
+        try:
+            linked = linked_object_of(obj)
+            if base_obj is not None and linked is not base_obj:
+                continue
+
+            pos = obj.Placement.Base
+            x = float(pos.x) * SCALE_FACTOR
+            y = float(pos.y) * SCALE_FACTOR
+            z = float(pos.z) * SCALE_FACTOR
+
+            if EXPORT_NAME_FIELD.lower() == "name":
+                name_value = getattr(obj, "Name", "")
+            else:
+                name_value = getattr(obj, "Label", "") or getattr(obj, "Name", "")
+
+            if not name_value:
+                name_value = getattr(obj, "Name", "Luminaria")
+
+            # Evitar repetidos en columna Nombre
+            base_name = str(name_value)
+            candidate = base_name
+            idx = 1
+            while candidate in used_names:
+                candidate = "{}_{:03d}".format(base_name, idx)
+                idx += 1
+            used_names.add(candidate)
+
+            rows.append(
+                [
+                    candidate,
+                    format_number(x, CSV_DECIMALS),
+                    format_number(y, CSV_DECIMALS),
+                    format_number(z, CSV_DECIMALS),
+                ]
+            )
+        except Exception:
+            skipped += 1
+
+    if not rows:
+        log("[WARN] No se generaron filas para exportar.")
+        return
+
+    try:
+        with open(CSV_EXPORT_PATH, "w", newline="", encoding=CSV_ENCODING) as f:
+            writer = csv.writer(f, delimiter=CSV_DELIMITER)
+            writer.writerow(["Nombre", "X", "Y", "Z"])
+            writer.writerows(rows)
+    except Exception as ex:
+        log("[ERROR] No se pudo escribir CSV: {}".format(ex))
+        return
+
+    log("[INFO] Exportacion completada: {}".format(CSV_EXPORT_PATH))
+    log("[INFO] Filas exportadas: {} | Omitidas: {}".format(len(rows), skipped))
+
+
+export_luminarias_csv()
+

@@ -1,0 +1,277 @@
+# -*- coding: utf-8 -*-
+# MenuText: Capturar Arbol de Grupos (Snapshot)
+# Icon: Capturar_Arbol_Grupos_Documento.svg
+"""
+Captura y exporta el arbol de grupos del documento activo.
+
+Salida:
+- TXT legible
+- MD (bloque de codigo)
+- JSON para procesamiento de macros/programacion
+
+Alcance:
+- Si hay grupos seleccionados, usa esos como raiz.
+- Si no hay seleccion, usa grupos raiz del documento.
+"""
+
+import datetime
+import json
+import os
+import re
+
+import FreeCAD as App
+
+try:
+    import FreeCADGui as Gui
+except Exception:
+    Gui = None
+
+try:
+    from PySide2 import QtWidgets
+except Exception:
+    try:
+        from PySide import QtGui as QtWidgets  # type: ignore
+    except Exception:
+        QtWidgets = None
+
+TAG = "[ARBOL_GRUPOS]"
+
+
+def info(msg):
+    App.Console.PrintMessage(f"{TAG} {msg}\n")
+
+
+def warn(msg):
+    App.Console.PrintWarning(f"{TAG} {msg}\n")
+
+
+def err(msg):
+    App.Console.PrintError(f"{TAG} {msg}\n")
+
+
+def txt(v):
+    try:
+        return str(v or "")
+    except Exception:
+        return ""
+
+
+def is_group(obj):
+    if obj is None:
+        return False
+    type_id = txt(getattr(obj, "TypeId", ""))
+    if type_id.startswith("App::DocumentObjectGroup"):
+        return True
+    return hasattr(obj, "Group")
+
+
+def natural_key(value):
+    s = txt(value)
+    return [int(t) if t.isdigit() else t.lower() for t in re.split(r"([0-9]+)", s)]
+
+
+def node_title(obj):
+    name = txt(getattr(obj, "Name", ""))
+    label = txt(getattr(obj, "Label", "")) or name
+    type_id = txt(getattr(obj, "TypeId", ""))
+    kind = "G" if is_group(obj) else "O"
+    return f"[{kind}] {label} | Name={name} | Type={type_id}"
+
+
+def unique_objs(objs):
+    out = []
+    seen = set()
+    for obj in list(objs or []):
+        name = txt(getattr(obj, "Name", ""))
+        key = name or str(id(obj))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(obj)
+    return out
+
+
+def selected_root_groups():
+    if Gui is None:
+        return []
+    try:
+        sel = list(Gui.Selection.getSelection() or [])
+    except Exception:
+        sel = []
+    return unique_objs([o for o in sel if is_group(o)])
+
+
+def document_root_groups(doc):
+    children = set()
+    for obj in list(doc.Objects or []):
+        if not is_group(obj):
+            continue
+        for ch in list(getattr(obj, "Group", []) or []):
+            cname = txt(getattr(ch, "Name", ""))
+            if cname:
+                children.add(cname)
+    roots = []
+    for obj in list(doc.Objects or []):
+        if not is_group(obj):
+            continue
+        name = txt(getattr(obj, "Name", ""))
+        if name and name not in children:
+            roots.append(obj)
+    roots.sort(key=lambda o: natural_key(txt(getattr(o, "Label", "")) or txt(getattr(o, "Name", ""))))
+    return unique_objs(roots)
+
+
+def sorted_children(group_obj):
+    children = list(getattr(group_obj, "Group", []) or [])
+    children.sort(key=lambda o: natural_key(txt(getattr(o, "Label", "")) or txt(getattr(o, "Name", ""))))
+    return children
+
+
+def walk_lines(obj, lines, depth=0, branch_names=None):
+    if branch_names is None:
+        branch_names = set()
+    name = txt(getattr(obj, "Name", ""))
+    prefix = "  " * depth + "- "
+    lines.append(prefix + node_title(obj))
+    if not is_group(obj):
+        return
+    next_branch = set(branch_names)
+    if name:
+        next_branch.add(name)
+    for child in sorted_children(obj):
+        cname = txt(getattr(child, "Name", ""))
+        if cname and cname in next_branch:
+            loop_line = "  " * (depth + 1) + f"- [LOOP] {node_title(child)}"
+            lines.append(loop_line)
+            continue
+        walk_lines(child, lines, depth + 1, next_branch)
+
+
+def build_node_dict(obj, branch_names=None):
+    if branch_names is None:
+        branch_names = set()
+    name = txt(getattr(obj, "Name", ""))
+    node = {
+        "name": name,
+        "label": txt(getattr(obj, "Label", "")),
+        "type_id": txt(getattr(obj, "TypeId", "")),
+        "is_group": bool(is_group(obj)),
+        "children": [],
+    }
+    if not is_group(obj):
+        return node
+    next_branch = set(branch_names)
+    if name:
+        next_branch.add(name)
+    for child in sorted_children(obj):
+        cname = txt(getattr(child, "Name", ""))
+        if cname and cname in next_branch:
+            node["children"].append(
+                {
+                    "name": cname,
+                    "label": txt(getattr(child, "Label", "")),
+                    "type_id": txt(getattr(child, "TypeId", "")),
+                    "is_group": bool(is_group(child)),
+                    "loop": True,
+                    "children": [],
+                }
+            )
+            continue
+        node["children"].append(build_node_dict(child, next_branch))
+    return node
+
+
+def copy_to_clipboard(text):
+    if QtWidgets is None:
+        return False
+    try:
+        app = QtWidgets.QApplication.instance()
+        if app is None:
+            return False
+        cb = app.clipboard()
+        if cb is None:
+            return False
+        cb.setText(text)
+        return True
+    except Exception:
+        return False
+
+
+def sanitize_filename(text):
+    base = txt(text).strip()
+    if not base:
+        return "Documento"
+    base = re.sub(r"[^0-9A-Za-z_ -]+", "_", base)
+    base = re.sub(r"\s+", "_", base).strip(" _")
+    return base or "Documento"
+
+
+def main():
+    doc = App.ActiveDocument
+    if doc is None:
+        err("No hay documento activo.")
+        return
+
+    roots = selected_root_groups()
+    scope = "seleccion" if roots else "documento"
+    if not roots:
+        roots = document_root_groups(doc)
+    if not roots:
+        err("No se encontraron grupos para exportar.")
+        return
+
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    doc_id = sanitize_filename(txt(getattr(doc, "Label", "")) or txt(getattr(doc, "Name", "")))
+    out_dir = os.path.join(os.path.dirname(__file__), "_reportes_arbol")
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+    except Exception as ex:
+        err(f"No se pudo crear carpeta de salida: {ex}")
+        return
+
+    base_name = f"Arbol_Grupos_{doc_id}_{timestamp}"
+    txt_path = os.path.join(out_dir, base_name + ".txt")
+    md_path = os.path.join(out_dir, base_name + ".md")
+    json_path = os.path.join(out_dir, base_name + ".json")
+
+    lines = []
+    lines.append(f"{TAG} Documento: {txt(getattr(doc, 'Label', '')) or txt(getattr(doc, 'Name', ''))}")
+    lines.append(f"{TAG} Alcance: {scope}")
+    lines.append(f"{TAG} Grupos raiz: {len(roots)}")
+    lines.append("")
+    for root in roots:
+        walk_lines(root, lines, depth=0, branch_names=set())
+        lines.append("")
+    text_blob = "\n".join(lines).rstrip() + "\n"
+
+    payload = {
+        "tag": TAG,
+        "document": {
+            "name": txt(getattr(doc, "Name", "")),
+            "label": txt(getattr(doc, "Label", "")),
+        },
+        "scope": scope,
+        "root_groups": [build_node_dict(root, set()) for root in roots],
+    }
+
+    try:
+        with open(txt_path, "w", encoding="utf-8") as fh:
+            fh.write(text_blob)
+        with open(md_path, "w", encoding="utf-8") as fh:
+            fh.write("```text\n")
+            fh.write(text_blob)
+            fh.write("```\n")
+        with open(json_path, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, ensure_ascii=False, indent=2)
+    except Exception as ex:
+        err(f"No se pudo escribir reporte: {ex}")
+        return
+
+    copied = copy_to_clipboard(text_blob)
+    info(f"Exportado: {txt_path}")
+    info(f"Exportado: {md_path}")
+    info(f"Exportado: {json_path}")
+    info(f"Resumen: scope={scope} | raiz={len(roots)} | clipboard={'SI' if copied else 'NO'}")
+
+
+main()

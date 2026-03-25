@@ -1,0 +1,83 @@
+# Codex Issue Log (ElectricCR)
+
+- [2026-03-12 00:00:00] ModoVisual Solo3D no se reflejaba visualmente en algunos tomacorrientes
+  - Problema recurrente reportado: al cambiar a Solo3D se seguia viendo 2D+3D.
+  - Hipotesis tecnica: desincronizacion entre `ModoVisual` en objeto/link/master y visibilidad de `Link2DName`/`Link3DName`.
+  - Accion aplicada: forzado de sincronizacion en macro de visibilidad (actualiza modo, toca objetos y ajusta links 2D/3D).
+  - Estado: mitigado por script; seguir monitoreando si reaparece en modelos legacy.
+
+- [2026-03-12 00:00:01] Refuerzo adicional para modo en componentes (Solo3D/Solo2D)
+  - Se agrego retarget de `App::Link` al master correcto por modo usando `_get_or_create_master_toma`.
+  - Se agrego fallback por deteccion de componente 2D/3D para forzar visibilidad en modelos heterogeneos.
+  - Se permite aplicar `ModoVisual` aunque no haya filtros de visibilidad marcados.
+  - Estado: pendiente validacion del usuario en proyecto real.
+- [2026-03-12 12:19:59] ModoVisual Solo3D aplicado con sincronizacion reforzada
+  - Problema recurrente reportado: objetos seguian viendose en Ambos tras cambiar a Solo3D.
+  - Objetos con ModoVisual actualizados: 109.
+  - Ajustes directos de visibilidad Link2D/Link3D: 0.
+- [2026-03-12 12:34:29] ModoVisual Solo3D aplicado con sincronizacion reforzada
+  - Problema recurrente reportado: objetos seguian viendose en Ambos tras cambiar a Solo3D.
+  - Objetos con ModoVisual actualizados: 1.
+  - Ajustes directos de visibilidad Link2D/Link3D: 0.
+  - Links retargeted a master de modo correcto: 164.
+
+- [2026-03-16 00:00:00] Consolidacion de problemas recurrentes para Conectar Cajas a Tablero v2
+  - Se documento una especificacion corta con reglas funcionales y regresiones recurrentes.
+  - Objetivo: evitar volver a discutir o reintroducir los mismos problemas durante la evolucion de la `v2`.
+  - Documento asociado: `ElectricCR/logs/conectar_cajas_tablero_v2_requisitos_recurrentes.md`
+  - Temas consolidados:
+    - origen correcto del alimentador
+    - guias como canales y no autoruteo libre
+    - offset correcto y separacion constante
+    - llegada ortogonal al tablero
+    - orden por secciones/guias y por circuitos
+    - cruces recurrentes sobre `Top` y a nivel de `3 m`
+
+- [2026-03-16 00:00:01] Consolidacion de requisitos recurrentes para circuitos ramales
+  - Se documento una especificacion separada para la macro de ramales internos.
+  - Objetivo: separar claramente la logica de ramales de la logica de alimentadores.
+  - Documento asociado: `ElectricCR/logs/conectar_circuitos_ramales_requisitos_recurrentes.md`
+  - Temas consolidados:
+    - caja octogonal como nodo principal
+    - backbone entre octogonales
+    - relaciones caja-dispositivo
+    - fallback solo cuando falta caja
+    - regla de misma cota para dispositivo-dispositivo
+    - curvas y entradas correctas a octogonales
+    - preservacion de jerarquia y persistencia del formulario
+- [2026-03-16 00:00:02] Macro de ramales vuelta temporalmente al backend estable de la v1
+  - Problema recurrente reportado: la macro nueva de ramales seguia haciendo enredo aunque la topologia de la `v1` ya funcionaba razonablemente bien.
+  - Accion aplicada: `Conectar_Circuitos_Ramales_Auto.FCMacro` mantiene su panel y persistencia, pero usa temporalmente el planificador y trazador interno de ramales de `Conectar_Cajas_a_Tablero_Auto.FCMacro`.
+  - Objetivo: recuperar comportamiento estable sin seguir manteniendo dos implementaciones divergentes del mismo problema.
+  - Riesgo conocido: dependencia en tiempo de ejecucion respecto a la macro `v1` hasta extraer esas funciones maduras de forma autonoma.
+- [2026-03-16 00:00:03] Extraccion inicial de backend compartido para ramales
+  - Se creo `Conectar/ramales_backend.py` como capa compartida para separar UI y alcance del motor de ramales.
+  - La macro `Conectar_Circuitos_Ramales_Auto.FCMacro` ya no carga directamente la `v1`; ahora importa el backend compartido.
+  - La `v1` no se toco en esta etapa para evitar regresiones en una macro que hoy ya funciona.
+  - Estado: separacion inicial completada; la dependencia temporal de fondo sigue encapsulada dentro del backend compartido.
+- [2026-03-16 00:00:04] Extraccion inicial de macro dedicada para alimentadores
+  - Se creo `Conectar/Conectar_Alimentadores_a_Tablero_Auto.FCMacro` como macro separada enfocada solo en alimentadores.
+  - Se creo `Conectar/alimentadores_backend.py` como backend compartido para encapsular la logica estable de alimentadores proveniente de la `v1`.
+  - La macro nueva mantiene panel lateral estilo FreeCAD y persistencia propia, pero reutiliza el motor estable de la macro principal.
+  - Estado: separacion funcional completada; la dependencia de fondo con la `v1` sigue encapsulada dentro del backend compartido.
+- [2026-03-16 00:00:05] Macro de alimentadores hereda configuracion madura de v1/v2
+  - Problema esperado: una macro nueva de alimentadores sin herencia de configuracion podia comportarse distinto aunque la logica base fuera la misma.
+  - Accion aplicada: `Conectar_Alimentadores_a_Tablero_Auto.FCMacro` ahora toma como base la configuracion persistida de la macro principal para caras, guias y orden manual de secciones/circuitos.
+  - Objetivo: evitar que la macro nueva arranque con orden y restricciones vacias, reduciendo diferencias innecesarias respecto al flujo ya ajustado en `v1/v2`.
+- 2026-03-16: Conectar_Alimentadores_a_Tablero_Auto se actualizo para usar pestañas en el formulario, reservar tambien puertos de Ramales_EMT, derivar el vector de offset desde la orientacion real de la guia por seccion y forzar hint de entrada a octogonal por proyeccion sobre la guia en el backend de alimentadores.
+
+- [2026-03-23 00:00:00] Herramienta Transform deshabilitada en links de dispositivos (recurrente)
+  - Reporte: en menu contextual (clic derecho) Transform aparece inactiva en dispositivos tipo App::Link (confirmado en flujo de apagadores; potencialmente general).
+  - Accion aplicada en nucleo: ElectricCR/electriccr/features/objeto_toma_uno.py
+    - LinkTransform = True
+    - desbloqueo de Placement y LinkPlacement
+    - ViewObject.Selectable = True
+  - Accion aplicada de soporte:
+    - macro Objetos/Habilitar_Transform_en_Links_Dispositivos.FCMacro para corregir links legacy ya creados.
+  - Estado: pendiente validacion final del menu contextual Transform en proyecto real.
+- [2026-03-23 08:58:45] Validacion Fix_Link_Transform_FreeCAD en documento real
+  - scan_links: links_detected=195.
+  - Resultado previo: la mayoria de links reportaban LinkTransform=False.
+  - fix_all_links: changed_links=195 | warning_links=0.
+  - Interpretacion: normalizacion tecnica aplicada correctamente en datos.
+  - Estado funcional: si el menu contextual Transform sigue inactivo, se confirma limitacion de habilitacion UI en FreeCAD para ciertos App::Link/contextos (pendiente resolver en siguiente iteracion).

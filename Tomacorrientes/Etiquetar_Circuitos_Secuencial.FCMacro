@@ -1,0 +1,875 @@
+# -*- coding: utf-8 -*-
+# MenuText: Etiquetar circuitos (secuencial)
+# Icon: Etiquetas_2.svg
+"""
+Etiquetar_Circuitos_Secuencial.FCMacro (rev 2026-02-23)
+
+- Selecciona el grupo principal (Tomacorrientes).
+- Recorre subgrupos directos (circuitos) y pide un punto por circuito.
+- Coloca etiqueta (simbolo + texto) como un solo objeto.
+- Direccion automatica considerando orientacion del toma e interferencias.
+"""
+
+from pathlib import Path
+import hashlib
+import re
+import sys
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+
+try:
+    import importlib
+    import conexiones_grouping as _conexiones_grouping_mod
+    _conexiones_grouping_mod = importlib.reload(_conexiones_grouping_mod)
+    ensure_conexiones_group = _conexiones_grouping_mod.ensure_conexiones_group
+except Exception:
+    try:
+        this_dir = Path(__file__).resolve().parent
+        con_dir = this_dir.parent / "Conectar"
+        if str(con_dir) not in sys.path:
+            sys.path.insert(0, str(con_dir))
+        import importlib
+        import conexiones_grouping as _conexiones_grouping_mod
+        _conexiones_grouping_mod = importlib.reload(_conexiones_grouping_mod)
+        ensure_conexiones_group = _conexiones_grouping_mod.ensure_conexiones_group
+    except Exception:
+        ensure_conexiones_group = None
+
+try:
+    import importlib
+    import component_classifier as _component_classifier_mod
+    _component_classifier_mod = importlib.reload(_component_classifier_mod)
+except Exception:
+    try:
+        this_dir = Path(__file__).resolve().parent
+        con_dir = this_dir.parent / "Conectar"
+        if str(con_dir) not in sys.path:
+            sys.path.insert(0, str(con_dir))
+        import importlib
+        import component_classifier as _component_classifier_mod
+        _component_classifier_mod = importlib.reload(_component_classifier_mod)
+    except Exception:
+        _component_classifier_mod = None
+
+try:
+    from PySide2 import QtWidgets
+except Exception:
+    try:
+        from PySide import QtGui as QtWidgets
+    except Exception:
+        QtWidgets = None
+
+# ----------------------------
+# Configuracion
+# ----------------------------
+SYMBOL_PATH = r"C:\Users\marco\OneDrive - Caja Costarricense de Seguro Social\Documentos\FreeCAD\Macros\Macros-de-Freecad\Resources\prototypes\2d\etiqueta_circuito.step"
+ALTURA_TEXTO_MM = 100.0
+FUENTE_TTF = r"C:\Windows\Fonts\arial.ttf"
+DISTANCIA_TEXTO_MM = 120.0
+ESCALA_SIMBOLO = 2.0
+LINE_WIDTH = 1.5
+AUTO_DISTANCIA = True
+
+SKIP_GROUP_LABELS = {"electrico", "tomacorrientes", "conexiones"}
+FORZAR_Z_0 = True
+Z_PLANO = 0.0
+
+# Persistencia
+PARAM_PATH = "User parameter:BaseApp/Preferences/Mod/ElectricCR/EtiquetaCircuito"
+
+# ----------------------------
+# Logging
+# ----------------------------
+
+def _log(msg):
+    App.Console.PrintMessage(f"[ETIQ-SEQ][INFO] {msg}\n")
+
+
+def _warn(msg):
+    App.Console.PrintWarning(f"[ETIQ-SEQ][WARN] {msg}\n")
+
+
+def _err(msg):
+    App.Console.PrintError(f"[ETIQ-SEQ][ERROR] {msg}\n")
+
+
+# ----------------------------
+# Draft Snapper
+# ----------------------------
+
+def _ensure_snapper():
+    try:
+        import DraftTools  # crea Gui.Snapper y Gui.draftToolBar
+        return True
+    except Exception:
+        pass
+    try:
+        import DraftGui
+        from draftguitools import gui_snapper
+        if not hasattr(Gui, "draftToolBar"):
+            Gui.draftToolBar = DraftGui.DraftToolBar()
+        if not hasattr(Gui, "Snapper"):
+            Gui.Snapper = gui_snapper.Snapper()
+        return True
+    except Exception as exc:
+        _err(f"No se pudo iniciar Draft Snapper: {exc}")
+        return False
+
+
+def _point_from_snap(pt, snapinfo=None):
+    try:
+        if snapinfo and all(k in snapinfo for k in ("x", "y", "z")):
+            return App.Vector(snapinfo["x"], snapinfo["y"], snapinfo["z"])
+    except Exception:
+        pass
+    return pt
+
+# ----------------------------
+# Parametros persistentes
+# ----------------------------
+
+def _defaults():
+    return {
+        "text_size": float(ALTURA_TEXTO_MM),
+        "scale_symbol": float(ESCALA_SIMBOLO),
+        "distance": float(DISTANCIA_TEXTO_MM),
+        "line_width": float(LINE_WIDTH),
+        "font_path": str(FUENTE_TTF),
+        "auto_distance": bool(AUTO_DISTANCIA),
+    }
+
+
+def _param_group():
+    try:
+        return App.ParamGet(PARAM_PATH)
+    except Exception:
+        return None
+
+
+def _load_params():
+    d = _defaults()
+    p = _param_group()
+    if not p:
+        return d
+    try:
+        d["text_size"] = float(p.GetFloat("text_size", d["text_size"]))
+        d["scale_symbol"] = float(p.GetFloat("scale_symbol", d["scale_symbol"]))
+        d["distance"] = float(p.GetFloat("distance", d["distance"]))
+        d["line_width"] = float(p.GetFloat("line_width", d["line_width"]))
+        d["font_path"] = str(p.GetString("font_path", d["font_path"]))
+        d["auto_distance"] = bool(p.GetBool("auto_distance", d["auto_distance"]))
+    except Exception:
+        pass
+    return d
+
+
+def _save_params(vals):
+    p = _param_group()
+    if not p:
+        return
+    try:
+        p.SetFloat("text_size", float(vals.get("text_size", ALTURA_TEXTO_MM)))
+        p.SetFloat("scale_symbol", float(vals.get("scale_symbol", ESCALA_SIMBOLO)))
+        p.SetFloat("distance", float(vals.get("distance", DISTANCIA_TEXTO_MM)))
+        p.SetFloat("line_width", float(vals.get("line_width", LINE_WIDTH)))
+        p.SetString("font_path", str(vals.get("font_path", FUENTE_TTF)))
+        p.SetBool("auto_distance", bool(vals.get("auto_distance", AUTO_DISTANCIA)))
+    except Exception:
+        pass
+
+
+# ----------------------------
+# UI parametros
+# ----------------------------
+
+def _ask_params():
+    d = _load_params()
+    if QtWidgets is None:
+        return d
+    dlg = QtWidgets.QDialog()
+    dlg.setWindowTitle("Parametros de etiqueta (secuencial)")
+    layout = QtWidgets.QFormLayout(dlg)
+    sp_text = QtWidgets.QDoubleSpinBox(); sp_text.setRange(1.0, 1000.0); sp_text.setDecimals(1); sp_text.setValue(float(d["text_size"]))
+    sp_scale = QtWidgets.QDoubleSpinBox(); sp_scale.setRange(0.1, 10.0); sp_scale.setDecimals(2); sp_scale.setValue(float(d["scale_symbol"]))
+    sp_dist = QtWidgets.QDoubleSpinBox(); sp_dist.setRange(1.0, 100000.0); sp_dist.setDecimals(1); sp_dist.setValue(float(d["distance"]))
+    sp_line = QtWidgets.QDoubleSpinBox(); sp_line.setRange(0.1, 10.0); sp_line.setDecimals(1); sp_line.setValue(float(d["line_width"]))
+    ed_font = QtWidgets.QLineEdit(str(d["font_path"]))
+    chk_auto = QtWidgets.QCheckBox("Auto distancia"); chk_auto.setChecked(bool(d["auto_distance"]))
+    sp_dist.setEnabled(not chk_auto.isChecked())
+    chk_auto.toggled.connect(lambda v: sp_dist.setEnabled(not v))
+    layout.addRow("Altura texto (mm):", sp_text)
+    layout.addRow("Escala simbolo:", sp_scale)
+    layout.addRow("Distancia rotulo (mm):", sp_dist)
+    layout.addRow("Grosor linea:", sp_line)
+    layout.addRow("Fuente TTF:", ed_font)
+    layout.addRow("", chk_auto)
+    btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+    btn_default = QtWidgets.QPushButton("Predeterminado")
+    btns.addButton(btn_default, QtWidgets.QDialogButtonBox.ResetRole)
+    layout.addRow(btns)
+    btns.accepted.connect(dlg.accept)
+    btns.rejected.connect(dlg.reject)
+    def _set_defaults():
+        d2 = _defaults()
+        sp_text.setValue(float(d2["text_size"]))
+        sp_scale.setValue(float(d2["scale_symbol"]))
+        sp_dist.setValue(float(d2["distance"]))
+        sp_line.setValue(float(d2["line_width"]))
+        ed_font.setText(str(d2["font_path"]))
+        chk_auto.setChecked(bool(d2["auto_distance"]))
+    btn_default.clicked.connect(_set_defaults)
+    if dlg.exec_() != QtWidgets.QDialog.Accepted:
+        return None
+    out = {
+        "text_size": sp_text.value(),
+        "scale_symbol": sp_scale.value(),
+        "distance": sp_dist.value(),
+        "line_width": sp_line.value(),
+        "font_path": ed_font.text().strip(),
+        "auto_distance": chk_auto.isChecked(),
+    }
+    _save_params(out)
+    return out
+
+
+# ----------------------------
+# Geometria
+# ----------------------------
+
+def _resolve_symbol_path():
+    p = Path(SYMBOL_PATH)
+    if p.is_file():
+        return str(p)
+    try:
+        here = Path(__file__).resolve().parent
+        repo = here.parent
+        cand = repo / "Resources" / "prototypes" / "2d" / "etiqueta_circuito.step"
+        if cand.is_file():
+            return str(cand)
+    except Exception:
+        pass
+    return None
+
+
+def _load_symbol_shape():
+    path = _resolve_symbol_path()
+    if not path:
+        _err("No se encontro etiqueta_circuito.step")
+        return None
+    _log(f"Usando simbolo: {path}")
+    try:
+        shp = Part.Shape(); shp.read(path)
+        if shp.isNull():
+            _err("Shape nula al leer etiqueta_circuito.step")
+            return None
+        return shp
+    except Exception as ex:
+        _err(f"Error leyendo simbolo: {ex}")
+        return None
+
+
+def _make_text_shape(text, font_path, text_size):
+    if not text:
+        return None
+    if not Path(font_path).is_file():
+        _warn(f"No se encontro fuente: {font_path}")
+        return None
+    # Part.makeShapeString
+    try:
+        make_ss = getattr(Part, "makeShapeString", None)
+        if make_ss:
+            shp = make_ss(String=text, FontFile=font_path, Size=float(text_size), Tracking=0)
+            if shp is None or getattr(shp, "isNull", lambda: False)():
+                return None
+            return shp
+    except Exception:
+        pass
+    # Draft.makeShapeString fallback
+    try:
+        import Draft
+        make_ds = getattr(Draft, "makeShapeString", None)
+        if not make_ds:
+            return None
+        tmp = make_ds(String=text, FontFile=font_path, Size=float(text_size), Tracking=0)
+        if tmp is None or not hasattr(tmp, "Shape"):
+            return None
+        shp = tmp.Shape.copy() if tmp.Shape else None
+        try:
+            App.ActiveDocument.removeObject(tmp.Name)
+        except Exception:
+            pass
+        return shp
+    except Exception:
+        return None
+
+
+def _place_text_shape(text_shape, anchor, direction, dist):
+    if text_shape is None:
+        return None
+    bb = text_shape.BoundBox
+    d = (direction or "").lower()
+    if d == "left":
+        tx = anchor.x - float(dist) - bb.XLength
+        ty = anchor.y - (bb.YLength * 0.5)
+    elif d == "up":
+        tx = anchor.x - (bb.XLength * 0.5)
+        ty = anchor.y + float(dist)
+    elif d == "down":
+        tx = anchor.x - (bb.XLength * 0.5)
+        ty = anchor.y - float(dist) - bb.YLength
+    else:
+        tx = anchor.x + float(dist)
+        ty = anchor.y - (bb.YLength * 0.5)
+    dx = tx - bb.XMin
+    dy = ty - bb.YMin
+    text_shape.translate(App.Vector(dx, dy, 0.0))
+    return text_shape
+
+
+def _auto_distance(direction, sym_bb, text_bb):
+    gap = 5.0
+    try:
+        if text_bb:
+            gap = max(gap, float(text_bb.YLength) * 0.2)
+    except Exception:
+        pass
+    d = (direction or "").lower()
+    if d in ("left", "right"):
+        try:
+            return float(sym_bb.XLength) + gap
+        except Exception:
+            return DISTANCIA_TEXTO_MM
+    try:
+        return float(sym_bb.YLength) + gap
+    except Exception:
+        return DISTANCIA_TEXTO_MM
+
+
+def _dir_angle(direction):
+    d = (direction or "").lower()
+    if d == "left":
+        return 180.0
+    if d == "up":
+        return 90.0
+    if d == "down":
+        return -90.0
+    return 0.0
+
+
+def _safe_name_token(value):
+    txt = str(value or "").strip()
+    txt = re.sub(r"[^0-9A-Za-z_]+", "_", txt)
+    txt = re.sub(r"_+", "_", txt).strip("_")
+    return txt or "Etiqueta"
+
+
+def _ensure_group(doc, name, parent=None):
+    grp = doc.getObject(name)
+    if grp is None:
+        grp = doc.addObject("App::DocumentObjectGroup", name)
+    if parent is not None and hasattr(parent, "addObject"):
+        try:
+            if grp not in (getattr(parent, "Group", []) or []):
+                parent.addObject(grp)
+        except Exception:
+            pass
+    return grp
+
+
+def _ensure_label_library_group(doc):
+    g_elec = _ensure_group(doc, "electrico", parent=None)
+    g_lib = _ensure_group(doc, "_lib", parent=g_elec)
+    g_lbl = _ensure_group(doc, "_lib_labels_circuito", parent=g_lib or g_elec)
+    return g_lbl
+
+
+def _master_label_name(text, direction, text_size, scale_sym, dist_txt, auto_dist):
+    key = "{}|{}|{:.3f}|{:.3f}|{:.3f}|{}".format(
+        text or "",
+        direction or "",
+        float(text_size or 0.0),
+        float(scale_sym or 0.0),
+        float(dist_txt or 0.0),
+        int(bool(auto_dist)),
+    )
+    digest = hashlib.sha1(key.encode("utf-8", errors="ignore")).hexdigest()[:10]
+    base = _safe_name_token(text)[:24]
+    return f"MasterEtiqueta_{base}_{digest}"
+
+
+def _create_label_link(doc, comp_local, text, direction, text_size, scale_sym, dist_txt, auto_dist, anchor, line_width):
+    master_name = _master_label_name(text, direction, text_size, scale_sym, dist_txt, auto_dist)
+    master = doc.getObject(master_name)
+    if master is None:
+        master = doc.addObject("Part::Feature", master_name)
+        master.Label = f"MasterEtiqueta_{text}"
+        master.Shape = comp_local
+        g_lbl = _ensure_label_library_group(doc)
+        try:
+            if master not in (getattr(g_lbl, "Group", []) or []):
+                g_lbl.addObject(master)
+        except Exception:
+            pass
+        try:
+            master.ViewObject.Visibility = False
+        except Exception:
+            pass
+
+    link = doc.addObject("App::Link", "EtiquetaCircuito")
+    link.LinkedObject = master
+    link.Label = f"Etiqueta_{text}"
+    try:
+        link.LinkTransform = False
+    except Exception:
+        pass
+    try:
+        link.Placement = App.Placement(App.Vector(anchor.x, anchor.y, anchor.z), App.Rotation())
+    except Exception:
+        pass
+    try:
+        link.ViewObject.DisplayMode = "Wireframe"
+        link.ViewObject.LineWidth = float(line_width)
+        link.ViewObject.Visibility = True
+    except Exception:
+        pass
+    return link
+
+
+# ----------------------------
+# Seleccion y grupos
+# ----------------------------
+
+def _is_group(obj):
+    if obj is None:
+        return False
+    try:
+        if obj.isDerivedFrom("App::DocumentObjectGroup"):
+            return True
+    except Exception:
+        pass
+    try:
+        if obj.isDerivedFrom("App::Part"):
+            return True
+    except Exception:
+        pass
+    return hasattr(obj, "Group")
+
+
+def _subgroups_direct(group):
+    out = []
+    for child in (getattr(group, "Group", []) or []):
+        if _is_group(child):
+            out.append(child)
+    return out
+
+
+def _iter_objects_in_group(grp):
+    for child in (getattr(grp, "Group", []) or []):
+        if _is_group(child):
+            for sub in _iter_objects_in_group(child):
+                yield sub
+        else:
+            yield child
+
+
+def _direct_parent_group(doc, obj):
+    if obj is None:
+        return None
+    if hasattr(obj, "getParentGroup"):
+        try:
+            pg = obj.getParentGroup()
+            if pg:
+                return pg
+        except Exception:
+            pass
+    try:
+        for o in doc.Objects:
+            if _is_group(o):
+                try:
+                    if obj in (getattr(o, "Group", []) or []):
+                        return o
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    return None
+
+
+def _find_circuit_group(doc, obj):
+    visited = set()
+    cur = obj
+    last = None
+    while True:
+        pg = _direct_parent_group(doc, cur)
+        if not pg or pg in visited:
+            break
+        visited.add(pg)
+        last = pg
+        label = (getattr(pg, "Label", "") or getattr(pg, "Name", "") or "").strip()
+        if label and label.lower() not in SKIP_GROUP_LABELS:
+            return pg
+        cur = pg
+    return last
+
+
+def _obj_from_snapinfo(doc, snapinfo):
+    if not snapinfo:
+        return None
+    try:
+        parent = snapinfo.get("ParentObject", None)
+        if parent:
+            return parent
+    except Exception:
+        pass
+    try:
+        obj_name = snapinfo.get("Object")
+        if obj_name:
+            return doc.getObject(obj_name)
+    except Exception:
+        pass
+    return None
+
+
+# ----------------------------
+# Interferencia / orientacion
+# ----------------------------
+
+def _aabb_overlap(a, b):
+    # a,b: (xmin,xmax,ymin,ymax)
+    ax1, ax2, ay1, ay2 = a
+    bx1, bx2, by1, by2 = b
+    ix1 = max(ax1, bx1); ix2 = min(ax2, bx2)
+    iy1 = max(ay1, by1); iy2 = min(ay2, by2)
+    if ix2 <= ix1 or iy2 <= iy1:
+        return 0.0
+    return (ix2 - ix1) * (iy2 - iy1)
+
+
+def _bbox2d_from_shape(shape):
+    if shape is None:
+        return None
+    bb = shape.BoundBox
+    return (bb.XMin, bb.XMax, bb.YMin, bb.YMax)
+
+
+def _obstacles_bboxes(group):
+    boxes = []
+    for obj in _iter_objects_in_group(group):
+        try:
+            lbl = getattr(obj, "Label", "") or ""
+            if lbl.startswith("Etiqueta_"):
+                continue
+            shp = getattr(obj, "Shape", None)
+            if shp is None or shp.isNull():
+                continue
+            bb = _bbox2d_from_shape(shp)
+            if bb:
+                boxes.append(bb)
+        except Exception:
+            pass
+    return boxes
+
+
+def _looks_like_toma(obj):
+    try:
+        if _component_classifier_mod is not None:
+            ctype = _component_classifier_mod.get_component_type(obj)
+            if ctype:
+                return True
+    except Exception:
+        pass
+    try:
+        if hasattr(obj, "Tipo") and str(obj.Tipo) == "Toma":
+            return True
+    except Exception:
+        pass
+    lbl = (getattr(obj, "Label", "") or "").lower()
+    name = (getattr(obj, "Name", "") or "").lower()
+    return ("toma" in lbl) or ("toma" in name) or ("tomacorriente" in lbl)
+
+
+def _preferred_direction_from_toma(group, anchor):
+    nearest_toma = None
+    best_toma_d = 1e18
+    nearest_any = None
+    best_any_d = 1e18
+    for obj in _iter_objects_in_group(group):
+        if not _looks_like_toma(obj):
+            continue
+        ctype = None
+        try:
+            if _component_classifier_mod is not None:
+                ctype = _component_classifier_mod.get_component_type(obj)
+        except Exception:
+            ctype = None
+        try:
+            p = obj.Placement.Base
+        except Exception:
+            try:
+                p = obj.Shape.BoundBox.Center
+            except Exception:
+                continue
+        d = (p.sub(anchor)).Length
+        if d < best_any_d:
+            best_any_d = d
+            nearest_any = obj
+        if ctype == "Toma" and d < best_toma_d:
+            best_toma_d = d
+            nearest_toma = obj
+    nearest = nearest_toma or nearest_any
+    if not nearest:
+        return "right"
+    try:
+        rot = nearest.Placement.Rotation
+        v = rot.multVec(App.Vector(1, 0, 0))
+        if abs(v.x) >= abs(v.y):
+            return "right" if v.x >= 0 else "left"
+        return "up" if v.y >= 0 else "down"
+    except Exception:
+        return "right"
+
+
+def _score_direction(direction, anchor, sym_base, text_shape, params, obstacles):
+    # build symbol shape
+    sym = sym_base.copy()
+    angle = _dir_angle(direction)
+    if angle != 0.0:
+        sym.rotate(App.Vector(0, 0, 0), App.Vector(0, 0, 1), angle)
+    scale_sym = params["scale_symbol"]
+    if scale_sym and abs(scale_sym - 1.0) > 1e-6:
+        try:
+            sym.scale(float(scale_sym))
+        except Exception:
+            pass
+    sym_bb = sym.BoundBox
+    sym.translate(App.Vector(anchor.x, anchor.y, anchor.z))
+
+    # text shape
+    txt = text_shape.copy() if text_shape else None
+    dist = params["distance"]
+    if params["auto_distance"]:
+        dist = _auto_distance(direction, sym_bb, txt.BoundBox if txt else None)
+    if txt:
+        _place_text_shape(txt, anchor, direction, dist)
+    # bounding box of compound
+    bbs = []
+    bbs.append(_bbox2d_from_shape(sym))
+    if txt:
+        bbs.append(_bbox2d_from_shape(txt))
+    # union
+    xmin = min(b[0] for b in bbs)
+    xmax = max(b[1] for b in bbs)
+    ymin = min(b[2] for b in bbs)
+    ymax = max(b[3] for b in bbs)
+    lbl_box = (xmin, xmax, ymin, ymax)
+
+    # overlap score
+    area = 0.0
+    for ob in obstacles:
+        area += _aabb_overlap(lbl_box, ob)
+    return area, dist
+
+
+# ----------------------------
+# Principal
+# ----------------------------
+
+def etiquetar_circuitos_secuencial():
+    doc = App.ActiveDocument or App.newDocument("Electrico")
+    sel = list(Gui.Selection.getSelection() or [])
+    if not sel:
+        sel_ex = Gui.Selection.getSelectionEx()
+        sel = [s.Object for s in sel_ex if getattr(s, "Object", None)]
+    grupo = None
+    # preferir grupo llamado Tomacorrientes
+    for o in sel:
+        if _is_group(o):
+            label = (getattr(o, "Label", "") or getattr(o, "Name", "")).strip()
+            if label.lower() == "tomacorrientes":
+                grupo = o
+                break
+            if grupo is None:
+                grupo = o
+    # fallback: buscar en el documento
+    if grupo is None:
+        try:
+            for o in doc.Objects:
+                if _is_group(o):
+                    label = (getattr(o, "Label", "") or getattr(o, "Name", "")).strip()
+                    if label.lower() == "tomacorrientes":
+                        grupo = o
+                        _warn("Se uso el grupo 'Tomacorrientes' encontrado en el documento.")
+                        break
+        except Exception:
+            pass
+    if grupo is None:
+        _err("Seleccione el grupo principal (Tomacorrientes).")
+        return
+    if not _is_group(grupo):
+        _err("La seleccion no es un grupo.")
+        return
+
+    subgrupos = _subgroups_direct(grupo)
+    if not subgrupos:
+        _err("No hay subgrupos directos.")
+        return
+
+    params = _ask_params()
+    if params is None:
+        _warn("Operacion cancelada.")
+        return
+
+    sym_base = _load_symbol_shape()
+    if sym_base is None:
+        return
+
+    # filtrar subgrupos validos
+    grupos = []
+    for sg in subgrupos:
+        label = (getattr(sg, "Label", "") or getattr(sg, "Name", "")).strip()
+        if not label or label.lower() in SKIP_GROUP_LABELS:
+            continue
+        grupos.append(sg)
+    if not grupos:
+        _err("No hay subgrupos validos para etiquetar.")
+        return
+
+    if not _ensure_snapper():
+        _err("No hay Snapper disponible para seleccionar puntos.")
+        return
+
+    class _Runner:
+        def __init__(self, doc, grupos, params, sym_base):
+            self.doc = doc
+            self.grupos = grupos
+            self.params = params
+            self.sym_base = sym_base
+            self.idx = 0
+            self.last_snapinfo = None
+
+        def _next(self):
+            if self.idx >= len(self.grupos):
+                _log("Listo.")
+                return
+            sg = self.grupos[self.idx]
+            label = (getattr(sg, "Label", "") or getattr(sg, "Name", "")).strip()
+            title = f"Etiqueta '{label}' ({self.idx+1}/{len(self.grupos)})"
+            try:
+                Gui.Snapper.getPoint(callback=self._on_click, movecallback=self._on_move, title=title)
+            except Exception as ex:
+                _err(f"No se pudo iniciar seleccion con Snapper: {ex}")
+
+        def _on_move(self, pt, snapinfo=None):
+            self.last_snapinfo = snapinfo
+
+        def _on_click(self, pt, snapped_obj=None):
+            if pt is None:
+                _warn("Proceso detenido por el usuario.")
+                return
+            sg = self.grupos[self.idx]
+            sg_label = (getattr(sg, "Label", "") or getattr(sg, "Name", "")).strip()
+            anchor = _point_from_snap(pt, self.last_snapinfo)
+            if anchor is None:
+                _warn(f"Sin punto valido para '{sg_label}'.")
+                self.idx += 1
+                self._next()
+                return
+            if FORZAR_Z_0:
+                anchor = App.Vector(anchor.x, anchor.y, float(Z_PLANO))
+
+            # detectar grupo segun objeto seleccionado (como macro individual)
+            obj_sel = snapped_obj
+            if obj_sel is None:
+                obj_sel = _obj_from_snapinfo(self.doc, self.last_snapinfo)
+            target_group = _find_circuit_group(self.doc, obj_sel) if obj_sel else sg
+            if target_group is None:
+                target_group = sg
+            label = (getattr(target_group, "Label", "") or getattr(target_group, "Name", "")).strip()
+            if target_group is not sg:
+                _warn(f"Punto pertenece a '{label}', no coincide con '{getattr(sg,'Label','')}'.")
+
+            # texto
+            text_shape = _make_text_shape(label, self.params["font_path"], self.params["text_size"])
+
+            # escoger direccion
+            obstacles = _obstacles_bboxes(target_group)
+            preferred = _preferred_direction_from_toma(target_group, anchor)
+            directions = [preferred, "right", "left", "up", "down"]
+            seen = []
+            for d in directions:
+                if d not in seen:
+                    seen.append(d)
+            best_dir = seen[0]
+            best_area = None
+            best_dist = self.params["distance"]
+            for d in seen:
+                area, dist_used = _score_direction(d, anchor, self.sym_base, text_shape, self.params, obstacles)
+                if best_area is None or area < best_area:
+                    best_area = area; best_dir = d; best_dist = dist_used
+            _log(f"Circuito '{label}' dir='{best_dir}' overlap={best_area:.1f}")
+
+            # construir forma final (local) y colocar como App::Link
+            sym = self.sym_base.copy()
+            angle = _dir_angle(best_dir)
+            if angle != 0.0:
+                sym.rotate(App.Vector(0, 0, 0), App.Vector(0, 0, 1), angle)
+            if self.params["scale_symbol"] and abs(self.params["scale_symbol"] - 1.0) > 1e-6:
+                try:
+                    sym.scale(float(self.params["scale_symbol"]))
+                except Exception:
+                    pass
+            sym_bb = sym.BoundBox
+
+            txt = text_shape.copy() if text_shape else None
+            dist = best_dist
+            if self.params["auto_distance"]:
+                dist = _auto_distance(best_dir, sym_bb, txt.BoundBox if txt else None)
+            if txt:
+                _place_text_shape(txt, App.Vector(0.0, 0.0, 0.0), best_dir, dist)
+
+            shapes = [sym]
+            if txt:
+                shapes.append(txt)
+            comp = Part.makeCompound(shapes)
+            obj_new = _create_label_link(
+                self.doc,
+                comp,
+                label,
+                best_dir,
+                self.params["text_size"],
+                self.params["scale_symbol"],
+                dist,
+                self.params["auto_distance"],
+                anchor,
+                self.params["line_width"],
+            )
+
+            try:
+                if ensure_conexiones_group is not None:
+                    g_con = ensure_conexiones_group(
+                        self.doc,
+                        parent_group=target_group,
+                        objects=[obj_sel] if obj_sel is not None else None,
+                    )
+                    if obj_new not in (getattr(g_con, "Group", []) or []):
+                        g_con.addObject(obj_new)
+                elif obj_new not in (target_group.Group or []):
+                    target_group.addObject(obj_new)
+            except Exception:
+                pass
+
+            try:
+                self.doc.recompute()
+            except Exception:
+                pass
+
+            self.idx += 1
+            self._next()
+
+    _Runner(doc, grupos, params, sym_base)._next()
+
+
+if __name__ == "__main__":
+    etiquetar_circuitos_secuencial()

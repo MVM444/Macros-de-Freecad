@@ -1,0 +1,21 @@
+{
+  "medidor_name": "Body001",
+  "tablero_name": "Clone001",
+  "wire_manual_name": "Wire103",
+  "area_obj_name": "Wire104",
+  "sistema": "1F-2H 120/240",
+  "normativa": "CR",
+  "demand_method": "MANUAL",
+  "carga_base_va_m2": 32.29,
+  "demanda_va_manual": 20000.0,
+  "demanda_kva": 20.0,
+  "pf": 0.95,
+  "growth_pct": 0.0,
+  "breaker_sel": 100,
+  "material": "Cu",
+  "awg_sel": "2",
+  "z_route_mm": 3000.0,
+  "use_manual_wire": true,
+  "use_project_group": true,
+  "area_total_m2": 370.143
+}

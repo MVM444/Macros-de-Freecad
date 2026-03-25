@@ -1,0 +1,490 @@
+# -*- coding: utf-8 -*-
+"""
+Gestionar_Registro_Electrico.FCMacro
+
+Editor del registro eléctrico (JSON) para ElectricCR:
+- Lista/crea/edita/elimina tipos (key → definición).
+- Campos: key, IFC, categoría, symbol2D, model3D, defaults (altura, modo, orient2D), versión, comentario.
+- Validación “suave”: permite cambiar solo defaults (p. ej. altura) sin exigir que existan los archivos.
+- Copia opcional de recursos a Resources/prototypes/{2d,3d}.
+- Guardado en dos rutas: OneDrive del proyecto y %APPDATA% del usuario.
+
+Autor: Marco + asistente · 2025-09
+"""
+
+import os
+import json
+import shutil
+from pathlib import Path
+
+import FreeCAD as App
+import FreeCADGui as Gui
+
+# ---- PySide compat ----
+try:
+    from PySide2 import QtCore, QtWidgets
+except Exception:
+    from PySide import QtCore
+    from PySide import QtGui as QtWidgets
+
+
+# -------------------------------
+# RUTAS DEL REGISTRO Y RECURSOS
+# -------------------------------
+PATH_ONEDRIVE_REG = Path(
+    r"C:\Users\marco\OneDrive - Caja Costarricense de Seguro Social\Documentos\FreeCAD\Macros\Macros-de-Freecad\Resources\registry\registry_electric.json"
+)
+PATH_APPDATA_REG = Path(
+    r"C:\Users\marco\AppData\Roaming\FreeCAD\Macro\Resources\registry\registry_electric.json"
+)
+
+# Raíz de recursos (prototypes) bajo OneDrive del proyecto
+RES_ROOT = Path(
+    r"C:\Users\marco\OneDrive - Caja Costarricense de Seguro Social\Documentos\FreeCAD\Macros\Macros-de-Freecad\Resources\prototypes"
+)
+RES_2D = RES_ROOT / "2d"
+RES_3D = RES_ROOT / "3d"
+
+SUPPORTED_2D = {".step", ".stp", ".dxf", ".iges", ".igs"}
+SUPPORTED_3D = {".step", ".stp"}
+
+DEFAULT_SCHEMA = "1.0.0"
+MODE_CHOICES = ["Ambos", "Solo2D", "Solo3D"]
+CATEG_CHOICES = ["Pared", "Cielo", "Piso"]
+
+
+# -------------------------------
+# Utilidades de logging
+# -------------------------------
+def _ts():
+    from datetime import datetime
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+def _log(msg: str):
+    App.Console.PrintMessage(f"[{_ts()}][REGUI][INFO] {msg}\n")
+
+def _warn(msg: str):
+    App.Console.PrintWarning(f"[{_ts()}][REGUI][WARN] {msg}\n")
+
+def _err(msg: str):
+    App.Console.PrintError(f"[{_ts()}][REGUI][ERROR] {msg}\n")
+
+
+# -------------------------------
+# Utilidades de serialización/limpieza
+# -------------------------------
+def _is_primitive(x):
+    return isinstance(x, (str, int, float, bool)) or x is None
+
+def _json_default(o):
+    # Conversión segura: cualquier objeto no-JSON -> cadena descriptiva
+    try:
+        name = getattr(o, "Name", None)
+        if name:
+            return f"<{o.__class__.__name__}:{name}>"
+    except Exception:
+        pass
+    return f"<{o.__class__.__name__}>"
+
+def _sanitize_entry(entry: dict) -> dict:
+    """Devuelve copia asegurando SOLO tipos JSON (recursivo en defaults)."""
+    out = {}
+    for k, v in (entry or {}).items():
+        if _is_primitive(v):
+            out[k] = v
+        elif isinstance(v, dict):
+            out[k] = _sanitize_entry(v)
+        else:
+            _warn(f"Campo '{k}' contenía un objeto no-JSON ({type(v).__name__}); se guarda como texto.")
+            out[k] = str(v)
+    return out
+
+
+# -------------------------------
+# Utilidades de E/S
+# -------------------------------
+def ensure_dirs():
+    for p in [PATH_ONEDRIVE_REG.parent, PATH_APPDATA_REG.parent, RES_2D, RES_3D]:
+        try:
+            p.mkdir(parents=True, exist_ok=True)
+        except Exception as ex:
+            _warn(f"No se pudo crear carpeta {p}: {ex}")
+
+def load_registry() -> dict:
+    """
+    Priorizamos el JSON del proyecto (OneDrive). Si no existe, usamos %APPDATA%.
+    Si ninguno es válido, retornamos estructura base.
+    """
+    ensure_dirs()
+    for src in (PATH_ONEDRIVE_REG, PATH_APPDATA_REG):
+        if src.is_file():
+            try:
+                data = json.loads(src.read_text(encoding="utf-8-sig"))
+                if isinstance(data, dict) and "types" in data:
+                    if "schema" not in data:
+                        data["schema"] = DEFAULT_SCHEMA
+                    _log(f"Registro cargado desde {src}")
+                    return data
+                _warn(f"Registro inválido (sin 'types') en {src}")
+            except Exception as ex:
+                _warn(f"Error leyendo {src}: {ex}")
+    _warn("No se encontró un registro válido; creando uno nuevo.")
+    return {"schema": DEFAULT_SCHEMA, "types": {}}
+
+def save_registry(payload: dict):
+    """
+    Guarda el JSON en OneDrive y lo replica a %APPDATA% (doble ruta).
+    """
+    ensure_dirs()
+    text = json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default)
+    try:
+        PATH_ONEDRIVE_REG.write_text(text, encoding="utf-8")
+        _log(f"Registro guardado en {PATH_ONEDRIVE_REG}")
+    except Exception as ex:
+        _err(f"No se pudo escribir {PATH_ONEDRIVE_REG}: {ex}")
+
+    try:
+        PATH_APPDATA_REG.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(str(PATH_ONEDRIVE_REG), str(PATH_APPDATA_REG))
+        _log(f"Registro replicado en {PATH_APPDATA_REG}")
+    except Exception as ex:
+        _warn(f"No se pudo replicar a {PATH_APPDATA_REG}: {ex}")
+
+
+# -------------------------------
+# Validaciones y helpers de recursos
+# -------------------------------
+def validate_key(key: str) -> str:
+    key = (key or "").strip()
+    if not key:
+        raise ValueError("El nombre del tipo (key) no puede estar vacío.")
+    return key
+
+def _looks_like_path(txt: str) -> bool:
+    txt = (txt or "").strip()
+    return ("\\" in txt) or ("/" in txt)
+
+# Validaciones “fuertes” (para ruta o copia)
+def validate_symbol2d(path_or_name: str) -> str:
+    ext = Path(path_or_name).suffix.lower()
+    if ext not in SUPPORTED_2D:
+        raise ValueError(f"symbol2D: extensión no soportada: {ext}. Use .step/.stp/.dxf/.iges/.igs")
+    return path_or_name
+
+def validate_model3d(path_or_name: str) -> str:
+    ext = Path(path_or_name).suffix.lower()
+    if ext not in SUPPORTED_3D:
+        raise ValueError(f"model3D: extensión no soportada: {ext}. Use .step/.stp")
+    return path_or_name
+
+# Validaciones “suaves” (solo avisan)
+def validate_symbol2d_name_only(name: str) -> None:
+    if not name:
+        return
+    ext = Path(name).suffix.lower()
+    if ext and ext not in SUPPORTED_2D:
+        _warn(f"symbol2D: extensión poco usual {ext}; recomendado .step/.stp/.dxf/.iges/.igs")
+
+def validate_model3d_name_only(name: str) -> None:
+    if not name:
+        return
+    ext = Path(name).suffix.lower()
+    if ext and ext not in SUPPORTED_3D:
+        _warn(f"model3D: extensión poco usual {ext}; recomendado .step/.stp")
+
+def copy_resource_if_requested(src_path: str, kind: str, do_copy: bool) -> str:
+    """
+    kind: "2d" | "3d"
+    Reglas:
+      - Si do_copy=True o 'src_path' parece ruta → validar fuerte + exigir existencia.
+      - Si 'src_path' es solo nombre y do_copy=False → validación suave y devolver nombre.
+    Devuelve SIEMPRE solo el nombre de archivo (basename).
+    """
+    if not src_path:
+        return ""
+    src_path = src_path.strip()
+
+    # Solo nombre (sin ruta) y no desea copiar → validación suave y devolver nombre
+    if not _looks_like_path(src_path) and not do_copy:
+        if kind == "2d":
+            validate_symbol2d_name_only(src_path)
+        else:
+            validate_model3d_name_only(src_path)
+        return Path(src_path).name
+
+    # Ruta o copia → validación fuerte y existencia
+    src = Path(src_path)
+    if not src.is_file():
+        raise ValueError(f"Archivo no existe: {src}")
+
+    if kind == "2d":
+        validate_symbol2d(str(src))
+        dst_dir = RES_2D
+    else:
+        validate_model3d(str(src))
+        dst_dir = RES_3D
+
+    if do_copy:
+        dst_dir.mkdir(parents=True, exist_ok=True)
+        dst = dst_dir / src.name
+        if str(src.resolve()) != str(dst.resolve()):
+            shutil.copyfile(str(src), str(dst))
+        return dst.name
+    else:
+        return src.name
+
+def coalesce_defaults(altura_str: str, modo: str, orient2d: bool) -> dict:
+    try:
+        altura = float(altura_str)
+    except Exception:
+        altura = 300.0
+    if modo not in MODE_CHOICES:
+        modo = "Ambos"
+    return {
+        "altura": altura,
+        "modo": "Both" if modo == "Ambos" else ("Solo2D" if modo == "Solo2D" else "Solo3D"),
+        "orient2D_sigue_pared": bool(orient2d),
+    }
+
+
+# -------------------------------
+# Diálogo principal
+# -------------------------------
+class RegistryDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Gestionar Registro Eléctrico (ElectricCR)")
+        self.setMinimumWidth(820)
+        self.reg = load_registry()
+
+        # --- Tabla de tipos ---
+        self.table = QtWidgets.QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels([
+            "Tipo (key)", "IFC", "Categoría", "symbol2D", "model3D", "Versión"
+        ])
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self.table.itemSelectionChanged.connect(self.on_row_selected)
+
+        # --- Formulario de detalle ---
+        self.ed_key = QtWidgets.QLineEdit()
+        self.ed_ifc = QtWidgets.QLineEdit()
+        self.cmb_cat = QtWidgets.QComboBox(); self.cmb_cat.addItems(CATEG_CHOICES)
+        self.ed_sym2d = QtWidgets.QLineEdit(); self.ed_sym2d.setPlaceholderText("Ej: toma_2d.dxf / .step")
+        self.ed_mod3d = QtWidgets.QLineEdit(); self.ed_mod3d.setPlaceholderText("Ej: toma_3d.step")
+        self.btn_pick_2d = QtWidgets.QPushButton("Elegir 2D…")
+        self.btn_pick_3d = QtWidgets.QPushButton("Elegir 3D…")
+        self.chk_copy_2d = QtWidgets.QCheckBox("Copiar a prototypes/2d")
+        self.chk_copy_3d = QtWidgets.QCheckBox("Copiar a prototypes/3d")
+
+        self.ed_altura = QtWidgets.QLineEdit("300")
+        self.cmb_modo = QtWidgets.QComboBox(); self.cmb_modo.addItems(MODE_CHOICES)
+        self.chk_orient = QtWidgets.QCheckBox("Rotar símbolo 2D según pared")
+        self.chk_orient.setChecked(True)
+
+        self.ed_version = QtWidgets.QLineEdit("1.0")
+        self.ed_coment = QtWidgets.QPlainTextEdit()
+
+        # Botones CRUD
+        self.btn_new = QtWidgets.QPushButton("Nuevo")
+        self.btn_save = QtWidgets.QPushButton("Guardar / Actualizar")
+        self.btn_del = QtWidgets.QPushButton("Eliminar")
+        self.btn_export = QtWidgets.QPushButton("Guardar Registro (DOS rutas)")
+
+        # Layouts
+        grid = QtWidgets.QGridLayout()
+        r = 0
+        grid.addWidget(QtWidgets.QLabel("Tipo (key):"), r, 0); grid.addWidget(self.ed_key, r, 1, 1, 3); r += 1
+        grid.addWidget(QtWidgets.QLabel("IFC:"), r, 0); grid.addWidget(self.ed_ifc, r, 1)
+        grid.addWidget(QtWidgets.QLabel("Categoría:"), r, 2); grid.addWidget(self.cmb_cat, r, 3); r += 1
+
+        grid.addWidget(QtWidgets.QLabel("symbol2D:"), r, 0); grid.addWidget(self.ed_sym2d, r, 1)
+        grid.addWidget(self.btn_pick_2d, r, 2); grid.addWidget(self.chk_copy_2d, r, 3); r += 1
+
+        grid.addWidget(QtWidgets.QLabel("model3D:"), r, 0); grid.addWidget(self.ed_mod3d, r, 1)
+        grid.addWidget(self.btn_pick_3d, r, 2); grid.addWidget(self.chk_copy_3d, r, 3); r += 1
+
+        grid.addWidget(QtWidgets.QLabel("Altura (mm):"), r, 0); grid.addWidget(self.ed_altura, r, 1)
+        grid.addWidget(QtWidgets.QLabel("Modo:"), r, 2); grid.addWidget(self.cmb_modo, r, 3); r += 1
+
+        grid.addWidget(self.chk_orient, r, 0, 1, 2); r += 1
+
+        grid.addWidget(QtWidgets.QLabel("Versión:"), r, 0); grid.addWidget(self.ed_version, r, 1)
+        grid.addWidget(QtWidgets.QLabel("Comentario:"), r, 2); grid.addWidget(self.ed_coment, r, 3); r += 1
+
+        btns = QtWidgets.QHBoxLayout()
+        btns.addWidget(self.btn_new); btns.addWidget(self.btn_del)
+        btns.addStretch(1)
+        btns.addWidget(self.btn_save); btns.addWidget(self.btn_export)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addWidget(self.table, 1)
+        layout.addLayout(grid)
+        layout.addLayout(btns)
+
+        # Conexiones
+        self.btn_pick_2d.clicked.connect(self.pick_2d)
+        self.btn_pick_3d.clicked.connect(self.pick_3d)
+        self.btn_new.clicked.connect(self.new_type)
+        self.btn_del.clicked.connect(self.delete_type)
+        self.btn_save.clicked.connect(self.save_type)
+        self.btn_export.clicked.connect(self.export_registry)
+
+        # Cargar tabla
+        self.refresh_table()
+
+    # --- Tabla ---
+    def refresh_table(self):
+        types = self.reg.get("types", {}) or {}
+        self.table.setRowCount(0)
+        for i, (k, v) in enumerate(sorted(types.items(), key=lambda kv: kv[0].lower())):
+            self.table.insertRow(i)
+            def _txt(s):
+                return "" if s is None else str(s)
+            self.table.setItem(i, 0, QtWidgets.QTableWidgetItem(k))
+            self.table.setItem(i, 1, QtWidgets.QTableWidgetItem(_txt(v.get("ifc",""))))
+            self.table.setItem(i, 2, QtWidgets.QTableWidgetItem(_txt(v.get("categoria",""))))
+            self.table.setItem(i, 3, QtWidgets.QTableWidgetItem(_txt(v.get("symbol2D",""))))
+            self.table.setItem(i, 4, QtWidgets.QTableWidgetItem(_txt(v.get("model3D",""))))
+            self.table.setItem(i, 5, QtWidgets.QTableWidgetItem(_txt(v.get("version",""))))
+
+    def on_row_selected(self):
+        items = self.table.selectedItems()
+        if not items:
+            return
+        row = items[0].row()
+        key = self.table.item(row, 0).text()
+        self.load_to_form(key)
+
+    # --- Formulario ---
+    def load_to_form(self, key: str):
+        t = (self.reg.get("types") or {}).get(key, {})
+        self.ed_key.setText(key)
+        self.ed_ifc.setText(t.get("ifc", ""))
+        cat = t.get("categoria","Pared")
+        self.cmb_cat.setCurrentIndex(max(0, CATEG_CHOICES.index(cat) if cat in CATEG_CHOICES else 0))
+        self.ed_sym2d.setText(t.get("symbol2D", ""))
+        self.ed_mod3d.setText(t.get("model3D", ""))
+        d = t.get("defaults", {}) or {}
+        self.ed_altura.setText(str(d.get("altura", 300)))
+        reg_modo = (d.get("modo","Both") or "Both").lower()
+        idx_modo = 0 if reg_modo == "both" else (1 if reg_modo == "solo2d" else (2 if reg_modo == "solo3d" else 0))
+        self.cmb_modo.setCurrentIndex(idx_modo)
+        self.chk_orient.setChecked(bool(d.get("orient2D_sigue_pared", True)))
+        self.ed_version.setText(t.get("version","1.0"))
+        self.ed_coment.setPlainText(t.get("comentario",""))
+
+    def new_type(self):
+        self.ed_key.clear()
+        self.ed_ifc.clear()
+        self.cmb_cat.setCurrentIndex(0)
+        self.ed_sym2d.clear()
+        self.ed_mod3d.clear()
+        self.ed_altura.setText("300")
+        self.cmb_modo.setCurrentIndex(0)
+        self.chk_orient.setChecked(True)
+        self.ed_version.setText("1.0")
+        self.ed_coment.clear()
+        self.table.clearSelection()
+
+    def delete_type(self):
+        key = self.ed_key.text().strip()
+        if not key:
+            _warn("No hay key para eliminar.")
+            return
+        types = self.reg.setdefault("types", {})
+        if key in types:
+            del types[key]
+            _log(f"Tipo '{key}' eliminado.")
+            self.refresh_table()
+            self.new_type()
+
+    def pick_2d(self):
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Seleccionar símbolo 2D", str(RES_2D),
+            "2D (*.step *.stp *.dxf *.iges *.igs);;Todos (*.*)"
+        )
+        if path:
+            self.ed_sym2d.setText(path)
+
+    def pick_3d(self):
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Seleccionar modelo 3D", str(RES_3D),
+            "STEP (*.step *.stp);;Todos (*.*)"
+        )
+        if path:
+            self.ed_mod3d.setText(path)
+
+    def save_type(self):
+        key = None
+        try:
+            key = validate_key(self.ed_key.text())
+            types = self.reg.setdefault("types", {})
+            current = types.get(key, {})  # entrada previa (si existe)
+
+            # 1) Campos base
+            ifc = self.ed_ifc.text().strip()
+            categoria = self.cmb_cat.currentText().strip() or "Pared"
+
+            # 2) Recursos 2D/3D
+            sym_src = (self.ed_sym2d.text() or "").strip()
+            mod_src = (self.ed_mod3d.text() or "").strip()
+
+            # Si el usuario no escribe nada nuevo, conservar lo que ya hay
+            prev_sym = (current.get("symbol2D") or "").strip()
+            prev_mod = (current.get("model3D") or "").strip()
+
+            # Resolver según reglas (no bloquear si es solo nombre sin copia)
+            try:
+                sym_name = copy_resource_if_requested(sym_src, "2d", self.chk_copy_2d.isChecked()) if sym_src else prev_sym
+            except Exception as ex:
+                _warn(f"symbol2D no actualizado: {ex}; se conserva '{prev_sym}'")
+                sym_name = prev_sym
+
+            try:
+                mod_name = copy_resource_if_requested(mod_src, "3d", self.chk_copy_3d.isChecked()) if mod_src else prev_mod
+            except Exception as ex:
+                _warn(f"model3D no actualizado: {ex}; se conserva '{prev_mod}'")
+                mod_name = prev_mod
+
+            # 3) Defaults (altura/modo/orient)
+            defaults = coalesce_defaults(self.ed_altura.text(), self.cmb_modo.currentText(), self.chk_orient.isChecked())
+
+            # 4) Otros metadatos
+            version = self.ed_version.text().strip() or "1.0"
+            comentario = self.ed_coment.toPlainText().strip()
+
+            # 5) Construir/actualizar entrada (sanitizada)
+            entry = {
+                "ifc": ifc,
+                "categoria": categoria,
+                "symbol2D": sym_name,   # puede quedar vacío o nombre suelto
+                "model3D": mod_name,    # idem
+                "defaults": defaults,
+                "version": version,
+                "comentario": comentario,
+            }
+            entry = _sanitize_entry(entry)
+            types[key] = entry
+
+            self.refresh_table()
+            _log(f"Tipo '{key}' guardado. (recuerde 'Guardar Registro')")
+        except Exception as ex:
+            _err(f"No se pudo guardar el tipo '{key or ''}': {ex}")
+
+    def export_registry(self):
+        try:
+            save_registry(self.reg)
+        except Exception as ex:
+            _err(f"Error guardando el registro: {ex}")
+
+
+def run_dialog():
+    dlg = RegistryDialog(Gui.getMainWindow())
+    dlg.resize(980, 640)
+    dlg.exec_()
+
+
+if __name__ == "__main__":
+    run_dialog()

@@ -1,0 +1,1450 @@
+# -*- coding: utf-8 -*-
+# MenuText: Colocar Cajas Octogonales Mejor Ubicacion...
+# Icon: Cajas/Colocar_Cajas_Octogonales_Mejor_Ubicacion.svg
+"""
+Coloca cajas EMT octogonales en la mejor ubicacion para la seleccion actual.
+
+Reglas principales:
+- Seleccione luminarias u otros objetos (sin limite).
+- Agrupa por contenedor funcional del arbol (para mantener el grupo correcto).
+- Inserta 1 caja por contenedor en posicion optima XY (mediana geometrica).
+- Altura configurable (SNPT).
+- Conexion opcional por objeto hacia caja:
+  - EMT Solido
+  - EMT Flexible
+  - Sin conexion
+
+Destino:
+- <contenedor>/Cajas_Octogonales
+- <contenedor>/Conexiones_3D (si hay conexion)
+"""
+
+from pathlib import Path
+import importlib
+import json
+import math
+import re
+import sys
+import unicodedata
+
+import FreeCAD as App
+import Part
+
+try:
+    import FreeCADGui as Gui
+    GUI_UP = True
+except Exception:
+    Gui = None
+    GUI_UP = False
+
+try:
+    from PySide2 import QtWidgets, QtCore
+except Exception:
+    try:
+        from PySide import QtGui as QtWidgets  # type: ignore
+        from PySide import QtCore  # type: ignore
+    except Exception:
+        QtWidgets = None
+        QtCore = None
+
+
+DEFAULT_DIAMETER = 22.2
+DEFAULT_SNPT = 3000.0
+DEFAULT_CONN = "EMT_Solido"
+NAME_PREFIX = "Caja EMT Octogonal"
+PARAM_PATH = "User parameter:BaseApp/Preferences/Mod/ElectricCR/CajaMejorUbicacion"
+
+LEGACY_CONEX_LABELS = ("Conexiones_Luminarias_Cajas", "Conexiones_Luminarias_Cajas_3D")
+
+SKIP_CONTAINER_HINTS = {
+    "conexion",
+    "conexiones",
+    "ramales",
+    "ramal",
+    "alimentador",
+    "alimentadores",
+    "componente",
+    "componentes",
+    "circuitos",
+    "recintos",
+    "cajas_octogonales",
+    "cajas",
+    "conexiones_3d",
+}
+DEVICE_BUCKET_HINTS = {
+    "apagador",
+    "luminaria",
+    "tomacorr",
+    "toma",
+    "sensor",
+    "ventilador",
+    "salida",
+}
+
+
+def _log(msg):
+    App.Console.PrintMessage(f"[CAJA_OPTIMA][INFO] {msg}\n")
+
+
+def _warn(msg):
+    App.Console.PrintWarning(f"[CAJA_OPTIMA][WARN] {msg}\n")
+
+
+def _err(msg):
+    App.Console.PrintError(f"[CAJA_OPTIMA][ERROR] {msg}\n")
+
+
+def _prefs():
+    try:
+        return App.ParamGet(PARAM_PATH)
+    except Exception:
+        return None
+
+
+def _pref_get_float(key, default):
+    p = _prefs()
+    if p is None:
+        return float(default)
+    try:
+        return float(p.GetFloat(str(key), float(default)))
+    except Exception:
+        return float(default)
+
+
+def _pref_get_str(key, default):
+    p = _prefs()
+    if p is None:
+        return str(default)
+    try:
+        out = p.GetString(str(key), str(default))
+        return str(out) if out is not None else str(default)
+    except Exception:
+        return str(default)
+
+
+def _save_cfg(cfg):
+    p = _prefs()
+    if p is None:
+        return
+    try:
+        p.SetFloat("altura_mm", float(cfg.get("altura_mm", DEFAULT_SNPT)))
+        p.SetFloat("diametro_mm", float(cfg.get("diametro_mm", DEFAULT_DIAMETER)))
+        p.SetString("tipo_conexion", str(cfg.get("tipo_conexion", DEFAULT_CONN)))
+    except Exception:
+        pass
+
+
+def _safe_text(value):
+    try:
+        return str(value or "")
+    except Exception:
+        return ""
+
+
+def _normalize(text):
+    s = _safe_text(text).strip().lower()
+    if not s:
+        return ""
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    s = s.replace("\\", "/")
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _key_token(text):
+    s = _normalize(text)
+    s = re.sub(r"[^0-9a-z]+", "", s)
+    return s
+
+
+def _safe_name_token(value, fallback="Caja_EMT"):
+    txt = _safe_text(value).strip()
+    if not txt:
+        return fallback
+    txt = re.sub(r"[^0-9A-Za-z_]+", "_", txt)
+    txt = re.sub(r"_+", "_", txt).strip("_")
+    return txt or fallback
+
+
+def _split_suffix_digits(key):
+    m = re.match(r"^(.*?)(\d+)$", _safe_text(key))
+    if m:
+        return m.group(1), m.group(2)
+    return _safe_text(key), ""
+
+
+def _keys_compatible(target_key, own_key):
+    if (not target_key) or (not own_key):
+        return False
+    if target_key == own_key:
+        return True
+    t_base, t_suf = _split_suffix_digits(target_key)
+    o_base, o_suf = _split_suffix_digits(own_key)
+    if t_base and (t_base == o_base):
+        if (not t_suf and o_suf) or (t_suf and not o_suf):
+            return True
+    return False
+
+
+def _is_group(obj):
+    try:
+        if obj and obj.isDerivedFrom("App::DocumentObjectGroup"):
+            return True
+    except Exception:
+        pass
+    try:
+        if obj and obj.isDerivedFrom("App::Part"):
+            return True
+    except Exception:
+        pass
+    try:
+        if obj and obj.isDerivedFrom("App::Link"):
+            return False
+    except Exception:
+        pass
+    return bool(obj and hasattr(obj, "Group"))
+
+
+def _is_doc_object(obj):
+    if obj is None:
+        return False
+    if isinstance(obj, str):
+        return False
+    if hasattr(obj, "TypeId"):
+        return True
+    if hasattr(obj, "isDerivedFrom"):
+        return True
+    if hasattr(obj, "Name"):
+        return True
+    return False
+
+
+def _is_link(obj):
+    try:
+        return bool(obj and obj.isDerivedFrom("App::Link"))
+    except Exception:
+        return False
+
+
+def _linked_object(obj):
+    if obj is None:
+        return None
+    for attr in ("LinkedObject", "Link"):
+        try:
+            ref = getattr(obj, attr, None)
+            if ref is not None:
+                return ref
+        except Exception:
+            pass
+    return None
+
+
+def _as_group_obj(obj):
+    if _is_group(obj):
+        return obj
+    ref = _linked_object(obj)
+    if _is_group(ref):
+        return ref
+    return None
+
+
+def _is_component_library_group(group_obj):
+    txt = f"{_safe_text(getattr(group_obj, 'Label', ''))} {_safe_text(getattr(group_obj, 'Name', ''))}"
+    n = _normalize(txt)
+    if not n:
+        return False
+    if "componente" in n:
+        return True
+    if n.startswith("_lib") or "/_lib" in n or " _lib" in n:
+        return True
+    return False
+
+
+def _obj_disp_name(obj, fallback="Objeto"):
+    if not _is_doc_object(obj):
+        return _safe_text(obj) or fallback
+    return _safe_text(getattr(obj, "Label", "")) or _safe_text(getattr(obj, "Name", fallback)) or fallback
+
+
+def _iter_doc_groups(doc):
+    for obj in (doc.Objects or []):
+        if _is_group(obj):
+            yield obj
+
+
+def _find_parent_group_linear(doc, obj):
+    for grp in _iter_doc_groups(doc):
+        try:
+            if obj in (getattr(grp, "Group", []) or []):
+                return grp
+        except Exception:
+            continue
+    return None
+
+
+def _parent_group(doc, obj):
+    gp = getattr(obj, "getParentGroup", None)
+    if callable(gp):
+        try:
+            p = gp()
+            if p:
+                return p
+        except Exception:
+            pass
+    return _find_parent_group_linear(doc, obj)
+
+
+def _group_chain_topdown(doc, obj, max_depth=60):
+    chain = []
+    seen = set()
+    cur = _parent_group(doc, obj)
+    while cur is not None and len(chain) < max_depth:
+        gid = getattr(cur, "Name", None) or id(cur)
+        if gid in seen:
+            break
+        seen.add(gid)
+        chain.append(cur)
+        cur = _parent_group(doc, cur)
+    chain.reverse()
+    return chain
+
+
+def _contains_any(text, tokens):
+    n = _normalize(text)
+    if not n:
+        return False
+    return any(t in n for t in tokens)
+
+
+def _is_connection_group_label(group_obj):
+    txt = f"{_safe_text(getattr(group_obj, 'Label', ''))} {_safe_text(getattr(group_obj, 'Name', ''))}"
+    n = _normalize(txt)
+    if "conexion" in n or "conexiones" in n:
+        return True
+    return any(_normalize(lb) in n for lb in LEGACY_CONEX_LABELS)
+
+
+def _is_bucket_group_label(group_obj):
+    txt = f"{_safe_text(getattr(group_obj, 'Label', ''))} {_safe_text(getattr(group_obj, 'Name', ''))}"
+    n = _normalize(txt)
+    if not n:
+        return False
+    for token in SKIP_CONTAINER_HINTS:
+        if token in n:
+            return True
+    return False
+
+
+def _is_device_bucket_group_label(group_obj):
+    txt = f"{_safe_text(getattr(group_obj, 'Label', ''))} {_safe_text(getattr(group_obj, 'Name', ''))}"
+    return _contains_any(txt, DEVICE_BUCKET_HINTS)
+
+
+def _is_iluminacion_group(group_obj):
+    txt = f"{_safe_text(getattr(group_obj, 'Label', ''))} {_safe_text(getattr(group_obj, 'Name', ''))}"
+    return "iluminacion" in _normalize(txt)
+
+
+def _is_root_device_group(group_obj):
+    txt = f"{_safe_text(getattr(group_obj, 'Label', ''))} {_safe_text(getattr(group_obj, 'Name', ''))}"
+    n = _normalize(txt)
+    return ("tomacorr" in n) or ("apagador" in n)
+
+
+def _group_chain_has_functional_root(chain):
+    for grp in (chain or []):
+        if _is_iluminacion_group(grp) or _is_root_device_group(grp):
+            return True
+    return False
+
+
+def _chain_has_component_library(chain):
+    for grp in (chain or []):
+        if _is_component_library_group(grp):
+            return True
+    return False
+
+
+def _group_matches_label(group_obj, label):
+    tk = _key_token(label)
+    if not tk:
+        return False
+    lk = _key_token(getattr(group_obj, "Label", ""))
+    nk = _key_token(getattr(group_obj, "Name", ""))
+    return _keys_compatible(tk, lk) or _keys_compatible(tk, nk)
+
+
+def _find_child_group_flexible(parent, label):
+    if parent is None:
+        return None
+    for child in (getattr(parent, "Group", []) or []):
+        grp = _as_group_obj(child)
+        if grp is None:
+            continue
+        if _group_matches_label(grp, label):
+            return grp
+    return None
+
+
+def _unique_doc_name(doc, base_name):
+    name = _safe_name_token(base_name, "obj")
+    if doc.getObject(name) is None:
+        return name
+    i = 2
+    while True:
+        cand = f"{name}_{i:02d}"
+        if doc.getObject(cand) is None:
+            return cand
+        i += 1
+
+
+def _ensure_group(doc, parent, label, prefix):
+    if parent is None:
+        for grp in _iter_doc_groups(doc):
+            if _group_matches_label(grp, label):
+                return grp
+        name = _unique_doc_name(doc, f"{prefix}_{_safe_name_token(label, 'grupo')}")
+        grp = doc.addObject("App::DocumentObjectGroup", name)
+        try:
+            grp.Label = _safe_text(label).strip() or "Grupo"
+        except Exception:
+            pass
+        return grp
+
+    hit = _find_child_group_flexible(parent, label)
+    if hit is not None:
+        return hit
+
+    name = _unique_doc_name(doc, f"{prefix}_{_safe_name_token(label, 'grupo')}")
+    grp = doc.addObject("App::DocumentObjectGroup", name)
+    try:
+        grp.Label = _safe_text(label).strip() or "Grupo"
+    except Exception:
+        pass
+    try:
+        parent.addObject(grp)
+    except Exception:
+        pass
+    return grp
+
+
+def _remove_from_all_groups(doc, obj, keep_group=None):
+    for grp in _iter_doc_groups(doc):
+        if keep_group is not None and grp == keep_group:
+            continue
+        try:
+            if obj in (getattr(grp, "Group", []) or []):
+                grp.removeObject(obj)
+        except Exception:
+            continue
+
+
+def _resolve_container_group(doc, src_obj):
+    chain = _group_chain_topdown(doc, src_obj)
+    if not chain:
+        return None
+
+    ilum_idx = None
+    for i, grp in enumerate(chain):
+        if _is_iluminacion_group(grp):
+            ilum_idx = i
+            break
+    if ilum_idx is not None:
+        tail = []
+        for grp in chain[ilum_idx + 1:]:
+            if _is_connection_group_label(grp):
+                continue
+            if _is_bucket_group_label(grp):
+                continue
+            if _is_device_bucket_group_label(grp):
+                continue
+            tail.append(grp)
+        if len(tail) >= 2:
+            return tail[1]  # Recinto
+        if len(tail) == 1:
+            return tail[0]  # Circuito
+
+    root_idx = None
+    for i, grp in enumerate(chain):
+        if _is_root_device_group(grp):
+            root_idx = i
+            break
+    if root_idx is not None:
+        tail = []
+        for grp in chain[root_idx + 1:]:
+            if _is_connection_group_label(grp):
+                continue
+            if _is_bucket_group_label(grp):
+                continue
+            tail.append(grp)
+        if tail:
+            return tail[-1]
+
+    # No usar componentes de biblioteca como contenedor funcional.
+    if _chain_has_component_library(chain) and (not _group_chain_has_functional_root(chain)):
+        return None
+
+    for grp in reversed(chain):
+        if _is_connection_group_label(grp):
+            continue
+        if _is_bucket_group_label(grp):
+            continue
+        if _is_component_library_group(grp):
+            continue
+        return grp
+    return None
+
+
+def _lineage_objects(doc, obj, max_depth=48):
+    out = []
+    seen = set()
+    cur = obj
+    depth = 0
+    while cur is not None and depth < max_depth:
+        key = getattr(cur, "Name", None) or id(cur)
+        if key in seen:
+            break
+        seen.add(key)
+        out.append(cur)
+        cur = _parent_group(doc, cur)
+        depth += 1
+    return out
+
+
+def _pick_point_from_selection_ex(sel_ex):
+    if sel_ex is None:
+        return None
+    try:
+        pts = getattr(sel_ex, "PickedPoints", None) or []
+        if pts:
+            p = pts[0]
+            return App.Vector(float(p.x), float(p.y), float(p.z))
+    except Exception:
+        pass
+    return None
+
+
+def _doc_object_from_selection_name(doc, raw_name):
+    if doc is None:
+        return None
+    txt = _safe_text(raw_name).strip()
+    if not txt:
+        return None
+
+    names = []
+
+    def _add_name(value):
+        nm = _safe_text(value).strip()
+        if not nm or (nm in names):
+            return
+        names.append(nm)
+
+    _add_name(txt)
+    for sep in ("#", ":", "/"):
+        if sep in txt:
+            _add_name(txt.split(sep)[-1])
+    if "." in txt:
+        _add_name(txt.split(".", 1)[0])
+
+    i = 0
+    while i < len(names):
+        nm = names[i]
+        i += 1
+        for sep in ("#", ":", "/"):
+            if sep in nm:
+                _add_name(nm.split(sep)[-1])
+        if "." in nm:
+            _add_name(nm.split(".", 1)[0])
+
+    for nm in names:
+        try:
+            obj = doc.getObject(nm)
+        except Exception:
+            obj = None
+        if _is_doc_object(obj):
+            return obj
+    return None
+
+
+def _selection_ex_doc_objects(doc, sel_ex):
+    if doc is None or sel_ex is None:
+        return []
+    out = []
+    seen = set()
+
+    def _push(obj):
+        if not _is_doc_object(obj):
+            return
+        key = getattr(obj, "Name", None) or id(obj)
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(obj)
+
+    obj_name = _safe_text(getattr(sel_ex, "ObjectName", "")).strip()
+    _push(_doc_object_from_selection_name(doc, obj_name))
+    _push(getattr(sel_ex, "Object", None))
+
+    try:
+        sub_names = list(getattr(sel_ex, "SubElementNames", []) or [])
+    except Exception:
+        sub_names = []
+    for sub_name in sub_names:
+        sub_txt = _safe_text(sub_name).strip()
+        if not sub_txt:
+            continue
+        _push(_doc_object_from_selection_name(doc, sub_txt))
+        _push(_doc_object_from_selection_name(doc, sub_txt.split(".", 1)[0]))
+
+    return out
+
+
+def _iter_dependency_links(obj):
+    seen = set()
+    for attr in ("InListRecursive", "InList"):
+        try:
+            parents = list(getattr(obj, attr, []) or [])
+        except Exception:
+            parents = []
+        for p in parents:
+            if not _is_link(p):
+                continue
+            key = getattr(p, "Name", None) or id(p)
+            if key in seen:
+                continue
+            seen.add(key)
+            yield p
+
+
+def _candidate_link_instances(doc, obj, pick_point=None):
+    lineage = _lineage_objects(doc, obj)
+    ids = set((getattr(o, "Name", None) or id(o)) for o in lineage)
+    scored = []
+    seen = set()
+
+    def _score_and_add(cand, pref_bias):
+        ckey = getattr(cand, "Name", None) or id(cand)
+        if ckey in seen:
+            return
+        seen.add(ckey)
+        chain = _group_chain_topdown(doc, cand)
+        if not _group_chain_has_functional_root(chain):
+            return
+        if _resolve_container_group(doc, cand) is None:
+            return
+        if pick_point is not None:
+            try:
+                cp = _object_anchor_world(cand)
+                dist = (cp - pick_point).Length
+            except Exception:
+                dist = 0.0
+        else:
+            dist = 0.0
+        scored.append((float(pref_bias), float(dist), -len(chain), _safe_text(getattr(cand, "Name", "")), cand))
+
+    # Prioridad 1: links ya dependientes del objeto seleccionado.
+    for dep_link in _iter_dependency_links(obj):
+        _score_and_add(dep_link, -100.0)
+
+    # Prioridad 2: links cuyo LinkedObject coincide con la cadena de padres del objeto.
+    for cand in (doc.Objects or []):
+        if not _is_link(cand):
+            continue
+        ref = _linked_object(cand)
+        if ref is None:
+            continue
+        rid = getattr(ref, "Name", None) or id(ref)
+        if rid not in ids:
+            continue
+        _score_and_add(cand, 0.0)
+
+    scored.sort(key=lambda t: (t[0], t[1], t[2], t[3]))
+    return [t[4] for t in scored]
+
+
+def _resolve_selected_instance(doc, obj, pick_point=None):
+    if obj is None:
+        return None
+    if _is_group(obj):
+        return obj
+    if _is_link(obj):
+        return obj
+
+    # Si el objeto es subcomponente de un link (ej. Chamfer/Housing),
+    # usar la instancia del link para no trabajar sobre el master.
+    cands = _candidate_link_instances(doc, obj, pick_point=pick_point)
+    if cands:
+        return cands[0]
+
+    chain = _group_chain_topdown(doc, obj)
+    if _group_chain_has_functional_root(chain):
+        return obj
+
+    if _chain_has_component_library(chain) or (not chain):
+        return None
+    return obj
+
+
+def _collect_non_group_children(root_group, out, seen):
+    gid = getattr(root_group, "Name", None) or id(root_group)
+    if gid in seen:
+        return
+    seen.add(gid)
+    for child in (getattr(root_group, "Group", []) or []):
+        if _is_group(child):
+            _collect_non_group_children(child, out, seen)
+            continue
+        if not _is_doc_object(child):
+            continue
+        cid = getattr(child, "Name", None) or id(child)
+        if cid in seen:
+            continue
+        seen.add(cid)
+        out.append(child)
+
+
+def _selection_objects(doc):
+    if not GUI_UP:
+        return []
+
+    sel_ex = []
+    for args in ((), ("",), ("", 0), ("", 1), ("", 2)):
+        try:
+            chunk = Gui.Selection.getSelectionEx(*args) or []
+        except Exception:
+            chunk = []
+        if chunk:
+            sel_ex.extend(chunk)
+
+    raw = []
+    for args in ((), ("",), (getattr(doc, "Name", ""),)):
+        try:
+            chunk = Gui.Selection.getSelection(*args) or []
+        except Exception:
+            chunk = []
+        if chunk:
+            raw.extend(chunk)
+
+    candidates = []
+    seen_cands = set()
+    for sx in sel_ex:
+        pick_pt = _pick_point_from_selection_ex(sx)
+        for item in _selection_ex_doc_objects(doc, sx):
+            base_key = getattr(item, "Name", None) or id(item)
+            if pick_pt is not None:
+                pkey = (
+                    round(float(pick_pt.x), 3),
+                    round(float(pick_pt.y), 3),
+                    round(float(pick_pt.z), 3),
+                )
+            else:
+                pkey = None
+            # Mantener entradas de la misma geometria cuando cambie el punto pick.
+            key = ("SX", base_key, pkey)
+            if key in seen_cands:
+                continue
+            seen_cands.add(key)
+            candidates.append((item, pick_pt))
+    for item in raw:
+        if item is None:
+            continue
+        base_key = getattr(item, "Name", None) or id(item)
+        key = ("RAW", base_key)
+        if key in seen_cands:
+            continue
+        seen_cands.add(key)
+        candidates.append((item, None))
+
+    # Fallback: algunos entornos no llenan getSelection/getSelectionEx de forma confiable.
+    if not candidates:
+        for obj in (doc.Objects or []):
+            if obj is None:
+                continue
+            try:
+                selected_flag = bool(Gui.Selection.isSelected(doc.Name, obj.Name))
+            except Exception:
+                selected_flag = False
+            if not selected_flag:
+                continue
+            base_key = getattr(obj, "Name", None) or id(obj)
+            key = ("ISSEL", base_key)
+            if key in seen_cands:
+                continue
+            seen_cands.add(key)
+            candidates.append((obj, None))
+
+    out = []
+    seen = set()
+    for item, pick_pt in candidates:
+        if item is None:
+            continue
+        if not _is_doc_object(item):
+            continue
+        if _is_group(item):
+            _collect_non_group_children(item, out, seen)
+            continue
+        resolved = _resolve_selected_instance(doc, item, pick_point=pick_pt)
+        if resolved is None:
+            continue
+        if not _is_doc_object(resolved):
+            continue
+        oid = getattr(resolved, "Name", None) or id(resolved)
+        if oid in seen:
+            continue
+        seen.add(oid)
+        out.append(resolved)
+
+    result = [o for o in out if o is not None and not _is_group(o)]
+    if result:
+        return result
+
+    # Fallback robusto: usar seleccion directa sin expansion.
+    fallback = []
+    seen_fb = set()
+    for item in raw:
+        if item is None or (not _is_doc_object(item)) or _is_group(item):
+            continue
+        resolved = _resolve_selected_instance(doc, item, pick_point=None) or item
+        if resolved is None or (not _is_doc_object(resolved)) or _is_group(resolved):
+            continue
+        oid = getattr(resolved, "Name", None) or id(resolved)
+        if oid in seen_fb:
+            continue
+        seen_fb.add(oid)
+        fallback.append(resolved)
+    return fallback
+
+
+def _as_float(value, default=0.0):
+    try:
+        if hasattr(value, "Value"):
+            return float(value.Value)
+        return float(value)
+    except Exception:
+        return float(default)
+
+
+def _object_anchor_world(obj):
+    try:
+        shape = getattr(obj, "Shape", None)
+        if shape is not None and not shape.isNull():
+            bb = shape.BoundBox
+            return App.Vector(
+                0.5 * (bb.XMin + bb.XMax),
+                0.5 * (bb.YMin + bb.YMax),
+                0.5 * (bb.ZMin + bb.ZMax),
+            )
+    except Exception:
+        pass
+    try:
+        return App.Vector(obj.Placement.Base)
+    except Exception:
+        return App.Vector(0.0, 0.0, 0.0)
+
+
+def _object_rotation(obj):
+    try:
+        return obj.Placement.Rotation
+    except Exception:
+        return App.Rotation()
+
+
+def _geometric_median_xy(points, max_iter=80, eps=1e-4):
+    if not points:
+        return App.Vector(0.0, 0.0, 0.0)
+    if len(points) == 1:
+        p = points[0]
+        return App.Vector(float(p.x), float(p.y), 0.0)
+
+    x = sum(float(p.x) for p in points) / float(len(points))
+    y = sum(float(p.y) for p in points) / float(len(points))
+    for _ in range(max_iter):
+        num_x = 0.0
+        num_y = 0.0
+        den = 0.0
+        coincident = False
+        for p in points:
+            dx = x - float(p.x)
+            dy = y - float(p.y)
+            d = math.hypot(dx, dy)
+            if d <= eps:
+                x = float(p.x)
+                y = float(p.y)
+                coincident = True
+                break
+            w = 1.0 / d
+            num_x += float(p.x) * w
+            num_y += float(p.y) * w
+            den += w
+        if coincident or den <= eps:
+            break
+        nx = num_x / den
+        ny = num_y / den
+        if math.hypot(nx - x, ny - y) <= eps:
+            x = nx
+            y = ny
+            break
+        x = nx
+        y = ny
+    return App.Vector(float(x), float(y), 0.0)
+
+
+def _ensure_electriccr_on_path():
+    for mod_name in ("ElectricCR", "electriccr"):
+        try:
+            importlib.import_module(mod_name)
+            return True
+        except ImportError:
+            pass
+
+    try:
+        here = Path(__file__).resolve()
+    except Exception:
+        here = None
+
+    cands = []
+    if here is not None:
+        for parent in [here.parent, *here.parents]:
+            pkg = parent / "ElectricCR"
+            if pkg.is_dir():
+                cands.extend([str(pkg.parent), str(pkg)])
+
+    try:
+        base = Path(App.getUserAppDataDir())
+    except Exception:
+        base = Path.home() / "AppData" / "Roaming" / "FreeCAD"
+
+    for folder_name in ("Macro", "Macros"):
+        pkg = base / folder_name / "ElectricCR"
+        if pkg.is_dir():
+            cands.extend([str(pkg.parent), str(pkg)])
+
+    for path in cands:
+        if path and path not in sys.path:
+            sys.path.insert(0, path)
+
+    importlib.invalidate_caches()
+    for mod_name in ("ElectricCR", "electriccr"):
+        try:
+            importlib.import_module(mod_name)
+            return True
+        except ImportError:
+            pass
+    return False
+
+
+def _import_caja_feature():
+    if not _ensure_electriccr_on_path():
+        raise RuntimeError("No se pudo resolver el paquete ElectricCR.")
+    candidates = (
+        "ElectricCR.electriccr.features.caja_emt_octogonal",
+        "electriccr.features.caja_emt_octogonal",
+    )
+    for mod_name in candidates:
+        try:
+            mod = importlib.import_module(mod_name)
+            insert_fn = getattr(mod, "insertar_caja_emt_octogonal_link", None)
+            master_fn = getattr(mod, "crear_caja_emt_octogonal_master", None)
+            if callable(insert_fn) and callable(master_fn):
+                return mod, insert_fn, master_fn
+        except Exception:
+            pass
+    raise RuntimeError("No se pudo importar caja_emt_octogonal.")
+
+
+def _ensure_property(obj, ptype, pname, pgroup, pdesc):
+    try:
+        if pname not in getattr(obj, "PropertiesList", []):
+            obj.addProperty(ptype, pname, pgroup, pdesc)
+    except Exception:
+        pass
+
+
+def _box_ports_world(box):
+    raw = _safe_text(getattr(box, "PuertosJSON", "")).strip()
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return []
+    if not isinstance(data, list):
+        return []
+    out = []
+    pl = getattr(box, "Placement", None)
+    rot = pl.Rotation if pl is not None else App.Rotation()
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        pos = item.get("position")
+        direc = item.get("direction")
+        if not isinstance(pos, list) or len(pos) != 3:
+            continue
+        try:
+            lp = App.Vector(float(pos[0]), float(pos[1]), float(pos[2]))
+        except Exception:
+            continue
+        wp = pl.multVec(lp) if pl is not None else lp
+        if isinstance(direc, list) and len(direc) == 3:
+            try:
+                ld = App.Vector(float(direc[0]), float(direc[1]), float(direc[2]))
+                wd = rot.multVec(ld)
+            except Exception:
+                wd = App.Vector(0.0, 0.0, -1.0)
+        else:
+            wd = App.Vector(0.0, 0.0, -1.0)
+        out.append({"name": _safe_text(item.get("name", "")), "point": wp, "dir": wd})
+    return out
+
+
+def _pick_box_entry_port(box, src_point):
+    ports = _box_ports_world(box)
+    if not ports:
+        p = getattr(getattr(box, "Placement", None), "Base", App.Vector(0.0, 0.0, 0.0))
+        cx = float(p.x)
+        cy = float(p.y)
+        dx = float(src_point.x - cx)
+        dy = float(src_point.y - cy)
+        dxy = math.hypot(dx, dy)
+        if dxy <= 1e-9:
+            return App.Vector(cx, cy, float(p.z)), App.Vector(1.0, 0.0, 0.0)
+        return App.Vector(cx, cy, float(p.z)), App.Vector(dx / dxy, dy / dxy, 0.0)
+
+    def _unit_xy(vx, vy, fbx=1.0, fby=0.0):
+        d = math.hypot(vx, vy)
+        if d <= 1e-9:
+            fd = math.hypot(fbx, fby)
+            if fd <= 1e-9:
+                return 1.0, 0.0
+            return fbx / fd, fby / fd
+        return vx / d, vy / d
+
+    def score(item):
+        p = item["point"]
+        d = item.get("dir", App.Vector(0.0, 0.0, 0.0))
+        dx = float(src_point.x - p.x)
+        dy = float(src_point.y - p.y)
+        dxy = math.hypot(dx, dy)
+        ux, uy = _unit_xy(float(d.x), float(d.y), dx, dy)
+        sx, sy = _unit_xy(dx, dy, ux, uy)
+        align = (ux * sx) + (uy * sy)  # 1.0 = puerto apuntando hacia el objeto
+        side_penalty = abs(float(d.z))  # preferir puertos laterales
+        return (side_penalty, -align, dxy, abs(float(p.z - src_point.z)))
+
+    best = sorted(ports, key=score)[0]
+    bp = best["point"]
+    bd = best.get("dir", App.Vector(0.0, 0.0, 0.0))
+    bdx = float(bd.x)
+    bdy = float(bd.y)
+    nxy = math.hypot(bdx, bdy)
+    if nxy <= 1e-9:
+        vx = float(src_point.x - bp.x)
+        vy = float(src_point.y - bp.y)
+        vxy = math.hypot(vx, vy)
+        if vxy <= 1e-9:
+            dir_xy = App.Vector(1.0, 0.0, 0.0)
+        else:
+            dir_xy = App.Vector(vx / vxy, vy / vxy, 0.0)
+    else:
+        dir_xy = App.Vector(bdx / nxy, bdy / nxy, 0.0)
+    return App.Vector(float(bp.x), float(bp.y), float(bp.z)), dir_xy
+
+
+def _dedupe_points(points, tol=1e-6):
+    out = []
+    for p in points:
+        if not out:
+            out.append(p)
+            continue
+        q = out[-1]
+        dx = float(p.x - q.x)
+        dy = float(p.y - q.y)
+        dz = float(p.z - q.z)
+        if (dx * dx + dy * dy + dz * dz) <= (tol * tol):
+            continue
+        out.append(p)
+    return out
+
+
+def _make_solid_shape(p0, p1, box_dir_xy):
+    src_raise = 100.0
+    side_out = 120.0
+    z_run = max(float(p0.z) + src_raise, float(p1.z) - 60.0)
+    p1_out = App.Vector(
+        float(p1.x + box_dir_xy.x * side_out),
+        float(p1.y + box_dir_xy.y * side_out),
+        float(p1.z),
+    )
+    pts = [
+        App.Vector(float(p0.x), float(p0.y), float(p0.z)),
+        App.Vector(float(p0.x), float(p0.y), z_run),
+        App.Vector(float(p1_out.x), float(p1_out.y), z_run),
+        App.Vector(float(p1_out.x), float(p1_out.y), float(p1_out.z)),
+        App.Vector(float(p1.x), float(p1.y), float(p1.z)),
+    ]
+    pts = _dedupe_points(pts)
+    if len(pts) < 2:
+        return None
+    if len(pts) == 2:
+        return Part.makeLine(pts[0], pts[1])
+    return Part.makePolygon(pts)
+
+
+def _make_flexible_shape(p0, p1, box_dir_xy):
+    src_raise = 100.0
+    side_out = 120.0
+
+    p0_up = App.Vector(float(p0.x), float(p0.y), float(p0.z + src_raise))
+    p1_out = App.Vector(
+        float(p1.x + box_dir_xy.x * side_out),
+        float(p1.y + box_dir_xy.y * side_out),
+        float(p1.z),
+    )
+
+    dx = float(p1_out.x - p0_up.x)
+    dy = float(p1_out.y - p0_up.y)
+    dxy = math.hypot(dx, dy)
+    if dxy <= 1e-6:
+        vx, vy = 1.0, 0.0
+    else:
+        vx, vy = (dx / dxy), (dy / dxy)
+    px, py = -vy, vx
+    amp = min(max(dxy * 0.16, 40.0), 160.0)
+
+    c1 = App.Vector(
+        float(p0_up.x + dx * 0.25 + px * amp),
+        float(p0_up.y + dy * 0.25 + py * amp),
+        float(p0_up.z + 0.20 * max(40.0, float(p1.z - p0.z))),
+    )
+    c2 = App.Vector(
+        float(p0_up.x + dx * 0.75 - px * amp),
+        float(p0_up.y + dy * 0.75 - py * amp),
+        float(max(p0_up.z, p1_out.z) - 20.0),
+    )
+
+    pts = [App.Vector(p0), p0_up, c1, c2, p1_out, App.Vector(p1)]
+    pts = _dedupe_points(pts)
+    if len(pts) < 2:
+        return None
+    if len(pts) == 2:
+        return Part.makeLine(pts[0], pts[1])
+    curve = Part.BSplineCurve()
+    curve.interpolate(pts)
+    return curve.toShape()
+
+
+def _style_connection(obj, conn_type):
+    vo = getattr(obj, "ViewObject", None)
+    if vo is None:
+        return
+    try:
+        vo.DisplayMode = "Wireframe"
+    except Exception:
+        pass
+    try:
+        vo.LineWidth = 2.0
+    except Exception:
+        pass
+    color = (0.12, 0.64, 0.95) if conn_type == "EMT_Flexible" else (1.0, 0.55, 0.08)
+    for attr in ("LineColor", "PointColor", "ShapeColor"):
+        try:
+            setattr(vo, attr, color)
+        except Exception:
+            pass
+
+
+def _create_connection(doc, src_obj, box_obj, p_src, p_box, box_dir_xy, conn_type):
+    if conn_type not in {"EMT_Solido", "EMT_Flexible"}:
+        return None
+    try:
+        shape = (
+            _make_flexible_shape(p_src, p_box, box_dir_xy)
+            if conn_type == "EMT_Flexible"
+            else _make_solid_shape(p_src, p_box, box_dir_xy)
+        )
+    except Exception:
+        return None
+    if shape is None:
+        return None
+
+    name = _unique_doc_name(doc, "EMT_Conexion")
+    obj = doc.addObject("Part::Feature", name)
+    obj.Shape = shape
+    src_lbl = _safe_text(getattr(src_obj, "Label", "")) or _safe_text(getattr(src_obj, "Name", "Objeto"))
+    box_lbl = _safe_text(getattr(box_obj, "Label", "")) or _safe_text(getattr(box_obj, "Name", "Caja"))
+    try:
+        obj.Label = f"{conn_type}: {src_lbl} -> {box_lbl}"
+    except Exception:
+        pass
+    _ensure_property(obj, "App::PropertyString", "TipoConexion", "ElectricCR", "Tipo de conexion")
+    _ensure_property(obj, "App::PropertyString", "ConduitType", "ElectricCR", "Tipo de tuberia")
+    _ensure_property(obj, "App::PropertyString", "EstadoConexion", "Red", "Estado de conexion")
+    _ensure_property(obj, "App::PropertyString", "ObjetoOrigen", "Vinculo", "Name objeto origen")
+    _ensure_property(obj, "App::PropertyString", "CajaDestino", "Vinculo", "Name caja destino")
+    try:
+        obj.TipoConexion = conn_type
+    except Exception:
+        pass
+    try:
+        obj.ConduitType = "EMT"
+    except Exception:
+        pass
+    try:
+        obj.EstadoConexion = "Conectado"
+    except Exception:
+        pass
+    try:
+        obj.ObjetoOrigen = _safe_text(getattr(src_obj, "Name", ""))
+    except Exception:
+        pass
+    try:
+        obj.CajaDestino = _safe_text(getattr(box_obj, "Name", ""))
+    except Exception:
+        pass
+    _style_connection(obj, conn_type)
+    return obj
+
+
+def _build_box_placement(point, anchor_local, rotation, z_level):
+    p = App.Vector(float(point.x), float(point.y), float(z_level))
+    rot = rotation if rotation is not None else App.Rotation()
+    base = p - rot.multVec(anchor_local)
+    return App.Placement(base, rot)
+
+
+def _default_cfg():
+    ctype = _pref_get_str("tipo_conexion", DEFAULT_CONN)
+    if ctype not in {"Sin", "EMT_Solido", "EMT_Flexible"}:
+        ctype = DEFAULT_CONN
+    return {
+        "altura_mm": _pref_get_float("altura_mm", DEFAULT_SNPT),
+        "diametro_mm": _pref_get_float("diametro_mm", DEFAULT_DIAMETER),
+        "tipo_conexion": ctype,
+    }
+
+
+def _run_dialog():
+    cfg = _default_cfg()
+    if (not GUI_UP) or (QtWidgets is None):
+        return cfg
+
+    parent = None
+    try:
+        parent = Gui.getMainWindow()
+    except Exception:
+        parent = None
+
+    dlg = QtWidgets.QDialog(parent)
+    dlg.setWindowTitle("Cajas Octogonales - Mejor Ubicacion")
+    dlg.setMinimumWidth(480)
+    dlg.setWindowModality(QtCore.Qt.WindowModal if QtCore else dlg.windowModality())
+
+    info = QtWidgets.QLabel(
+        "Se crea 1 caja por contenedor funcional, en posicion optima XY\n"
+        "para todos los objetos seleccionados de ese contenedor."
+    )
+    info.setWordWrap(True)
+    info.setStyleSheet("color:#4b5563;")
+
+    sp_alt = QtWidgets.QDoubleSpinBox()
+    sp_alt.setRange(-5000.0, 20000.0)
+    sp_alt.setDecimals(1)
+    sp_alt.setSuffix(" mm")
+    sp_alt.setValue(float(cfg.get("altura_mm", DEFAULT_SNPT)))
+
+    sp_diam = QtWidgets.QDoubleSpinBox()
+    sp_diam.setRange(1.0, 200.0)
+    sp_diam.setDecimals(1)
+    sp_diam.setSuffix(" mm")
+    sp_diam.setValue(float(cfg.get("diametro_mm", DEFAULT_DIAMETER)))
+
+    cb_conn = QtWidgets.QComboBox()
+    cb_conn.addItem("Sin conexion", "Sin")
+    cb_conn.addItem("EMT Solido", "EMT_Solido")
+    cb_conn.addItem("EMT Flexible", "EMT_Flexible")
+    idx = cb_conn.findData(str(cfg.get("tipo_conexion", DEFAULT_CONN)))
+    cb_conn.setCurrentIndex(idx if idx >= 0 else 1)
+
+    form = QtWidgets.QFormLayout()
+    form.addRow("Altura octogonal (SNPT):", sp_alt)
+    form.addRow("Diametro EMT:", sp_diam)
+    form.addRow("Conexion:", cb_conn)
+
+    btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+    btns.accepted.connect(dlg.accept)
+    btns.rejected.connect(dlg.reject)
+
+    lay = QtWidgets.QVBoxLayout(dlg)
+    lay.addWidget(info)
+    lay.addLayout(form)
+    lay.addWidget(btns)
+
+    if dlg.exec_() != QtWidgets.QDialog.Accepted:
+        return None
+
+    cfg["altura_mm"] = float(sp_alt.value())
+    cfg["diametro_mm"] = float(sp_diam.value())
+    cfg["tipo_conexion"] = _safe_text(cb_conn.currentData()) or "Sin"
+    _save_cfg(cfg)
+    return cfg
+
+
+def main():
+    doc = App.ActiveDocument
+    if doc is None:
+        _err("No hay documento activo.")
+        return
+
+    selected = _selection_objects(doc)
+    if not selected:
+        _warn("Seleccione luminarias u otros objetos.")
+        return
+    _log(f"Seleccion efectiva: {len(selected)} objetos.")
+
+    cfg = _run_dialog()
+    if cfg is None:
+        _warn("Operacion cancelada.")
+        return
+
+    conn_type = _safe_text(cfg.get("tipo_conexion", "Sin"))
+    altura = float(cfg.get("altura_mm", DEFAULT_SNPT))
+    diametro = max(1.0, float(cfg.get("diametro_mm", DEFAULT_DIAMETER)))
+    if abs(altura) <= 1e-6:
+        altura = float(DEFAULT_SNPT)
+
+    try:
+        _mod, insert_box, create_master = _import_caja_feature()
+    except Exception as ex:
+        _err(f"No se pudo cargar feature de caja EMT: {ex}")
+        return
+
+    try:
+        master = create_master(doc=doc, hide_master=True)
+        bb = master.Shape.BoundBox
+        anchor_local = App.Vector(
+            0.5 * (bb.XMin + bb.XMax),
+            0.5 * (bb.YMin + bb.YMax),
+            0.5 * (bb.ZMin + bb.ZMax),
+        )
+    except Exception as ex:
+        _err(f"No se pudo preparar master de caja EMT: {ex}")
+        return
+
+    buckets = {}
+    skipped_invalid = 0
+    for src in selected:
+        container = _resolve_container_group(doc, src)
+        if container is None:
+            skipped_invalid += 1
+            _warn(f"Sin contenedor valido para '{_obj_disp_name(src)}'. Se omite.")
+            continue
+        key = _safe_text(getattr(container, "Name", "")) or str(id(container))
+        bucket = buckets.setdefault(key, {"container": container, "objects": []})
+        bucket["objects"].append(src)
+
+    if not buckets:
+        _warn("No hay objetos seleccionados con contenedor funcional valido.")
+        return
+
+    created_boxes = 0
+    created_conn = 0
+    skipped = 0
+    try:
+        doc.openTransaction("ElectricCR: cajas octogonales mejor ubicacion")
+        for bucket in buckets.values():
+            container = bucket["container"]
+            items = bucket["objects"]
+            if not items:
+                continue
+
+            points = [_object_anchor_world(o) for o in items]
+            p_med = _geometric_median_xy(points)
+            center = App.Vector(float(p_med.x), float(p_med.y), float(altura))
+            rot = _object_rotation(items[0]) if items else App.Rotation()
+
+            g_cajas = _ensure_group(doc, container, "Cajas_Octogonales", "CajaOct")
+            g_conex = None
+            if conn_type in {"EMT_Solido", "EMT_Flexible"}:
+                g_conex = _ensure_group(doc, container, "Conexiones_3D", "Conex3D")
+
+            cont_lbl = _safe_text(getattr(container, "Label", "")) or _safe_text(getattr(container, "Name", "Grupo"))
+            placement = _build_box_placement(center, anchor_local, rot, altura)
+            box = insert_box(
+                doc=doc,
+                name_prefix=f"{NAME_PREFIX} - {cont_lbl}",
+                placement=placement,
+                diametro_emt=diametro,
+                recompute=False,
+                hide_master=True,
+            )
+
+            _ensure_property(box, "App::PropertyFloat", "NivelSNPT", "Red", "Cota SNPT objetivo (mm)")
+            _ensure_property(box, "App::PropertyString", "EstadoConexion", "Red", "Estado de conexion")
+            _ensure_property(box, "App::PropertyInteger", "CantidadObjetos", "ElectricCR", "Cantidad objetos asociados")
+            _ensure_property(box, "App::PropertyString", "TipoConexion", "ElectricCR", "Tipo de conexion utilizada")
+            try:
+                box.NivelSNPT = float(altura)
+            except Exception:
+                pass
+            try:
+                box.EstadoConexion = "Conectado" if conn_type in {"EMT_Solido", "EMT_Flexible"} else "Pendiente"
+            except Exception:
+                pass
+            try:
+                box.CantidadObjetos = int(len(items))
+            except Exception:
+                pass
+            try:
+                box.TipoConexion = conn_type
+            except Exception:
+                pass
+
+            _remove_from_all_groups(doc, box, keep_group=g_cajas)
+            try:
+                g_cajas.addObject(box)
+            except Exception:
+                pass
+            created_boxes += 1
+
+            if g_conex is not None:
+                for src in items:
+                    try:
+                        p_src = _object_anchor_world(src)
+                        p_box, box_dir_xy = _pick_box_entry_port(box, p_src)
+                        conn = _create_connection(doc, src, box, p_src, p_box, box_dir_xy, conn_type)
+                    except Exception:
+                        conn = None
+                    if conn is None:
+                        skipped += 1
+                        continue
+                    _remove_from_all_groups(doc, conn, keep_group=g_conex)
+                    try:
+                        g_conex.addObject(conn)
+                    except Exception:
+                        pass
+                    created_conn += 1
+
+            _log(
+                f"Caja creada: {box.Label} | contenedor={cont_lbl} | objetos={len(items)} "
+                f"| altura={altura:.1f} mm | conexion={conn_type}"
+            )
+
+        doc.recompute()
+        doc.commitTransaction()
+    except Exception as ex:
+        try:
+            doc.abortTransaction()
+        except Exception:
+            pass
+        _err(f"Fallo general: {ex}")
+        return
+
+    _log(
+        f"Finalizado. Seleccion={len(selected)} | contenedores={len(buckets)} | "
+        f"cajas={created_boxes} | conexiones={created_conn} | omitidos={skipped + skipped_invalid}."
+    )
+
+
+if __name__ == "__main__":
+    main()

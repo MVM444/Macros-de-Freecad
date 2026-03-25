@@ -1,99 +1,719 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Macro: ColocarApagadores_Sketch_v7.FCMacro
+# Macro: ColocarApagadores_Sketch_v8.FCMacro
+# MenuText: Crear apagadores en sketch
+# Icon: ColocarApagadores_Sketch.svg
+# Toolbar: Iluminacion
 # Descripcion:
-#   Inserta simbolos de apagador en cada PUNTO del Sketch y los nombra/
-#   orienta segun las areas (rectangulos) del proyecto.
-#
-# Reglas del proyecto:
-#   - Comentarios y cadenas sin tildes ni caracteres especiales.
-#   - Prototipo con Label EXACTO: "Simbolo Apagador" (en cualquier grupo).
-#   - Sketch: si no hay seleccion, busca "Sketch apagadores".
-#   - El sketch se MUEVE al grupo organizativo "apagadores".
-#   - Grupo destino de instancias: "Apagadores" (Mayuscula).
-#   - Areas: del grupo "Grupo de areas" (con o sin acento) o de la seleccion.
-#   - Solo puntos del Sketch (no vertices de aristas).
-#   - Orientacion ortogonal: 0/90/180/270 (Y+ apunta hacia el centro del area).
-#   - Empuje hacia adentro: 100 mm despues del giro (ajustable).
-#   - Instancias por Draft.clone (sin App::Link).
-#   - Logs detallados en consola.
-#
-# Fecha/Hora: 2025-08-20 08:40 America/Costa_Rica
-# FreeCAD: 1.0.x
+#   Inserta simbolos de apagador en cada punto de un Sketch y los orienta
+#   por area. Usa formulario persistente para seleccionar Sketch, Areas,
+#   grupo Iluminacion, altura y empuje al centro.
 # ======================================================================
 
 import FreeCAD as App
 import FreeCADGui as Gui
 import unicodedata
 import math
+import os
+import re
+import json
+import sys
+from pathlib import Path
 
 DOC = App.ActiveDocument
+SKETCH_TYPES = ("Sketcher::SketchObject", "Sketcher::SketchObjectPython")
 
 # -----------------------
 # Parametros
 # -----------------------
 PROTO_LABEL            = "Simbolo Apagador"
-GRUPO_DESTINO_LABEL    = "Apagadores"       # grupo de instancias (Mayuscula)
-GRUPO_SKETCH_LABEL     = "apagadores"       # grupo organizativo del sketch
+PROTO_LABEL_ALTS       = ("Simbolo Apagador", "Apagador_Simple", "Switch_Simple")
+PROTO_AUTO_NAME        = "Proto_Simbolo_Apagador"
+PROTO_STEP_REL         = os.path.join("Resources", "prototypes", "3d", "switch_simple.step")
+DEFAULT_REG_KEY        = "Apagador_Simple"
+DEFAULT_MODO_VISUAL    = "Ambos"
+
+GRUPO_DESTINO_LABEL    = "Apagadores"
+GRUPO_SKETCH_LABEL     = "apagadores"
 SKETCH_TARGET_LABEL    = "Sketch apagadores"
-GRUPO_AREAS_LABEL      = "Grupo de areas"   # se compara con o sin acento
+GRUPO_CIRCUITOS_LABEL  = "Circuitos"
+GRUPO_RECINTOS_LABEL   = "Recintos"
+DEFAULT_CIRCUITO_LABEL = "Circuito_01"
 
-Z_BASE                 = 0.0
-ROTATION_EXTRA_DEG     = 0.0                 # ajuste fino si el simbolo base esta girado
-OFFSET_LOCAL           = App.Vector(0.0, 0.0, 0.0)  # offset adicional tras el empuje; por defecto 0
-BB_TOL                 = 0.5                 # tolerancia para contencion por bounding box
-PUSH_TO_CENTER_MM      = 100.0               # empuje hacia el centro del area, luego del giro
+PARAM_PATH             = "User parameter:BaseApp/Preferences/Mod/ElectricCR/ApagadoresSketch"
+DEFAULT_Z_BASE_MM      = 1200.0
+DEFAULT_PUSH_MM        = 0.0
+ROTATION_EXTRA_DEG     = 0.0
+OFFSET_LOCAL           = App.Vector(0.0, 0.0, 0.0)
+BB_TOL                 = 2.0
+SKIP_IF_LABEL_EXISTS   = True
+
+AREA_GROUP_ALIASES = (
+    "grupo de areas", "areas", "recintos", "espacios", "zonas"
+)
+AREA_GROUP_EXCLUDE_HINTS = (
+    "humo", "sensor", "incendio", "deteccion", "detector"
+)
+ILUM_GROUP_ALIASES = (
+    "iluminacion", "grupo iluminacion", "luminarias", "lighting"
+)
+
+# Alias puntuales de area -> recinto real en tu arbol de Iluminacion/Circuito.
+# Se comparan en formato canonico (sin tildes/simbolos/espacios).
+AREA_RECINTO_ALIAS = {
+    "boveda": ("jefatura",),
+    "egresos": ("plataforma",),
+    "ingresos": ("plataforma",),
+    "frentedeplatafoma": ("plataforma",),   # typo historico en el modelo
+    "frentedeplataforma": ("plataforma",),
+    "pasilloss": ("ssfuncionarios",),
+    "ssfuncionarias": ("ssfuncionarios",),
+}
+
+_REG_TYPES_CACHE = None
 
 # -----------------------
-# Utilidades de debug
+# Log
 # -----------------------
-def log(m):  App.Console.PrintMessage("[APAGADOR][INFO] " + str(m) + "\n")
-def warn(m): App.Console.PrintWarning("[APAGADOR][WARN] " + str(m) + "\n")
-def err(m):  App.Console.PrintError("[APAGADOR][ERROR] " + str(m) + "\n")
+def log(m):
+    App.Console.PrintMessage("[APAGADOR][INFO] " + str(m) + "\n")
+
+def warn(m):
+    App.Console.PrintWarning("[APAGADOR][WARN] " + str(m) + "\n")
+
+def err(m):
+    App.Console.PrintError("[APAGADOR][ERROR] " + str(m) + "\n")
 
 # -----------------------
-# Helpers basicos
+# Basicos
 # -----------------------
 def norm(s):
     try:
-        return unicodedata.normalize("NFKD", s).encode("ascii","ignore").decode("ascii").lower().strip()
-    except:
-        return str(s).lower().strip()
+        return unicodedata.normalize("NFKD", str(s or "")).encode("ascii", "ignore").decode("ascii").lower().strip()
+    except Exception:
+        return str(s or "").lower().strip()
 
 def rotZ(deg):
-    return App.Rotation(App.Vector(0,0,1), deg)
+    return App.Rotation(App.Vector(0, 0, 1), float(deg))
 
 def snap_ortho_deg(deg):
-    return round(deg / 90.0) * 90.0
+    return round(float(deg) / 90.0) * 90.0
 
 def scaled(v, s):
     return App.Vector(v.x * s, v.y * s, v.z * s)
 
+def point_in_bb(P, bb, tol=0.0):
+    return (
+        P.x >= bb.XMin - tol and P.x <= bb.XMax + tol and
+        P.y >= bb.YMin - tol and P.y <= bb.YMax + tol
+    )
+
+def _qwidgets():
+    try:
+        from PySide2 import QtWidgets
+        return QtWidgets
+    except Exception:
+        try:
+            from PySide import QtGui as QtWidgets
+            return QtWidgets
+        except Exception:
+            return None
+
+def _user_appdata_dir():
+    try:
+        return Path(App.getUserAppDataDir())
+    except Exception:
+        return Path.home() / "AppData" / "Roaming" / "FreeCAD"
+
+def _user_macro_root():
+    base = _user_appdata_dir()
+    for name in ("Macro", "Macros"):
+        candidate = base / name
+        if candidate.exists():
+            return candidate
+    return base / "Macro"
+
+def _candidate_registry_files():
+    cands = []
+    try:
+        here = Path(__file__).resolve()
+        for parent in [here.parent, *here.parents]:
+            rj = parent / "Resources" / "registry" / "registry_electric.json"
+            if rj.is_file():
+                cands.append(rj)
+                break
+    except Exception:
+        pass
+    try:
+        user_reg = _user_macro_root() / "Resources" / "registry" / "registry_electric.json"
+        if user_reg.is_file():
+            cands.append(user_reg)
+    except Exception:
+        pass
+    return cands
+
+def _load_registry_types():
+    global _REG_TYPES_CACHE
+    if _REG_TYPES_CACHE is not None:
+        return _REG_TYPES_CACHE
+    merged = {}
+    for path in _candidate_registry_files():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+            if isinstance(data, dict):
+                merged.update(data.get("types") or {})
+        except Exception:
+            continue
+    _REG_TYPES_CACHE = merged
+    return merged
+
+def _apagador_registry_keys():
+    types = _load_registry_types()
+    keys = sorted(types.keys())
+    if not keys:
+        return [DEFAULT_REG_KEY]
+    only = [k for k in keys if ("apagador" in norm(k) or "switch" in norm(k))]
+    if DEFAULT_REG_KEY in keys and DEFAULT_REG_KEY not in only:
+        only.insert(0, DEFAULT_REG_KEY)
+    return only or keys
+
+def _preferred_apagador_key():
+    keys = _apagador_registry_keys()
+    if DEFAULT_REG_KEY in keys:
+        return DEFAULT_REG_KEY
+    return keys[0] if keys else DEFAULT_REG_KEY
+
+def _candidate_electriccr_dirs():
+    found = []
+    seen = set()
+
+    def push(path):
+        if not path:
+            return
+        try:
+            real = Path(path).resolve()
+        except Exception:
+            real = Path(path)
+        if real in seen:
+            return
+        seen.add(real)
+        found.append(real)
+
+    def check_base(base):
+        if not base:
+            return
+        try:
+            b = Path(base).resolve()
+        except Exception:
+            b = Path(base)
+        direct = b / "electriccr" / "features" / "objeto_toma_uno.py"
+        if direct.is_file():
+            push(b)
+        pkg = b / "ElectricCR"
+        if (pkg / "electriccr" / "features" / "objeto_toma_uno.py").is_file():
+            push(pkg)
+
+    try:
+        here = Path(__file__).resolve()
+        for parent in [here.parent, *here.parents]:
+            check_base(parent)
+    except Exception:
+        pass
+    try:
+        um = _user_macro_root()
+        check_base(um)
+        check_base(um.parent)
+    except Exception:
+        pass
+    return found
+
+def _load_toma_module():
+    import importlib
+
+    def _try_import():
+        try:
+            return importlib.import_module("ElectricCR.electriccr.features.objeto_toma_uno")
+        except Exception:
+            pass
+        try:
+            return importlib.import_module("electriccr.features.objeto_toma_uno")
+        except Exception:
+            return None
+
+    mod = _try_import()
+    if mod is not None:
+        return mod
+
+    for directory in _candidate_electriccr_dirs():
+        for p in (directory.parent, directory):
+            sp = str(p)
+            if sp and sp not in sys.path:
+                sys.path.insert(0, sp)
+        try:
+            importlib.invalidate_caches()
+        except Exception:
+            pass
+        mod = _try_import()
+        if mod is not None:
+            return mod
+    return None
+
+# -----------------------
+# Prototipo
+# -----------------------
 def find_object_by_label(lbl):
-    for o in DOC.Objects:
+    for o in (DOC.Objects or []):
         if getattr(o, "Label", None) == lbl:
             return o
     return None
 
+def _unwrap_link(o):
+    if getattr(o, "TypeId", "") == "App::Link" and getattr(o, "LinkedObject", None):
+        return o.LinkedObject
+    return o
+
+def _find_step_prototype_path():
+    start_dir = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd()
+    cur = start_dir
+    seen = set()
+    for _ in range(8):
+        if not cur or cur in seen:
+            break
+        seen.add(cur)
+        candidate = os.path.join(cur, PROTO_STEP_REL)
+        if os.path.isfile(candidate):
+            return candidate
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            break
+        cur = parent
+    return ""
+
+def _load_step_as_prototype(step_path):
+    try:
+        import Part
+    except Exception as ex:
+        err("No se pudo importar modulo Part para crear prototipo automatico: {}".format(ex))
+        return None
+    try:
+        shape = Part.read(step_path)
+        if shape is None or shape.isNull():
+            raise RuntimeError("Shape vacia")
+        proto = DOC.getObject(PROTO_AUTO_NAME)
+        if proto is None:
+            proto = DOC.addObject("Part::Feature", PROTO_AUTO_NAME)
+        proto.Label = PROTO_LABEL
+        proto.Shape = shape
+        proto.Placement = App.Placement()
+        try:
+            if Gui.ActiveDocument:
+                vo = Gui.ActiveDocument.getObject(proto.Name)
+                if vo:
+                    vo.Visibility = False
+        except Exception:
+            pass
+        log("Prototipo creado desde STEP: {}".format(step_path))
+        return proto
+    except Exception as ex:
+        err("No se pudo crear prototipo desde STEP '{}': {}".format(step_path, ex))
+        return None
+
+def _crear_apagador_link(doc, proto, label, placement):
+    """Crea una instancia App::Link del prototipo de apagador."""
+    try:
+        link = doc.addObject("App::Link", "Apagador")
+    except Exception:
+        link = doc.addObject("App::Link")
+    link.LinkedObject = proto
+    try:
+        link.LinkTransform = True
+    except Exception:
+        pass
+    try:
+        link.setEditorMode("Placement", 0)
+    except Exception:
+        pass
+    try:
+        link.setEditorMode("LinkPlacement", 0)
+    except Exception:
+        pass
+    try:
+        link.setPropertyStatus("Placement", [])
+    except Exception:
+        pass
+    try:
+        link.setPropertyStatus("LinkPlacement", [])
+    except Exception:
+        pass
+    try:
+        if hasattr(link, "LinkPlacement"):
+            link.LinkPlacement = App.Placement()
+    except Exception:
+        pass
+    try:
+        link.Placement = placement
+    except Exception:
+        pass
+    try:
+        if hasattr(link, "ViewObject") and link.ViewObject is not None:
+            link.ViewObject.Selectable = True
+    except Exception:
+        pass
+    try:
+        link.Label = label
+    except Exception:
+        pass
+    return link
+
+def _crear_apagador_dispositivo(doc, modulo_toma, label, placement, altura_mm, key_registro, target_group_obj):
+    """Crea apagador con el mismo pipeline que Insertar_Dispositivo (crear_toma_link)."""
+    if modulo_toma is None or not hasattr(modulo_toma, "crear_toma_link"):
+        raise RuntimeError("crear_toma_link no disponible")
+
+    kwargs = {
+        "doc": doc,
+        "name_prefix": label,
+        "key_registro": key_registro,
+        "tipo_logico": "Apagador",
+        "placement": placement,
+        "modo_visual": DEFAULT_MODO_VISUAL,
+        "altura_rel": float(altura_mm),
+        "orientacion_pared": "Vertical",
+        "recompute": False,
+        "target_group": target_group_obj,
+    }
+
+    try:
+        obj = modulo_toma.crear_toma_link(**kwargs)
+    except TypeError:
+        # Compat con firmas anteriores sin algunos argumentos.
+        kwargs.pop("target_group", None)
+        try:
+            obj = modulo_toma.crear_toma_link(**kwargs)
+        except TypeError:
+            kwargs.pop("recompute", None)
+            obj = modulo_toma.crear_toma_link(**kwargs)
+
+    try:
+        obj.Label = label
+    except Exception:
+        pass
+    try:
+        obj.ModoVisual = DEFAULT_MODO_VISUAL
+    except Exception:
+        pass
+    try:
+        obj.AlturaRel = float(altura_mm)
+    except Exception:
+        pass
+    try:
+        obj.Tipo = "Apagador"
+    except Exception:
+        pass
+    try:
+        obj.KeyRegistro = str(key_registro)
+    except Exception:
+        pass
+    try:
+        obj.LinkTransform = True
+    except Exception:
+        pass
+    try:
+        obj.setEditorMode("Placement", 0)
+    except Exception:
+        pass
+    try:
+        obj.setEditorMode("LinkPlacement", 0)
+    except Exception:
+        pass
+    try:
+        obj.setPropertyStatus("Placement", [])
+    except Exception:
+        pass
+    try:
+        obj.setPropertyStatus("LinkPlacement", [])
+    except Exception:
+        pass
+    try:
+        if hasattr(obj, "ViewObject") and obj.ViewObject is not None:
+            obj.ViewObject.Selectable = True
+    except Exception:
+        pass
+    return obj
+
+def _habilitar_transform_en_links_apagador(group_obj):
+    fixed = 0
+    for obj in (getattr(group_obj, "Group", []) or []):
+        if getattr(obj, "TypeId", "") != "App::Link":
+            continue
+        try:
+            changed = False
+            if getattr(obj, "LinkTransform", True) is False:
+                obj.LinkTransform = True
+                changed = True
+            try:
+                obj.setEditorMode("Placement", 0)
+            except Exception:
+                pass
+            try:
+                obj.setEditorMode("LinkPlacement", 0)
+            except Exception:
+                pass
+            try:
+                obj.setPropertyStatus("Placement", [])
+            except Exception:
+                pass
+            try:
+                obj.setPropertyStatus("LinkPlacement", [])
+            except Exception:
+                pass
+            try:
+                if hasattr(obj, "ViewObject") and obj.ViewObject is not None:
+                    if getattr(obj.ViewObject, "Selectable", True) is False:
+                        obj.ViewObject.Selectable = True
+                        changed = True
+            except Exception:
+                pass
+            if changed:
+                fixed += 1
+        except Exception:
+            continue
+    return fixed
+
+def resolve_switch_prototype():
+    # 1) Labels exactos conocidos.
+    for label in PROTO_LABEL_ALTS:
+        o = find_object_by_label(label)
+        if o:
+            return _unwrap_link(o)
+
+    # 2) Fallback por nombre normalizado.
+    for o in (DOC.Objects or []):
+        key = "{} {}".format(norm(getattr(o, "Label", "")), norm(getattr(o, "Name", "")))
+        if "apagador" in key and ("simbolo" in key or "switch" in key):
+            return _unwrap_link(o)
+
+    # 3) Reusar prototipo auto si ya existe.
+    auto_proto = DOC.getObject(PROTO_AUTO_NAME)
+    if auto_proto:
+        return _unwrap_link(auto_proto)
+
+    # 4) Crear desde STEP.
+    step_path = _find_step_prototype_path()
+    if not step_path:
+        err("No existe el prototipo '{}' y tampoco se encontro '{}'.".format(PROTO_LABEL, PROTO_STEP_REL))
+        return None
+    return _load_step_as_prototype(step_path)
+
+# -----------------------
+# Grupos y jerarquia
+# -----------------------
+def _is_group(o):
+    return getattr(o, "TypeId", "") == "App::DocumentObjectGroup"
+
+def _iter_doc_groups():
+    for o in (DOC.Objects or []):
+        if _is_group(o):
+            yield o
+
+def _iter_group_tree(group_obj, seen=None):
+    if seen is None:
+        seen = set()
+    if group_obj is None:
+        return
+    gid = getattr(group_obj, "Name", None) or id(group_obj)
+    if gid in seen:
+        return
+    seen.add(gid)
+    yield group_obj
+    for child in (getattr(group_obj, "Group", []) or []):
+        if _is_group(child):
+            for sub in _iter_group_tree(child, seen):
+                yield sub
+
 def find_group_loose(lbl_expected):
     target = norm(lbl_expected)
-    for o in DOC.Objects:
-        if getattr(o, "TypeId", "") == "App::DocumentObjectGroup":
-            if norm(getattr(o, "Label","")) == target:
-                return o
+    for o in _iter_doc_groups():
+        if norm(getattr(o, "Label", "")) == target or norm(getattr(o, "Name", "")) == target:
+            return o
     return None
 
-def get_or_make_group(lbl):
-    g = DOC.getObject(lbl)
-    if g is None:
-        g = DOC.addObject("App::DocumentObjectGroup", lbl)
-        log("Grupo creado: {}".format(lbl))
-    return g
+def _safe_group_name(label, prefix="Grp"):
+    base = "".join(ch if ch.isalnum() else "_" for ch in norm(label))
+    base = "_".join([t for t in base.split("_") if t])
+    if not base:
+        base = prefix
+    candidate = base
+    idx = 1
+    while DOC.getObject(candidate):
+        idx += 1
+        candidate = "{}_{}".format(base, idx)
+    return candidate
 
+def ensure_root_group(label):
+    grp = find_group_loose(label)
+    if grp:
+        return grp
+    name = _safe_group_name(label, "Grp")
+    grp = DOC.addObject("App::DocumentObjectGroup", name)
+    grp.Label = label
+    log("Grupo creado: {}".format(label))
+    return grp
+
+def ensure_child_group(parent, label, reuse_global=True):
+    if parent is None:
+        return ensure_root_group(label)
+    target = norm(label)
+    for child in (getattr(parent, "Group", []) or []):
+        if _is_group(child):
+            if norm(getattr(child, "Label", "")) == target or norm(getattr(child, "Name", "")) == target:
+                return child
+
+    # Reusar uno global con mismo label si ya existe.
+    if reuse_global:
+        g_global = find_group_loose(label)
+        if g_global:
+            try:
+                parent.addObject(g_global)
+            except Exception:
+                pass
+            return g_global
+
+    name = _safe_group_name(label, "Grp")
+    grp = DOC.addObject("App::DocumentObjectGroup", name)
+    grp.Label = label
+    parent.addObject(grp)
+    log("Grupo creado bajo '{}': {}".format(getattr(parent, "Label", parent.Name), label))
+    return grp
+
+
+def _group_label_or_name(obj):
+    return getattr(obj, "Label", getattr(obj, "Name", ""))
+
+
+def _child_groups(parent):
+    if parent is None:
+        return []
+    return [c for c in (getattr(parent, "Group", []) or []) if _is_group(c)]
+
+
+def _canon_group_key(text):
+    s = norm(text)
+    s = re.sub(r"[^a-z0-9]+", "", s)
+    return s
+
+
+def _canon_variants(text):
+    c = _canon_group_key(text)
+    if not c:
+        return set()
+    out = {c}
+    c_nodig = re.sub(r"\d+$", "", c)
+    if c_nodig:
+        out.add(c_nodig)
+    return out
+
+
+def _find_child_group_by_label(parent, label):
+    target_vars = _canon_variants(label)
+    if not target_vars:
+        return None
+    for child in _child_groups(parent):
+        child_vars = set()
+        child_vars |= _canon_variants(getattr(child, "Label", ""))
+        child_vars |= _canon_variants(getattr(child, "Name", ""))
+        if target_vars.intersection(child_vars):
+            return child
+    return None
+
+
+def _is_circuit_group(obj):
+    key = norm(_group_label_or_name(obj))
+    if not key:
+        return False
+    if key.startswith("tp_") or key.startswith("tp-") or key.startswith("tp "):
+        return True
+    plain = key.replace("_", " ").replace("-", " ")
+    # "circuito" singular (evita capturar contenedores tipo "circuitos")
+    return bool(re.search(r"\bcircuito\b", plain))
+
+
+def _list_circuit_groups(ilum_group):
+    if ilum_group is None:
+        return []
+    circuits = []
+    seen = set()
+
+    if _is_circuit_group(ilum_group):
+        return [ilum_group]
+
+    containers = []
+    direct_container = _find_child_group_by_label(ilum_group, GRUPO_CIRCUITOS_LABEL)
+    if direct_container is not None:
+        containers.append(direct_container)
+    if not containers:
+        containers.append(ilum_group)
+
+    for container in containers:
+        for grp in _iter_group_tree(container):
+            if grp is None:
+                continue
+            # Ignorar contenedores "Circuitos" (plural) para usar circuitos reales.
+            gtxt = norm(_group_label_or_name(grp)).replace("_", " ").replace("-", " ")
+            if "circuitos" in gtxt and not _is_circuit_group(grp):
+                continue
+            if not _is_circuit_group(grp):
+                continue
+            gid = getattr(grp, "Name", None) or id(grp)
+            if gid in seen:
+                continue
+            seen.add(gid)
+            circuits.append(grp)
+
+    circuits.sort(key=lambda g: norm(_group_label_or_name(g)))
+    return circuits
+
+
+def _find_recinto_group_in_circuit(circuit_group, recinto_label):
+    if circuit_group is None:
+        return None
+    recintos_parent = _find_child_group_by_label(circuit_group, GRUPO_RECINTOS_LABEL) or circuit_group
+    # 1) Match directo/flexible por label/name.
+    direct = _find_child_group_by_label(recintos_parent, recinto_label)
+    if direct is not None:
+        return direct
+
+    # 2) Alias manuales de area -> recinto.
+    area_key = _canon_group_key(recinto_label)
+    alias_targets = list(AREA_RECINTO_ALIAS.get(area_key, ()) or [])
+    for target in alias_targets:
+        hit = _find_child_group_by_label(recintos_parent, target)
+        if hit is not None:
+            return hit
+    return None
+
+
+def _choose_circuit_for_area(circuit_groups, area_label):
+    if not circuit_groups:
+        return None
+    if len(circuit_groups) == 1:
+        return circuit_groups[0]
+
+    matches = []
+    for cg in circuit_groups:
+        if _find_recinto_group_in_circuit(cg, area_label) is not None:
+            matches.append(cg)
+    if len(matches) == 1:
+        return matches[0]
+    return circuit_groups[0]
+
+# -----------------------
+# Sketch helpers
+# -----------------------
 def is_point_geom(g):
     if hasattr(g, "TypeId") and "Point" in str(g.TypeId):
         return True
-    has_xyz = all(hasattr(g, c) for c in ("X","Y","Z"))
+    has_xyz = all(hasattr(g, c) for c in ("X", "Y", "Z"))
     has_pos = hasattr(g, "Position") and hasattr(g.Position, "x")
     return has_xyz or has_pos
 
@@ -102,7 +722,7 @@ def get_sketch_points_world(sk):
     try:
         for geo in sk.Geometry:
             if is_point_geom(geo):
-                if all(hasattr(geo, c) for c in ("X","Y","Z")):
+                if all(hasattr(geo, c) for c in ("X", "Y", "Z")):
                     v_local = App.Vector(geo.X, geo.Y, geo.Z)
                 elif hasattr(geo, "Position"):
                     v_local = App.Vector(geo.Position.x, geo.Position.y, geo.Position.z)
@@ -113,6 +733,75 @@ def get_sketch_points_world(sk):
     except Exception as ex:
         warn("Fallo leyendo puntos del sketch: {}".format(ex))
     return pts
+
+def _sketch_objects():
+    return sorted(
+        [o for o in (DOC.Objects or []) if getattr(o, "TypeId", "") in SKETCH_TYPES],
+        key=lambda o: norm(getattr(o, "Label", getattr(o, "Name", "")))
+    )
+
+def _pick_default_sketch(selected_objs):
+    selected_sk = next((o for o in selected_objs if getattr(o, "TypeId", "") in SKETCH_TYPES), None)
+    if selected_sk:
+        return selected_sk
+
+    grp_sk = find_group_loose(GRUPO_SKETCH_LABEL)
+    if grp_sk:
+        for o in (getattr(grp_sk, "Group", []) or []):
+            if getattr(o, "TypeId", "") in SKETCH_TYPES and getattr(o, "Label", "") == SKETCH_TARGET_LABEL:
+                return o
+        for o in (getattr(grp_sk, "Group", []) or []):
+            if getattr(o, "TypeId", "") in SKETCH_TYPES:
+                return o
+
+    by_label = find_object_by_label(SKETCH_TARGET_LABEL)
+    if by_label and getattr(by_label, "TypeId", "") in SKETCH_TYPES:
+        return by_label
+
+    all_sk = _sketch_objects()
+    return all_sk[0] if all_sk else None
+
+# -----------------------
+# Areas
+# -----------------------
+def _angle_deg_xy(v):
+    return math.degrees(math.atan2(v.y, v.x))
+
+def _area_axis_base_deg(area_obj):
+    # 1) Prefer placement rotation.
+    try:
+        rot = getattr(getattr(area_obj, "Placement", None), "Rotation", None)
+        if rot:
+            vx = rot.multVec(App.Vector(1, 0, 0))
+            v2 = App.Vector(vx.x, vx.y, 0.0)
+            if v2.Length > 1e-9:
+                return _angle_deg_xy(v2)
+    except Exception:
+        pass
+
+    # 2) Fallback by longest edge in XY.
+    try:
+        shp = getattr(area_obj, "Shape", None)
+        if shp:
+            best_v = None
+            best_l = 0.0
+            for e in (getattr(shp, "Edges", []) or []):
+                try:
+                    v0 = e.Vertexes[0].Point
+                    v1 = e.Vertexes[-1].Point
+                    vv = App.Vector(v1.x - v0.x, v1.y - v0.y, 0.0)
+                    ll = vv.Length
+                    if ll > best_l and ll > 1e-6:
+                        best_l = ll
+                        best_v = vv
+                except Exception:
+                    continue
+            if best_v and best_v.Length > 1e-9:
+                return _angle_deg_xy(best_v)
+    except Exception:
+        pass
+
+    return 0.0
 
 def area_info_from_obj(o):
     try:
@@ -126,85 +815,502 @@ def area_info_from_obj(o):
             "obj": o,
             "label": getattr(o, "Label", o.Name),
             "bb": bb,
-            "center": App.Vector(cx, cy, 0.0)
+            "center": App.Vector(cx, cy, 0.0),
+            "axis_deg": _area_axis_base_deg(o),
         }
     except Exception:
         return None
 
-def load_areas(group_loose_label, selected_objs):
+def _collect_areas_from_obj(obj, out, seen):
+    if obj is None:
+        return
+    if _is_group(obj):
+        for grp in _iter_group_tree(obj):
+            for child in (getattr(grp, "Group", []) or []):
+                if _is_group(child):
+                    continue
+                _collect_areas_from_obj(child, out, seen)
+        return
+
+    oid = getattr(obj, "Name", None) or id(obj)
+    if oid in seen:
+        return
+    seen.add(oid)
+
+    if getattr(obj, "TypeId", "") in SKETCH_TYPES:
+        return
+
+    ai = area_info_from_obj(obj)
+    if ai:
+        out.append(ai)
+
+def load_areas(area_group_obj, selected_objs):
     areas = []
-    grp = find_group_loose(group_loose_label)
-    if grp:
-        for o in getattr(grp, "Group", []):
-            ai = area_info_from_obj(o)
-            if ai: areas.append(ai)
+    seen = set()
+    if area_group_obj:
+        _collect_areas_from_obj(area_group_obj, areas, seen)
     if not areas and selected_objs:
         for o in selected_objs:
-            if o.TypeId in ("Sketcher::SketchObject","Sketcher::SketchObjectPython"):
-                continue
-            ai = area_info_from_obj(o)
-            if ai: areas.append(ai)
+            _collect_areas_from_obj(o, areas, seen)
     return areas
 
-def point_in_bb(P, bb, tol=0.0):
-    return (P.x >= bb.XMin - tol and P.x <= bb.XMax + tol and
-            P.y >= bb.YMin - tol and P.y <= bb.YMax + tol)
+def _group_rect_count(group_obj):
+    cnt = 0
+    for grp in _iter_group_tree(group_obj):
+        for child in (getattr(grp, "Group", []) or []):
+            if _is_group(child):
+                continue
+            if area_info_from_obj(child):
+                cnt += 1
+    return cnt
 
-def yaw_for_y_along_vec(v):
-    ang = math.degrees(math.atan2(v.y, v.x))
-    return ang - 90.0 + ROTATION_EXTRA_DEG
+def _is_excluded_area_group(group_obj):
+    key = "{} {}".format(norm(getattr(group_obj, "Label", "")), norm(getattr(group_obj, "Name", "")))
+    for hint in AREA_GROUP_EXCLUDE_HINTS:
+        if hint and hint in key:
+            return True
+    return False
+
+def _candidate_area_groups():
+    out = []
+    for grp in _iter_doc_groups():
+        cnt = _group_rect_count(grp)
+        if cnt > 0:
+            out.append((grp, cnt))
+    out.sort(key=lambda t: (-t[1], norm(getattr(t[0], "Label", t[0].Name))))
+    return out
+
+def find_areas_group_auto(selected_objs):
+    # 1) Seleccion de usuario.
+    for obj in (selected_objs or []):
+        if _is_group(obj) and _group_rect_count(obj) > 0:
+            return obj
+
+    # 2) Alias conocidos.
+    for alias in AREA_GROUP_ALIASES:
+        grp = find_group_loose(alias)
+        if grp and _group_rect_count(grp) > 0 and not _is_excluded_area_group(grp):
+            return grp
+
+    # 3) Heuristica por mayor cantidad de rectangulos.
+    best = None
+    best_cnt = 0
+    for grp, cnt in _candidate_area_groups():
+        if _is_excluded_area_group(grp):
+            continue
+        if cnt > best_cnt:
+            best = grp
+            best_cnt = cnt
+    if best:
+        return best
+
+    # 4) Ultimo recurso.
+    cands = _candidate_area_groups()
+    return cands[0][0] if cands else None
+
+def find_iluminacion_group_auto():
+    for alias in ILUM_GROUP_ALIASES:
+        grp = find_group_loose(alias)
+        if grp:
+            return grp
+
+    cands = []
+    for grp in _iter_doc_groups():
+        key = "{} {}".format(norm(getattr(grp, "Label", "")), norm(getattr(grp, "Name", "")))
+        if "ilumin" in key:
+            cands.append(grp)
+    if not cands:
+        return None
+    cands.sort(key=lambda g: len(norm(getattr(g, "Label", g.Name))))
+    return cands[0]
+
+def _find_area_for_point(P, areas):
+    for ai in areas:
+        if point_in_bb(P, ai["bb"], BB_TOL):
+            return ai
+
+    # Fallback: area mas cercana al centro si no entro por BB.
+    best = None
+    best_d2 = None
+    for ai in areas:
+        c = ai["center"]
+        dx = c.x - P.x
+        dy = c.y - P.y
+        d2 = dx * dx + dy * dy
+        if best is None or d2 < best_d2:
+            best = ai
+            best_d2 = d2
+    return best
+
+# -----------------------
+# Persistencia
+# -----------------------
+def _param_get():
+    try:
+        return App.ParamGet(PARAM_PATH)
+    except Exception:
+        return None
+
+def _param_get_str(pg, key, default):
+    try:
+        v = pg.GetString(key, "")
+        return v if v else default
+    except Exception:
+        return default
+
+def _param_get_float(pg, key, default):
+    s = _param_get_str(pg, key, "")
+    if s == "":
+        return float(default)
+    try:
+        return float(s)
+    except Exception:
+        return float(default)
+
+def _param_set_str(pg, key, value):
+    try:
+        pg.SetString(key, str(value if value is not None else ""))
+    except Exception:
+        pass
+
+def _combo_select_by_data(cmb, data_value):
+    if data_value is None:
+        return
+    wanted = str(data_value)
+    for i in range(cmb.count()):
+        if str(cmb.itemData(i)) == wanted:
+            cmb.setCurrentIndex(i)
+            return
+
+# -----------------------
+# Formulario
+# -----------------------
+def _ask_options_dialog(selected_objs):
+    QtWidgets = _qwidgets()
+
+    default_sketch = _pick_default_sketch(selected_objs)
+    auto_area = find_areas_group_auto(selected_objs)
+    auto_ilum = find_iluminacion_group_auto()
+
+    pg = _param_get()
+    saved_sketch = _param_get_str(pg, "sketch_name", "")
+    saved_areas = _param_get_str(pg, "areas_group_name", "")
+    saved_ilum = _param_get_str(pg, "ilum_group_name", "")
+    saved_key = _param_get_str(pg, "key_registro", _preferred_apagador_key())
+    val_z = _param_get_float(pg, "altura_mm", DEFAULT_Z_BASE_MM)
+    val_push = _param_get_float(pg, "push_mm", DEFAULT_PUSH_MM)
+    cfg_version = _param_get_str(pg, "cfg_version", "")
+    if cfg_version != "2":
+        # Migracion de defaults antiguos.
+        val_z = float(DEFAULT_Z_BASE_MM)
+        val_push = float(DEFAULT_PUSH_MM)
+
+    # Fallback sin UI
+    if QtWidgets is None:
+        return {
+            "sketch": default_sketch,
+            "areas_group": auto_area,
+            "ilum_group": auto_ilum,
+            "key_registro": saved_key,
+            "z_mm": val_z,
+            "push_mm": val_push,
+        }
+
+    try:
+        parent = Gui.getMainWindow()
+    except Exception:
+        parent = None
+
+    dlg = QtWidgets.QDialog(parent)
+    dlg.setWindowTitle("Crear apagadores en sketch")
+    dlg.resize(620, 280)
+
+    lay = QtWidgets.QVBoxLayout(dlg)
+    lay.addWidget(QtWidgets.QLabel(
+        "Configuracion persistente: seleccione Sketch, Areas y grupo Iluminacion."
+    ))
+
+    form = QtWidgets.QFormLayout()
+    lay.addLayout(form)
+
+    cmb_sketch = QtWidgets.QComboBox()
+    sketches = _sketch_objects()
+    for sk in sketches:
+        cmb_sketch.addItem("{} ({})".format(getattr(sk, "Label", sk.Name), sk.Name), sk.Name)
+    form.addRow("Sketch:", cmb_sketch)
+
+    cmb_areas = QtWidgets.QComboBox()
+    cmb_areas.addItem("Auto detectar (o seleccion actual)", "")
+    for grp, cnt in _candidate_area_groups():
+        txt = "{} ({}, {} rectangulos)".format(getattr(grp, "Label", grp.Name), grp.Name, int(cnt))
+        cmb_areas.addItem(txt, grp.Name)
+    form.addRow("Grupo de areas:", cmb_areas)
+
+    cmb_ilum = QtWidgets.QComboBox()
+    cmb_ilum.addItem("Auto detectar / crear 'Iluminacion'", "")
+    all_groups = sorted(list(_iter_doc_groups()), key=lambda g: norm(getattr(g, "Label", g.Name)))
+    for grp in all_groups:
+        cmb_ilum.addItem("{} ({})".format(getattr(grp, "Label", grp.Name), grp.Name), grp.Name)
+    form.addRow("Grupo Iluminacion:", cmb_ilum)
+
+    cmb_key = QtWidgets.QComboBox()
+    cmb_key.setEditable(True)
+    for key in _apagador_registry_keys():
+        cmb_key.addItem(key, key)
+    form.addRow("Tipo apagador (registro):", cmb_key)
+
+    sp_z = QtWidgets.QDoubleSpinBox()
+    sp_z.setDecimals(1)
+    sp_z.setRange(-10000.0, 10000.0)
+    sp_z.setSingleStep(50.0)
+    sp_z.setSuffix(" mm")
+    sp_z.setValue(float(val_z))
+    form.addRow("Altura apagador:", sp_z)
+
+    sp_push = QtWidgets.QDoubleSpinBox()
+    sp_push.setDecimals(1)
+    sp_push.setRange(0.0, 2000.0)
+    sp_push.setSingleStep(10.0)
+    sp_push.setSuffix(" mm")
+    sp_push.setValue(float(val_push))
+    form.addRow("Distancia desde pared:", sp_push)
+
+    btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+    btns.accepted.connect(dlg.accept)
+    btns.rejected.connect(dlg.reject)
+    lay.addWidget(btns)
+
+    # Defaults
+    if default_sketch:
+        _combo_select_by_data(cmb_sketch, default_sketch.Name)
+    elif saved_sketch:
+        _combo_select_by_data(cmb_sketch, saved_sketch)
+
+    if saved_areas:
+        _combo_select_by_data(cmb_areas, saved_areas)
+    elif auto_area:
+        _combo_select_by_data(cmb_areas, auto_area.Name)
+
+    if saved_ilum:
+        _combo_select_by_data(cmb_ilum, saved_ilum)
+    elif auto_ilum:
+        _combo_select_by_data(cmb_ilum, auto_ilum.Name)
+    _combo_select_by_data(cmb_key, saved_key)
+    if cmb_key.currentIndex() < 0 and saved_key:
+        cmb_key.setEditText(saved_key)
+
+    if dlg.exec_() != QtWidgets.QDialog.Accepted:
+        return None
+
+    sketch_name = cmb_sketch.currentData()
+    areas_name = cmb_areas.currentData()
+    ilum_name = cmb_ilum.currentData()
+    key_registro = (cmb_key.currentData() or cmb_key.currentText() or _preferred_apagador_key()).strip()
+
+    out = {
+        "sketch": DOC.getObject(sketch_name) if sketch_name else None,
+        "areas_group": DOC.getObject(areas_name) if areas_name else None,
+        "ilum_group": DOC.getObject(ilum_name) if ilum_name else None,
+        "key_registro": key_registro,
+        "z_mm": float(sp_z.value()),
+        "push_mm": float(sp_push.value()),
+    }
+
+    if pg:
+        _param_set_str(pg, "sketch_name", sketch_name or "")
+        _param_set_str(pg, "areas_group_name", areas_name or "")
+        _param_set_str(pg, "ilum_group_name", ilum_name or "")
+        _param_set_str(pg, "key_registro", key_registro)
+        _param_set_str(pg, "altura_mm", "{:.3f}".format(out["z_mm"]))
+        _param_set_str(pg, "push_mm", "{:.3f}".format(out["push_mm"]))
+        _param_set_str(pg, "cfg_version", "2")
+
+    return out
+
+# -----------------------
+# Orientacion
+# -----------------------
+def yaw_aligned_to_area(area_info, inward_vec):
+    # Compat helper (kept for backward references): now maps to wall mode.
+    target = inward_vec if inward_vec.Length > 1e-9 else App.Vector(0, 1, 0)
+    base_axis = snap_ortho_deg(float(area_info.get("axis_deg", 0.0)))
+    tan = rotZ(base_axis).multVec(App.Vector(1, 0, 0))
+    return _yaw_x_along_tangent_y_to_inward(tan, target)
+
+def _clamp(v, lo, hi):
+    return max(lo, min(hi, v))
+
+def _to_float(v, default=0.0):
+    try:
+        if hasattr(v, "Value"):
+            return float(v.Value)
+        return float(v)
+    except Exception:
+        return float(default)
+
+def _unit_xy(v, fallback):
+    vv = App.Vector(v.x, v.y, 0.0)
+    if vv.Length <= 1e-9:
+        ff = App.Vector(fallback.x, fallback.y, 0.0)
+        if ff.Length <= 1e-9:
+            return App.Vector(1, 0, 0)
+        return scaled(ff, 1.0 / ff.Length)
+    return scaled(vv, 1.0 / vv.Length)
+
+def _yaw_x_along_tangent_y_to_inward(tan_world, inward_world):
+    t = _unit_xy(tan_world, App.Vector(1, 0, 0))
+    i = _unit_xy(inward_world, App.Vector(0, 1, 0))
+    yaw = math.degrees(math.atan2(t.y, t.x))
+    y_dir = rotZ(yaw).multVec(App.Vector(0, 1, 0))
+    if (y_dir.x * i.x + y_dir.y * i.y) < 0.0:
+        yaw += 180.0
+    return yaw + ROTATION_EXTRA_DEG
+
+def _wall_pose_from_area(P, area_info):
+    """Return (wall_point_world, tangent_world, inward_world, source)."""
+    obj = area_info.get("obj")
+
+    # Preferred: local frame from rectangle object (supports rotated rectangles).
+    try:
+        pl = getattr(obj, "Placement", None)
+        if pl:
+            L = _to_float(getattr(obj, "Length", 0.0), 0.0)
+            H = _to_float(getattr(obj, "Height", 0.0), 0.0)
+            if L > 1e-6 and H > 1e-6:
+                inv = pl.inverse()
+                p_loc = inv.multVec(P)
+                x = p_loc.x
+                y = p_loc.y
+                d = {
+                    "left": abs(x - 0.0),
+                    "right": abs(x - L),
+                    "bottom": abs(y - 0.0),
+                    "top": abs(y - H),
+                }
+                side = min(d, key=d.get)
+                if side == "left":
+                    wall_loc = App.Vector(0.0, _clamp(y, 0.0, H), 0.0)
+                    tan_loc = App.Vector(0, 1, 0)
+                    in_loc = App.Vector(1, 0, 0)
+                elif side == "right":
+                    wall_loc = App.Vector(L, _clamp(y, 0.0, H), 0.0)
+                    tan_loc = App.Vector(0, 1, 0)
+                    in_loc = App.Vector(-1, 0, 0)
+                elif side == "bottom":
+                    wall_loc = App.Vector(_clamp(x, 0.0, L), 0.0, 0.0)
+                    tan_loc = App.Vector(1, 0, 0)
+                    in_loc = App.Vector(0, 1, 0)
+                else:
+                    wall_loc = App.Vector(_clamp(x, 0.0, L), H, 0.0)
+                    tan_loc = App.Vector(1, 0, 0)
+                    in_loc = App.Vector(0, -1, 0)
+
+                rot = pl.Rotation
+                wall_world = pl.multVec(wall_loc)
+                tan_world = rot.multVec(tan_loc)
+                inward_world = rot.multVec(in_loc)
+                return wall_world, tan_world, inward_world, "rect_local_" + side
+    except Exception:
+        pass
+
+    # Fallback: axis-aligned boundbox.
+    bb = area_info.get("bb")
+    if bb:
+        d = {
+            "left": abs(P.x - bb.XMin),
+            "right": abs(P.x - bb.XMax),
+            "bottom": abs(P.y - bb.YMin),
+            "top": abs(P.y - bb.YMax),
+        }
+        side = min(d, key=d.get)
+        if side == "left":
+            wall_world = App.Vector(bb.XMin, _clamp(P.y, bb.YMin, bb.YMax), 0.0)
+            tan_world = App.Vector(0, 1, 0)
+            inward_world = App.Vector(1, 0, 0)
+        elif side == "right":
+            wall_world = App.Vector(bb.XMax, _clamp(P.y, bb.YMin, bb.YMax), 0.0)
+            tan_world = App.Vector(0, 1, 0)
+            inward_world = App.Vector(-1, 0, 0)
+        elif side == "bottom":
+            wall_world = App.Vector(_clamp(P.x, bb.XMin, bb.XMax), bb.YMin, 0.0)
+            tan_world = App.Vector(1, 0, 0)
+            inward_world = App.Vector(0, 1, 0)
+        else:
+            wall_world = App.Vector(_clamp(P.x, bb.XMin, bb.XMax), bb.YMax, 0.0)
+            tan_world = App.Vector(1, 0, 0)
+            inward_world = App.Vector(0, -1, 0)
+        return wall_world, tan_world, inward_world, "bb_" + side
+
+    # Last fallback.
+    c = area_info.get("center", App.Vector(P.x, P.y, 0.0))
+    inward = App.Vector(c.x - P.x, c.y - P.y, 0.0)
+    tan = App.Vector(-inward.y, inward.x, 0.0)
+    return App.Vector(P.x, P.y, 0.0), tan, inward, "center_fallback"
 
 # -----------------------
 # Main
 # -----------------------
 def main():
-    # Prototipo
-    proto = find_object_by_label(PROTO_LABEL)
-    if proto is None:
-        err("No existe el prototipo con Label '{}'.".format(PROTO_LABEL))
-        err("Seleccione un Sketch y seleccione tambien las areas o el grupo 'Grupo de areas'.")
+    if DOC is None:
+        err("No hay documento activo.")
         return
-    if proto.TypeId == "App::Link" and getattr(proto, "LinkedObject", None):
-        log("Prototipo es Link; se usa LinkedObject: {} ({})".format(proto.LinkedObject.Label, proto.LinkedObject.Name))
-        proto = proto.LinkedObject
-    log("Prototipo resuelto: {} ({})".format(proto.Label, proto.Name))
 
-    # Seleccion
-    sel = Gui.Selection.getSelection()
-    selected_sketch = next((o for o in sel if o.TypeId in ("Sketcher::SketchObject","Sketcher::SketchObjectPython")), None)
-
-    # Sketch objetivo
-    sketch = None
-    if selected_sketch:
-        sketch = selected_sketch
-        log("Sketch seleccionado: {} ({})".format(sketch.Label, sketch.Name))
+    modulo_toma = _load_toma_module()
+    usar_objeto_toma = bool(modulo_toma and hasattr(modulo_toma, "crear_toma_link"))
+    proto = None
+    if usar_objeto_toma:
+        log("Insercion de apagadores por crear_toma_link (mismo flujo que Insertar_Dispositivo).")
     else:
-        grp_sk = get_or_make_group(GRUPO_SKETCH_LABEL)
-        candidate = None
-        for o in getattr(grp_sk, "Group", []):
-            if o.TypeId in ("Sketcher::SketchObject","Sketcher::SketchObjectPython") and o.Label == SKETCH_TARGET_LABEL:
-                candidate = o; break
-        if not candidate:
-            any_sk = find_object_by_label(SKETCH_TARGET_LABEL)
-            if any_sk and any_sk.TypeId in ("Sketcher::SketchObject","Sketcher::SketchObjectPython"):
-                grp_sk.addObject(any_sk)
-                candidate = any_sk
-        sketch = candidate
+        warn("No se pudo cargar objeto_toma_uno; se usa fallback de prototipo STEP.")
+        proto = resolve_switch_prototype()
+        if proto is None:
+            err("No fue posible resolver el prototipo de apagador.")
+            err("Verifique '{}' o cree un objeto con Label '{}'.".format(PROTO_STEP_REL, PROTO_LABEL))
+            return
+        log("Prototipo fallback resuelto: {} ({})".format(proto.Label, proto.Name))
+
+    sel = Gui.Selection.getSelection() or []
+    opts = _ask_options_dialog(sel)
+    if opts is None:
+        warn("Operacion cancelada por el usuario.")
+        return
+
+    sketch = opts.get("sketch")
+    area_group = opts.get("areas_group") or find_areas_group_auto(sel)
+    ilum_group = opts.get("ilum_group") or find_iluminacion_group_auto()
+    key_registro = (opts.get("key_registro") or _preferred_apagador_key()).strip() or _preferred_apagador_key()
+    z_base = float(opts.get("z_mm", DEFAULT_Z_BASE_MM))
+    push_mm = float(opts.get("push_mm", DEFAULT_PUSH_MM))
 
     if sketch is None:
-        err("No se selecciono un Sketch y tampoco existe '{}' en el grupo '{}'.".format(SKETCH_TARGET_LABEL, GRUPO_SKETCH_LABEL))
-        err("Seleccione un Sketch con puntos y seleccione tambien las areas o el grupo de areas.")
+        err("No se selecciono un Sketch valido.")
+        err("Seleccione un Sketch con puntos desde el formulario.")
         return
+    log("Sketch seleccionado: {} ({})".format(sketch.Label, sketch.Name))
 
-    # Acomodar sketch: renombrar y mover a grupo 'apagadores'
+    if ilum_group is None:
+        err("No se encontro el grupo Iluminacion. Seleccionelo en el formulario.")
+        return
+    log("Grupo Iluminacion destino: {} ({})".format(getattr(ilum_group, "Label", ilum_group.Name), ilum_group.Name))
+
+    if area_group:
+        log("Grupo de areas: {} ({})".format(getattr(area_group, "Label", area_group.Name), area_group.Name))
+    else:
+        warn("No se definio grupo de areas; se intentara usar seleccion actual.")
+    log("KeyRegistro apagador: {}".format(key_registro))
+
+    # Sketch dentro de Iluminacion/apagadores (solo si el grupo ya existe)
     try:
         if sketch.Label != SKETCH_TARGET_LABEL:
             sketch.Label = SKETCH_TARGET_LABEL
             log("Sketch renombrado a '{}'".format(SKETCH_TARGET_LABEL))
-        grp_sk = get_or_make_group(GRUPO_SKETCH_LABEL)
-        if sketch not in getattr(grp_sk, "Group", []):
-            grp_sk.addObject(sketch)
-            log("Sketch movido al grupo '{}'".format(grp_sk.Label))
+        grp_sk = _find_child_group_by_label(ilum_group, GRUPO_SKETCH_LABEL)
+        if grp_sk is not None:
+            if sketch not in (getattr(grp_sk, "Group", []) or []):
+                grp_sk.addObject(sketch)
+                log("Sketch movido a '{}/{}'".format(getattr(ilum_group, "Label", ilum_group.Name), grp_sk.Label))
+        else:
+            warn("No existe subgrupo '{}' dentro de Iluminacion; no se movio el sketch.".format(GRUPO_SKETCH_LABEL))
     except Exception as ex:
         warn("No se pudo renombrar/mover sketch: {}".format(ex))
 
@@ -220,79 +1326,169 @@ def main():
         err("El Sketch no tiene puntos de geometria. Agregue puntos y reintente.")
         return
 
-    # Areas (grupo o seleccion)
-    areas = load_areas(GRUPO_AREAS_LABEL, sel)
+    # Areas
+    areas = load_areas(area_group, sel)
     if not areas:
-        err("No se encontraron areas. Cree/seleccione el grupo '{}' o seleccione los rectangulos de las areas.".format(GRUPO_AREAS_LABEL))
+        err("No se encontraron areas. Seleccione un grupo de areas valido o rectangulos en seleccion.")
         return
     log("Areas cargadas: {}".format(len(areas)))
 
-    # Grupo destino 'Apagadores'
-    grp_dest = get_or_make_group(GRUPO_DESTINO_LABEL)
+    # Destino por estructura:
+    # Iluminacion/Circuitos/<Circuito>/Recintos/<Recinto>/Apagadores
+    circuit_groups = _list_circuit_groups(ilum_group)
+    if not circuit_groups:
+        err("No se detectaron circuitos dentro de Iluminacion. No se crearon grupos nuevos.")
+        return
+    log("Circuitos disponibles para apagadores: {}".format(len(circuit_groups)))
 
-    # Insercion
-    import Draft
     count = 0
+    fallback_nearest = 0
+    skipped_existing = 0
+    fixed_dest_groups = set()
+    dest_paths_count = {}
+    warned_no_apagadores = set()
+
     for i, P in enumerate(points):
-        # area por BB
         area_hit = None
+        inside_any = False
         for ai in areas:
             if point_in_bb(P, ai["bb"], BB_TOL):
                 area_hit = ai
+                inside_any = True
                 break
         if area_hit is None:
-            warn("Punto {} no pertenece a ninguna area (por BB). Se omite.".format(i+1))
+            area_hit = _find_area_for_point(P, areas)
+            if area_hit is None:
+                warn("Punto {} no pudo asociarse a un area. Se omite.".format(i + 1))
+                continue
+            fallback_nearest += 1
+
+        base_label = str(area_hit["label"])
+        name = "Apagador-{}-{:03d}".format(base_label, i + 1)
+        if SKIP_IF_LABEL_EXISTS and find_object_by_label(name) is not None:
+            skipped_existing += 1
+            log("Existe '{}' y se omite para evitar duplicado.".format(name))
             continue
 
-        # nombre segun area
-        base_label = area_hit["label"]
-        name = "Apagador-{}-{:03d}".format(base_label, i+1)
+        circuit_group = _choose_circuit_for_area(circuit_groups, base_label)
+        if circuit_group is None:
+            warn("No se pudo resolver circuito para '{}'. Se omite punto {}.".format(base_label, i + 1))
+            continue
 
-        # vector hacia el centro del area (BB center)
+        recinto_group = _find_recinto_group_in_circuit(circuit_group, base_label)
+        if recinto_group is None:
+            warn(
+                "No existe recinto '{}' dentro de '{}'. Se omite punto {}.".format(
+                    base_label,
+                    _group_label_or_name(circuit_group),
+                    i + 1,
+                )
+            )
+            continue
+
+        grp_dest = _find_child_group_by_label(recinto_group, GRUPO_DESTINO_LABEL)
+        if grp_dest is None:
+            rec_key = "{}|{}".format(
+                getattr(circuit_group, "Name", "") or _group_label_or_name(circuit_group),
+                getattr(recinto_group, "Name", "") or _group_label_or_name(recinto_group),
+            )
+            if rec_key not in warned_no_apagadores:
+                warned_no_apagadores.add(rec_key)
+                warn(
+                    "No existe grupo '{}' dentro de '{}/{}'. Se usa el recinto como destino sin crear grupos.".format(
+                        GRUPO_DESTINO_LABEL,
+                        _group_label_or_name(circuit_group),
+                        _group_label_or_name(recinto_group),
+                    )
+                )
+            grp_dest = recinto_group
+
+        dest_gid = getattr(grp_dest, "Name", None) or id(grp_dest)
+        if dest_gid not in fixed_dest_groups:
+            fixed_dest_groups.add(dest_gid)
+            fixed_links = _habilitar_transform_en_links_apagador(grp_dest)
+            if fixed_links:
+                log(
+                    "Links de apagador actualizados para Transformar en '{}': {}".format(
+                        _group_label_or_name(grp_dest), int(fixed_links)
+                    )
+                )
+
+        # Vector hacia el centro del area.
         v_in = App.Vector(area_hit["center"].x - P.x, area_hit["center"].y - P.y, 0.0)
-        if v_in.Length == 0:
-            v_in = App.Vector(0,1,0)
+        if v_in.Length <= 1e-9:
+            v_in = App.Vector(0, 1, 0)
 
-        # yaw crudo para que Y+ apunte a v_in -> snap 90 deg
-        yaw_raw = yaw_for_y_along_vec(v_in)
-        yaw = snap_ortho_deg(yaw_raw)
-        Rz  = rotZ(yaw)
+        # Ubicar en pared mas cercana del rectangulo y alinear X del apagador con esa pared.
+        wall_pt, wall_tan, wall_in, wall_src = _wall_pose_from_area(P, area_hit)
+        yaw = _yaw_x_along_tangent_y_to_inward(wall_tan, wall_in)
+        Rz = rotZ(yaw)
 
         try:
-            inst = Draft.clone(proto)
-            inst.Label = name
+            # Distancia desde pared hacia adentro.
+            in_dir = _unit_xy(wall_in, v_in)
+            push = scaled(in_dir, push_mm)
 
-            # empuje 100 mm hacia adentro a lo largo de Y+ ya rotado
-            y_dir_world = Rz.multVec(App.Vector(0,1,0))
-            if y_dir_world.Length == 0:
-                push = App.Vector(0, PUSH_TO_CENTER_MM, 0)
-            else:
-                push = scaled(y_dir_world, PUSH_TO_CENTER_MM / y_dir_world.Length)
-
-            # offset adicional en coords locales del simbolo
             off_local = Rz.multVec(OFFSET_LOCAL)
-
-            base = App.Vector(P.x, P.y, Z_BASE)
+            base_z = 0.0 if usar_objeto_toma else z_base
+            base = App.Vector(wall_pt.x, wall_pt.y, base_z)
             final_base = base + push + off_local
 
             pl = App.Placement()
             pl.Base = final_base
             pl.Rotation = Rz
-            inst.Placement = pl
+            if usar_objeto_toma:
+                inst = _crear_apagador_dispositivo(
+                    DOC,
+                    modulo_toma,
+                    name,
+                    pl,
+                    z_base,
+                    key_registro,
+                    grp_dest,
+                )
+            else:
+                inst = _crear_apagador_link(DOC, proto, name, pl)
 
-            grp_dest.addObject(inst)
-            log("Creado {} en ({:.2f},{:.2f},{:.2f}) yaw={} push={}mm".format(
-                name, pl.Base.x, pl.Base.y, pl.Base.z, int(yaw), int(PUSH_TO_CENTER_MM)))
+            if inst not in (getattr(grp_dest, "Group", []) or []):
+                grp_dest.addObject(inst)
+
+            dest_path = "{}/{}/{}".format(
+                _group_label_or_name(circuit_group),
+                _group_label_or_name(recinto_group),
+                _group_label_or_name(grp_dest),
+            )
+            dest_paths_count[dest_path] = int(dest_paths_count.get(dest_path, 0)) + 1
+            log(
+                "Creado {} en ({:.2f},{:.2f},{:.2f}) yaw={} push={}mm{} -> {}".format(
+                    name,
+                    pl.Base.x,
+                    pl.Base.y,
+                    pl.Base.z,
+                    int(yaw),
+                    int(push_mm),
+                    " [{}]{}".format(wall_src, " [fallback_area]" if not inside_any else ""),
+                    dest_path,
+                )
+            )
             count += 1
         except Exception as ex:
-            warn("Fallo creando instancia en punto {}: {}".format(i+1, ex))
+            warn("Fallo creando instancia en punto {}: {}".format(i + 1, ex))
 
     try:
         DOC.recompute()
     except Exception as ex:
         warn("Recompute final con advertencia: {}".format(ex))
 
-    log("Listo. Insertados {} simbolos en '{}'.".format(count, GRUPO_DESTINO_LABEL))
+    log(
+        "Listo. Insertados {} simbolos | existentes_omitidos={} | destinos={} | altura={} mm | fallback_area={}.".format(
+            count,
+            int(skipped_existing),
+            len(dest_paths_count),
+            int(z_base),
+            int(fallback_nearest),
+        )
+    )
 
 # Ejecutar
 main()

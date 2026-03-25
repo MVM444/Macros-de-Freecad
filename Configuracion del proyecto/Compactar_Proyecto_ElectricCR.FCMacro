@@ -1,0 +1,868 @@
+# -*- coding: utf-8 -*-
+# MenuText: Compactar proyecto ElectricCR
+# Icon: Compactar_Proyecto_ElectricCR.svg
+
+"""
+Compactar_Proyecto_ElectricCR.FCMacro
+
+Objetivo:
+- Reducir peso del FCStd y mejorar recompute de proyectos ElectricCR.
+
+Acciones (seleccionables):
+1) Desactivar AutoUpdate en Shape2DView ocultas.
+2) Convertir Draft Clone (Part::FeaturePython) a App::Link.
+3) Deduplicar Part::FeaturePython legacy repetidos (Proxy None) por hash de Shape.
+
+Notas:
+- Recomendado ejecutar primero sobre una copia del archivo.
+- La deduplicacion usa App::Link y cambia Name de objetos reemplazados.
+"""
+
+import hashlib
+import os
+import sys
+import traceback
+
+import FreeCAD as App
+
+try:
+    import FreeCADGui as Gui
+except Exception:
+    Gui = None
+
+try:
+    from PySide2 import QtWidgets, QtCore
+except Exception:
+    try:
+        from PySide import QtGui as QtWidgets  # type: ignore
+        from PySide import QtCore  # type: ignore
+    except Exception:
+        QtWidgets = None
+        QtCore = None
+
+
+TAG = "[COMPACT]"
+
+
+def _info(msg):
+    App.Console.PrintMessage(f"{TAG}[INFO] {msg}\n")
+
+
+def _warn(msg):
+    App.Console.PrintWarning(f"{TAG}[WARN] {msg}\n")
+
+
+def _err(msg):
+    App.Console.PrintError(f"{TAG}[ERROR] {msg}\n")
+
+
+def _safe_text(value):
+    try:
+        return str(value or "")
+    except Exception:
+        return ""
+
+
+def _is_shape_valid(obj):
+    try:
+        return hasattr(obj, "Shape") and obj.Shape and (not obj.Shape.isNull())
+    except Exception:
+        return False
+
+
+def _is_draft_clone(obj):
+    try:
+        if obj.TypeId != "Part::FeaturePython":
+            return False
+        p = getattr(obj, "Proxy", None)
+        if p is None:
+            return False
+        return type(p).__name__ == "Clone"
+    except Exception:
+        return False
+
+
+def _is_legacy_featurepython(obj):
+    try:
+        return obj.TypeId == "Part::FeaturePython" and getattr(obj, "Proxy", None) is None
+    except Exception:
+        return False
+
+
+def _looks_toma_sensor(label):
+    text = _safe_text(label).lower()
+    return ("toma" in text) or ("sensor" in text) or ("circuito" in text)
+
+
+def _vector_copy(v):
+    try:
+        return App.Vector(float(v.x), float(v.y), float(v.z))
+    except Exception:
+        return App.Vector(1.0, 1.0, 1.0)
+
+
+def _copy_view_props(src_obj, dst_obj):
+    try:
+        sv = getattr(src_obj, "ViewObject", None)
+        dv = getattr(dst_obj, "ViewObject", None)
+        if sv is None or dv is None:
+            return
+        props = [
+            "ShapeColor", "LineColor", "PointColor", "DiffuseColor",
+            "Transparency", "DisplayMode", "Visibility", "LineWidth", "PointSize"
+        ]
+        for p in props:
+            if hasattr(sv, p) and hasattr(dv, p):
+                try:
+                    setattr(dv, p, getattr(sv, p))
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
+def _replace_obj_in_data(data, old_obj, new_obj):
+    if data is old_obj:
+        return new_obj, True
+    if isinstance(data, tuple):
+        changed = False
+        out = []
+        for item in data:
+            n, c = _replace_obj_in_data(item, old_obj, new_obj)
+            out.append(n)
+            changed = changed or c
+        return tuple(out), changed
+    if isinstance(data, list):
+        changed = False
+        out = []
+        for item in data:
+            n, c = _replace_obj_in_data(item, old_obj, new_obj)
+            out.append(n)
+            changed = changed or c
+        return out, changed
+    return data, False
+
+
+def _replace_references(doc, old_obj, new_obj):
+    changed_props = 0
+    for obj in list(doc.Objects):
+        if obj is old_obj or obj is new_obj:
+            continue
+        for prop in list(getattr(obj, "PropertiesList", []) or []):
+            try:
+                ptype = obj.getTypeIdOfProperty(prop)
+            except Exception:
+                continue
+            if "Link" not in _safe_text(ptype):
+                continue
+            try:
+                cur = getattr(obj, prop)
+            except Exception:
+                continue
+            try:
+                nxt, changed = _replace_obj_in_data(cur, old_obj, new_obj)
+                if changed:
+                    if isinstance(nxt, (list, tuple)) and len(nxt) > 1:
+                        deduped, _removed = _dedupe_link_sequence(nxt)
+                        if isinstance(nxt, tuple):
+                            nxt = tuple(deduped)
+                        else:
+                            nxt = deduped
+                    setattr(obj, prop, nxt)
+                    changed_props += 1
+            except Exception:
+                continue
+    return changed_props
+
+
+def _dedupe_link_sequence(seq):
+    out = []
+    seen = set()
+    removed = 0
+    for item in list(seq or []):
+        key = None
+        try:
+            if hasattr(item, "Name"):
+                key = ("obj", item.Name)
+            elif isinstance(item, tuple) and len(item) >= 1 and hasattr(item[0], "Name"):
+                sub = item[1] if len(item) > 1 else ()
+                if isinstance(sub, (list, tuple)):
+                    sub = tuple(sub)
+                key = ("linksub", item[0].Name, sub)
+            else:
+                key = ("raw", repr(item))
+        except Exception:
+            key = ("raw", repr(item))
+        if key in seen:
+            removed += 1
+            continue
+        seen.add(key)
+        out.append(item)
+    return out, removed
+
+
+def _coerce_seq_like(src_seq, items):
+    if isinstance(src_seq, tuple):
+        return tuple(items)
+    return list(items)
+
+
+def _is_linklist_property_type(ptype):
+    t = _safe_text(ptype).strip().lower()
+    if not t:
+        return False
+    if "linksublist" in t:
+        return True
+    if "linklist" in t:
+        return True
+    # Some FC versions expose xlink variants.
+    if "xlink" in t and "list" in t:
+        return True
+    return False
+
+
+def _cleanup_duplicate_links(doc, stats):
+    props_changed = 0
+    links_removed = 0
+    touched = set()
+    for obj in list(doc.Objects):
+        for prop in list(getattr(obj, "PropertiesList", []) or []):
+            try:
+                ptype = _safe_text(obj.getTypeIdOfProperty(prop))
+            except Exception:
+                continue
+            if not _is_linklist_property_type(ptype):
+                continue
+            try:
+                cur = getattr(obj, prop)
+            except Exception:
+                continue
+            if not isinstance(cur, (list, tuple)) or len(cur) < 2:
+                continue
+            try:
+                nxt, removed = _dedupe_link_sequence(cur)
+                if removed > 0:
+                    setattr(obj, prop, _coerce_seq_like(cur, nxt))
+                    props_changed += 1
+                    links_removed += removed
+                    touched.add((obj.Name, prop))
+            except Exception:
+                continue
+    # Explicit pass for common container properties in case property type
+    # does not expose LinkList naming in some versions.
+    common_props = ("Group", "Objects", "Links", "Elements")
+    for obj in list(doc.Objects):
+        for prop in common_props:
+            key = (getattr(obj, "Name", ""), prop)
+            if key in touched:
+                continue
+            if prop not in (getattr(obj, "PropertiesList", []) or []):
+                continue
+            try:
+                cur = getattr(obj, prop)
+            except Exception:
+                continue
+            if not isinstance(cur, (list, tuple)) or len(cur) < 2:
+                continue
+            try:
+                nxt, removed = _dedupe_link_sequence(cur)
+                if removed > 0:
+                    setattr(obj, prop, _coerce_seq_like(cur, nxt))
+                    props_changed += 1
+                    links_removed += removed
+            except Exception:
+                continue
+    stats["cleanup_props_changed"] = props_changed
+    stats["cleanup_links_removed"] = links_removed
+
+
+def _is_draft_text_like(obj):
+    try:
+        if obj is None:
+            return False
+        t = _safe_text(getattr(obj, "TypeId", "")).lower()
+        if ("text" in t) or ("annotation" in t):
+            return True
+        p = getattr(obj, "Proxy", None)
+        ptype = _safe_text(getattr(p, "Type", "")) or _safe_text(type(p).__name__)
+        ptype = ptype.lower()
+        if ptype in ("text", "label", "lineardimension", "angulardimension", "dimensionbase"):
+            return True
+        props = set(getattr(obj, "PropertiesList", []) or [])
+        if "Text" in props or "TextColor" in props:
+            return True
+    except Exception:
+        return False
+    return False
+
+
+def _repair_draft_text_viewproxies(doc, stats):
+    candidates = 0
+    repaired = 0
+    failed = 0
+    recreated = 0
+    recreated_ref_changes = 0
+
+    def _ensure_draft_search_path():
+        paths = []
+        try:
+            import Draft
+            p = os.path.dirname(getattr(Draft, "__file__", "") or "")
+            if p:
+                paths.append(p)
+        except Exception:
+            pass
+        try:
+            res = getattr(App, "getResourceDir", None)
+            if callable(res):
+                base = res()
+                if base:
+                    paths.append(os.path.join(base, "Mod", "Draft"))
+        except Exception:
+            pass
+        # Common Windows fallback for local install.
+        paths.append(r"C:\Users\marco\AppData\Local\Programs\FreeCAD 1.0\Mod\Draft")
+
+        added = 0
+        for p in paths:
+            try:
+                if p and os.path.isdir(p) and p not in sys.path:
+                    sys.path.insert(0, p)
+                    added += 1
+            except Exception:
+                continue
+        return added
+
+    def _is_valid_annotation_proxy(vobj):
+        p = getattr(vobj, "Proxy", None)
+        return (p is not None) and hasattr(p, "set_annotation_properties")
+
+    def _try_viewprovider_ctor(vobj, cls):
+        if cls is None:
+            return False
+        try:
+            cls(vobj)
+            return _is_valid_annotation_proxy(vobj)
+        except Exception:
+            return False
+
+    _ensure_draft_search_path()
+
+    classes = {
+        "text": None,
+        "label": None,
+        "dim_linear": None,
+        "dim_angular": None,
+        "dim_base": None,
+        "annotation": None,
+    }
+    try:
+        import draftviewproviders.view_text as _vpt
+        classes["text"] = getattr(_vpt, "ViewProviderText", None) or getattr(_vpt, "ViewProviderDraftText", None)
+    except Exception:
+        pass
+    try:
+        import draftviewproviders.view_label as _vpl
+        classes["label"] = getattr(_vpl, "ViewProviderLabel", None)
+    except Exception:
+        pass
+    try:
+        import draftviewproviders.view_dimension as _vpd
+        classes["dim_linear"] = getattr(_vpd, "ViewProviderLinearDimension", None)
+        classes["dim_angular"] = getattr(_vpd, "ViewProviderAngularDimension", None)
+        classes["dim_base"] = getattr(_vpd, "ViewProviderDimensionBase", None)
+    except Exception:
+        pass
+    try:
+        import draftviewproviders.view_draft_annotation as _vpa
+        classes["annotation"] = getattr(_vpa, "ViewProviderDraftAnnotation", None)
+    except Exception:
+        pass
+
+    for obj in list(doc.Objects):
+        if not _is_draft_text_like(obj):
+            continue
+        vobj = getattr(obj, "ViewObject", None)
+        if vobj is None:
+            continue
+        if getattr(vobj, "Proxy", None) is not None:
+            continue
+        candidates += 1
+        ok = False
+
+        props = set(getattr(obj, "PropertiesList", []) or [])
+        proxy = getattr(obj, "Proxy", None)
+        proxy_type = _safe_text(getattr(proxy, "Type", "")) or type(proxy).__name__
+        proxy_type_l = _safe_text(proxy_type).lower()
+
+        tries = []
+        if ("label" in proxy_type_l) or ("Target" in props) or ("CustomText" in props):
+            tries.extend([classes.get("label"), classes.get("annotation")])
+        elif ("dimension" in proxy_type_l) or ("LinkedGeometry" in props):
+            if "angular" in proxy_type_l:
+                tries.extend([classes.get("dim_angular"), classes.get("dim_base"), classes.get("annotation")])
+            else:
+                tries.extend([classes.get("dim_linear"), classes.get("dim_base"), classes.get("annotation")])
+        else:
+            tries.extend([classes.get("text"), classes.get("annotation")])
+
+        # Add broad fallbacks and keep order stable without duplicates.
+        tries.extend([
+            classes.get("text"),
+            classes.get("label"),
+            classes.get("dim_linear"),
+            classes.get("dim_angular"),
+            classes.get("dim_base"),
+            classes.get("annotation"),
+        ])
+        uniq_tries = []
+        seen = set()
+        for cls in tries:
+            if cls is None:
+                continue
+            key = f"{getattr(cls, '__module__', '')}.{getattr(cls, '__name__', '')}"
+            if key in seen:
+                continue
+            seen.add(key)
+            uniq_tries.append(cls)
+
+        for cls in uniq_tries:
+            if _try_viewprovider_ctor(vobj, cls):
+                ok = True
+                break
+
+        # Legacy Draft fallback names.
+        if not ok:
+            try:
+                import Draft
+                for fn in (
+                    "_ViewProviderText",
+                    "_ViewProviderDraftText",
+                    "_ViewProviderLabel",
+                    "_ViewProviderDimension",
+                    "_ViewProviderAnnotation",
+                ):
+                    ctor = getattr(Draft, fn, None)
+                    if callable(ctor) and _try_viewprovider_ctor(vobj, ctor):
+                        ok = True
+                        break
+            except Exception:
+                pass
+
+        if not ok:
+            failed += 1
+            if failed <= 8:
+                _warn(
+                    "No se pudo reparar ViewProxy en '{}' (TypeId={}, ProxyType={})".format(
+                        _safe_text(getattr(obj, "Name", "")),
+                        _safe_text(getattr(obj, "TypeId", "")),
+                        proxy_type,
+                    )
+                )
+            # Hard fallback for broken Draft Text objects:
+            # recreate with Draft.make_text and replace references.
+            try:
+                can_recreate_text = ("Text" in props) and ("Target" not in props) and ("LinkedGeometry" not in props)
+                if can_recreate_text:
+                    import Draft
+                    text_data = getattr(obj, "Text", [])
+                    if isinstance(text_data, str):
+                        text_lines = [text_data]
+                    elif isinstance(text_data, (list, tuple)):
+                        text_lines = [str(x) for x in text_data]
+                    else:
+                        text_lines = [_safe_text(text_data)]
+                    old_label = _safe_text(getattr(obj, "Label", ""))
+                    old_dm = _safe_text(getattr(vobj, "DisplayMode", "")).lower()
+                    old_fs = getattr(vobj, "FontSize", None)
+                    old_ls = getattr(vobj, "LineSpacing", None)
+                    old_pl = getattr(obj, "Placement", App.Placement())
+                    new_obj = None
+                    try:
+                        new_obj = Draft.make_text(
+                            text_lines,
+                            placement=old_pl,
+                            screen=("screen" in old_dm),
+                            height=float(getattr(old_fs, "Value", old_fs or 0.0) or 0.0),
+                            line_spacing=float(old_ls or 1.0),
+                        )
+                    except Exception:
+                        new_obj = Draft.make_text(text_lines, old_pl)
+                    if new_obj is not None:
+                        try:
+                            if old_label:
+                                new_obj.Label = old_label
+                        except Exception:
+                            pass
+                        _copy_view_props(obj, new_obj)
+                        recreated_ref_changes += _replace_references(doc, obj, new_obj)
+                        doc.removeObject(obj.Name)
+                        recreated += 1
+                        failed -= 1
+                        ok = True
+            except Exception:
+                pass
+        if ok:
+            repaired += 1
+
+    stats["draft_vp_candidates"] = candidates
+    stats["draft_vp_repaired"] = repaired
+    stats["draft_vp_failed"] = failed
+    stats["draft_vp_recreated"] = recreated
+    stats["draft_vp_recreated_ref_changes"] = recreated_ref_changes
+
+
+def _create_link_from_object(doc, source_obj, template_obj, name_prefix="Link"):
+    base_name = f"{name_prefix}_{template_obj.Name}"
+    link = doc.addObject("App::Link", base_name)
+    link.LinkedObject = source_obj
+    # Para parecerse al Draft Clone en este proyecto.
+    try:
+        link.LinkTransform = False
+    except Exception:
+        pass
+    try:
+        link.Placement = template_obj.Placement
+    except Exception:
+        pass
+    try:
+        if hasattr(template_obj, "Scale"):
+            link.ScaleVector = _vector_copy(template_obj.Scale)
+    except Exception:
+        pass
+    try:
+        link.Label = template_obj.Label
+    except Exception:
+        pass
+    _copy_view_props(template_obj, link)
+    return link
+
+
+def _shape_hash(obj):
+    try:
+        brep = obj.Shape.exportBrepToString()
+        if isinstance(brep, bytes):
+            data = brep
+        else:
+            data = _safe_text(brep).encode("utf-8", errors="ignore")
+        return hashlib.sha1(data).hexdigest()
+    except Exception:
+        return None
+
+
+def _compact_shape2dviews(doc, stats):
+    n = 0
+    for obj in list(doc.Objects):
+        try:
+            if obj.TypeId != "Part::Part2DObjectPython":
+                continue
+            if not _safe_text(obj.Name).startswith("Shape2DView"):
+                continue
+            if bool(getattr(obj, "Visibility", True)):
+                continue
+            if bool(getattr(obj, "AutoUpdate", False)):
+                obj.AutoUpdate = False
+                n += 1
+        except Exception:
+            continue
+    stats["shape2d_autoupdate_off"] = n
+
+
+def _convert_clones(doc, stats):
+    clones = [o for o in list(doc.Objects) if _is_draft_clone(o)]
+    converted = 0
+    ref_changes = 0
+    skipped = 0
+
+    for old in clones:
+        try:
+            src = None
+            objs = list(getattr(old, "Objects", []) or [])
+            if objs:
+                src = objs[0]
+            if src is None:
+                skipped += 1
+                continue
+
+            new_link = _create_link_from_object(doc, src, old, name_prefix="Link")
+            ref_changes += _replace_references(doc, old, new_link)
+            doc.removeObject(old.Name)
+            converted += 1
+        except Exception as ex:
+            _warn(f"No se pudo convertir clone '{old.Name}': {ex}")
+            skipped += 1
+
+    stats["clones_found"] = len(clones)
+    stats["clones_converted"] = converted
+    stats["clones_skipped"] = skipped
+    stats["clone_ref_changes"] = ref_changes
+
+
+def _dedupe_legacy_features(doc, stats):
+    cands = []
+    for obj in list(doc.Objects):
+        if not _is_legacy_featurepython(obj):
+            continue
+        if not _is_shape_valid(obj):
+            continue
+        if not _looks_toma_sensor(obj.Label):
+            continue
+        cands.append(obj)
+
+    by_hash = {}
+    for obj in cands:
+        h = _shape_hash(obj)
+        if not h:
+            continue
+        by_hash.setdefault(h, []).append(obj)
+
+    groups = [g for g in by_hash.values() if len(g) > 1]
+    replaced = 0
+    ref_changes = 0
+
+    for group in groups:
+        # Mantener el primero como maestro.
+        master = group[0]
+        for old in group[1:]:
+            try:
+                new_link = _create_link_from_object(doc, master, old, name_prefix="LinkDup")
+                ref_changes += _replace_references(doc, old, new_link)
+                doc.removeObject(old.Name)
+                replaced += 1
+            except Exception as ex:
+                _warn(f"No se pudo deduplicar '{old.Name}': {ex}")
+
+    stats["legacy_candidates"] = len(cands)
+    stats["legacy_groups"] = len(groups)
+    stats["legacy_replaced"] = replaced
+    stats["legacy_ref_changes"] = ref_changes
+
+
+def _dedupe_partfeature_tomas(doc, stats):
+    cands = []
+    for obj in list(doc.Objects):
+        try:
+            if obj.TypeId != "Part::Feature":
+                continue
+        except Exception:
+            continue
+        if not _is_shape_valid(obj):
+            continue
+        if not _looks_toma_sensor(obj.Label):
+            continue
+        cands.append(obj)
+
+    by_hash = {}
+    for obj in cands:
+        h = _shape_hash(obj)
+        if not h:
+            continue
+        by_hash.setdefault(h, []).append(obj)
+
+    groups = [g for g in by_hash.values() if len(g) > 1]
+    replaced = 0
+    ref_changes = 0
+
+    for group in groups:
+        master = group[0]
+        for old in group[1:]:
+            try:
+                new_link = _create_link_from_object(doc, master, old, name_prefix="LinkPF")
+                ref_changes += _replace_references(doc, old, new_link)
+                doc.removeObject(old.Name)
+                replaced += 1
+            except Exception as ex:
+                _warn(f"No se pudo deduplicar Part::Feature '{old.Name}': {ex}")
+
+    stats["partfeature_toma_candidates"] = len(cands)
+    stats["partfeature_toma_groups"] = len(groups)
+    stats["partfeature_toma_replaced"] = replaced
+    stats["partfeature_toma_ref_changes"] = ref_changes
+
+
+def _make_report(doc, stats):
+    lines = [
+        "Compactacion completada",
+        f"Documento: {_safe_text(getattr(doc, 'Label', doc.Name))}",
+        f"Shape2DView ocultas con AutoUpdate OFF: {stats.get('shape2d_autoupdate_off', 0)}",
+        f"Clones encontrados: {stats.get('clones_found', 0)}",
+        f"Clones convertidos a Link: {stats.get('clones_converted', 0)}",
+        f"Clones omitidos: {stats.get('clones_skipped', 0)}",
+        f"Cambios de referencia por clones: {stats.get('clone_ref_changes', 0)}",
+        f"Legacy candidatos (Toma/Sensor/Circuito): {stats.get('legacy_candidates', 0)}",
+        f"Grupos de duplicados legacy: {stats.get('legacy_groups', 0)}",
+        f"Objetos legacy reemplazados por Link: {stats.get('legacy_replaced', 0)}",
+        f"Cambios de referencia por dedupe: {stats.get('legacy_ref_changes', 0)}",
+        f"Part::Feature candidatos (Toma/Sensor/Circuito): {stats.get('partfeature_toma_candidates', 0)}",
+        f"Grupos duplicados Part::Feature: {stats.get('partfeature_toma_groups', 0)}",
+        f"Part::Feature reemplazados por Link: {stats.get('partfeature_toma_replaced', 0)}",
+        f"Cambios de referencia Part::Feature: {stats.get('partfeature_toma_ref_changes', 0)}",
+        f"Propiedades limpiadas por duplicados: {stats.get('cleanup_props_changed', 0)}",
+        f"Links duplicados eliminados: {stats.get('cleanup_links_removed', 0)}",
+        f"Draft textos con ViewProxy faltante (candidatos): {stats.get('draft_vp_candidates', 0)}",
+        f"Draft textos reparados: {stats.get('draft_vp_repaired', 0)}",
+        f"Draft textos sin reparar: {stats.get('draft_vp_failed', 0)}",
+        f"Draft textos recreados: {stats.get('draft_vp_recreated', 0)}",
+        f"Cambios de referencia por recrear Draft texto: {stats.get('draft_vp_recreated_ref_changes', 0)}",
+    ]
+    return "\n".join(lines)
+
+
+def _default_options():
+    return {
+        "shape2d_disable_autoupdate_hidden": True,
+        "convert_clones_to_links": True,
+        "dedupe_legacy_featurepython": True,
+        "dedupe_partfeature_toma": True,
+        "cleanup_duplicate_links": True,
+        "repair_draft_text_viewproxies": True,
+    }
+
+
+def _ask_options_gui():
+    if QtWidgets is None:
+        return _default_options()
+
+    dlg = QtWidgets.QDialog()
+    dlg.setWindowTitle("Compactar proyecto ElectricCR")
+    dlg.resize(560, 280)
+
+    lay = QtWidgets.QVBoxLayout(dlg)
+    txt = QtWidgets.QLabel(
+        "Seleccione acciones. Recomendado: ejecutar primero sobre una copia del FCStd."
+    )
+    txt.setWordWrap(True)
+    lay.addWidget(txt)
+
+    c1 = QtWidgets.QCheckBox("Desactivar AutoUpdate en Shape2DView ocultas (seguro)")
+    c1.setChecked(True)
+    lay.addWidget(c1)
+
+    c2 = QtWidgets.QCheckBox("Convertir Draft Clone a App::Link (reduccion alta)")
+    c2.setChecked(True)
+    lay.addWidget(c2)
+
+    c3 = QtWidgets.QCheckBox("Deduplicar tomas/sensores legacy repetidos por hash (agresivo)")
+    c3.setChecked(True)
+    lay.addWidget(c3)
+
+    c4 = QtWidgets.QCheckBox("Deduplicar tomas/sensores que sean Part::Feature (por hash)")
+    c4.setChecked(True)
+    lay.addWidget(c4)
+
+    c5 = QtWidgets.QCheckBox("Limpiar entradas duplicadas en grupos/linklists (recomendado)")
+    c5.setChecked(True)
+    lay.addWidget(c5)
+
+    c6 = QtWidgets.QCheckBox("Reparar ViewProxy faltante en textos Draft (recomendado)")
+    c6.setChecked(True)
+    lay.addWidget(c6)
+
+    lay.addSpacing(8)
+    warn = QtWidgets.QLabel(
+        "Nota: la deduplicacion/agresivo puede cambiar Name interno de objetos reemplazados."
+    )
+    warn.setWordWrap(True)
+    warn.setStyleSheet("color:#9a5f00;")
+    lay.addWidget(warn)
+
+    btns = QtWidgets.QDialogButtonBox(
+        QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+    )
+    btns.accepted.connect(dlg.accept)
+    btns.rejected.connect(dlg.reject)
+    lay.addWidget(btns)
+
+    if dlg.exec_() != QtWidgets.QDialog.Accepted:
+        return None
+
+    return {
+        "shape2d_disable_autoupdate_hidden": bool(c1.isChecked()),
+        "convert_clones_to_links": bool(c2.isChecked()),
+        "dedupe_legacy_featurepython": bool(c3.isChecked()),
+        "dedupe_partfeature_toma": bool(c4.isChecked()),
+        "cleanup_duplicate_links": bool(c5.isChecked()),
+        "repair_draft_text_viewproxies": bool(c6.isChecked()),
+    }
+
+
+def compact_document(doc=None, options=None):
+    doc = doc or App.ActiveDocument
+    if doc is None:
+        raise RuntimeError("No hay documento activo.")
+
+    opts = dict(_default_options())
+    if isinstance(options, dict):
+        opts.update(options)
+
+    stats = {}
+    tx_open = False
+    try:
+        try:
+            doc.openTransaction("ElectricCR: Compactar proyecto")
+            tx_open = True
+        except Exception:
+            tx_open = False
+
+        if opts.get("shape2d_disable_autoupdate_hidden", True):
+            _compact_shape2dviews(doc, stats)
+        if opts.get("convert_clones_to_links", True):
+            _convert_clones(doc, stats)
+        if opts.get("dedupe_legacy_featurepython", True):
+            _dedupe_legacy_features(doc, stats)
+        if opts.get("dedupe_partfeature_toma", True):
+            _dedupe_partfeature_tomas(doc, stats)
+        if opts.get("cleanup_duplicate_links", True):
+            _cleanup_duplicate_links(doc, stats)
+        if opts.get("repair_draft_text_viewproxies", True):
+            _repair_draft_text_viewproxies(doc, stats)
+
+        doc.recompute()
+        if tx_open:
+            try:
+                doc.commitTransaction()
+            except Exception:
+                pass
+    except Exception:
+        if tx_open:
+            try:
+                doc.abortTransaction()
+            except Exception:
+                pass
+        raise
+
+    return stats
+
+
+def main():
+    doc = App.ActiveDocument
+    if doc is None:
+        _err("No hay documento activo.")
+        return
+
+    opts = _ask_options_gui() if (Gui is not None and QtWidgets is not None) else _default_options()
+    if opts is None:
+        _info("Operacion cancelada por usuario.")
+        return
+
+    try:
+        stats = compact_document(doc, options=opts)
+        report = _make_report(doc, stats)
+        _info(report.replace("\n", " | "))
+        if QtWidgets is not None:
+            try:
+                QtWidgets.QMessageBox.information(None, "Compactar proyecto", report)
+            except Exception:
+                pass
+    except Exception as ex:
+        _err(f"Fallo compactacion: {ex}")
+        _err(traceback.format_exc())
+        if QtWidgets is not None:
+            try:
+                QtWidgets.QMessageBox.critical(None, "Compactar proyecto", f"Error: {ex}")
+            except Exception:
+                pass
+
+
+if __name__ == "__main__":
+    main()

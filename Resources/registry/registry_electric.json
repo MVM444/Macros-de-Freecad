@@ -1,0 +1,109 @@
+{
+  "schema": "1.0.0",
+  "types": {
+    "Tomacorriente_120V": {
+      "ifc": "IfcOutlet",
+      "categoria": "Pared",
+      "symbol2D": "toma_normal.step",
+      "model3D": "toma_normal.step",
+      "defaults": {
+        "altura": 300,
+        "modo": "Both",
+        "orient2D_sigue_pared": true
+      },
+      "version": "1.0",
+      "comentario": "Toma estándar 120 V"
+    },
+    "Tomacorriente_GFCI": {
+      "ifc": "IfcOutlet",
+      "categoria": "Pared",
+      "symbol2D": "toma_gfci.step",
+      "model3D": "toma_gfci.step",
+      "defaults": {
+        "altura": 1200,
+        "modo": "Both",
+        "orient2D_sigue_pared": true
+      },
+      "version": "1.0",
+      "comentario": "Toma con protección GFCI para baños y áreas húmedas"
+    },
+    "Tomacorriente_240V": {
+      "ifc": "IfcOutlet",
+      "categoria": "Pared",
+      "symbol2D": "toma_240v.step",
+      "model3D": "toma_240v.step",
+      "defaults": {
+        "altura": 400,
+        "modo": "Both",
+        "orient2D_sigue_pared": true
+      },
+      "version": "1.0",
+      "comentario": "Toma de 240 V para equipos de potencia"
+    },
+    "Telecom_TV": {
+      "ifc": "IfcCommunicationsOutlet",
+      "categoria": "Pared",
+      "symbol2D": "toma_tv.step",
+      "model3D": "toma_tv.step",
+      "defaults": {
+        "altura": 450,
+        "modo": "Both",
+        "orient2D_sigue_pared": true
+      },
+      "version": "1.0",
+      "comentario": "Salida de telecomunicaciones (coaxial/RJ45)"
+    },
+    "Apagador_Simple": {
+      "ifc": "IfcSwitchingDevice",
+      "categoria": "Pared",
+      "symbol2D": "switch_simple.step",
+      "model3D": "switch_simple.step",
+      "defaults": {
+        "altura": 1200,
+        "modo": "Both",
+        "orient2D_sigue_pared": true
+      },
+      "version": "1.0",
+      "comentario": "Interruptor unipolar estándar"
+    },
+    "Luminaria 60x60": {
+      "ifc": "",
+      "categoria": "Cielo",
+      "symbol2D": "Luminaria 60x60.step",
+      "model3D": "Luminaria 60x60.step",
+      "defaults": {
+        "altura": 3000.0,
+        "modo": "Both",
+        "orient2D_sigue_pared": false
+      },
+      "version": "1.0",
+      "comentario": ""
+    },
+    "Sensor_Humo": {
+      "ifc": "",
+      "categoria": "Cielo",
+      "symbol2D": "Sensor de Humo.step",
+      "model3D": "Sensor de Humo.step",
+      "defaults": {
+        "altura": 2400.0,
+        "modo": "Both",
+        "orient2D_sigue_pared": false
+      },
+      "version": "1.0",
+      "comentario": "Sensor de humo (modelo 3D)"
+    },
+    "Etiqueta_Circuito": {
+      "ifc": "",
+      "categoria": "Piso",
+      "symbol2D": "etiqueta_circuito.step",
+      "model3D": "",
+      "defaults": {
+        "altura": 0,
+        "modo": "Solo2D",
+        "orient2D_sigue_pared": false
+      },
+      "version": "1.0",
+      "comentario": "Etiqueta de circuito (solo 2D)"
+    }
+  }
+}

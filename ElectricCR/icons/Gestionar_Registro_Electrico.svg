@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 64 64">
+  <!-- Paleta pensada para contrastar en claro/oscuro -->
+  <!-- Trazos oscuros: #1f2937 (gris pizarra) / Rellenos: verde #10b981, ámbar #f59e0b, blanco -->
+  <defs>
+    <!-- Delgada “aureola” clara para bordes sobre fondos oscuros -->
+    <filter id="halo" x="-10%" y="-10%" width="120%" height="120%">
+      <feMorphology in="SourceAlpha" operator="dilate" radius="0.7" result="dilated"/>
+      <feColorMatrix in="dilated" type="matrix" values="
+        0 0 0 0 1
+        0 0 0 0 1
+        0 0 0 0 1
+        0 0 0 .9 0"/>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Documento / registro -->
+  <g filter="url(#halo)">
+    <path d="M16 8h24l8 8v32a6 6 0 0 1-6 6H16a6 6 0 0 1-6-6V14a6 6 0 0 1 6-6z"
+          fill="#ffffff" stroke="#1f2937" stroke-width="2" />
+    <path d="M40 8v8a4 4 0 0 0 4 4h8" fill="#e5e7eb" stroke="#1f2937" stroke-width="2"/>
+    <!-- Líneas del “registro” -->
+    <path d="M18 24h22 M18 30h22 M18 36h18"
+          stroke="#1f2937" stroke-width="2" stroke-linecap="round"/>
+  </g>
+
+  <!-- Enchufe (eléctrico) -->
+  <g filter="url(#halo)" transform="translate(6,6)">
+    <path d="M16 28h10a6 6 0 0 1 6 6v6a6 6 0 0 1-6 6H16a6 6 0 0 1-6-6v-6a6 6 0 0 1 6-6z"
+          fill="#10b981" stroke="#1f2937" stroke-width="2"/>
+    <path d="M20 26v4M28 26v4" stroke="#1f2937" stroke-width="2" stroke-linecap="round"/>
+    <path d="M19 40h14" stroke="#065f46" stroke-width="2" stroke-linecap="round" opacity=".6"/>
+  </g>
+
+  <!-- Engranaje (gestión) -->
+  <g filter="url(#halo)" transform="translate(30,32)">
+    <circle cx="18" cy="18" r="6" fill="#f59e0b" stroke="#1f2937" stroke-width="2"/>
+    <g fill="none" stroke="#1f2937" stroke-width="2" stroke-linecap="round">
+      <path d="M18 8v4"/><path d="M18 24v4"/>
+      <path d="M8 18h4"/><path d="M24 18h4"/>
+      <path d="M11.4 11.4l2.8 2.8"/><path d="M21.8 21.8l2.8 2.8"/>
+      <path d="M24.6 11.4l-2.8 2.8"/><path d="M14.2 21.8l-2.8 2.8"/>
+    </g>
+  </g>
+</svg>

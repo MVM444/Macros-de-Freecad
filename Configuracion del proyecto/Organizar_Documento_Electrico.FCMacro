@@ -1,0 +1,914 @@
+# -*- coding: utf-8 -*-
+# MenuText: Organizar documento electrico
+# Icon: Organizar_Documento_Electrico.svg
+#
+# Organiza objetos electricos en grupos canonicos estilo explorador.
+#
+# Reglas actuales:
+# 1) Luminarias:
+#    electrico/Iluminacion/Circuitos/<Circuito>/Recintos/<Recinto>/Apagadores/<Apagador>/Luminarias
+# 2) Sensores de humo:
+#    electrico/Deteccion/Zonas/<Zona>/Sensores_Humo
+#
+# Notas:
+# - Si hay seleccion, procesa seleccion (y contenido de grupos seleccionados).
+# - Sin seleccion, procesa todo el documento.
+# - Mueve objetos reales (no crea indices).
+
+import re
+import sys
+import unicodedata
+from pathlib import Path
+
+import FreeCAD as App
+import FreeCADGui as Gui
+
+
+try:
+    import importlib
+    import component_classifier as _component_classifier_mod
+    _component_classifier_mod = importlib.reload(_component_classifier_mod)
+except Exception:
+    try:
+        this_dir = Path(__file__).resolve().parent
+        con_dir = this_dir.parent / "Conectar"
+        if str(con_dir) not in sys.path:
+            sys.path.insert(0, str(con_dir))
+        import importlib
+        import component_classifier as _component_classifier_mod
+        _component_classifier_mod = importlib.reload(_component_classifier_mod)
+    except Exception:
+        _component_classifier_mod = None
+
+
+ROOT_LABEL = "electrico"
+FALLBACK_CIRCUITO = "Sin_Circuito"
+FALLBACK_RECINTO = "Sin_Recinto"
+FALLBACK_APAGADOR = "Sin_Apagador"
+FALLBACK_ZONA = "Zona_01"
+
+AREA_ATTRS = (
+    "Area",
+    "AreaID",
+    "AreaNombre",
+    "Recinto",
+    "Habitacion",
+    "Local",
+    "Zona",
+    "Espacio",
+    "Ambiente",
+    "NombreArea",
+)
+
+CIRCUIT_ATTRS = (
+    "CircuitoID",
+    "Circuito_Grupo",
+    "Circuito",
+    "CircuitID",
+    "Circuit",
+)
+
+SWITCH_ATTRS = (
+    "ApagadorID",
+    "SwitchID",
+    "InterruptorID",
+    "ControlID",
+    "Control_Grupo",
+    "GrupoControl",
+    "ControlGrupo",
+    "Apagador",
+    "Switch",
+    "Interruptor",
+    "Control",
+)
+
+ZONE_ATTRS = (
+    "Zona",
+    "ZonaID",
+    "Zone",
+    "ZoneID",
+    "Sector",
+)
+
+IGNORE_TOKENS = {
+    "",
+    "-",
+    "_",
+    "na",
+    "n/a",
+    "none",
+    "null",
+    "sin",
+    "sin_dato",
+    "sin_datos",
+    "sin_info",
+}
+
+AREA_GROUP_ALIASES = {
+    "areas",
+    "area",
+    "recintos",
+    "recinto",
+    "espacios",
+    "espacio",
+    "zonas",
+    "zona",
+}
+
+AREA_GROUP_EXCLUDE = {
+    "electrico",
+    "iluminacion",
+    "luminarias",
+    "conexiones",
+    "tomacorrientes",
+    "apagadores",
+    "cajas",
+    "deteccion",
+}
+
+AREA_GROUP_EXCLUDE_HINTS = {
+    "sensor",
+    "humo",
+    "detector",
+    "rociador",
+    "sprinkler",
+    "alarm",
+    "alarma",
+}
+
+GENERIC_CONTAINER_LABELS = {
+    "electrico",
+    "iluminacion",
+    "luminarias",
+    "circuitos",
+    "recintos",
+    "areas",
+    "area",
+    "espacios",
+    "espacio",
+    "apagadores",
+    "apagador",
+    "deteccion",
+    "zonas",
+    "zona",
+    "sensores_humo",
+    "sensores humo",
+    "sensores",
+}
+
+LIBRARY_HINTS = {
+    "componente",
+    "componentes",
+    "prototipo",
+    "prototype",
+    "catalogo",
+    "catalog",
+    "biblioteca",
+    "resource",
+    "resources",
+    "recurso",
+    "plantilla",
+    "template",
+    "master",
+}
+
+SMOKE_HINTS = {
+    "humo",
+    "smoke",
+    "detector",
+}
+
+
+def _log(msg):
+    App.Console.PrintMessage(f"[ORG_DOC][INFO] {msg}\n")
+
+
+def _warn(msg):
+    App.Console.PrintWarning(f"[ORG_DOC][WARN] {msg}\n")
+
+
+def _err(msg):
+    App.Console.PrintError(f"[ORG_DOC][ERROR] {msg}\n")
+
+
+def _safe_text(value):
+    try:
+        return str(value or "")
+    except Exception:
+        return ""
+
+
+def _normalize(text):
+    s = _safe_text(text).strip().lower()
+    if not s:
+        return ""
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    s = s.replace("\\", "/")
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _contains_any(text, hint_set):
+    n = _normalize(text)
+    if not n:
+        return False
+    return any(h in n for h in hint_set)
+
+
+def _token_for_name(text, fallback="grp"):
+    s = _normalize(text)
+    s = re.sub(r"[^0-9a-zA-Z_]+", "_", s)
+    s = re.sub(r"_+", "_", s).strip("_")
+    return s or fallback
+
+
+def _is_valid_id(value):
+    txt = _normalize(value)
+    if not txt:
+        return False
+    if txt in IGNORE_TOKENS:
+        return False
+    if txt in {"true", "false", "0", "1"}:
+        return False
+    return True
+
+
+def _is_group(obj):
+    return getattr(obj, "TypeId", "") == "App::DocumentObjectGroup"
+
+
+def _iter_doc_groups(doc):
+    for obj in (doc.Objects or []):
+        if _is_group(obj):
+            yield obj
+
+
+def _find_group_by_label(doc, label):
+    target = _normalize(label)
+    for grp in _iter_doc_groups(doc):
+        if _normalize(getattr(grp, "Label", "")) == target:
+            return grp
+    return None
+
+
+def _unique_doc_name(doc, base_name):
+    name = _token_for_name(base_name, "obj")
+    if doc.getObject(name) is None:
+        return name
+    i = 2
+    while True:
+        cand = f"{name}_{i:02d}"
+        if doc.getObject(cand) is None:
+            return cand
+        i += 1
+
+
+def _ensure_root_group(doc):
+    grp = doc.getObject(ROOT_LABEL)
+    if grp and _is_group(grp):
+        return grp
+    grp = _find_group_by_label(doc, ROOT_LABEL)
+    if grp and _is_group(grp):
+        return grp
+    name = _unique_doc_name(doc, ROOT_LABEL)
+    grp = doc.addObject("App::DocumentObjectGroup", name)
+    grp.Label = ROOT_LABEL
+    return grp
+
+
+def _ensure_child_group(doc, parent, label, prefix):
+    target = _normalize(label)
+    for child in (getattr(parent, "Group", []) or []):
+        if _is_group(child) and _normalize(getattr(child, "Label", "")) == target:
+            return child
+    base = f"{prefix}_{_token_for_name(label, 'grupo')}"
+    name = _unique_doc_name(doc, base)
+    grp = doc.addObject("App::DocumentObjectGroup", name)
+    grp.Label = _safe_text(label).strip() or "Grupo"
+    parent.addObject(grp)
+    return grp
+
+
+def _ensure_group_path(doc, labels):
+    if not labels:
+        return None
+    root = _ensure_root_group(doc)
+    if _normalize(labels[0]) != _normalize(ROOT_LABEL):
+        labels = [ROOT_LABEL] + list(labels)
+    cur = root
+    for idx, label in enumerate(labels[1:], start=1):
+        cur = _ensure_child_group(doc, cur, label, f"G{idx:02d}")
+    return cur
+
+
+def _detach_from_all_doc_groups(doc, obj, keep_group=None):
+    for grp in _iter_doc_groups(doc):
+        if keep_group is not None and grp == keep_group:
+            continue
+        try:
+            if obj in (getattr(grp, "Group", []) or []):
+                grp.removeObject(obj)
+        except Exception:
+            continue
+
+
+def _collect_from_group_recursive(group_obj, out, seen):
+    gid = getattr(group_obj, "Name", None) or id(group_obj)
+    if gid in seen:
+        return
+    seen.add(gid)
+    for child in (getattr(group_obj, "Group", []) or []):
+        if _is_group(child):
+            _collect_from_group_recursive(child, out, seen)
+        else:
+            cid = getattr(child, "Name", None) or id(child)
+            if cid not in seen:
+                seen.add(cid)
+                out.append(child)
+
+
+def _collect_candidates(doc):
+    try:
+        sel = Gui.Selection.getSelection() or []
+    except Exception:
+        sel = []
+
+    out = []
+    seen = set()
+    if sel:
+        for obj in sel:
+            if _is_group(obj):
+                _collect_from_group_recursive(obj, out, seen)
+            else:
+                oid = getattr(obj, "Name", None) or id(obj)
+                if oid not in seen:
+                    seen.add(oid)
+                    out.append(obj)
+        return out, True
+
+    for obj in (doc.Objects or []):
+        if not _is_group(obj):
+            out.append(obj)
+    return out, False
+
+
+def _find_parent_group_linear(doc, obj):
+    for grp in _iter_doc_groups(doc):
+        try:
+            if obj in (getattr(grp, "Group", []) or []):
+                return grp
+        except Exception:
+            continue
+    return None
+
+
+def _get_parent_group(doc, obj):
+    gp = getattr(obj, "getParentGroup", None)
+    if callable(gp):
+        try:
+            p = gp()
+            if p:
+                return p
+        except Exception:
+            pass
+    return _find_parent_group_linear(doc, obj)
+
+
+def _ancestor_groups(doc, obj, max_depth=40):
+    chain = []
+    seen = set()
+    cur = _get_parent_group(doc, obj)
+    while cur is not None and len(chain) < max_depth:
+        gid = getattr(cur, "Name", None) or id(cur)
+        if gid in seen:
+            break
+        seen.add(gid)
+        chain.append(cur)
+        cur = _get_parent_group(doc, cur)
+    return chain
+
+
+def _valid_ancestor_label(value):
+    txt = _safe_text(value).strip()
+    if not _is_valid_id(txt):
+        return ""
+    if _normalize(txt) in GENERIC_CONTAINER_LABELS:
+        return ""
+    return txt
+
+
+def _first_valid_property(obj, names):
+    for attr in names:
+        try:
+            if hasattr(obj, attr):
+                txt = _safe_text(getattr(obj, attr)).strip()
+                if _is_valid_id(txt):
+                    return txt
+        except Exception:
+            continue
+    return ""
+
+
+def _is_draft_rectangle(obj):
+    if obj is None or _is_group(obj):
+        return False
+    try:
+        tid = _normalize(getattr(obj, "TypeId", ""))
+        if "rectangle" in tid:
+            return True
+    except Exception:
+        pass
+    try:
+        proxy = getattr(obj, "Proxy", None)
+        if _normalize(getattr(proxy, "Type", "")) == "rectangle":
+            return True
+    except Exception:
+        pass
+    return bool(hasattr(obj, "Length") and hasattr(obj, "Height") and hasattr(obj, "Placement"))
+
+
+def _qfloat(value, default=0.0):
+    try:
+        if hasattr(value, "Value"):
+            return float(value.Value)
+        return float(value)
+    except Exception:
+        return float(default)
+
+
+def _iter_group_tree(root_group):
+    stack = [root_group]
+    seen = set()
+    while stack:
+        grp = stack.pop()
+        gid = getattr(grp, "Name", None) or id(grp)
+        if gid in seen:
+            continue
+        seen.add(gid)
+        yield grp
+        for child in (getattr(grp, "Group", []) or []):
+            if _is_group(child):
+                stack.append(child)
+
+
+def _group_rect_count(group_obj):
+    count = 0
+    for grp in _iter_group_tree(group_obj):
+        for child in (getattr(grp, "Group", []) or []):
+            if _is_group(child):
+                continue
+            if _is_draft_rectangle(child):
+                count += 1
+    return count
+
+
+def _selection_has_area_reference(doc):
+    try:
+        sel = Gui.Selection.getSelection() or []
+    except Exception:
+        sel = []
+    if not sel:
+        return False
+    for obj in sel:
+        if _is_draft_rectangle(obj):
+            return True
+        if _is_group(obj) and _group_rect_count(obj) > 0:
+            return True
+        parent = _get_parent_group(doc, obj)
+        if parent and _is_group(parent) and _group_rect_count(parent) > 0:
+            return True
+    return False
+
+
+def _group_label_norm(grp):
+    return _normalize(f"{getattr(grp, 'Label', '')} {getattr(grp, 'Name', '')}")
+
+
+def _is_area_group_excluded(grp):
+    txt = _group_label_norm(grp)
+    if not txt:
+        return False
+    if txt in AREA_GROUP_EXCLUDE:
+        return True
+    if _contains_any(txt, AREA_GROUP_EXCLUDE_HINTS):
+        return True
+    return False
+
+
+def _find_areas_group(doc):
+    # 1) Seleccion manual (grupo o rectangulos seleccionados).
+    try:
+        sel = Gui.Selection.getSelection() or []
+    except Exception:
+        sel = []
+
+    manual = []
+    manual_seen = set()
+    for obj in sel:
+        grp = None
+        if _is_group(obj):
+            grp = obj
+        elif _is_draft_rectangle(obj):
+            grp = _get_parent_group(doc, obj)
+        if grp is None or not _is_group(grp):
+            continue
+        gid = getattr(grp, "Name", None) or id(grp)
+        if gid in manual_seen:
+            continue
+        manual_seen.add(gid)
+        cnt = _group_rect_count(grp)
+        if cnt > 0:
+            manual.append((cnt, grp))
+    if manual:
+        manual.sort(key=lambda item: item[0], reverse=True)
+        return manual[0][1], "seleccion"
+
+    # 2) Nombres comunes exactos.
+    by_name = []
+    for name in ("Areas", "areas", "Recintos", "Espacios", "Zonas"):
+        grp = doc.getObject(name)
+        if not grp or not _is_group(grp):
+            continue
+        if _is_area_group_excluded(grp):
+            continue
+        cnt = _group_rect_count(grp)
+        if cnt > 0:
+            by_name.append((cnt, grp))
+    if by_name:
+        by_name.sort(key=lambda item: item[0], reverse=True)
+        return by_name[0][1], "nombre"
+
+    # 3) Alias por label.
+    by_alias = []
+    for grp in _iter_doc_groups(doc):
+        n = _normalize(getattr(grp, "Label", ""))
+        if n not in AREA_GROUP_ALIASES:
+            continue
+        if _is_area_group_excluded(grp):
+            continue
+        cnt = _group_rect_count(grp)
+        if cnt > 0:
+            by_alias.append((cnt, grp))
+    if by_alias:
+        by_alias.sort(key=lambda item: item[0], reverse=True)
+        return by_alias[0][1], "alias"
+
+    # 4) Heuristica: grupo con mas rectangulos evitando sensores/humo.
+    best = None
+    best_score = -1
+    for grp in _iter_doc_groups(doc):
+        if _is_area_group_excluded(grp):
+            continue
+        cnt = _group_rect_count(grp)
+        if cnt <= 0:
+            continue
+        score = cnt
+        n = _normalize(getattr(grp, "Label", ""))
+        if n in AREA_GROUP_ALIASES:
+            score += 2
+        if score > best_score:
+            best_score = score
+            best = grp
+    if best is not None:
+        return best, "heuristica"
+    return None, "sin_grupo"
+
+
+def _build_area_records(areas_group):
+    records = []
+    if areas_group is None:
+        return records
+    for grp in _iter_group_tree(areas_group):
+        for child in (getattr(grp, "Group", []) or []):
+            if _is_group(child) or not _is_draft_rectangle(child):
+                continue
+            w = abs(_qfloat(getattr(child, "Length", 0.0), 0.0))
+            h = abs(_qfloat(getattr(child, "Height", 0.0), 0.0))
+            if w <= 0.0 or h <= 0.0:
+                continue
+            pl = getattr(child, "Placement", None)
+            if pl is None:
+                continue
+            base = pl.Base
+            rot = pl.Rotation
+            name = _safe_text(getattr(child, "Label", "")).strip() or _safe_text(getattr(child, "Name", "Recinto"))
+            if not _is_valid_id(name):
+                name = _safe_text(getattr(child, "Name", "Recinto")) or "Recinto"
+            center = base + rot.multVec(App.Vector(w * 0.5, h * 0.5, 0.0))
+            records.append({"name": name, "base": base, "rot": rot, "w": w, "h": h, "a": w * h, "center": center})
+    return records
+
+
+def _object_point(obj):
+    try:
+        pl = getattr(obj, "Placement", None)
+        if pl is not None:
+            return pl.Base
+    except Exception:
+        pass
+    try:
+        shp = getattr(obj, "Shape", None)
+        if shp and not shp.isNull():
+            return shp.BoundBox.Center
+    except Exception:
+        pass
+    return App.Vector(0.0, 0.0, 0.0)
+
+
+def _contains_point_xy(rec, p, tol=1.0):
+    try:
+        local = rec["rot"].inverted().multVec(p - rec["base"])
+        x = float(local.x)
+        y = float(local.y)
+        return (-tol <= x <= rec["w"] + tol) and (-tol <= y <= rec["h"] + tol)
+    except Exception:
+        return False
+
+
+def _dist2_xy(p1, p2):
+    dx = float(p1.x - p2.x)
+    dy = float(p1.y - p2.y)
+    return dx * dx + dy * dy
+
+
+def _resolve_recinto(doc, obj, area_records):
+    # 1) Propiedad explicita.
+    txt = _first_valid_property(obj, AREA_ATTRS)
+    if txt:
+        return txt
+
+    # 2) Rectangulos en Areas.
+    if area_records:
+        p = _object_point(obj)
+        inside = [r for r in area_records if _contains_point_xy(r, p)]
+        if inside:
+            inside.sort(key=lambda r: float(r.get("a", 0.0)))
+            return inside[0]["name"]
+        nearest = min(area_records, key=lambda r: _dist2_xy(p, r["center"]))
+        return nearest["name"]
+
+    # 3) Ancestros.
+    chain = _ancestor_groups(doc, obj)
+    for idx, grp in enumerate(chain):
+        n = _normalize(getattr(grp, "Label", ""))
+        if n in {"recintos", "areas", "area", "espacios", "espacio", "zonas", "zona"} and idx > 0:
+            near = _valid_ancestor_label(getattr(chain[idx - 1], "Label", ""))
+            if near:
+                return near
+    for grp in chain:
+        label = _valid_ancestor_label(getattr(grp, "Label", ""))
+        if label:
+            return label
+    return FALLBACK_RECINTO
+
+
+def _resolve_circuito(doc, obj):
+    txt = _first_valid_property(obj, CIRCUIT_ATTRS)
+    if txt:
+        return txt
+
+    chain = _ancestor_groups(doc, obj)
+    for idx, grp in enumerate(chain):
+        n = _normalize(getattr(grp, "Label", ""))
+        if n == "circuitos" and idx > 0:
+            near = _valid_ancestor_label(getattr(chain[idx - 1], "Label", ""))
+            if near:
+                return near
+    for grp in chain:
+        label = _safe_text(getattr(grp, "Label", "")).strip()
+        n = _normalize(label)
+        if (("circuito" in n) or n.startswith("tp-") or n.startswith("tp ")) and n not in {"circuito", "circuitos"}:
+            if _is_valid_id(label):
+                return label
+    for grp in chain:
+        label = _safe_text(getattr(grp, "Label", "")).strip()
+        if re.match(r"^(c|ckt|circuito)\s*[-_ ]*\d+$", _normalize(label)):
+            if _is_valid_id(label):
+                return label
+    return FALLBACK_CIRCUITO
+
+
+def _resolve_apagador(doc, obj, recinto):
+    txt = _first_valid_property(obj, SWITCH_ATTRS)
+    if txt:
+        return txt
+
+    chain = _ancestor_groups(doc, obj)
+    for idx, grp in enumerate(chain):
+        n = _normalize(getattr(grp, "Label", ""))
+        if n == "apagadores" and idx > 0:
+            near = _valid_ancestor_label(getattr(chain[idx - 1], "Label", ""))
+            if near:
+                return near
+    for grp in chain:
+        label = _safe_text(getattr(grp, "Label", "")).strip()
+        n = _normalize(label)
+        if (("apagador" in n) or ("switch" in n) or ("interruptor" in n)) and n not in {"apagador", "apagadores", "switch", "interruptor"}:
+            if _is_valid_id(label):
+                return label
+    if _is_valid_id(recinto) and _normalize(recinto) != _normalize(FALLBACK_RECINTO):
+        return f"Apagador {recinto}"
+    return FALLBACK_APAGADOR
+
+
+def _resolve_zona(doc, obj):
+    txt = _first_valid_property(obj, ZONE_ATTRS)
+    if txt:
+        return txt
+
+    chain = _ancestor_groups(doc, obj)
+    for idx, grp in enumerate(chain):
+        n = _normalize(getattr(grp, "Label", ""))
+        if n == "zonas" and idx > 0:
+            near = _valid_ancestor_label(getattr(chain[idx - 1], "Label", ""))
+            if near:
+                return near
+    for grp in chain:
+        label = _safe_text(getattr(grp, "Label", "")).strip()
+        n = _normalize(label)
+        if "zona" in n and n not in {"zona", "zonas"}:
+            if _is_valid_id(label):
+                return label
+    return FALLBACK_ZONA
+
+
+def _is_library_object(doc, obj):
+    if obj is None:
+        return True
+    txt = _normalize(f"{getattr(obj, 'Label', '')} {getattr(obj, 'Name', '')}")
+    if txt in {"componentes", "componente", "resources", "resource", "prototipos", "prototipo"}:
+        return True
+    if _contains_any(txt, LIBRARY_HINTS):
+        if not any(hasattr(obj, attr) for attr in ("Tipo", "TipoLogico", "Categoria", "KeyRegistro", "CircuitoID")):
+            return True
+    try:
+        if hasattr(obj, "EsPrototipo") and bool(getattr(obj, "EsPrototipo")):
+            return True
+    except Exception:
+        pass
+    for grp in _ancestor_groups(doc, obj):
+        ln = _normalize(getattr(grp, "Label", ""))
+        if _contains_any(ln, LIBRARY_HINTS):
+            return True
+    return False
+
+
+def _classify(doc, obj):
+    if _is_library_object(doc, obj):
+        return None
+
+    try:
+        if _component_classifier_mod is not None:
+            ctype = _component_classifier_mod.get_component_type(obj)
+            if ctype == "Luminaria":
+                return "Luminaria"
+            if ctype == "Sensor":
+                txt = _normalize(
+                    f"{getattr(obj, 'Label', '')} "
+                    f"{getattr(obj, 'Name', '')} "
+                    f"{getattr(obj, 'Tipo', '')} "
+                    f"{getattr(obj, 'TipoLogico', '')} "
+                    f"{getattr(obj, 'Categoria', '')} "
+                    f"{getattr(obj, 'KeyRegistro', '')}"
+                )
+                if _contains_any(txt, SMOKE_HINTS):
+                    return "SensorHumo"
+                return None
+    except Exception:
+        pass
+
+    txt = _normalize(
+        f"{getattr(obj, 'Label', '')} "
+        f"{getattr(obj, 'Name', '')} "
+        f"{getattr(obj, 'Tipo', '')} "
+        f"{getattr(obj, 'TipoLogico', '')} "
+        f"{getattr(obj, 'Categoria', '')} "
+        f"{getattr(obj, 'KeyRegistro', '')}"
+    )
+    if ("luminaria" in txt) or ("lampara" in txt):
+        return "Luminaria"
+    if ("sensor" in txt) and _contains_any(txt, SMOKE_HINTS):
+        return "SensorHumo"
+    return None
+
+
+def _target_path_for(obj_type, circuito, recinto, apagador, zona):
+    if obj_type == "Luminaria":
+        return [
+            ROOT_LABEL,
+            "Iluminacion",
+            "Circuitos",
+            circuito,
+            "Recintos",
+            recinto,
+            "Apagadores",
+            apagador,
+            "Luminarias",
+        ]
+    if obj_type == "SensorHumo":
+        return [
+            ROOT_LABEL,
+            "Deteccion",
+            "Zonas",
+            zona,
+            "Sensores_Humo",
+        ]
+    return None
+
+
+def organizar_documento_electrico():
+    doc = App.ActiveDocument
+    if doc is None:
+        _err("No hay documento activo.")
+        return
+
+    candidates, from_selection = _collect_candidates(doc)
+    if from_selection:
+        if _selection_has_area_reference(doc):
+            candidates = [obj for obj in (doc.Objects or []) if not _is_group(obj)]
+            from_selection = False
+            _log("Seleccion con Areas detectada; se procesa documento completo usando Areas como referencia.")
+
+        has_target = False
+        for obj in candidates:
+            if _classify(doc, obj):
+                has_target = True
+                break
+        if not has_target:
+            candidates = [obj for obj in (doc.Objects or []) if not _is_group(obj)]
+            from_selection = False
+            _log("La seleccion se uso como referencia de Areas; se procesa documento completo.")
+
+    areas_group, areas_source = _find_areas_group(doc)
+    area_records = _build_area_records(areas_group)
+    if areas_group is None:
+        _warn("No se encontro grupo de Areas/Recintos. Se usara fallback por propiedades y ancestros.")
+    else:
+        _log(
+            f"Grupo Areas detectado: {getattr(areas_group, 'Label', getattr(areas_group, 'Name', '?'))} | "
+            f"fuente={areas_source} | rectangulos={len(area_records)}"
+        )
+        if not area_records:
+            _warn("El grupo de Areas detectado no contiene rectangulos validos.")
+
+    stats = {
+        "Luminaria": 0,
+        "SensorHumo": 0,
+        "Movidos": 0,
+        "SinCambio": 0,
+        "Errores": 0,
+    }
+    buckets = {}
+
+    for obj in candidates:
+        obj_type = _classify(doc, obj)
+        if not obj_type:
+            continue
+        stats[obj_type] += 1
+
+        circuito = _resolve_circuito(doc, obj) if obj_type == "Luminaria" else ""
+        recinto = _resolve_recinto(doc, obj, area_records) if obj_type == "Luminaria" else ""
+        apagador = _resolve_apagador(doc, obj, recinto) if obj_type == "Luminaria" else ""
+        zona = _resolve_zona(doc, obj) if obj_type == "SensorHumo" else ""
+
+        path = _target_path_for(obj_type, circuito, recinto, apagador, zona)
+        target = _ensure_group_path(doc, path)
+        if target is None:
+            stats["Errores"] += 1
+            _warn(f"No se pudo crear destino para '{getattr(obj, 'Label', getattr(obj, 'Name', '?'))}'")
+            continue
+
+        already = obj in (getattr(target, "Group", []) or [])
+        try:
+            _detach_from_all_doc_groups(doc, obj, keep_group=target)
+            if already:
+                stats["SinCambio"] += 1
+            else:
+                target.addObject(obj)
+                stats["Movidos"] += 1
+            bucket_key = "/".join(path[1:] if _normalize(path[0]) == _normalize(ROOT_LABEL) else path)
+            buckets[bucket_key] = buckets.get(bucket_key, 0) + 1
+        except Exception as ex:
+            stats["Errores"] += 1
+            _warn(f"No se pudo mover '{getattr(obj, 'Label', getattr(obj, 'Name', '?'))}': {ex}")
+
+    try:
+        doc.recompute()
+    except Exception as ex:
+        _warn(f"Recompute con advertencia: {ex}")
+
+    scope = "seleccion" if from_selection else "documento completo"
+    _log(
+        "Finalizado. "
+        f"Luminarias={stats['Luminaria']} | SensoresHumo={stats['SensorHumo']} | "
+        f"Movidos={stats['Movidos']} | SinCambio={stats['SinCambio']} | Errores={stats['Errores']} | "
+        f"RectangulosAreas={len(area_records)} | alcance={scope}"
+    )
+    if buckets:
+        for key in sorted(buckets.keys()):
+            _log(f"  - {key}: {buckets[key]}")
+
+
+if __name__ == "__main__":
+    organizar_documento_electrico()

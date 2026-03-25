@@ -1,0 +1,81 @@
+# -*- coding: utf-8 -*-
+# MenuText: Normalizar grupos Conexiones
+
+import os
+import sys
+import importlib
+
+import FreeCAD
+
+_THIS_DIR = os.path.dirname(__file__) if "__file__" in globals() else ""
+if _THIS_DIR and _THIS_DIR not in sys.path:
+    sys.path.insert(0, _THIS_DIR)
+
+import conexiones_grouping as _cg
+_cg = importlib.reload(_cg)
+
+
+TAG = "[CONEX-NORM]"
+
+
+def _info(msg):
+    FreeCAD.Console.PrintMessage(f"{TAG}[INFO] {msg}\n")
+
+
+def _warn(msg):
+    FreeCAD.Console.PrintWarning(f"{TAG}[WARN] {msg}\n")
+
+
+def _has_conexiones_child(group_obj):
+    if not hasattr(group_obj, "Group"):
+        return False
+    for child in (getattr(group_obj, "Group", []) or []):
+        try:
+            if _cg.is_group(child) and _cg.is_conexiones_group(child):
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def normalizar_grupos_conexiones():
+    doc = FreeCAD.ActiveDocument
+    if doc is None:
+        _warn("No hay documento activo.")
+        return
+
+    parents = []
+    for obj in list(getattr(doc, "Objects", []) or []):
+        try:
+            if not _cg.is_group(obj):
+                continue
+            if _cg.is_conexiones_group(obj):
+                continue
+            if _has_conexiones_child(obj):
+                parents.append(obj)
+        except Exception:
+            pass
+
+    if not parents:
+        _info("No se encontraron grupos con subgrupos 'Conexiones*' para normalizar.")
+        return
+
+    _info(f"Grupos a normalizar: {len(parents)}")
+    fixed = 0
+    for grp in parents:
+        try:
+            _cg.ensure_conexiones_group(doc, parent_group=grp)
+            fixed += 1
+        except Exception as ex:
+            _warn(f"Fallo en '{getattr(grp, 'Label', grp.Name)}': {ex}")
+
+    try:
+        doc.recompute()
+    except Exception as ex:
+        _warn(f"Error en recompute: {ex}")
+
+    _info(f"Listo. Grupos procesados: {fixed}")
+
+
+if __name__ == "__main__":
+    normalizar_grupos_conexiones()

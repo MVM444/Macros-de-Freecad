@@ -1,0 +1,1717 @@
+# -*- coding: utf-8 -*-
+# MenuText: [ACTIVA] Ajustar Alimentador o Ramal Manual
+# Icon: Ajustar_Alimentador_o_Ramal_Manual.svg
+"""
+Macro: Ajustar_Alimentador_o_Ramal_Manual
+Description:
+Local manual edit for an existing feeder/branch route.
+
+Workflow:
+1) Select one existing wire/polyline (feeder or branch).
+2) Select a reference geometry for the target point:
+   - vertex -> exact vertex point
+   - circular edge -> edge center
+   - line edge -> edge midpoint
+   - face -> center of mass
+   - picked point -> picked 3D point
+   - if the picked point belongs to a box, the route starts perpendicular
+     to that box side before continuing toward the panel
+3) Run macro.
+
+Behavior:
+- Preserves most of the original route and reroutes only the selected side.
+- Optional full reroute mode exists in code (disabled by default).
+- If possible, the reroute starts with a perpendicular stub from the picked box.
+- Tries to apply 100 mm bend radius when segment lengths allow it.
+"""
+
+import math
+
+import FreeCAD as App
+
+try:
+    import FreeCADGui as Gui
+except Exception:
+    Gui = None
+
+try:
+    import Part
+except Exception:
+    Part = None
+
+
+TAG = "[AJUSTE_LOCAL]"
+EPS = 1e-9
+POINT_TOL = 0.1
+BEND_RADIUS_TARGET = 100.0
+FULL_REROUTE_DEFAULT = False
+MIN_REASONABLE_BEND_MM = 5.0
+BEND_COUNT_PENALTY = 85.0
+CUT_CANDIDATE_BONUS = -280.0
+CUT_T_MIN = 0.02
+CUT_T_MAX = 0.98
+STAIR_MIDDLE_MAX = 550.0
+BACKTRACK_DOT_LIMIT = -0.965
+BACKTRACK_BASE_PENALTY = 1400.0
+
+
+def log_info(msg):
+    App.Console.PrintMessage(f"{TAG} {msg}\n")
+
+
+def log_warn(msg):
+    App.Console.PrintWarning(f"{TAG} {msg}\n")
+
+
+def log_error(msg):
+    App.Console.PrintError(f"{TAG} {msg}\n")
+
+
+def _vec(x=0.0, y=0.0, z=0.0):
+    return App.Vector(float(x), float(y), float(z))
+
+
+def _safe_text(value):
+    try:
+        return str(value or "")
+    except Exception:
+        return ""
+
+
+def _vlen(v):
+    try:
+        return math.sqrt((float(v.x) ** 2) + (float(v.y) ** 2) + (float(v.z) ** 2))
+    except Exception:
+        return 0.0
+
+
+def _normalize(v):
+    n = _vlen(v)
+    if n <= EPS:
+        return _vec(0.0, 0.0, 0.0)
+    return _vec(float(v.x) / n, float(v.y) / n, float(v.z) / n)
+
+
+def _dot(a, b):
+    return (float(a.x) * float(b.x)) + (float(a.y) * float(b.y)) + (float(a.z) * float(b.z))
+
+
+def _is_zero_vec(v):
+    return _vlen(v) <= EPS
+
+
+def _scaled(v, s):
+    return _vec(float(v.x) * float(s), float(v.y) * float(s), float(v.z) * float(s))
+
+
+def _dedup_points(points, tol=POINT_TOL):
+    out = []
+    for p in (points or []):
+        if not out:
+            out.append(_vec(p.x, p.y, p.z))
+            continue
+        if out[-1].distanceToPoint(p) > float(tol):
+            out.append(_vec(p.x, p.y, p.z))
+    return out
+
+
+def _points_almost_equal(a_pts, b_pts, tol=POINT_TOL):
+    a = _dedup_points(a_pts, tol=tol)
+    b = _dedup_points(b_pts, tol=tol)
+    if len(a) != len(b):
+        return False
+    for i in range(len(a)):
+        if a[i].distanceToPoint(b[i]) > float(tol):
+            return False
+    return True
+
+
+def _clone_points(points):
+    return [_vec(p.x, p.y, p.z) for p in (points or [])]
+
+
+def _merge_head_with_tail(head_pts, tail_pts):
+    head = _simplify_collinear(_dedup_points(head_pts), tol=POINT_TOL)
+    tail = _clone_points(tail_pts)
+    if not head:
+        return tail
+    if tail and head[-1].distanceToPoint(tail[0]) <= POINT_TOL:
+        tail = tail[1:]
+    return head + tail
+
+
+def _merge_prefix_with_connector(prefix_pts, conn_pts):
+    prefix = _clone_points(prefix_pts)
+    conn = _simplify_collinear(_dedup_points(conn_pts), tol=POINT_TOL)
+    if not prefix:
+        return conn
+    if conn and prefix[-1].distanceToPoint(conn[0]) <= POINT_TOL:
+        conn = conn[1:]
+    return prefix + conn
+
+
+def _segment_projection(point, a, b):
+    ab = b - a
+    ab2 = float(ab.dot(ab))
+    if ab2 <= EPS:
+        return _vec(a.x, a.y, a.z), 0.0, point.distanceToPoint(a)
+    t = float((point - a).dot(ab) / ab2)
+    if t < 0.0:
+        t = 0.0
+    elif t > 1.0:
+        t = 1.0
+    proj = _vec(a.x + ab.x * t, a.y + ab.y * t, a.z + ab.z * t)
+    return proj, t, point.distanceToPoint(proj)
+
+
+def _join_turn_penalty(prev_pt, join_pt, next_pt):
+    if prev_pt is None or join_pt is None or next_pt is None:
+        return 0.0
+    vin = _normalize(_vec(join_pt.x - prev_pt.x, join_pt.y - prev_pt.y, join_pt.z - prev_pt.z))
+    vout = _normalize(_vec(next_pt.x - join_pt.x, next_pt.y - join_pt.y, next_pt.z - join_pt.z))
+    if _is_zero_vec(vin) or _is_zero_vec(vout):
+        return 0.0
+    d = float(_dot(vin, vout))
+    if d >= 0.20:
+        return 0.0
+    if d >= 0.0:
+        return float((0.20 - d) * 40.0)
+    return float(120.0 + abs(d) * 220.0)
+
+
+def _zigzag_penalty(p0, p1, p2, p3):
+    if p0 is None or p1 is None or p2 is None or p3 is None:
+        return 0.0
+    a1 = _segment_axis_name(p0, p1)
+    a2 = _segment_axis_name(p1, p2)
+    a3 = _segment_axis_name(p2, p3)
+    if not a1 or not a2 or not a3:
+        return 0.0
+    if a1 != a3 or a2 == a1:
+        return 0.0
+    l2 = float(p1.distanceToPoint(p2))
+    if l2 <= POINT_TOL:
+        return 0.0
+    # Penalize A-B-A staircase; short middle runs hurt fillet continuity.
+    if l2 <= 1.6 * BEND_RADIUS_TARGET:
+        return 820.0
+    if l2 <= 3.0 * BEND_RADIUS_TARGET:
+        return 520.0
+    return 260.0
+
+
+def _path_zigzag_penalty(points):
+    pts = _dedup_points(points)
+    if len(pts) < 4:
+        return 0.0
+    total = 0.0
+    for i in range(len(pts) - 3):
+        total += _zigzag_penalty(pts[i], pts[i + 1], pts[i + 2], pts[i + 3])
+    return float(total)
+
+
+def _path_backtrack_penalty(points, dot_limit=BACKTRACK_DOT_LIMIT):
+    pts = _dedup_points(points)
+    if len(pts) < 3:
+        return 0.0
+    total = 0.0
+    lim = float(dot_limit)
+    for i in range(1, len(pts) - 1):
+        a = pts[i - 1]
+        b = pts[i]
+        c = pts[i + 1]
+        v1 = _normalize(_vec(b.x - a.x, b.y - a.y, b.z - a.z))
+        v2 = _normalize(_vec(c.x - b.x, c.y - b.y, c.z - b.z))
+        if _is_zero_vec(v1) or _is_zero_vec(v2):
+            continue
+        if _segment_axis_name(a, b) != _segment_axis_name(b, c):
+            continue
+        d = float(_dot(v1, v2))
+        if d <= lim:
+            l1 = float(a.distanceToPoint(b))
+            l2 = float(b.distanceToPoint(c))
+            total += float(BACKTRACK_BASE_PENALTY + min(l1, l2))
+    return float(total)
+
+
+def _collapse_backtracks(points, dot_limit=BACKTRACK_DOT_LIMIT):
+    pts = _simplify_collinear(_dedup_points(points), tol=POINT_TOL)
+    if len(pts) < 3:
+        return pts
+    lim = float(dot_limit)
+    changed = True
+    while changed:
+        changed = False
+        i = 1
+        while i < (len(pts) - 1):
+            a = pts[i - 1]
+            b = pts[i]
+            c = pts[i + 1]
+            axis1 = _segment_axis_name(a, b)
+            axis2 = _segment_axis_name(b, c)
+            if not axis1 or axis1 != axis2:
+                i += 1
+                continue
+            v1 = _normalize(_vec(b.x - a.x, b.y - a.y, b.z - a.z))
+            v2 = _normalize(_vec(c.x - b.x, c.y - b.y, c.z - b.z))
+            if _is_zero_vec(v1) or _is_zero_vec(v2):
+                i += 1
+                continue
+            d = float(_dot(v1, v2))
+            if d > lim:
+                i += 1
+                continue
+            # Remove overshoot pivot B (A->B->C on same axis and opposite direction).
+            pts = pts[:i] + pts[i + 1 :]
+            pts = _simplify_collinear(_dedup_points(pts), tol=POINT_TOL)
+            changed = True
+            break
+    return _simplify_collinear(_dedup_points(pts), tol=POINT_TOL)
+
+
+def _collapse_staircase_patterns(points, max_middle=STAIR_MIDDLE_MAX, protected_head_segments=0, protected_tail_segments=0):
+    pts = _simplify_collinear(_dedup_points(points), tol=POINT_TOL)
+    if len(pts) < 4:
+        return pts
+
+    head = max(0, int(protected_head_segments))
+    tail = max(0, int(protected_tail_segments))
+    changed = True
+    while changed:
+        changed = False
+        tail_first_idx = max(0, (len(pts) - 1) - tail)
+        i = 0
+        while i <= (len(pts) - 4):
+            # Window uses segments i, i+1, i+2.
+            if i < head:
+                i += 1
+                continue
+            if (i + 2) >= tail_first_idx:
+                i += 1
+                continue
+
+            p0 = pts[i]
+            p1 = pts[i + 1]
+            p2 = pts[i + 2]
+            p3 = pts[i + 3]
+            a1 = _segment_axis_name(p0, p1)
+            a2 = _segment_axis_name(p1, p2)
+            a3 = _segment_axis_name(p2, p3)
+            if not a1 or not a2 or not a3 or a1 != a3 or a2 == a1:
+                i += 1
+                continue
+
+            l2 = float(p1.distanceToPoint(p2))
+            if l2 <= POINT_TOL or l2 > float(max_middle):
+                i += 1
+                continue
+
+            other_axes = [ax for ax in ("x", "y", "z") if ax not in (a1, a2)]
+            if len(other_axes) != 1:
+                i += 1
+                continue
+            c = other_axes[0]
+            if abs(float(getattr(p0, c)) - float(getattr(p3, c))) > (2.0 * POINT_TOL):
+                i += 1
+                continue
+
+            elbow = _vec(p0.x, p0.y, p0.z)
+            elbow = _set_axis_value(elbow, a2, float(getattr(p3, a2)))
+            elbow = _set_axis_value(elbow, c, float(getattr(p3, c)))
+            if p0.distanceToPoint(elbow) <= POINT_TOL or elbow.distanceToPoint(p3) <= POINT_TOL:
+                i += 1
+                continue
+            if _segment_axis_name(p0, elbow) != a2 or _segment_axis_name(elbow, p3) != a1:
+                i += 1
+                continue
+
+            old_len = float(p0.distanceToPoint(p1) + p1.distanceToPoint(p2) + p2.distanceToPoint(p3))
+            new_len = float(p0.distanceToPoint(elbow) + elbow.distanceToPoint(p3))
+            if new_len > (old_len + 5.0):
+                i += 1
+                continue
+
+            pts = pts[: i + 1] + [elbow] + pts[i + 3 :]
+            pts = _simplify_collinear(_dedup_points(pts), tol=POINT_TOL)
+            changed = True
+            break
+    return _simplify_collinear(_dedup_points(pts), tol=POINT_TOL)
+
+
+def _simplify_collinear(points, tol=POINT_TOL):
+    pts = _dedup_points(points, tol=tol)
+    if len(pts) < 3:
+        return pts
+    out = [pts[0]]
+    for idx in range(1, len(pts) - 1):
+        prev_pt = out[-1]
+        cur_pt = pts[idx]
+        next_pt = pts[idx + 1]
+        _proj, _t, dist = _segment_projection(cur_pt, prev_pt, next_pt)
+        if dist <= float(tol):
+            continue
+        out.append(cur_pt)
+    out.append(pts[-1])
+    return _dedup_points(out, tol=tol)
+
+
+def _polyline_points_from_object(obj):
+    if obj is None:
+        return []
+    shape = getattr(obj, "Shape", None)
+    if shape is None:
+        return []
+    try:
+        if shape.isNull():
+            return []
+    except Exception:
+        pass
+
+    candidates = []
+    try:
+        for wire in (getattr(shape, "Wires", []) or []):
+            pts = []
+            for vtx in (getattr(wire, "OrderedVertexes", []) or []):
+                pt = getattr(vtx, "Point", None)
+                if pt is not None:
+                    pts.append(_vec(pt.x, pt.y, pt.z))
+            if len(pts) >= 2:
+                candidates.append(_dedup_points(pts))
+    except Exception:
+        pass
+
+    if candidates:
+        candidates.sort(key=lambda pts: len(pts), reverse=True)
+        return candidates[0]
+
+    try:
+        pts = []
+        for vtx in (getattr(shape, "OrderedVertexes", []) or []):
+            pt = getattr(vtx, "Point", None)
+            if pt is not None:
+                pts.append(_vec(pt.x, pt.y, pt.z))
+        if len(pts) >= 2:
+            return _dedup_points(pts)
+    except Exception:
+        pass
+
+    try:
+        pts = []
+        for vtx in (getattr(shape, "Vertexes", []) or []):
+            pt = getattr(vtx, "Point", None)
+            if pt is not None:
+                pts.append(_vec(pt.x, pt.y, pt.z))
+        if len(pts) >= 2:
+            return _dedup_points(pts)
+    except Exception:
+        pass
+    return []
+
+
+def _obj_text(obj):
+    if obj is None:
+        return ""
+    return " ".join(
+        [
+            _safe_text(getattr(obj, "Label", "")).lower(),
+            _safe_text(getattr(obj, "Name", "")).lower(),
+            _safe_text(getattr(obj, "TypeId", "")).lower(),
+        ]
+    )
+
+
+def _has_route_metadata(obj):
+    if obj is None:
+        return False
+    props = set(getattr(obj, "PropertiesList", []) or [])
+    if {"AutoRouteKey", "ConduitType", "CircuitoID", "LinkKind", "Tipo"} & props:
+        return True
+    try:
+        tipo = _safe_text(getattr(obj, "Tipo", "")).strip().lower()
+        if tipo == "conduitpath":
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _is_wire_like_type(obj):
+    tid = _safe_text(getattr(obj, "TypeId", "")).lower()
+    if any(tok in tid for tok in ("wire", "sketch", "line", "polyline")):
+        return True
+    txt = _obj_text(obj)
+    if any(tok in txt for tok in ("wire", "alimentador", "ramal", "conduit", "emt", "pvc", "tuber")):
+        return True
+    return False
+
+
+def _is_box_like(obj):
+    if obj is None:
+        return False
+    if _is_octagonal_like(obj):
+        return True
+    txt = _obj_text(obj)
+    if any(tok in txt for tok in ("caja", "box", "tablero", "panel", "gabinete")):
+        return True
+    props = set(getattr(obj, "PropertiesList", []) or [])
+    if "PuertosJSON" in props:
+        return True
+    shape = getattr(obj, "Shape", None)
+    if shape is None:
+        return False
+    try:
+        faces_n = len(getattr(shape, "Faces", []) or [])
+        solids_n = len(getattr(shape, "Solids", []) or [])
+        edges_n = len(getattr(shape, "Edges", []) or [])
+        if solids_n >= 1 and faces_n >= 4:
+            return True
+        if faces_n >= 6 and edges_n >= 8:
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _is_board_like_obj(obj):
+    if obj is None:
+        return False
+    txt = _obj_text(obj)
+    if any(tok in txt for tok in ("tablero", "panel", "switchboard", "board", "mainboard")):
+        return True
+    return False
+
+
+def _board_endpoint_index_for_route(route_obj, pts):
+    if route_obj is None or len(pts) < 2:
+        return None
+    n = len(pts)
+    board_faces = {"North", "South", "East", "West", "Top", "Bottom"}
+
+    p0 = _safe_text(getattr(route_obj, "PuertoOrigen", "")).strip()
+    p1 = _safe_text(getattr(route_obj, "PuertoDestino", "")).strip()
+    if p0 in board_faces and p1 not in board_faces:
+        return 0
+    if p1 in board_faces and p0 not in board_faces:
+        return n - 1
+
+    doc = App.ActiveDocument
+    oname = _safe_text(getattr(route_obj, "OrigenName", "")).strip()
+    dname = _safe_text(getattr(route_obj, "DestinoName", "")).strip()
+    oobj = doc.getObject(oname) if (doc is not None and oname) else None
+    dobj = doc.getObject(dname) if (doc is not None and dname) else None
+    if _is_board_like_obj(oobj) and (not _is_board_like_obj(dobj)):
+        return 0
+    if _is_board_like_obj(dobj) and (not _is_board_like_obj(oobj)):
+        return n - 1
+
+    label = _safe_text(getattr(route_obj, "Label", ""))
+    if "->" in label:
+        left, right = [x.strip().lower() for x in label.split("->", 1)]
+        if any(tok in right for tok in ("tablero", "panel", "board")):
+            return n - 1
+        if any(tok in left for tok in ("tablero", "panel", "board")):
+            return 0
+    return None
+
+
+def _score_route_candidate(obj):
+    if obj is None:
+        return -10
+    has_meta = _has_route_metadata(obj)
+    if _is_box_like(obj) and (not has_meta):
+        return -100
+
+    pts = _polyline_points_from_object(obj)
+    if len(pts) < 2:
+        return -10
+
+    score = 0
+    if has_meta:
+        score += 70
+    if _is_wire_like_type(obj):
+        score += 20
+
+    txt = _obj_text(obj)
+    if any(tok in txt for tok in ("alimentador", "ramal", "conduit", "emt", "pvc", "tuber")):
+        score += 10
+    if any(tok in txt for tok in ("caja", "box", "tablero", "panel")) and (not has_meta):
+        score -= 40
+
+    shape = getattr(obj, "Shape", None)
+    if shape is not None:
+        try:
+            faces_n = len(getattr(shape, "Faces", []) or [])
+            solids_n = len(getattr(shape, "Solids", []) or [])
+            wires_n = len(getattr(shape, "Wires", []) or [])
+            if wires_n == 1:
+                score += 5
+            if (faces_n > 0 or solids_n > 0) and (not has_meta) and (not _is_wire_like_type(obj)):
+                score -= 35
+        except Exception:
+            pass
+    try:
+        if pts[0].distanceToPoint(pts[-1]) <= POINT_TOL:
+            score -= 15
+    except Exception:
+        pass
+    return score
+
+
+def _point_from_edge(edge):
+    if edge is None:
+        return None
+    curve = getattr(edge, "Curve", None)
+    if curve is not None:
+        center = getattr(curve, "Center", None)
+        if center is not None:
+            return _vec(center.x, center.y, center.z)
+    verts = list(getattr(edge, "Vertexes", []) or [])
+    if len(verts) >= 2:
+        p1 = verts[0].Point
+        p2 = verts[-1].Point
+        return _vec((p1.x + p2.x) * 0.5, (p1.y + p2.y) * 0.5, (p1.z + p2.z) * 0.5)
+    if len(verts) == 1:
+        p = verts[0].Point
+        return _vec(p.x, p.y, p.z)
+    return None
+
+
+def _point_from_subobject(subobj):
+    if subobj is None:
+        return None
+    point = getattr(subobj, "Point", None)
+    if point is not None:
+        return _vec(point.x, point.y, point.z)
+
+    stype = _safe_text(getattr(subobj, "ShapeType", "")).lower()
+    if stype == "edge":
+        pt = _point_from_edge(subobj)
+        if pt is not None:
+            return pt
+    if stype == "face":
+        com = getattr(subobj, "CenterOfMass", None)
+        if com is not None:
+            return _vec(com.x, com.y, com.z)
+    com = getattr(subobj, "CenterOfMass", None)
+    if com is not None:
+        return _vec(com.x, com.y, com.z)
+    return None
+
+
+def _face_normal_from_subobject(subobj):
+    if subobj is None:
+        return None
+    stype = _safe_text(getattr(subobj, "ShapeType", "")).lower()
+    if stype != "face":
+        return None
+    try:
+        u0, u1, v0, v1 = subobj.ParameterRange
+        normal = subobj.normalAt(0.5 * (u0 + u1), 0.5 * (v0 + v1))
+        n = _normalize(_vec(normal.x, normal.y, normal.z))
+        if not _is_zero_vec(n):
+            return n
+    except Exception:
+        return None
+    return None
+
+
+def _point_from_object(obj):
+    if obj is None:
+        return None
+    shape = getattr(obj, "Shape", None)
+    if shape is not None:
+        try:
+            edges = list(getattr(shape, "Edges", []) or [])
+            if len(edges) == 1:
+                pt = _point_from_edge(edges[0])
+                if pt is not None:
+                    return pt
+        except Exception:
+            pass
+        com = getattr(shape, "CenterOfMass", None)
+        if com is not None:
+            return _vec(com.x, com.y, com.z)
+
+    placement = getattr(obj, "Placement", None)
+    if placement is not None:
+        base = getattr(placement, "Base", None)
+        if base is not None:
+            return _vec(base.x, base.y, base.z)
+    return None
+
+
+def _object_center(obj):
+    if obj is None:
+        return None
+    shape = getattr(obj, "Shape", None)
+    if shape is not None:
+        try:
+            bb = getattr(shape, "BoundBox", None)
+            if bb is not None:
+                return _vec(
+                    0.5 * (float(bb.XMin) + float(bb.XMax)),
+                    0.5 * (float(bb.YMin) + float(bb.YMax)),
+                    0.5 * (float(bb.ZMin) + float(bb.ZMax)),
+                )
+        except Exception:
+            pass
+        com = getattr(shape, "CenterOfMass", None)
+        if com is not None:
+            return _vec(com.x, com.y, com.z)
+    placement = getattr(obj, "Placement", None)
+    if placement is not None:
+        base = getattr(placement, "Base", None)
+        if base is not None:
+            return _vec(base.x, base.y, base.z)
+    return None
+
+
+def _object_axes_world(obj):
+    x_axis = _vec(1.0, 0.0, 0.0)
+    y_axis = _vec(0.0, 1.0, 0.0)
+    z_axis = _vec(0.0, 0.0, 1.0)
+    placement = getattr(obj, "Placement", None) if obj is not None else None
+    rot = getattr(placement, "Rotation", None) if placement is not None else None
+    if rot is not None:
+        try:
+            x_axis = _normalize(rot.multVec(x_axis))
+            y_axis = _normalize(rot.multVec(y_axis))
+            z_axis = _normalize(rot.multVec(z_axis))
+        except Exception:
+            x_axis = _vec(1.0, 0.0, 0.0)
+            y_axis = _vec(0.0, 1.0, 0.0)
+            z_axis = _vec(0.0, 0.0, 1.0)
+    return x_axis, y_axis, z_axis
+
+
+def _outward_dir_from_obj_point(obj, point):
+    if obj is None or point is None:
+        return None
+    center = _object_center(obj)
+    if center is None:
+        return None
+    v = _normalize(point - center)
+    if _is_zero_vec(v):
+        return None
+    return v
+
+
+def _nearest_face_normal_from_object(obj, point):
+    if obj is None or point is None:
+        return None
+    shape = getattr(obj, "Shape", None)
+    if shape is None:
+        return None
+
+    best = None
+    for face in (getattr(shape, "Faces", []) or []):
+        try:
+            u0, u1, v0, v1 = face.ParameterRange
+            c = face.valueAt(0.5 * (u0 + u1), 0.5 * (v0 + v1))
+            n = face.normalAt(0.5 * (u0 + u1), 0.5 * (v0 + v1))
+            normal = _normalize(_vec(n.x, n.y, n.z))
+            if _is_zero_vec(normal):
+                continue
+            # Prioritize vertical side faces over top/bottom faces.
+            side_bias = abs(float(normal.z))
+            if side_bias > 0.92:
+                continue
+            d = float(point.distanceToPoint(_vec(c.x, c.y, c.z)))
+            score = d + (side_bias * 50.0)
+            if best is None or score < best[0]:
+                best = (score, normal)
+        except Exception:
+            continue
+    if best is None:
+        return None
+    return best[1]
+
+
+def _perpendicular_dir_from_target(point, obj=None, subobj=None):
+    outward = _outward_dir_from_obj_point(obj, point)
+
+    # Prefer an explicit picked face normal when available.
+    n = _face_normal_from_subobject(subobj)
+    if n is not None and not _is_zero_vec(n):
+        if outward is not None and _dot(n, outward) < 0.0:
+            n = _scaled(n, -1.0)
+        return n
+
+    # If an edge/point was selected on an octagonal/rectangular box, infer
+    # the nearest side-face normal so the first segment exits perpendicular.
+    n2 = _nearest_face_normal_from_object(obj, point)
+    if n2 is not None and not _is_zero_vec(n2):
+        if outward is not None and _dot(n2, outward) < 0.0:
+            n2 = _scaled(n2, -1.0)
+        return n2
+
+    if point is None or obj is None:
+        return None
+
+    if outward is None:
+        return None
+
+    x_axis, y_axis, z_axis = _object_axes_world(obj)
+    axes = [("x", x_axis), ("y", y_axis), ("z", z_axis)]
+    best = None
+    for name, ax in axes:
+        proj = _dot(outward, ax)
+        score = abs(float(proj))
+        if best is None or score > best[0]:
+            best = (score, name, ax, proj)
+    if best is None or best[0] <= EPS:
+        return None
+
+    _score, _name, axis, proj = best
+    sign = 1.0 if float(proj) >= 0.0 else -1.0
+    return _normalize(_scaled(axis, sign))
+
+
+def _target_info_from_selection_ex(sel_ex):
+    if sel_ex is None:
+        return None
+
+    obj = getattr(sel_ex, "Object", None)
+    for sub in (getattr(sel_ex, "SubObjects", []) or []):
+        pt = _point_from_subobject(sub)
+        if pt is not None:
+            outward = _outward_dir_from_obj_point(obj, pt)
+            return {
+                "point": pt,
+                "obj": obj,
+                "subobj": sub,
+                "perp_dir": _perpendicular_dir_from_target(pt, obj=obj, subobj=sub),
+                "outward_dir": outward,
+                "source": "subobject",
+            }
+
+    for p in (getattr(sel_ex, "PickedPoints", []) or []):
+        if p is not None:
+            pt = _vec(p.x, p.y, p.z)
+            outward = _outward_dir_from_obj_point(obj, pt)
+            return {
+                "point": pt,
+                "obj": obj,
+                "subobj": None,
+                "perp_dir": _perpendicular_dir_from_target(pt, obj=obj, subobj=None),
+                "outward_dir": outward,
+                "source": "picked",
+            }
+
+    pt = _point_from_object(obj)
+    if pt is not None:
+        outward = _outward_dir_from_obj_point(obj, pt)
+        return {
+            "point": pt,
+            "obj": obj,
+            "subobj": None,
+            "perp_dir": _perpendicular_dir_from_target(pt, obj=obj, subobj=None),
+            "outward_dir": outward,
+            "source": "object",
+        }
+    return None
+
+
+def _axis_delta(a, b):
+    return {
+        "x": abs(float(b.x) - float(a.x)),
+        "y": abs(float(b.y) - float(a.y)),
+        "z": abs(float(b.z) - float(a.z)),
+    }
+
+
+def _dominant_axis(a, b):
+    deltas = _axis_delta(a, b)
+    items = sorted(deltas.items(), key=lambda it: it[1], reverse=True)
+    if not items:
+        return "x"
+    axis, d = items[0]
+    if d <= POINT_TOL:
+        return "x"
+    return axis
+
+
+def _axis_order(a, b, first_axis=None):
+    deltas = _axis_delta(a, b)
+    axes = ["x", "y", "z"]
+    order = []
+    if first_axis in axes and deltas[first_axis] > POINT_TOL:
+        order.append(first_axis)
+    tail = sorted(
+        [ax for ax in axes if ax not in order and deltas[ax] > POINT_TOL],
+        key=lambda ax: deltas[ax],
+        reverse=True,
+    )
+    order.extend(tail)
+    return order
+
+
+def _segment_axis_name(a, b):
+    d = _axis_delta(a, b)
+    axis, val = sorted(d.items(), key=lambda it: it[1], reverse=True)[0]
+    if float(val) <= POINT_TOL:
+        return ""
+    return axis
+
+
+def _old_axis_signature(pts, endpoint_idx, join_idx):
+    axes = []
+    if endpoint_idx == 0:
+        seq = range(0, max(0, int(join_idx)))
+        for i in seq:
+            ax = _segment_axis_name(pts[i], pts[i + 1])
+            if ax and (not axes or axes[-1] != ax):
+                axes.append(ax)
+    else:
+        seq = range(len(pts) - 1, int(join_idx), -1)
+        for i in seq:
+            ax = _segment_axis_name(pts[i], pts[i - 1])
+            if ax and (not axes or axes[-1] != ax):
+                axes.append(ax)
+    return axes
+
+
+def _min_join_index_for_signature(pts, endpoint_idx, min_distinct_axes=2):
+    n = len(pts)
+    if n < 3:
+        return 1 if endpoint_idx == 0 else n - 2
+    if endpoint_idx == 0:
+        axes = []
+        for i in range(0, n - 1):
+            ax = _segment_axis_name(pts[i], pts[i + 1])
+            if ax and (not axes or axes[-1] != ax):
+                axes.append(ax)
+            if len(axes) >= int(min_distinct_axes):
+                return max(1, i + 1)
+        return 1
+    axes = []
+    for i in range(n - 1, 0, -1):
+        ax = _segment_axis_name(pts[i], pts[i - 1])
+        if ax and (not axes or axes[-1] != ax):
+            axes.append(ax)
+        if len(axes) >= int(min_distinct_axes):
+            return min(n - 2, i - 1)
+    return n - 2
+
+
+def _set_axis_value(pt, axis, value):
+    if axis == "x":
+        return _vec(value, pt.y, pt.z)
+    if axis == "y":
+        return _vec(pt.x, value, pt.z)
+    return _vec(pt.x, pt.y, value)
+
+
+def _orthogonal_leg(a, b, first_axis=None):
+    start = _vec(a.x, a.y, a.z)
+    end = _vec(b.x, b.y, b.z)
+    if start.distanceToPoint(end) <= POINT_TOL:
+        return [start, end]
+
+    cur = start
+    pts = [start]
+    for axis in _axis_order(start, end, first_axis=first_axis):
+        target_value = getattr(end, axis)
+        next_pt = _set_axis_value(cur, axis, target_value)
+        if cur.distanceToPoint(next_pt) > POINT_TOL:
+            pts.append(next_pt)
+            cur = next_pt
+    if pts[-1].distanceToPoint(end) > POINT_TOL:
+        pts.append(end)
+    return _dedup_points(pts)
+
+
+def _orthogonal_leg_with_priority(a, b, priority_axes=None, first_axis=None, last_axis=None):
+    start = _vec(a.x, a.y, a.z)
+    end = _vec(b.x, b.y, b.z)
+    if start.distanceToPoint(end) <= POINT_TOL:
+        return [start, end]
+
+    pr = []
+    for ax in (priority_axes or []):
+        key = _safe_text(ax).strip().lower()
+        if key in ("x", "y", "z") and key not in pr:
+            pr.append(key)
+    if first_axis in ("x", "y", "z") and first_axis not in pr:
+        pr.insert(0, first_axis)
+    if last_axis in ("x", "y", "z"):
+        key = str(last_axis)
+        if key in pr:
+            pr = [ax for ax in pr if ax != key] + [key]
+        else:
+            pr.append(key)
+
+    rem = [ax for ax in ("x", "y", "z") if ax not in pr and abs(float(getattr(end, ax)) - float(getattr(start, ax))) > POINT_TOL]
+    order = pr + rem
+    if last_axis in ("x", "y", "z") and last_axis in order:
+        order = [ax for ax in order if ax != last_axis] + [last_axis]
+
+    cur = start
+    out = [start]
+    for ax in order:
+        tgt = getattr(end, ax)
+        nxt = _set_axis_value(cur, ax, tgt)
+        if cur.distanceToPoint(nxt) > POINT_TOL:
+            out.append(nxt)
+            cur = nxt
+    if out[-1].distanceToPoint(end) > POINT_TOL:
+        out.append(end)
+    return _dedup_points(out)
+
+
+def _polyline_length(points):
+    pts = _dedup_points(points)
+    if len(pts) < 2:
+        return 0.0
+    total = 0.0
+    for idx in range(len(pts) - 1):
+        total += float(pts[idx].distanceToPoint(pts[idx + 1]))
+    return total
+
+
+def _is_octagonal_like(obj):
+    if obj is None:
+        return False
+    txt = " ".join(
+        [
+            _safe_text(getattr(obj, "Label", "")).lower(),
+            _safe_text(getattr(obj, "Name", "")).lower(),
+            _safe_text(getattr(obj, "TypeId", "")).lower(),
+        ]
+    )
+    return any(tok in txt for tok in ("octogonal", "octagonal", "octagono", "octagon"))
+
+
+def _suggest_perp_stub_len(pts, endpoint_idx, bend_radius=BEND_RADIUS_TARGET):
+    if len(pts) < 2:
+        return max(120.0, float(bend_radius) * 2.0)
+    if endpoint_idx == 0:
+        old = float(pts[0].distanceToPoint(pts[1]))
+    else:
+        old = float(pts[-1].distanceToPoint(pts[-2]))
+    minimum = max(120.0, float(bend_radius) * 2.0)
+    if old <= POINT_TOL:
+        return minimum
+    return max(minimum, min(600.0, old))
+
+
+def _orient_perp_dir(perp_dir, endpoint_dir=None, outward_dir=None):
+    if perp_dir is None or _is_zero_vec(perp_dir):
+        return None
+    p = _normalize(perp_dir)
+    cand = [p, _scaled(p, -1.0)]
+    best = None
+    for c in cand:
+        score = 0.0
+        if endpoint_dir is not None and not _is_zero_vec(endpoint_dir):
+            score += (2.0 * _dot(c, endpoint_dir))
+        if outward_dir is not None and not _is_zero_vec(outward_dir):
+            score += (1.0 * _dot(c, outward_dir))
+        if best is None or score > best[0]:
+            best = (score, c)
+    if best is None:
+        return p
+    return best[1]
+
+
+def _full_reroute_path(pts, endpoint_idx, target, use_perp=False, perp_use=None):
+    n = len(pts)
+    if n < 2:
+        raise RuntimeError("La ruta no tiene suficientes puntos.")
+
+    tgt = _vec(target.x, target.y, target.z)
+    if endpoint_idx == 0:
+        fixed = _vec(pts[-1].x, pts[-1].y, pts[-1].z)
+        fixed_axis = _dominant_axis(pts[-2], pts[-1]) if n >= 2 else None
+        if use_perp and perp_use is not None and not _is_zero_vec(perp_use):
+            stub_len = _suggest_perp_stub_len(pts, endpoint_idx)
+            stub = tgt + _scaled(perp_use, stub_len)
+            leg = _orthogonal_leg(fixed, stub, first_axis=fixed_axis)
+            out = [tgt, _vec(stub.x, stub.y, stub.z)] + list(reversed(leg))[1:]
+            action = "extremo inicial reruteado completo (perpendicular)"
+        else:
+            leg = _orthogonal_leg(fixed, tgt, first_axis=fixed_axis)
+            out = list(reversed(leg))
+            action = "extremo inicial reruteado completo (ortogonal)"
+    else:
+        fixed = _vec(pts[0].x, pts[0].y, pts[0].z)
+        fixed_axis = _dominant_axis(pts[0], pts[1]) if n >= 2 else None
+        if use_perp and perp_use is not None and not _is_zero_vec(perp_use):
+            stub_len = _suggest_perp_stub_len(pts, endpoint_idx)
+            stub = tgt + _scaled(perp_use, stub_len)
+            leg = _orthogonal_leg(fixed, stub, first_axis=fixed_axis)
+            out = leg + [tgt]
+            action = "extremo final reruteado completo (perpendicular)"
+        else:
+            out = _orthogonal_leg(fixed, tgt, first_axis=fixed_axis)
+            action = "extremo final reruteado completo (ortogonal)"
+
+    out = _simplify_collinear(_dedup_points(out))
+    if len(out) < 2:
+        raise RuntimeError("El reruteo completo genero menos de 2 puntos.")
+    return out, action
+
+
+def _route_from_endpoint_keep_rest(
+    pts,
+    endpoint_idx,
+    target,
+    perp_dir=None,
+    endpoint_dir=None,
+    outward_dir=None,
+    max_depth=4,
+    changed_vertex_penalty=120.0,
+    full_reroute=False,
+    preserve_depth_bias=25.0,
+    min_signature_axes=2,
+    lock_prefix_vertices=0,
+    lock_suffix_vertices=0,
+):
+    n = len(pts)
+    if n < 2:
+        raise RuntimeError("La ruta no tiene suficientes puntos.")
+
+    lock_prefix_vertices = max(0, int(lock_prefix_vertices))
+    lock_suffix_vertices = max(0, int(lock_suffix_vertices))
+    if (lock_prefix_vertices + lock_suffix_vertices) >= (n - 1):
+        # Keep at least one editable segment.
+        lock_prefix_vertices = min(lock_prefix_vertices, max(0, (n - 2)))
+        lock_suffix_vertices = max(0, (n - 2) - lock_prefix_vertices)
+
+    max_depth = min(max(1, int(max_depth)), n - 1)
+    candidates = []
+    use_perp = perp_dir is not None and not _is_zero_vec(perp_dir)
+    perp_use = _orient_perp_dir(perp_dir, endpoint_dir=endpoint_dir, outward_dir=outward_dir) if use_perp else None
+    use_perp = perp_use is not None and (not _is_zero_vec(perp_use))
+
+    if bool(full_reroute):
+        return _full_reroute_path(pts, endpoint_idx, target, use_perp=use_perp, perp_use=perp_use)
+
+    stub_len = _suggest_perp_stub_len(pts, endpoint_idx) if use_perp else 0.0
+    stub_pt = (_vec(target.x, target.y, target.z) + _scaled(perp_use, stub_len)) if use_perp else None
+
+    if endpoint_idx == 0:
+        max_join_allowed = max(1, (n - 1) - lock_suffix_vertices)
+        max_depth = min(max_depth, max_join_allowed)
+        min_join = min(max_depth, _min_join_index_for_signature(pts, endpoint_idx=0, min_distinct_axes=min_signature_axes))
+        for join_idx in range(max(1, min_join), max_depth + 1):
+            join_pt = pts[join_idx]
+            old_ref = pts[join_idx - 1] if join_idx > 0 else join_pt
+            hint = _dominant_axis(old_ref, join_pt)
+            tail_axis = _segment_axis_name(join_pt, pts[join_idx + 1]) if (join_idx + 1) < n else ""
+            sig = _old_axis_signature(pts, endpoint_idx=0, join_idx=join_idx)
+            pri_axes = list(sig)
+            if use_perp and ("z" not in pri_axes):
+                pri_axes = ["z"] + pri_axes
+            if use_perp and stub_pt is not None:
+                leg = _orthogonal_leg_with_priority(stub_pt, join_pt, priority_axes=pri_axes, first_axis=hint, last_axis=tail_axis)
+                base = [_vec(target.x, target.y, target.z), _vec(stub_pt.x, stub_pt.y, stub_pt.z)] + leg[1:]
+            else:
+                leg = _orthogonal_leg_with_priority(target, join_pt, priority_axes=pri_axes, first_axis=hint, last_axis=tail_axis)
+                base = list(leg)
+            base = _collapse_staircase_patterns(base, protected_head_segments=(1 if use_perp else 0), protected_tail_segments=0)
+            cand = _merge_head_with_tail(base, pts[join_idx + 1 :])
+            cand = _collapse_backtracks(cand)
+            if len(cand) < 2:
+                continue
+            old_len = _polyline_length(pts[: join_idx + 1])
+            new_len = _polyline_length(base)
+            changed_vertices = join_idx
+            bends = max(0, len(base) - 2)
+            perp_penalty = 0.0 if use_perp else 40.0
+            depth_bonus = -float(preserve_depth_bias) * float(join_idx)
+            prev_conn = base[-2] if len(base) >= 2 else None
+            next_tail = pts[join_idx + 1] if (join_idx + 1) < n else None
+            turn_pen = _join_turn_penalty(prev_conn, join_pt, next_tail)
+            zig_pen = _path_zigzag_penalty(base) + _zigzag_penalty(base[-3] if len(base) >= 3 else None, prev_conn, join_pt, next_tail)
+            back_pen = _path_backtrack_penalty(cand)
+            elbow_bonus = -180.0 if bends <= 1 else 0.0
+            vertex_pen = 35.0
+            cost = (
+                abs(new_len - old_len)
+                + (changed_vertices * float(changed_vertex_penalty))
+                + (bends * float(BEND_COUNT_PENALTY))
+                + perp_penalty
+                + depth_bonus
+                + turn_pen
+                + zig_pen
+                + back_pen
+                + vertex_pen
+                + elbow_bonus
+            )
+            mode = "perpendicular" if use_perp else "ortogonal"
+            candidates.append((cost, cand, f"extremo inicial reruteado ({mode}) hasta vertice {join_idx + 1}"))
+
+        # Extra candidates: cut inside a segment to reconnect cleaner to trunk.
+        ref_pt = stub_pt if (use_perp and stub_pt is not None) else _vec(target.x, target.y, target.z)
+        for seg_idx in range(max(1, min_join), max_depth + 1):
+            if seg_idx >= (n - 1):
+                continue
+            a = pts[seg_idx]
+            b = pts[seg_idx + 1]
+            join_pt, t, _dist = _segment_projection(ref_pt, a, b)
+            if t <= CUT_T_MIN or t >= CUT_T_MAX:
+                continue
+            hint = _dominant_axis(a, b)
+            tail_axis = _segment_axis_name(join_pt, pts[seg_idx + 1]) if (seg_idx + 1) < n else ""
+            sig = _old_axis_signature(pts, endpoint_idx=0, join_idx=seg_idx + 1)
+            pri_axes = list(sig)
+            if use_perp and ("z" not in pri_axes):
+                pri_axes = ["z"] + pri_axes
+            if use_perp and stub_pt is not None:
+                leg = _orthogonal_leg_with_priority(stub_pt, join_pt, priority_axes=pri_axes, first_axis=hint, last_axis=tail_axis)
+                base = [_vec(target.x, target.y, target.z), _vec(stub_pt.x, stub_pt.y, stub_pt.z)] + leg[1:]
+            else:
+                leg = _orthogonal_leg_with_priority(target, join_pt, priority_axes=pri_axes, first_axis=hint, last_axis=tail_axis)
+                base = list(leg)
+            base = _collapse_staircase_patterns(base, protected_head_segments=(1 if use_perp else 0), protected_tail_segments=0)
+            cand = _merge_head_with_tail(base + [join_pt], pts[seg_idx + 1 :])
+            cand = _collapse_backtracks(cand)
+            if len(cand) < 2:
+                continue
+            old_len = _polyline_length(pts[: seg_idx + 1] + [join_pt])
+            new_len = _polyline_length(base)
+            changed_vertices = float(seg_idx) + 0.5
+            bends = max(0, len(base) - 2)
+            perp_penalty = 0.0 if use_perp else 40.0
+            depth_bonus = -float(preserve_depth_bias) * float(seg_idx + 0.5)
+            prev_conn = base[-2] if len(base) >= 2 else None
+            next_tail = pts[seg_idx + 1] if (seg_idx + 1) < n else None
+            turn_pen = _join_turn_penalty(prev_conn, join_pt, next_tail)
+            zig_pen = _path_zigzag_penalty(base) + _zigzag_penalty(base[-3] if len(base) >= 3 else None, prev_conn, join_pt, next_tail)
+            back_pen = _path_backtrack_penalty(cand)
+            elbow_bonus = -180.0 if bends <= 1 else 0.0
+            cut_bonus = float(CUT_CANDIDATE_BONUS)
+            cost = (
+                abs(new_len - old_len)
+                + (changed_vertices * float(changed_vertex_penalty))
+                + (bends * float(BEND_COUNT_PENALTY))
+                + perp_penalty
+                + depth_bonus
+                + cut_bonus
+                + turn_pen
+                + zig_pen
+                + back_pen
+                + elbow_bonus
+            )
+            mode = "perpendicular" if use_perp else "ortogonal"
+            candidates.append((cost, cand, f"extremo inicial reruteado ({mode}) con corte en tramo {seg_idx + 1}"))
+    else:
+        max_depth = min(max_depth, max(1, (n - 1) - lock_prefix_vertices))
+        min_join = max(n - 2 - (max_depth - 1), _min_join_index_for_signature(pts, endpoint_idx=n - 1, min_distinct_axes=min_signature_axes))
+        min_join = max(min_join, lock_prefix_vertices)
+        for join_idx in range(n - 2, min_join - 1, -1):
+            join_pt = pts[join_idx]
+            old_ref = pts[join_idx + 1] if join_idx < (n - 1) else join_pt
+            hint = _dominant_axis(join_pt, old_ref)
+            prev_tail_axis = _segment_axis_name(pts[join_idx - 1], join_pt) if join_idx > 0 else ""
+            sig = _old_axis_signature(pts, endpoint_idx=n - 1, join_idx=join_idx)
+            pri_axes = list(sig)
+            if use_perp and ("z" not in pri_axes):
+                pri_axes = ["z"] + pri_axes
+            if use_perp and stub_pt is not None:
+                leg = _orthogonal_leg_with_priority(join_pt, stub_pt, priority_axes=pri_axes, first_axis=prev_tail_axis or hint)
+                base = leg + [_vec(target.x, target.y, target.z)]
+            else:
+                leg = _orthogonal_leg_with_priority(join_pt, target, priority_axes=pri_axes, first_axis=prev_tail_axis or hint)
+                base = list(leg)
+            base = _collapse_staircase_patterns(base, protected_head_segments=0, protected_tail_segments=(1 if use_perp else 0))
+            cand = _merge_prefix_with_connector(pts[:join_idx], base)
+            cand = _collapse_backtracks(cand)
+            if len(cand) < 2:
+                continue
+            old_len = _polyline_length(pts[join_idx:])
+            new_len = _polyline_length(base)
+            changed_vertices = (n - 1) - join_idx
+            bends = max(0, len(base) - 2)
+            perp_penalty = 0.0 if use_perp else 40.0
+            depth_bonus = -float(preserve_depth_bias) * float((n - 1) - join_idx)
+            prev_tail = pts[join_idx - 1] if join_idx > 0 else None
+            next_conn = base[1] if len(base) >= 2 else None
+            turn_pen = _join_turn_penalty(prev_tail, join_pt, next_conn)
+            zig_pen = _path_zigzag_penalty(base) + _zigzag_penalty(prev_tail, join_pt, next_conn, base[2] if len(base) >= 3 else None)
+            back_pen = _path_backtrack_penalty(cand)
+            elbow_bonus = -180.0 if bends <= 1 else 0.0
+            vertex_pen = 35.0
+            cost = (
+                abs(new_len - old_len)
+                + (changed_vertices * float(changed_vertex_penalty))
+                + (bends * float(BEND_COUNT_PENALTY))
+                + perp_penalty
+                + depth_bonus
+                + turn_pen
+                + zig_pen
+                + back_pen
+                + vertex_pen
+                + elbow_bonus
+            )
+            mode = "perpendicular" if use_perp else "ortogonal"
+            candidates.append((cost, cand, f"extremo final reruteado ({mode}) desde vertice {join_idx + 1}"))
+
+        # Extra candidates: cut inside a segment to reconnect cleaner to trunk.
+        ref_pt = stub_pt if (use_perp and stub_pt is not None) else _vec(target.x, target.y, target.z)
+        for seg_idx in range(n - 2, min_join - 1, -1):
+            if seg_idx < 0 or seg_idx >= (n - 1):
+                continue
+            a = pts[seg_idx]
+            b = pts[seg_idx + 1]
+            join_pt, t, _dist = _segment_projection(ref_pt, a, b)
+            if t <= CUT_T_MIN or t >= CUT_T_MAX:
+                continue
+            hint = _dominant_axis(a, b)
+            prev_tail_axis = _segment_axis_name(pts[seg_idx], join_pt) if seg_idx >= 0 else ""
+            sig = _old_axis_signature(pts, endpoint_idx=n - 1, join_idx=seg_idx)
+            pri_axes = list(sig)
+            if use_perp and ("z" not in pri_axes):
+                pri_axes = ["z"] + pri_axes
+            if use_perp and stub_pt is not None:
+                leg = _orthogonal_leg_with_priority(join_pt, stub_pt, priority_axes=pri_axes, first_axis=prev_tail_axis or hint)
+                base = leg + [_vec(target.x, target.y, target.z)]
+            else:
+                leg = _orthogonal_leg_with_priority(join_pt, target, priority_axes=pri_axes, first_axis=prev_tail_axis or hint)
+                base = list(leg)
+            base = _collapse_staircase_patterns(base, protected_head_segments=0, protected_tail_segments=(1 if use_perp else 0))
+            cand = _merge_prefix_with_connector(pts[: seg_idx + 1], [join_pt] + base[1:])
+            cand = _collapse_backtracks(cand)
+            if len(cand) < 2:
+                continue
+            old_len = _polyline_length([join_pt] + pts[seg_idx + 1 :])
+            new_len = _polyline_length(base)
+            changed_vertices = float((n - 1) - seg_idx) + 0.5
+            bends = max(0, len(base) - 2)
+            perp_penalty = 0.0 if use_perp else 40.0
+            depth_bonus = -float(preserve_depth_bias) * float((n - 1) - seg_idx + 0.5)
+            prev_tail = pts[seg_idx] if seg_idx >= 0 else None
+            next_conn = base[1] if len(base) >= 2 else None
+            turn_pen = _join_turn_penalty(prev_tail, join_pt, next_conn)
+            zig_pen = _path_zigzag_penalty(base) + _zigzag_penalty(prev_tail, join_pt, next_conn, base[2] if len(base) >= 3 else None)
+            back_pen = _path_backtrack_penalty(cand)
+            elbow_bonus = -180.0 if bends <= 1 else 0.0
+            cut_bonus = float(CUT_CANDIDATE_BONUS)
+            cost = (
+                abs(new_len - old_len)
+                + (changed_vertices * float(changed_vertex_penalty))
+                + (bends * float(BEND_COUNT_PENALTY))
+                + perp_penalty
+                + depth_bonus
+                + cut_bonus
+                + turn_pen
+                + zig_pen
+                + back_pen
+                + elbow_bonus
+            )
+            mode = "perpendicular" if use_perp else "ortogonal"
+            candidates.append((cost, cand, f"extremo final reruteado ({mode}) con corte en tramo {seg_idx + 1}"))
+
+    if not candidates:
+        raise RuntimeError("No se pudo construir un reruteo ortogonal desde el extremo.")
+    candidates.sort(key=lambda item: item[0])
+    _score, best_pts, best_action = candidates[0]
+    return best_pts, best_action
+
+
+def _adjust_points_local(points, target, target_info=None, route_obj=None):
+    pts = [_vec(p.x, p.y, p.z) for p in (points or [])]
+    if len(pts) < 2:
+        raise RuntimeError("La ruta no tiene suficientes puntos.")
+    if pts[0].distanceToPoint(pts[-1]) <= POINT_TOL and len(pts) > 2:
+        raise RuntimeError("La macro no soporta polilineas cerradas.")
+
+    d_start = float(pts[0].distanceToPoint(target))
+    d_end = float(pts[-1].distanceToPoint(target))
+    endpoint_idx = 0 if d_start <= d_end else (len(pts) - 1)
+
+    perp_dir = None
+    outward_dir = None
+    target_obj = None
+    if isinstance(target_info, dict):
+        perp_dir = target_info.get("perp_dir")
+        outward_dir = target_info.get("outward_dir")
+        target_obj = target_info.get("obj")
+
+    board_idx = _board_endpoint_index_for_route(route_obj, pts)
+    if board_idx is not None and target_obj is not None and _is_box_like(target_obj) and endpoint_idx == int(board_idx):
+        endpoint_idx = (len(pts) - 1) if int(board_idx) == 0 else 0
+
+    endpoint_dir = None
+    if endpoint_idx == 0 and len(pts) >= 2:
+        endpoint_dir = _normalize(pts[1] - pts[0])
+    elif endpoint_idx == (len(pts) - 1) and len(pts) >= 2:
+        endpoint_dir = _normalize(pts[-2] - pts[-1])
+
+    is_oct_target = _is_octagonal_like(target_obj)
+    if is_oct_target:
+        # For octagonal boxes, allow deep reconnect to trunk path.
+        max_depth = len(pts) - 1
+        changed_penalty = 18.0
+        min_axes = 3
+        preserve_bias = 2.0
+    else:
+        # Non-octagonal picks often require correcting much earlier.
+        max_depth = len(pts) - 1
+        changed_penalty = 10.0
+        min_axes = 2
+        preserve_bias = 1.0
+
+    lock_prefix = 0
+    lock_suffix = 0
+    if board_idx == 0:
+        lock_prefix = min(5, max(0, len(pts) - 2))
+    elif board_idx == (len(pts) - 1):
+        lock_suffix = min(5, max(0, len(pts) - 2))
+
+    # Primary behavior: reroute the selected side as a new path until the
+    # opposite endpoint. Fallback to partial reroute if needed.
+    try:
+        out_pts, action = _route_from_endpoint_keep_rest(
+            pts,
+            endpoint_idx,
+            target,
+            perp_dir=perp_dir,
+            endpoint_dir=endpoint_dir,
+            outward_dir=outward_dir,
+            max_depth=max_depth,
+            changed_vertex_penalty=changed_penalty,
+            preserve_depth_bias=preserve_bias,
+            min_signature_axes=min_axes,
+            lock_prefix_vertices=lock_prefix,
+            lock_suffix_vertices=lock_suffix,
+            full_reroute=FULL_REROUTE_DEFAULT,
+        )
+    except Exception:
+        out_pts, action = _route_from_endpoint_keep_rest(
+            pts,
+            endpoint_idx,
+            target,
+            perp_dir=perp_dir,
+            endpoint_dir=endpoint_dir,
+            outward_dir=outward_dir,
+            max_depth=max_depth,
+            changed_vertex_penalty=changed_penalty,
+            preserve_depth_bias=preserve_bias,
+            min_signature_axes=min_axes,
+            lock_prefix_vertices=lock_prefix,
+            lock_suffix_vertices=lock_suffix,
+            full_reroute=False,
+        )
+
+    out_pts = _simplify_collinear(_dedup_points(out_pts), tol=POINT_TOL)
+    out_pts = _collapse_backtracks(out_pts)
+    out_pts = _simplify_collinear(_dedup_points(out_pts), tol=POINT_TOL)
+    if len(out_pts) < 2:
+        raise RuntimeError("La edicion dejo menos de 2 puntos.")
+    if _points_almost_equal(pts, out_pts, tol=0.5):
+        return pts, "sin cambios (ruta equivalente)"
+    return out_pts, action
+
+
+def _max_fillet_radius(points):
+    pts = _dedup_points(points)
+    if len(pts) < 3:
+        return 0.0
+    best = float("inf")
+    found_corner = False
+    for idx in range(1, len(pts) - 1):
+        a = pts[idx - 1]
+        b = pts[idx]
+        c = pts[idx + 1]
+        l1 = float(a.distanceToPoint(b))
+        l2 = float(b.distanceToPoint(c))
+        if l1 <= POINT_TOL or l2 <= POINT_TOL:
+            continue
+        # Ignore collinear runs; fillet on same-direction edges raises warnings.
+        v1 = _normalize(_vec(b.x - a.x, b.y - a.y, b.z - a.z))
+        v2 = _normalize(_vec(c.x - b.x, c.y - b.y, c.z - b.z))
+        if _is_zero_vec(v1) or _is_zero_vec(v2):
+            continue
+        align = abs(float(_dot(v1, v2)))
+        if align >= 0.995:
+            continue
+        found_corner = True
+        best = min(best, 0.5 * min(l1, l2))
+    if not found_corner or not math.isfinite(best):
+        return 0.0
+    return max(0.0, best)
+
+
+def _property_names(obj):
+    try:
+        return set(getattr(obj, "PropertiesList", []) or [])
+    except Exception:
+        return set()
+
+
+def _iter_editable_objects(obj):
+    seen = set()
+    stack = [obj]
+    while stack:
+        cur = stack.pop(0)
+        if cur is None:
+            continue
+        key = id(cur)
+        if key in seen:
+            continue
+        seen.add(key)
+        yield cur
+        for attr in ("LinkedObject", "Object", "Base", "Source"):
+            try:
+                nxt = getattr(cur, attr, None)
+            except Exception:
+                nxt = None
+            if nxt is None or nxt is cur:
+                continue
+            if isinstance(nxt, (list, tuple, set)):
+                for item in nxt:
+                    if item is not None and item is not cur:
+                        stack.append(item)
+            else:
+                stack.append(nxt)
+
+
+def _requested_bend_radius(obj, default=BEND_RADIUS_TARGET):
+    radio_vals = []
+    fillet_vals = []
+    small_vals = []
+
+    for cur in _iter_editable_objects(obj):
+        if _is_box_like(cur) and (not _has_route_metadata(cur)) and (not _is_wire_like_type(cur)):
+            continue
+        pnames = _property_names(cur)
+        if "RadioCurvatura" in pnames:
+            try:
+                v = float(getattr(cur, "RadioCurvatura"))
+                if math.isfinite(v) and v > 0.05:
+                    if v >= MIN_REASONABLE_BEND_MM:
+                        radio_vals.append(v)
+                    else:
+                        small_vals.append(v)
+            except Exception:
+                pass
+        if "FilletRadius" in pnames:
+            try:
+                v = float(getattr(cur, "FilletRadius"))
+                if math.isfinite(v) and v > 0.05:
+                    if v >= MIN_REASONABLE_BEND_MM:
+                        fillet_vals.append(v)
+                    else:
+                        small_vals.append(v)
+            except Exception:
+                pass
+
+    if radio_vals:
+        return float(max(radio_vals))
+    if fillet_vals:
+        return float(max(fillet_vals))
+
+    # If only tiny values were found (e.g., 0.7), treat as unreliable and
+    # fall back to the configured target radius.
+    if small_vals:
+        return float(default)
+    return float(default)
+
+
+def _apply_bend_radius(obj, points, requested=BEND_RADIUS_TARGET):
+    max_allowed = _max_fillet_radius(points)
+    effective = min(float(requested), float(max_allowed)) if max_allowed > 0.0 else 0.0
+    applied = False
+
+    for cur in _iter_editable_objects(obj):
+        if _is_box_like(cur) and (not _has_route_metadata(cur)) and (not _is_wire_like_type(cur)):
+            continue
+        pnames = _property_names(cur)
+        if "FilletRadius" in pnames:
+            try:
+                cur.FilletRadius = float(effective)
+                applied = True
+            except Exception:
+                pass
+        if "RadioCurvatura" in pnames:
+            try:
+                cur.RadioCurvatura = float(effective)
+                applied = True
+            except Exception:
+                pass
+    return effective, max_allowed, applied
+
+
+def _clear_bend_radius(obj):
+    for cur in _iter_editable_objects(obj):
+        if _is_box_like(cur) and (not _has_route_metadata(cur)) and (not _is_wire_like_type(cur)):
+            continue
+        pnames = _property_names(cur)
+        if "FilletRadius" in pnames:
+            try:
+                cur.FilletRadius = 0.0
+            except Exception:
+                pass
+        if "RadioCurvatura" in pnames:
+            try:
+                cur.RadioCurvatura = 0.0
+            except Exception:
+                pass
+
+
+def _set_polyline_points(obj, points):
+    err = []
+    pts = _dedup_points(points)
+    if len(pts) < 2:
+        raise RuntimeError("Se necesitan al menos 2 puntos para actualizar la ruta.")
+
+    for cur in _iter_editable_objects(obj):
+        name = _safe_text(getattr(cur, "Name", "") or getattr(cur, "Label", "") or "?")
+        if _is_box_like(cur) and (not _has_route_metadata(cur)) and (not _is_wire_like_type(cur)):
+            err.append(f"Skip[{name}]: objeto tipo caja/solido no editable como ruta")
+            continue
+        pnames = _property_names(cur)
+        if "Points" in pnames:
+            try:
+                cur.Points = pts
+                return f"Points({name})"
+            except Exception as ex:
+                err.append(f"Points[{name}]: {ex}")
+        if Part is not None and "Shape" in pnames:
+            try:
+                cur.Shape = Part.makePolygon(pts)
+                return f"Shape({name})"
+            except Exception as ex:
+                err.append(f"Shape[{name}]: {ex}")
+
+    if not err:
+        err = ["El objeto no expone 'Points' ni 'Shape' editable."]
+    raise RuntimeError(" | ".join(err))
+
+
+def _score_target_candidate(sel_ex, route_obj):
+    obj = getattr(sel_ex, "Object", None)
+    if obj is None or obj is route_obj:
+        return -10
+    info = _target_info_from_selection_ex(sel_ex)
+    if not isinstance(info, dict) or info.get("point") is None:
+        return -10
+
+    score = 1
+    if _is_box_like(obj):
+        score += 50
+    if _is_octagonal_like(obj):
+        score += 30
+
+    source = _safe_text(info.get("source", "")).lower()
+    if source == "subobject":
+        score += 20
+    elif source == "picked":
+        score += 12
+    elif source == "object":
+        score += 5
+
+    try:
+        subs = list(getattr(sel_ex, "SubObjects", []) or [])
+    except Exception:
+        subs = []
+    for sub in subs:
+        st = _safe_text(getattr(sub, "ShapeType", "")).lower()
+        if st == "face":
+            score += 12
+        elif st == "edge":
+            score += 9
+        elif st == "vertex":
+            score += 6
+    return score
+
+
+def _find_route_and_target(sel_ex_list):
+    if not sel_ex_list:
+        return None, None, [], None, None
+
+    candidates = []
+    for idx, sx in enumerate(sel_ex_list):
+        obj = getattr(sx, "Object", None)
+        score = _score_route_candidate(obj)
+        if score >= 10:
+            pts = _polyline_points_from_object(obj)
+            if len(pts) >= 2:
+                candidates.append((score, idx, sx, obj, pts))
+    if not candidates:
+        return None, None, [], None, None
+
+    candidates.sort(key=lambda item: (-item[0], item[1]))
+    _score, _idx, sx_route, route_obj, route_pts = candidates[0]
+
+    target_cands = []
+    for idx, sx in enumerate(sel_ex_list):
+        tscore = _score_target_candidate(sx, route_obj=route_obj)
+        if tscore >= 0:
+            info = _target_info_from_selection_ex(sx)
+            if isinstance(info, dict) and info.get("point") is not None:
+                target_cands.append((tscore, idx, info))
+
+    if target_cands:
+        target_cands.sort(key=lambda item: (-item[0], item[1]))
+        _ts, _tidx, best_info = target_cands[0]
+        return sx_route, route_obj, route_pts, best_info.get("point"), best_info
+
+    info_same = _target_info_from_selection_ex(sx_route)
+    point_same = info_same.get("point") if isinstance(info_same, dict) else None
+    return sx_route, route_obj, route_pts, point_same, info_same
+
+
+def main():
+    if Gui is None:
+        log_error("FreeCADGui no disponible. Ejecute la macro desde la interfaz de FreeCAD.")
+        return
+    doc = App.ActiveDocument
+    if doc is None:
+        log_error("No hay documento activo.")
+        return
+
+    sel_ex_list = list(Gui.Selection.getSelectionEx("", 0) or [])
+    if not sel_ex_list:
+        log_warn("Seleccione una ruta (alimentador/ramal) y luego un punto de referencia.")
+        return
+
+    _sx_route, route_obj, route_pts, target, target_info = _find_route_and_target(sel_ex_list)
+    if route_obj is None or len(route_pts) < 2:
+        log_error("No se encontro una ruta valida en la seleccion.")
+        return
+    if target is None:
+        log_error(
+            "No se pudo resolver el punto objetivo. "
+            "Seleccione la ruta y otra geometria (vertice, borde circular, cara o punto)."
+        )
+        return
+
+    route_name = _safe_text(getattr(route_obj, "Label", "") or getattr(route_obj, "Name", "Ruta"))
+    doc.openTransaction("Ajuste manual de alimentador/ramal")
+    try:
+        new_pts, action = _adjust_points_local(route_pts, target, target_info=target_info, route_obj=route_obj)
+        if _points_almost_equal(route_pts, new_pts, tol=0.5):
+            doc.abortTransaction()
+            log_info(f"Ruta ajustada: {route_name} | accion=sin cambios (ruta equivalente)")
+            return
+        requested_bend = _requested_bend_radius(route_obj, default=BEND_RADIUS_TARGET)
+        if abs(float(requested_bend) - float(BEND_RADIUS_TARGET)) <= 1e-6:
+            inferred_old = _max_fillet_radius(route_pts)
+            if inferred_old >= MIN_REASONABLE_BEND_MM:
+                requested_bend = float(inferred_old)
+        _clear_bend_radius(route_obj)
+        mode = _set_polyline_points(route_obj, new_pts)
+        bend_eff, bend_cap, bend_applied = _apply_bend_radius(route_obj, new_pts, requested=requested_bend)
+        doc.recompute()
+        doc.commitTransaction()
+        has_perp = isinstance(target_info, dict) and (target_info.get("perp_dir") is not None) and (not _is_zero_vec(target_info.get("perp_dir")))
+        log_info(
+            f"Ruta ajustada: {route_name} | accion={action} | metodo={mode} "
+            f"| puntos={len(route_pts)}->{len(new_pts)} "
+            f"| radio_objetivo={requested_bend:.1f} | radio_aplicado={bend_eff:.1f} "
+            f"| radio_max={bend_cap:.1f} | codos={'SI' if bend_applied else 'NO'} "
+            f"| salida_perpendicular={'SI' if has_perp else 'NO'}"
+        )
+    except Exception as ex:
+        try:
+            doc.abortTransaction()
+        except Exception:
+            pass
+        log_error(f"No se pudo ajustar la ruta: {ex}")
+
+
+if __name__ == "__main__":
+    main()

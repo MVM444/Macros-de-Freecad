@@ -1,0 +1,1017 @@
+# -*- coding: utf-8 -*-
+# MenuText: Asistente CSV 2 Pasos
+# ToolTip: Paso 1 CSV a Sketch, Paso 2 Sketch a Objetos
+# Icon: ColocarLuminarias.svg
+# Toolbar: Importar y Exportar
+
+import csv
+import io
+import json
+import os
+import unicodedata
+import importlib
+
+import FreeCAD as App
+
+try:
+    from PySide2 import QtWidgets
+except Exception:
+    try:
+        from PySide import QtGui as QtWidgets
+    except Exception:
+        QtWidgets = None
+
+CSV_PATH = r"C:\Users\marco\OneDrive - Caja Costarricense de Seguro Social\2026\03-Marzo-2026\La Cruz\1411-04 Luminarias y Ejes La Cruz.csv"
+REGISTRY_PATH = r"C:\Users\marco\OneDrive - Caja Costarricense de Seguro Social\Documentos\FreeCAD\Macros\Macros-de-Freecad\Resources\registry\registry_electric.json"
+
+WORKBENCH_ID = "ElectricCRWorkbench"
+SCALE_DEFAULT = 1.0
+ANCHOR_MODE_DEFAULT = "centroid"    # first | centroid
+MISSING_POLICY_DEFAULT = "skip"      # skip | fallback
+ALIGN_MODE_DEFAULT = "none"          # none | selected | object
+
+ELECTRICO_LABEL = "electrico"
+ELECTRICO_NAME = "electrico"
+ILUMINACION_LABEL = "Iluminacion"
+ILUMINACION_NAME = "Iluminacion"
+IMPORT_GROUP_LABEL = "CSV_Sketch_Import"
+IMPORT_GROUP_NAME = "CSV_Sketch_Import"
+POINTS_GROUP_LABEL = "Puntos_CSV_por_Tipo"
+POINTS_GROUP_NAME = "Puntos_CSV_por_Tipo"
+REF_GROUP_LABEL = "Referencias_CSV"
+REF_GROUP_NAME = "Referencias_CSV"
+ANCHOR_NAME = "CSV_Anchor"
+ANCHOR_LABEL = "CSV_Anchor"
+TARGET_NAME = "CSV_Target"
+TARGET_LABEL = "CSV_Target"
+OUTPUT_GROUP_LABEL = "Luminarias_Importadas"
+OUTPUT_GROUP_NAME = "Luminarias_Importadas"
+SKETCH_PREFIX = "PtsCSV"
+LINK_PREFIX = "Luminaria"
+
+CSV_NAME_TO_REGISTRY_KEY = {
+    "lamp emerg": "Luminaria 60x60",
+    "panel led p27540-36": "Luminaria 60x60",
+    "luminaria hermetica": "Luminaria 60x60",
+    "cascada": "Luminaria 60x60",
+    "apagador sencillo": "Apagador_Simple",
+    "apagador doble": "Apagador_Simple",
+    "sensor pir": "Sensor_Humo",
+    "rotulo salida": "Etiqueta_Circuito",
+}
+
+
+def log(msg):
+    App.Console.PrintMessage(str(msg) + "\n")
+
+
+def to_ascii(text):
+    if text is None:
+        return ""
+    n = unicodedata.normalize("NFKD", str(text))
+    return n.encode("ascii", "ignore").decode("ascii")
+
+
+def keynorm(text):
+    return "".join(ch for ch in to_ascii(text).lower() if ch.isalnum())
+
+
+def sanitize_name(text, fallback):
+    raw = to_ascii(text).strip()
+    chars = []
+    for ch in raw:
+        chars.append(ch if (ch.isalnum() or ch == "_") else "_")
+    name = "".join(chars).strip("_") or fallback
+    if name[0].isdigit():
+        name = "{}_{}".format(fallback, name)
+    return name
+
+
+def unique_value(base, used):
+    c = base
+    i = 1
+    while c in used:
+        c = "{}_{:03d}".format(base, i)
+        i += 1
+    used.add(c)
+    return c
+
+
+def is_group(obj):
+    if obj is None:
+        return False
+    t = getattr(obj, "TypeId", "")
+    if t.startswith("App::DocumentObjectGroup"):
+        return True
+    return hasattr(obj, "addObject") and hasattr(obj, "Group")
+
+
+def find_obj(doc, token):
+    if not token:
+        return None
+    obj = doc.getObject(token)
+    if obj is not None:
+        return obj
+    for it in doc.Objects:
+        if getattr(it, "Label", "") == token:
+            return it
+    return None
+
+
+def find_child_group(parent, label=None, name=None):
+    for child in getattr(parent, "Group", []) or []:
+        if not is_group(child):
+            continue
+        if label is not None and getattr(child, "Label", "") == label:
+            return child
+        if name is not None and getattr(child, "Name", "") == name:
+            return child
+    return None
+
+
+def make_unique_object_name(doc, base):
+    c = base
+    i = 1
+    while doc.getObject(c) is not None:
+        c = "{}_{:02d}".format(base, i)
+        i += 1
+    return c
+
+
+def create_group(doc, label, pref_name, parent=None):
+    name = make_unique_object_name(doc, sanitize_name(pref_name or label, "Group"))
+    g = doc.addObject("App::DocumentObjectGroup", name)
+    g.Label = label
+    if parent is not None:
+        parent.addObject(g)
+    return g
+
+
+def ensure_root_group(doc, label, pref_name):
+    by_name = doc.getObject(pref_name) if pref_name else None
+    if is_group(by_name):
+        return by_name
+    for obj in doc.Objects:
+        if is_group(obj) and getattr(obj, "Label", "") == label:
+            return obj
+    g = create_group(doc, label, pref_name)
+    log("[INFO] Grupo creado: {}".format(label))
+    return g
+
+
+def ensure_child_group(doc, parent, label, pref_name):
+    g = find_child_group(parent, label=label)
+    if g is not None:
+        return g
+    g = find_child_group(parent, name=pref_name)
+    if g is not None:
+        if getattr(g, "Label", "") != label:
+            g.Label = label
+        return g
+    g = create_group(doc, label, pref_name, parent)
+    log("[INFO] Subgrupo creado: {}/{}".format(parent.Label, label))
+    return g
+
+
+def parse_number(v, field, row):
+    t = str(v).strip() if v is not None else ""
+    if t == "":
+        raise ValueError("fila {}: {} vacio".format(row, field))
+    t = t.replace(",", ".")
+    try:
+        return float(t)
+    except Exception:
+        raise ValueError("fila {}: {} invalido ({})".format(row, field, t))
+
+
+def open_csv_reader(path):
+    with open(path, "rb") as f:
+        raw = f.read()
+    text = None
+    used = None
+    tried = []
+    for enc in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
+        try:
+            text = raw.decode(enc)
+            used = enc
+            break
+        except Exception as ex:
+            tried.append("{} ({})".format(enc, ex))
+    if text is None:
+        raise RuntimeError("no se pudo decodificar CSV: {}".format("; ".join(tried)))
+
+    fobj = io.StringIO(text)
+    delim = ","
+    try:
+        d = csv.Sniffer().sniff(text[:4096], delimiters=",;|\t")
+        delim = d.delimiter
+    except Exception:
+        pass
+    reader = csv.DictReader(fobj, delimiter=delim)
+    return fobj, reader, used
+
+
+def resolve_header(fieldnames, aliases, partials=None):
+    partials = partials or []
+    norm_map = {}
+    for h in fieldnames:
+        k = keynorm(h)
+        if k and k not in norm_map:
+            norm_map[k] = h
+    for a in aliases:
+        ka = keynorm(a)
+        if ka in norm_map:
+            return norm_map[ka]
+    for nk, orig in norm_map.items():
+        for p in partials:
+            kp = keynorm(p)
+            if kp and kp in nk:
+                return orig
+    return None
+
+
+def validate_headers(reader):
+    if not reader.fieldnames:
+        raise RuntimeError("CSV sin encabezados")
+    reader.fieldnames = [(h or "").strip() for h in reader.fieldnames]
+    kn = resolve_header(reader.fieldnames, ["nombre", "name", "blockname"], ["nombre", "name"])
+    kx = resolve_header(reader.fieldnames, ["x", "positionx", "insertionx", "coordenadax"], ["positionx", "insertionx", "coordenadax"])
+    ky = resolve_header(reader.fieldnames, ["y", "positiony", "insertiony", "coordenaday"], ["positiony", "insertiony", "coordenaday"])
+    kz = resolve_header(reader.fieldnames, ["z", "positionz", "insertionz", "coordenadaz"], ["positionz", "insertionz", "coordenadaz"])
+    miss = []
+    if kx is None:
+        miss.append("X")
+    if ky is None:
+        miss.append("Y")
+    if kz is None:
+        miss.append("Z")
+    if miss:
+        raise RuntimeError("faltan encabezados: {}".format(",".join(miss)))
+    return kn, kx, ky, kz
+
+def _vector_from_sub(sub):
+    if sub is None:
+        return None
+    if hasattr(sub, "Point"):
+        p = sub.Point
+        return App.Vector(float(p.x), float(p.y), float(p.z))
+    if hasattr(sub, "CenterOfMass"):
+        p = sub.CenterOfMass
+        return App.Vector(float(p.x), float(p.y), float(p.z))
+    if isinstance(sub, App.Vector):
+        return App.Vector(float(sub.x), float(sub.y), float(sub.z))
+    return None
+
+
+def get_selection_anchor_vector():
+    if not getattr(App, "GuiUp", False):
+        return None
+    try:
+        import FreeCADGui as Gui
+    except Exception:
+        return None
+
+    try:
+        sx = Gui.Selection.getSelectionEx() or []
+    except Exception:
+        sx = []
+    for ex in sx:
+        for sub in getattr(ex, "SubObjects", []) or []:
+            v = _vector_from_sub(sub)
+            if v is not None:
+                return v
+
+    try:
+        s = Gui.Selection.getSelection() or []
+    except Exception:
+        s = []
+    if not s:
+        return None
+
+    obj = s[0]
+    sh = getattr(obj, "Shape", None)
+    if sh is not None:
+        try:
+            if hasattr(sh, "CenterOfMass"):
+                c = sh.CenterOfMass
+                return App.Vector(float(c.x), float(c.y), float(c.z))
+        except Exception:
+            pass
+        try:
+            bb = sh.BoundBox
+            return App.Vector(float(bb.XMin + bb.XLength / 2.0), float(bb.YMin + bb.YLength / 2.0), float(bb.ZMin + bb.ZLength / 2.0))
+        except Exception:
+            pass
+
+    pl = getattr(obj, "Placement", None)
+    if pl is not None and getattr(pl, "Base", None) is not None:
+        b = pl.Base
+        return App.Vector(float(b.x), float(b.y), float(b.z))
+    return None
+
+
+def ensure_sketch_for_type(doc, g_points, type_name):
+    safe = type_name or "Generico"
+    label = "Puntos {}".format(safe)
+    for ch in getattr(g_points, "Group", []) or []:
+        if getattr(ch, "TypeId", "") == "Sketcher::SketchObject" and getattr(ch, "Label", "") == label:
+            return ch
+
+    base = sanitize_name("{}_{}".format(SKETCH_PREFIX, safe), SKETCH_PREFIX)
+    ex = doc.getObject(base)
+    if ex is not None and getattr(ex, "TypeId", "") == "Sketcher::SketchObject":
+        if ex not in (getattr(g_points, "Group", []) or []):
+            g_points.addObject(ex)
+        ex.Label = label
+        return ex
+
+    name = base if ex is None else make_unique_object_name(doc, base)
+    sk = doc.addObject("Sketcher::SketchObject", name)
+    sk.Label = label
+    g_points.addObject(sk)
+    return sk
+
+
+def add_point_to_sketch(sketch, x, y, z):
+    import Part
+    sketch.addGeometry(Part.Point(App.Vector(float(x), float(y), float(z))), False)
+
+
+def ensure_ref_point(doc, g_ref, name, label, vec):
+    import Part
+    obj = doc.getObject(name)
+    if obj is None:
+        obj = doc.addObject("Part::Feature", name)
+        obj.Label = label
+    obj.Shape = Part.makeVertex(0, 0, 0)
+    obj.Placement = App.Placement(App.Vector(float(vec.x), float(vec.y), float(vec.z)), App.Rotation())
+    if obj not in (getattr(g_ref, "Group", []) or []):
+        g_ref.addObject(obj)
+    return obj
+
+
+def clear_group_children(doc, grp):
+    for ch in list(getattr(grp, "Group", []) or []):
+        try:
+            grp.removeObject(ch)
+        except Exception:
+            pass
+        try:
+            doc.removeObject(ch.Name)
+        except Exception:
+            pass
+
+
+def extract_type_from_sketch(sk):
+    label = getattr(sk, "Label", "") or getattr(sk, "Name", "")
+    txt = str(label)
+    if txt.lower().startswith("puntos "):
+        return txt[7:].strip() or "Generico"
+    return txt.strip() or "Generico"
+
+
+def vector_from_geom(geom):
+    if geom is None:
+        return None
+    if hasattr(geom, "Point"):
+        p = geom.Point
+        return App.Vector(float(p.x), float(p.y), float(p.z))
+    if hasattr(geom, "X") and hasattr(geom, "Y") and hasattr(geom, "Z"):
+        return App.Vector(float(geom.X), float(geom.Y), float(geom.Z))
+    return None
+
+
+def rows_from_sketch_group(g_points):
+    rows = []
+    for ch in getattr(g_points, "Group", []) or []:
+        if getattr(ch, "TypeId", "") != "Sketcher::SketchObject":
+            continue
+        t = extract_type_from_sketch(ch)
+        for geom in (getattr(ch, "Geometry", []) or []):
+            v = vector_from_geom(geom)
+            if v is None:
+                continue
+            rows.append({"csv_name": t, "x": float(v.x), "y": float(v.y), "z": float(v.z)})
+    return rows
+
+
+def anchor_from_rows(rows, mode):
+    if not rows:
+        return None
+    m = str(mode or "").strip().lower()
+    if m == "first":
+        r = rows[0]
+        return App.Vector(float(r["x"]), float(r["y"]), float(r["z"]))
+    cx = sum(float(it["x"]) for it in rows) / float(len(rows))
+    cy = sum(float(it["y"]) for it in rows) / float(len(rows))
+    cz = sum(float(it["z"]) for it in rows) / float(len(rows))
+    return App.Vector(cx, cy, cz)
+
+
+def ref_point_world(obj):
+    if obj is None:
+        return None
+    pl = getattr(obj, "Placement", None)
+    if pl is not None and getattr(pl, "Base", None) is not None:
+        b = pl.Base
+        return App.Vector(float(b.x), float(b.y), float(b.z))
+    return None
+
+
+def load_registry_keys():
+    p = str(REGISTRY_PATH or "").strip()
+    if not p or not os.path.isfile(p):
+        return []
+    try:
+        with open(p, "r", encoding="utf-8-sig") as f:
+            data = json.load(f)
+        types = (data.get("types") or {}) if isinstance(data, dict) else {}
+        if isinstance(types, dict):
+            return sorted(types.keys(), key=lambda x: str(x).lower())
+    except Exception as ex:
+        log("[WARN] No se pudo leer registro: {}".format(ex))
+    return []
+
+
+def resolve_registry_key(csv_name, reg_keys):
+    if not csv_name:
+        return ""
+    n = keynorm(csv_name)
+    if not n:
+        return ""
+    for k, v in CSV_NAME_TO_REGISTRY_KEY.items():
+        if keynorm(k) == n:
+            return str(v).strip()
+    for rk in reg_keys:
+        nr = keynorm(rk)
+        if nr == n or n in nr or nr in n:
+            return rk
+    return ""
+
+
+def ensure_electriccr_on_path():
+    for mod_name in ("ElectricCR", "electriccr"):
+        try:
+            importlib.import_module(mod_name)
+            return True
+        except Exception:
+            continue
+    return False
+
+
+def get_crear_toma_uno():
+    if not ensure_electriccr_on_path():
+        return None
+    for mod_name in (
+        "ElectricCR.electriccr.features.objeto_toma_uno",
+        "electriccr.features.objeto_toma_uno",
+    ):
+        try:
+            mod = importlib.import_module(mod_name)
+            fn = getattr(mod, "crear_toma_uno", None)
+            if callable(fn):
+                return fn
+        except Exception:
+            continue
+    return None
+
+
+def ensure_workbench():
+    if not getattr(App, "GuiUp", False):
+        return True
+    try:
+        import FreeCADGui as Gui
+    except Exception as ex:
+        log("[ERROR] No se pudo importar FreeCADGui: {}".format(ex))
+        return False
+    try:
+        wbs = Gui.listWorkbenches() or {}
+        if WORKBENCH_ID not in wbs:
+            log("[ERROR] Workbench '{}' no esta cargado.".format(WORKBENCH_ID))
+            return False
+        Gui.activateWorkbench(WORKBENCH_ID)
+        log("[INFO] Workbench activo: {}".format(WORKBENCH_ID))
+    except Exception as ex:
+        log("[ERROR] No se pudo activar workbench: {}".format(ex))
+        return False
+    return True
+
+def is_candidate_base(obj):
+    if obj is None:
+        return False
+    tid = getattr(obj, "TypeId", "")
+    if is_group(obj) or tid == "App::Link" or tid.startswith("Sketcher::"):
+        return False
+    return True
+
+
+def object_in_group_tree(obj, wanted_label):
+    w = str(wanted_label or "").strip().lower()
+    if not w:
+        return False
+    visited = set()
+
+    def walk(node):
+        if node is None:
+            return False
+        key = getattr(node, "Name", None)
+        if key and key in visited:
+            return False
+        if key:
+            visited.add(key)
+        if is_group(node) and str(getattr(node, "Label", "")).strip().lower() == w:
+            return True
+        for p in getattr(node, "InList", []) or []:
+            if walk(p):
+                return True
+        return False
+
+    return walk(obj)
+
+
+def list_base_candidates(doc):
+    out = []
+    for obj in doc.Objects:
+        if not is_candidate_base(obj):
+            continue
+        if not object_in_group_tree(obj, ELECTRICO_LABEL):
+            continue
+        out.append(obj)
+
+    def score(item):
+        txt = "{} {}".format(getattr(item, "Name", ""), getattr(item, "Label", "")).lower()
+        pts = 0
+        if "lumin" in txt:
+            pts += 12
+        if "proto" in txt:
+            pts += 8
+        if str(getattr(item, "TypeId", "")).startswith("Part::"):
+            pts += 2
+        return (-pts, getattr(item, "Label", "").lower(), getattr(item, "Name", "").lower())
+
+    out.sort(key=score)
+    return out
+
+
+def find_best_base_for_type(type_name, base_candidates):
+    if not type_name:
+        return None
+    low = str(type_name).strip().lower()
+    norm = keynorm(type_name)
+    for obj in base_candidates:
+        if getattr(obj, "Name", "").lower() == low or getattr(obj, "Label", "").lower() == low:
+            return obj
+    for obj in base_candidates:
+        if keynorm(getattr(obj, "Name", "")) == norm or keynorm(getattr(obj, "Label", "")) == norm:
+            return obj
+    for obj in base_candidates:
+        n1 = keynorm(getattr(obj, "Name", ""))
+        n2 = keynorm(getattr(obj, "Label", ""))
+        if norm and (norm in n1 or norm in n2 or n1 in norm or n2 in norm):
+            return obj
+    return None
+
+
+def run_step1(params):
+    doc = App.ActiveDocument
+    if doc is None:
+        log("[ERROR] No hay documento activo.")
+        return
+
+    csv_path = str(params.get("csv_path", "")).strip()
+    if not csv_path or not os.path.isfile(csv_path):
+        log("[ERROR] CSV no encontrado: {}".format(csv_path))
+        return
+
+    scale = float(params.get("scale", 1.0))
+    clear_prev = bool(params.get("clear_prev", True))
+    anchor_mode = str(params.get("anchor_mode", "centroid")).strip().lower()
+    create_target = bool(params.get("create_target", True))
+
+    rows = []
+    skipped = 0
+    fobj, reader, enc = open_csv_reader(csv_path)
+    log("[INFO] CSV encoding detectado: {}".format(enc))
+    try:
+        kn, kx, ky, kz = validate_headers(reader)
+        for rn, row in enumerate(reader, start=2):
+            try:
+                x = parse_number(row.get(kx), "X", rn) * scale
+                y = parse_number(row.get(ky), "Y", rn) * scale
+                z = parse_number(row.get(kz), "Z", rn) * scale
+                name = (row.get(kn) or "").strip() if kn is not None else ""
+                rows.append({"csv_name": name or "Generico", "x": x, "y": y, "z": z})
+            except Exception as ex:
+                skipped += 1
+                log("[WARN] Fila {} omitida: {}".format(rn, ex))
+    finally:
+        fobj.close()
+
+    if not rows:
+        log("[WARN] No hay filas validas.")
+        return
+
+    doc.openTransaction("ElectricCR: CSV a Sketch")
+    try:
+        g_e = ensure_root_group(doc, ELECTRICO_LABEL, ELECTRICO_NAME)
+        g_i = ensure_child_group(doc, g_e, ILUMINACION_LABEL, ILUMINACION_NAME)
+        g_imp = ensure_child_group(doc, g_i, IMPORT_GROUP_LABEL, IMPORT_GROUP_NAME)
+        g_pts = ensure_child_group(doc, g_imp, POINTS_GROUP_LABEL, POINTS_GROUP_NAME)
+        g_ref = ensure_child_group(doc, g_imp, REF_GROUP_LABEL, REF_GROUP_NAME)
+
+        if clear_prev:
+            clear_group_children(doc, g_pts)
+            clear_group_children(doc, g_ref)
+
+        sset = set()
+        for it in rows:
+            sk = ensure_sketch_for_type(doc, g_pts, it["csv_name"])
+            add_point_to_sketch(sk, it["x"], it["y"], it["z"])
+            sset.add(sk.Name)
+
+        anchor = anchor_from_rows(rows, anchor_mode)
+        if anchor is not None:
+            ensure_ref_point(doc, g_ref, ANCHOR_NAME, ANCHOR_LABEL, anchor)
+            log("[INFO] CSV_Anchor actualizado: {}".format(anchor))
+
+        if create_target:
+            t = get_selection_anchor_vector()
+            if t is not None:
+                ensure_ref_point(doc, g_ref, TARGET_NAME, TARGET_LABEL, t)
+                log("[INFO] CSV_Target actualizado: {}".format(t))
+            else:
+                log("[WARN] No hay seleccion para CSV_Target.")
+
+        doc.recompute()
+        doc.commitTransaction()
+        log("[INFO] Paso 1 listo. Sketches: {} | Puntos: {} | Omitidos: {}".format(len(sset), len(rows), skipped))
+    except Exception as ex:
+        doc.abortTransaction()
+        log("[ERROR] Paso 1 cancelado: {}".format(ex))
+
+
+def run_step2(params):
+    doc = App.ActiveDocument
+    if doc is None:
+        log("[ERROR] No hay documento activo.")
+        return
+
+    import_label = str(params.get("import_group", IMPORT_GROUP_LABEL)).strip() or IMPORT_GROUP_LABEL
+    base_token = str(params.get("base_token", "")).strip()
+    missing = str(params.get("missing", MISSING_POLICY_DEFAULT)).strip().lower()
+    if missing != "fallback":
+        missing = "skip"
+    use_labels = bool(params.get("use_labels", True))
+    use_devices = bool(params.get("use_devices", True))
+    align_mode = str(params.get("align_mode", "none")).strip().lower()
+    align_target = str(params.get("align_target", "")).strip()
+
+    g_imp = None
+    for obj in doc.Objects:
+        if is_group(obj) and getattr(obj, "Label", "") == import_label:
+            g_imp = obj
+            break
+    if g_imp is None:
+        log("[ERROR] No existe grupo origen: {}".format(import_label))
+        return
+
+    g_pts = find_child_group(g_imp, label=POINTS_GROUP_LABEL, name=POINTS_GROUP_NAME)
+    if g_pts is None:
+        log("[ERROR] No existe subgrupo de puntos: {}".format(POINTS_GROUP_LABEL))
+        return
+    g_ref = find_child_group(g_imp, label=REF_GROUP_LABEL, name=REF_GROUP_NAME)
+
+    rows = rows_from_sketch_group(g_pts)
+    if not rows:
+        log("[WARN] No hay puntos para convertir.")
+        return
+
+    if align_mode != "none":
+        anchor_obj = None
+        if g_ref is not None:
+            for ch in getattr(g_ref, "Group", []) or []:
+                if getattr(ch, "Name", "") == ANCHOR_NAME or getattr(ch, "Label", "") == ANCHOR_LABEL:
+                    anchor_obj = ch
+                    break
+        a = ref_point_world(anchor_obj)
+        if a is None:
+            log("[WARN] No hay CSV_Anchor para alinear.")
+        else:
+            t = None
+            if align_mode == "selected":
+                t = get_selection_anchor_vector()
+            elif align_mode == "object":
+                tobj = find_obj(doc, align_target)
+                t = ref_point_world(tobj)
+                if t is None:
+                    t = get_selection_anchor_vector()
+            if t is None:
+                log("[WARN] No se resolvio target de alineacion.")
+            else:
+                dx = float(t.x) - float(a.x)
+                dy = float(t.y) - float(a.y)
+                dz = float(t.z) - float(a.z)
+                for it in rows:
+                    it["x"] += dx
+                    it["y"] += dy
+                    it["z"] += dz
+                log("[INFO] Delta alineacion aplicado: dX={} dY={} dZ={}".format(dx, dy, dz))
+
+    base_candidates = list_base_candidates(doc)
+    default_base = find_obj(doc, base_token) if base_token else None
+    if default_base is None and base_candidates:
+        default_base = base_candidates[0]
+
+    reg_keys = load_registry_keys()
+    type_names = sorted(set(it["csv_name"] for it in rows if it["csv_name"]))
+    type_map = {}
+    reg_map = {}
+    unresolved = []
+    for tname in type_names:
+        reg_key = resolve_registry_key(tname, reg_keys)
+        if reg_key:
+            reg_map[tname] = reg_key
+        base = find_best_base_for_type(tname, base_candidates)
+        if base is None and reg_key:
+            base = find_best_base_for_type(reg_key, base_candidates)
+        if base is None:
+            if missing == "fallback" and default_base is not None:
+                base = default_base
+            else:
+                unresolved.append(tname)
+                continue
+        type_map[tname] = base
+
+    if unresolved:
+        log("[WARN] Tipos sin base: {}".format(", ".join(unresolved)))
+
+    crear_toma_uno = get_crear_toma_uno() if use_devices else None
+    if use_devices and crear_toma_uno is None:
+        log("[WARN] crear_toma_uno no disponible. Se hara solo Link.")
+
+    created = 0
+    skipped = 0
+    used_names = set(obj.Name for obj in doc.Objects)
+    used_labels = set(obj.Label for obj in doc.Objects)
+
+    doc.openTransaction("ElectricCR: Sketch a Objetos")
+    try:
+        g_e = ensure_root_group(doc, ELECTRICO_LABEL, ELECTRICO_NAME)
+        g_i = ensure_child_group(doc, g_e, ILUMINACION_LABEL, ILUMINACION_NAME)
+        g_out = ensure_child_group(doc, g_i, OUTPUT_GROUP_LABEL, OUTPUT_GROUP_NAME)
+
+        for it in rows:
+            tname = it["csv_name"]
+            base = type_map.get(tname, default_base)
+            reg_key = reg_map.get(tname, "")
+
+            if base is None and callable(crear_toma_uno) and reg_key:
+                try:
+                    dev = crear_toma_uno(doc, name_prefix=sanitize_name(tname or reg_key, "Disp") + "_", key_registro=reg_key, tipo_logico="Dispositivo")
+                    if dev is None:
+                        raise RuntimeError("crear_toma_uno devolvio None")
+                    pl = App.Placement(App.Vector(float(it["x"]), float(it["y"]), float(it["z"])), App.Rotation())
+                    try:
+                        dev.Placement = pl
+                    except Exception:
+                        try:
+                            dev.BasePlacement = pl
+                        except Exception:
+                            pass
+                    try:
+                        dev.Label = unique_value(tname or reg_key, used_labels)
+                    except Exception:
+                        pass
+                    g_out.addObject(dev)
+                    created += 1
+                    continue
+                except Exception as ex:
+                    log("[WARN] Dispositivo '{}' no creado: {}".format(tname, ex))
+                    skipped += 1
+                    continue
+
+            if base is None:
+                skipped += 1
+                continue
+
+            link = None
+            try:
+                oname = unique_value(sanitize_name(tname or LINK_PREFIX, LINK_PREFIX), used_names)
+                link = doc.addObject("App::Link", oname)
+                if hasattr(link, "LinkedObject"):
+                    link.LinkedObject = base
+                else:
+                    link.Link = base
+                link.Placement = App.Placement(App.Vector(float(it["x"]), float(it["y"]), float(it["z"])), App.Rotation())
+                seed = tname if (use_labels and tname) else oname
+                link.Label = unique_value(seed, used_labels)
+                g_out.addObject(link)
+                created += 1
+            except Exception as ex:
+                skipped += 1
+                if link is not None:
+                    try:
+                        doc.removeObject(link.Name)
+                    except Exception:
+                        pass
+                log("[WARN] Fila omitida: {}".format(ex))
+
+        doc.recompute()
+        doc.commitTransaction()
+        log("[INFO] Paso 2 listo. Creados: {} | Omitidos: {}".format(created, skipped))
+    except Exception as ex:
+        doc.abortTransaction()
+        log("[ERROR] Paso 2 cancelado: {}".format(ex))
+
+
+class AsisCsv2PasosDialog(QtWidgets.QDialog):
+    def __init__(self, doc, parent=None):
+        super(AsisCsv2PasosDialog, self).__init__(parent)
+        self._doc = doc
+        self.setWindowTitle("Asistente CSV 2 Pasos")
+        self.setMinimumWidth(820)
+        self._build_ui()
+        self.refresh_lists()
+
+    def _build_ui(self):
+        tabs = QtWidgets.QTabWidget()
+        t1 = QtWidgets.QWidget()
+        t2 = QtWidgets.QWidget()
+        tabs.addTab(t1, "Paso 1 Importacion")
+        tabs.addTab(t2, "Paso 2 Conversion")
+
+        self.le_csv = QtWidgets.QLineEdit(CSV_PATH)
+        self.btn_csv = QtWidgets.QPushButton("...")
+        self.btn_csv.setFixedWidth(36)
+        self.btn_csv.clicked.connect(self.pick_csv)
+        row_csv = QtWidgets.QHBoxLayout()
+        row_csv.addWidget(self.le_csv)
+        row_csv.addWidget(self.btn_csv)
+
+        self.sp_scale = QtWidgets.QDoubleSpinBox()
+        self.sp_scale.setDecimals(8)
+        self.sp_scale.setRange(0.00000001, 1000000000.0)
+        self.sp_scale.setValue(float(SCALE_DEFAULT))
+
+        self.cmb_anchor = QtWidgets.QComboBox()
+        self.cmb_anchor.addItem("Primer punto", "first")
+        self.cmb_anchor.addItem("Centro del CSV", "centroid")
+        idx = self.cmb_anchor.findData(ANCHOR_MODE_DEFAULT)
+        if idx >= 0:
+            self.cmb_anchor.setCurrentIndex(idx)
+
+        self.chk_clear = QtWidgets.QCheckBox("Limpiar grupo previo de sketches")
+        self.chk_clear.setChecked(True)
+        self.chk_target = QtWidgets.QCheckBox("Crear CSV_Target desde seleccion")
+        self.chk_target.setChecked(True)
+
+        btn_run1 = QtWidgets.QPushButton("Ejecutar Paso 1")
+        btn_run1.clicked.connect(self.run1)
+
+        f1 = QtWidgets.QFormLayout()
+        f1.addRow("Archivo CSV:", row_csv)
+        f1.addRow("Factor escala:", self.sp_scale)
+        f1.addRow("Anchor:", self.cmb_anchor)
+        f1.addRow("", self.chk_clear)
+        f1.addRow("", self.chk_target)
+        l1 = QtWidgets.QVBoxLayout(t1)
+        l1.addLayout(f1)
+        l1.addStretch(1)
+        l1.addWidget(btn_run1)
+
+        self.cmb_group = QtWidgets.QComboBox()
+        self.cmb_group.setEditable(True)
+        self.cmb_base = QtWidgets.QComboBox()
+        self.cmb_base.setEditable(True)
+
+        self.cmb_missing = QtWidgets.QComboBox()
+        self.cmb_missing.addItem("Omitir tipo sin base", "skip")
+        self.cmb_missing.addItem("Usar base fallback", "fallback")
+        idxm = self.cmb_missing.findData(MISSING_POLICY_DEFAULT)
+        if idxm >= 0:
+            self.cmb_missing.setCurrentIndex(idxm)
+
+        self.chk_labels = QtWidgets.QCheckBox("Usar nombre de tipo como Label")
+        self.chk_labels.setChecked(True)
+        self.chk_devices = QtWidgets.QCheckBox("Usar Insertar_Dispositivo si aplica")
+        self.chk_devices.setChecked(True)
+
+        self.cmb_align = QtWidgets.QComboBox()
+        self.cmb_align.addItem("Sin alineacion", "none")
+        self.cmb_align.addItem("Alinear anchor a seleccion", "selected")
+        self.cmb_align.addItem("Alinear anchor a objeto", "object")
+        idxa = self.cmb_align.findData(ALIGN_MODE_DEFAULT)
+        if idxa >= 0:
+            self.cmb_align.setCurrentIndex(idxa)
+        self.cmb_align.currentIndexChanged.connect(self.toggle_target_token)
+
+        self.le_align_target = QtWidgets.QLineEdit("")
+        self.le_align_target.setPlaceholderText("Name o Label target (opcional)")
+        self.toggle_target_token()
+
+        btn_run2 = QtWidgets.QPushButton("Ejecutar Paso 2")
+        btn_run2.clicked.connect(self.run2)
+
+        f2 = QtWidgets.QFormLayout()
+        f2.addRow("Grupo origen:", self.cmb_group)
+        f2.addRow("Base fallback:", self.cmb_base)
+        f2.addRow("Si falta tipo:", self.cmb_missing)
+        f2.addRow("", self.chk_labels)
+        f2.addRow("", self.chk_devices)
+        f2.addRow("Alineacion:", self.cmb_align)
+        f2.addRow("Target objeto:", self.le_align_target)
+        l2 = QtWidgets.QVBoxLayout(t2)
+        l2.addLayout(f2)
+        l2.addStretch(1)
+        l2.addWidget(btn_run2)
+
+        btn_refresh = QtWidgets.QPushButton("Actualizar listas")
+        btn_refresh.clicked.connect(self.refresh_lists)
+        btn_close = QtWidgets.QPushButton("Cerrar")
+        btn_close.clicked.connect(self.reject)
+
+        foot = QtWidgets.QHBoxLayout()
+        foot.addWidget(btn_refresh)
+        foot.addStretch(1)
+        foot.addWidget(btn_close)
+
+        root = QtWidgets.QVBoxLayout(self)
+        root.addWidget(tabs)
+        root.addLayout(foot)
+
+    def pick_csv(self):
+        start = self.le_csv.text().strip()
+        if os.path.isfile(start):
+            start = os.path.dirname(start)
+        elif not os.path.isdir(start):
+            start = ""
+        selected, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Seleccionar CSV", start, "CSV (*.csv);;Todos (*.*)")
+        if selected:
+            self.le_csv.setText(selected)
+
+    def toggle_target_token(self):
+        self.le_align_target.setEnabled(str(self.cmb_align.currentData() or "none") == "object")
+
+    def refresh_lists(self):
+        self.cmb_group.clear()
+        labels = []
+        for obj in self._doc.Objects:
+            if is_group(obj) and "csvsketchimport" in keynorm(getattr(obj, "Label", "")):
+                labels.append(getattr(obj, "Label", ""))
+        if IMPORT_GROUP_LABEL not in labels:
+            labels.insert(0, IMPORT_GROUP_LABEL)
+        for lb in sorted(set(labels)):
+            self.cmb_group.addItem(lb, lb)
+
+        self.cmb_base.clear()
+        for obj in list_base_candidates(self._doc):
+            txt = "{} ({}) [{}]".format(getattr(obj, "Label", "") or getattr(obj, "Name", ""), getattr(obj, "Name", ""), getattr(obj, "TypeId", ""))
+            self.cmb_base.addItem(txt, getattr(obj, "Name", ""))
+
+        log("[INFO] Listas actualizadas.")
+
+    def run1(self):
+        run_step1({
+            "csv_path": self.le_csv.text().strip(),
+            "scale": float(self.sp_scale.value()),
+            "anchor_mode": str(self.cmb_anchor.currentData() or "centroid"),
+            "clear_prev": bool(self.chk_clear.isChecked()),
+            "create_target": bool(self.chk_target.isChecked()),
+        })
+        self.refresh_lists()
+
+    def run2(self):
+        idx = self.cmb_base.currentIndex()
+        data = self.cmb_base.itemData(idx) if idx >= 0 else None
+        base_token = str(data).strip() if data else self.cmb_base.currentText().strip()
+        run_step2({
+            "import_group": self.cmb_group.currentText().strip(),
+            "base_token": base_token,
+            "missing": str(self.cmb_missing.currentData() or "skip"),
+            "use_labels": bool(self.chk_labels.isChecked()),
+            "use_devices": bool(self.chk_devices.isChecked()),
+            "align_mode": str(self.cmb_align.currentData() or "none"),
+            "align_target": self.le_align_target.text().strip(),
+        })
+
+
+def main():
+    doc = App.ActiveDocument
+    if doc is None:
+        log("[ERROR] No hay documento activo.")
+        return
+    if not ensure_workbench():
+        return
+    if QtWidgets is None or not getattr(App, "GuiUp", False):
+        log("[ERROR] GUI/Qt no disponible.")
+        return
+    try:
+        import FreeCADGui as Gui
+        parent = Gui.getMainWindow()
+    except Exception:
+        parent = None
+    dlg = AsisCsv2PasosDialog(doc, parent)
+    dlg.exec_()
+
+
+main()

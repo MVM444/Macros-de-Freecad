@@ -1,0 +1,484 @@
+# -*- coding: utf-8 -*-
+# MenuText: Exportar spreadsheets a Excel
+# Icon: Exportar_Spreadsheets_a_Excel.svg
+
+"""
+Exporta todas las hojas Spreadsheet del documento activo a un archivo Excel.
+
+Notas:
+- Requiere openpyxl para salida .xlsx.
+- Si openpyxl no esta disponible, exporta Excel XML (.xml) compatible con Excel.
+- Si el XML falla, exporta CSV por hoja como ultimo fallback.
+"""
+
+import csv
+import os
+import re
+from datetime import datetime
+
+import FreeCAD as App
+
+try:
+    import FreeCADGui as Gui
+except Exception:
+    Gui = None
+
+try:
+    from PySide2 import QtWidgets
+except Exception:
+    try:
+        from PySide import QtGui as QtWidgets
+    except Exception:
+        QtWidgets = None
+
+
+TAG = "[EXPORT_XLSX]"
+
+
+def _info(msg):
+    App.Console.PrintMessage(f"{TAG}[INFO] {msg}\n")
+
+
+def _warn(msg):
+    App.Console.PrintWarning(f"{TAG}[WARN] {msg}\n")
+
+
+def _err(msg):
+    App.Console.PrintError(f"{TAG}[ERROR] {msg}\n")
+
+
+def _safe_text(value):
+    try:
+        return str(value or "")
+    except Exception:
+        return ""
+
+
+def _msg_info(title, text):
+    if QtWidgets is None:
+        return
+    try:
+        QtWidgets.QMessageBox.information(None, title, text)
+    except Exception:
+        pass
+
+
+def _msg_warn(title, text):
+    if QtWidgets is None:
+        return
+    try:
+        QtWidgets.QMessageBox.warning(None, title, text)
+    except Exception:
+        pass
+
+
+def _col_letter(idx):
+    out = ""
+    i = int(idx)
+    while i > 0:
+        i, rem = divmod(i - 1, 26)
+        out = chr(65 + rem) + out
+    return out or "A"
+
+
+def _parse_cell_addr(addr):
+    m = re.match(r"^([A-Za-z]+)(\d+)$", _safe_text(addr).strip())
+    if not m:
+        return None
+    col_txt = m.group(1).upper()
+    row = int(m.group(2))
+    col = 0
+    for ch in col_txt:
+        col = col * 26 + (ord(ch) - 64)
+    return row, col
+
+
+def _read_display_value(sheet, cell):
+    try:
+        val = sheet.get(cell)
+        if val is not None and _safe_text(val) != "":
+            return val
+    except Exception:
+        pass
+    try:
+        if hasattr(sheet, "getContents"):
+            raw = sheet.getContents(cell)
+            if raw is not None:
+                return raw
+    except Exception:
+        pass
+    return ""
+
+
+def _coerce_excel_value(value):
+    if isinstance(value, (int, float)):
+        return value
+    s = _safe_text(value).strip()
+    if not s:
+        return ""
+
+    # FreeCAD Spreadsheet text may be stored as quoted literal.
+    if len(s) >= 2 and s[0] == '"' and s[-1] == '"':
+        s = s[1:-1].replace('""', '"')
+
+    # Preserve explicit text literal.
+    if s.startswith("'"):
+        return s[1:]
+
+    # Keep values like 2/0 or leading-zero codes as text.
+    if re.match(r"^\d+/0$", s):
+        return s
+    if re.match(r"^-?0\d+$", s):
+        return s
+
+    # Parse plain numeric text.
+    sn = s
+    if "," in sn and "." not in sn:
+        sn = sn.replace(",", ".")
+    if re.match(r"^-?\d+(\.\d+)?$", sn):
+        try:
+            if "." in sn:
+                return float(sn)
+            return int(sn)
+        except Exception:
+            return s
+    return s
+
+
+def _xml_escape(value):
+    s = _safe_text(value)
+    return (
+        s.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&apos;")
+    )
+
+
+def _collect_non_empty_cells(sheet, max_rows=5000, max_cols=80):
+    cells = []
+
+    # Preferred API when available.
+    try:
+        if hasattr(sheet, "getNonEmptyCells"):
+            arr = list(sheet.getNonEmptyCells() or [])
+            for a in arr:
+                cell = _safe_text(a).strip().upper()
+                if _parse_cell_addr(cell):
+                    cells.append(cell)
+    except Exception:
+        pass
+
+    if cells:
+        uniq = sorted(set(cells), key=lambda c: _parse_cell_addr(c) or (10**9, 10**9))
+        return uniq
+
+    # Fallback scan for older versions.
+    out = []
+    empty_row_run = 0
+    for r in range(1, max_rows + 1):
+        row_has_data = False
+        for c in range(1, max_cols + 1):
+            addr = f"{_col_letter(c)}{r}"
+            v = _read_display_value(sheet, addr)
+            if _safe_text(v).strip() != "":
+                out.append(addr)
+                row_has_data = True
+        if row_has_data:
+            empty_row_run = 0
+        else:
+            empty_row_run += 1
+            if r >= 150 and empty_row_run >= 120:
+                break
+    return out
+
+
+def _safe_xlsx_sheet_name(name, used_names):
+    base = _safe_text(name).strip()
+    if not base:
+        base = "Sheet"
+    base = re.sub(r"[\[\]\*:/\\\?]+", "_", base)
+    base = base[:31]
+    if not base:
+        base = "Sheet"
+    cand = base
+    i = 1
+    while cand in used_names:
+        suffix = f"_{i}"
+        cand = f"{base[:max(1, 31 - len(suffix))]}{suffix}"
+        i += 1
+    used_names.add(cand)
+    return cand
+
+
+def _spreadsheet_objects(doc):
+    out = []
+    for obj in getattr(doc, "Objects", []) or []:
+        if _safe_text(getattr(obj, "TypeId", "")) == "Spreadsheet::Sheet":
+            out.append(obj)
+    out.sort(key=lambda o: (_safe_text(getattr(o, "Label", "")).lower(), _safe_text(getattr(o, "Name", "")).lower()))
+    return out
+
+
+def _collect_sheet_values(sheet):
+    values = {}
+    max_row = 0
+    max_col = 0
+    for addr in _collect_non_empty_cells(sheet):
+        rc = _parse_cell_addr(addr)
+        if rc is None:
+            continue
+        r, c = rc
+        val = _coerce_excel_value(_read_display_value(sheet, addr))
+        if val == "":
+            continue
+        values[(r, c)] = val
+        max_row = max(max_row, r)
+        max_col = max(max_col, c)
+    return values, max_row, max_col
+
+
+def _export_xlsx(doc, file_path):
+    try:
+        import openpyxl
+        from openpyxl.utils import get_column_letter
+    except Exception as ex:
+        return False, f"openpyxl no disponible: {ex}"
+
+    sheets = _spreadsheet_objects(doc)
+    if not sheets:
+        return False, "No hay objetos Spreadsheet::Sheet en el documento."
+
+    wb = openpyxl.Workbook()
+    try:
+        wb.remove(wb.active)
+    except Exception:
+        pass
+
+    used_names = set()
+    total_cells = 0
+
+    for sheet in sheets:
+        title_raw = _safe_text(getattr(sheet, "Label", "")).strip() or _safe_text(getattr(sheet, "Name", "")).strip()
+        ws = wb.create_sheet(_safe_xlsx_sheet_name(title_raw, used_names))
+        non_empty = _collect_non_empty_cells(sheet)
+        col_width = {}
+        for addr in non_empty:
+            rc = _parse_cell_addr(addr)
+            if rc is None:
+                continue
+            r, c = rc
+            val = _coerce_excel_value(_read_display_value(sheet, addr))
+            if val == "":
+                continue
+            ws.cell(row=r, column=c, value=val)
+            total_cells += 1
+            txt = _safe_text(val)
+            col_width[c] = max(col_width.get(c, 0), min(len(txt), 80))
+
+        for c, w in col_width.items():
+            try:
+                ws.column_dimensions[get_column_letter(c)].width = min(60, max(8, w + 2))
+            except Exception:
+                pass
+        try:
+            ws.freeze_panes = "A2"
+        except Exception:
+            pass
+
+    wb.save(file_path)
+    return True, f"Archivo Excel exportado: {file_path}\nHojas: {len(sheets)} | Celdas: {total_cells}"
+
+
+def _export_excel_xml_fallback(doc, file_path_xml):
+    sheets = _spreadsheet_objects(doc)
+    if not sheets:
+        return False, "No hay objetos Spreadsheet::Sheet en el documento."
+
+    used_names = set()
+    total_cells = 0
+    lines = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<?mso-application progid="Excel.Sheet"?>',
+        '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"',
+        ' xmlns:o="urn:schemas-microsoft-com:office:office"',
+        ' xmlns:x="urn:schemas-microsoft-com:office:excel"',
+        ' xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"',
+        ' xmlns:html="http://www.w3.org/TR/REC-html40">',
+    ]
+
+    for sheet in sheets:
+        title_raw = _safe_text(getattr(sheet, "Label", "")).strip() or _safe_text(getattr(sheet, "Name", "")).strip()
+        ws_name = _safe_xlsx_sheet_name(title_raw, used_names)
+        vals, max_row, _max_col = _collect_sheet_values(sheet)
+        lines.append(f' <Worksheet ss:Name="{_xml_escape(ws_name)}">')
+        lines.append("  <Table>")
+        if vals:
+            row_map = {}
+            for (r, c), v in vals.items():
+                row_map.setdefault(r, {})[c] = v
+            for r in sorted(row_map.keys()):
+                lines.append(f'   <Row ss:Index="{r}">')
+                for c in sorted(row_map[r].keys()):
+                    v = row_map[r][c]
+                    if isinstance(v, (int, float)):
+                        sval = f"{float(v):.15g}"
+                        lines.append(
+                            f'    <Cell ss:Index="{c}"><Data ss:Type="Number">{sval}</Data></Cell>'
+                        )
+                    else:
+                        lines.append(
+                            f'    <Cell ss:Index="{c}"><Data ss:Type="String">{_xml_escape(v)}</Data></Cell>'
+                        )
+                    total_cells += 1
+                lines.append("   </Row>")
+        elif max_row <= 0:
+            lines.append('   <Row><Cell><Data ss:Type="String">(hoja vacia)</Data></Cell></Row>')
+        lines.append("  </Table>")
+        lines.append(" </Worksheet>")
+    lines.append("</Workbook>")
+
+    try:
+        with open(file_path_xml, "w", encoding="utf-8-sig") as f:
+            f.write("\n".join(lines))
+    except Exception as ex:
+        return False, f"No se pudo escribir Excel XML: {ex}"
+    return True, f"openpyxl no disponible. Exportado Excel XML: {file_path_xml}\nHojas: {len(sheets)} | Celdas: {total_cells}"
+
+
+def _export_csv_fallback(doc, folder_path):
+    sheets = _spreadsheet_objects(doc)
+    if not sheets:
+        return False, "No hay objetos Spreadsheet::Sheet en el documento."
+
+    try:
+        os.makedirs(folder_path, exist_ok=True)
+    except Exception as ex:
+        return False, f"No se pudo crear carpeta de salida: {ex}"
+
+    exported = 0
+    for sheet in sheets:
+        title = _safe_text(getattr(sheet, "Label", "")).strip() or _safe_text(getattr(sheet, "Name", "")).strip() or "Sheet"
+        safe = re.sub(r"[^0-9A-Za-z_ -]+", "_", title).strip() or "Sheet"
+        out_csv = os.path.join(folder_path, f"{safe}.csv")
+        cells = _collect_non_empty_cells(sheet)
+        if not cells:
+            with open(out_csv, "w", newline="", encoding="utf-8-sig") as f:
+                writer = csv.writer(f)
+                writer.writerow(["(hoja vacia)"])
+            exported += 1
+            continue
+
+        max_row = 1
+        max_col = 1
+        values = {}
+        for addr in cells:
+            rc = _parse_cell_addr(addr)
+            if rc is None:
+                continue
+            r, c = rc
+            val = _coerce_excel_value(_read_display_value(sheet, addr))
+            if val == "":
+                continue
+            values[(r, c)] = val
+            max_row = max(max_row, r)
+            max_col = max(max_col, c)
+
+        with open(out_csv, "w", newline="", encoding="utf-8-sig") as f:
+            writer = csv.writer(f)
+            for r in range(1, max_row + 1):
+                row_vals = []
+                for c in range(1, max_col + 1):
+                    row_vals.append(values.get((r, c), ""))
+                writer.writerow(row_vals)
+        exported += 1
+
+    return True, f"openpyxl no disponible. Exportado fallback CSV en: {folder_path}\nHojas: {exported}"
+
+
+def _pick_output_xlsx(doc):
+    if QtWidgets is None:
+        return ""
+    doc_name = _safe_text(getattr(doc, "Label", "")).strip() or _safe_text(getattr(doc, "Name", "")).strip() or "Proyecto"
+    doc_name = re.sub(r"[^0-9A-Za-z_ -]+", "_", doc_name).strip() or "Proyecto"
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    base_dir = ""
+    try:
+        fpath = _safe_text(getattr(doc, "FileName", "")).strip()
+        if fpath:
+            base_dir = os.path.dirname(fpath)
+    except Exception:
+        base_dir = ""
+    if not base_dir:
+        base_dir = os.path.expanduser("~")
+
+    suggested = os.path.join(base_dir, f"{doc_name}_Spreadsheets_{ts}.xlsx")
+    try:
+        result = QtWidgets.QFileDialog.getSaveFileName(
+            None,
+            "Exportar spreadsheets a Excel",
+            suggested,
+            "Excel (*.xlsx)",
+        )
+    except Exception:
+        return ""
+    if isinstance(result, tuple):
+        path = _safe_text(result[0]).strip()
+    else:
+        path = _safe_text(result).strip()
+    if not path:
+        return ""
+    if not path.lower().endswith(".xlsx"):
+        path += ".xlsx"
+    return path
+
+
+def exportar_spreadsheets_a_excel():
+    doc = App.ActiveDocument
+    if doc is None:
+        _err("No hay documento activo.")
+        _msg_warn("Exportar a Excel", "No hay documento activo.")
+        return
+
+    sheets = _spreadsheet_objects(doc)
+    if not sheets:
+        _err("El documento no contiene hojas Spreadsheet.")
+        _msg_warn("Exportar a Excel", "El documento no contiene hojas Spreadsheet.")
+        return
+
+    out_xlsx = _pick_output_xlsx(doc)
+    if not out_xlsx:
+        _info("Operacion cancelada por usuario.")
+        return
+
+    ok, msg = _export_xlsx(doc, out_xlsx)
+    if ok:
+        _info(msg)
+        _msg_info("Exportar a Excel", msg)
+        return
+
+    # Fallback 1: Excel XML when xlsx backend is unavailable.
+    _warn(msg)
+    out_xml = out_xlsx[:-5] + ".xml"
+    ok_xml, msg_xml = _export_excel_xml_fallback(doc, out_xml)
+    if ok_xml:
+        _warn(msg_xml)
+        _msg_warn("Exportar a Excel", msg_xml)
+        return
+
+    # Fallback 2: CSV by sheet.
+    _warn(msg_xml)
+    csv_dir = out_xlsx[:-5] + "_csv"
+    ok_csv, msg_csv = _export_csv_fallback(doc, csv_dir)
+    if ok_csv:
+        _warn(msg_csv)
+        _msg_warn("Exportar a Excel", f"{msg}\n{msg_xml}\n{msg_csv}")
+    else:
+        _err(msg_csv)
+        _msg_warn("Exportar a Excel", f"Fallo exportacion.\n{msg}\n{msg_xml}\n{msg_csv}")
+
+
+if __name__ == "__main__":
+    exportar_spreadsheets_a_excel()

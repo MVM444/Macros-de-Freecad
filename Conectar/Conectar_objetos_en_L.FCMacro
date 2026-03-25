@@ -1,0 +1,326 @@
+# -*- coding: utf-8 -*-
+# MenuText: [ACTIVA] Conectar objetos en L
+# Icon: Conectar_objetos_en_L.svg
+
+import math
+import os
+import sys
+
+import FreeCAD
+import FreeCADGui
+import Draft
+import Part
+
+try:
+    from PySide2 import QtWidgets, QtCore
+except Exception:
+    from PySide import QtGui as QtWidgets  # type: ignore
+    from PySide import QtCore  # type: ignore
+
+
+_THIS_DIR = os.path.dirname(__file__) if "__file__" in globals() else ""
+if _THIS_DIR and _THIS_DIR not in sys.path:
+    sys.path.insert(0, _THIS_DIR)
+
+import importlib
+import conexiones_grouping as _conexiones_grouping_mod
+
+_conexiones_grouping_mod = importlib.reload(_conexiones_grouping_mod)
+ensure_conexiones_group = _conexiones_grouping_mod.ensure_conexiones_group
+
+
+EPS = 1e-9
+POINT_TOL = 0.1
+
+
+def _safe_text(v):
+    try:
+        return str(v or "")
+    except Exception:
+        return ""
+
+
+def _vec(x=0.0, y=0.0, z=0.0):
+    return FreeCAD.Vector(float(x), float(y), float(z))
+
+
+def _set_axis(pt, axis, value):
+    if axis == "x":
+        return _vec(value, pt.y, pt.z)
+    if axis == "y":
+        return _vec(pt.x, value, pt.z)
+    return _vec(pt.x, pt.y, value)
+
+
+def _dedup_points(points, tol=POINT_TOL):
+    out = []
+    for p in (points or []):
+        if not out:
+            out.append(_vec(p.x, p.y, p.z))
+            continue
+        if out[-1].distanceToPoint(p) > float(tol):
+            out.append(_vec(p.x, p.y, p.z))
+    return out
+
+
+def _axis_deltas(a, b):
+    return {
+        "x": abs(float(b.x) - float(a.x)),
+        "y": abs(float(b.y) - float(a.y)),
+        "z": abs(float(b.z) - float(a.z)),
+    }
+
+
+def _max_fillet(points):
+    pts = _dedup_points(points)
+    if len(pts) < 3:
+        return 0.0
+    best = float("inf")
+    found = False
+    for i in range(1, len(pts) - 1):
+        a = pts[i - 1]
+        b = pts[i]
+        c = pts[i + 1]
+        l1 = float(a.distanceToPoint(b))
+        l2 = float(b.distanceToPoint(c))
+        if l1 <= POINT_TOL or l2 <= POINT_TOL:
+            continue
+        found = True
+        best = min(best, 0.5 * min(l1, l2))
+    if not found or not math.isfinite(best):
+        return 0.0
+    return max(0.0, best)
+
+
+def _make_wire(points):
+    maker = getattr(Draft, "make_wire", None)
+    if maker is None:
+        maker = getattr(Draft, "makeWire", None)
+    if maker is None:
+        raise RuntimeError("No se encontro Draft.make_wire ni Draft.makeWire.")
+
+    attempts = [
+        lambda: maker(points, closed=False),
+        lambda: maker(points, False),
+        lambda: maker(points),
+    ]
+    last_err = None
+    for fn in attempts:
+        try:
+            return fn()
+        except Exception as ex:
+            last_err = ex
+    raise RuntimeError(f"No se pudo crear el Wire Draft: {last_err}")
+
+
+def _point_from_subobj(sub_obj):
+    if isinstance(sub_obj, Part.Vertex):
+        return sub_obj.Point
+    if isinstance(sub_obj, Part.Edge):
+        return sub_obj.CenterOfMass
+    if isinstance(sub_obj, Part.Face):
+        return sub_obj.CenterOfMass
+
+    pt = getattr(sub_obj, "Point", None)
+    if pt is not None:
+        return pt
+    com = getattr(sub_obj, "CenterOfMass", None)
+    if com is not None:
+        return com
+    return None
+
+
+def _point_from_selection(sel_ex):
+    if sel_ex is None:
+        return None
+
+    for sub in (getattr(sel_ex, "SubObjects", []) or []):
+        pt = _point_from_subobj(sub)
+        if pt is not None:
+            return _vec(pt.x, pt.y, pt.z)
+
+    picked = list(getattr(sel_ex, "PickedPoints", []) or [])
+    if picked:
+        p = picked[0]
+        if p is not None:
+            return _vec(p.x, p.y, p.z)
+
+    obj = getattr(sel_ex, "Object", None)
+    if obj is None:
+        return None
+
+    shape = getattr(obj, "Shape", None)
+    if shape is not None:
+        com = getattr(shape, "CenterOfMass", None)
+        if com is not None:
+            return _vec(com.x, com.y, com.z)
+
+    placement = getattr(obj, "Placement", None)
+    base = getattr(placement, "Base", None) if placement is not None else None
+    if base is not None:
+        return _vec(base.x, base.y, base.z)
+    return None
+
+
+class LSelectorDialog(QtWidgets.QDialog):
+    def __init__(self, axis_primary, axis_secondary):
+        super(LSelectorDialog, self).__init__()
+        self.selected_mode = None
+        self.setWindowTitle("Conectar en L")
+        self.setFixedSize(340, 170)
+
+        axis_txt = f"Ejes principales: {axis_primary.upper()} y {axis_secondary.upper()}"
+        lbl = QtWidgets.QLabel(axis_txt)
+        lbl.setAlignment(QtCore.Qt.AlignCenter)
+
+        btn_normal = QtWidgets.QPushButton("L normal")
+        btn_inv = QtWidgets.QPushButton("L invertida")
+        btn_cancel = QtWidgets.QPushButton("Cancelar")
+
+        btn_normal.clicked.connect(lambda: self._set_mode("normal"))
+        btn_inv.clicked.connect(lambda: self._set_mode("invertida"))
+        btn_cancel.clicked.connect(self.reject)
+
+        row = QtWidgets.QHBoxLayout()
+        row.addWidget(btn_normal)
+        row.addWidget(btn_inv)
+
+        root = QtWidgets.QVBoxLayout()
+        root.addWidget(lbl)
+        root.addSpacing(10)
+        root.addLayout(row)
+        root.addSpacing(8)
+        root.addWidget(btn_cancel)
+        self.setLayout(root)
+
+    def _set_mode(self, mode):
+        self.selected_mode = mode
+        self.accept()
+
+
+def _choose_l_mode(axis_primary, axis_secondary):
+    dlg = LSelectorDialog(axis_primary, axis_secondary)
+    if dlg.exec_() == QtWidgets.QDialog.Accepted:
+        return dlg.selected_mode
+    return None
+
+
+def _build_l_points(p1, p2, mode):
+    deltas = _axis_deltas(p1, p2)
+    order = sorted(["x", "y", "z"], key=lambda a: deltas[a], reverse=True)
+    a1, a2, a3 = order[0], order[1], order[2]
+
+    if deltas[a2] <= POINT_TOL:
+        # Practicamente alineados: usar ruta recta.
+        return _dedup_points([p1, p2]), a1, a2
+
+    first, second = (a1, a2) if mode == "normal" else (a2, a1)
+    p_mid1 = _set_axis(p1, first, getattr(p2, first))
+
+    pts = [p1, p_mid1]
+
+    # Si hay diferencia relevante en tercer eje, insertar un tramo extra
+    # para mantener ortogonalidad estricta.
+    if deltas[a3] > POINT_TOL:
+        p_mid2 = _set_axis(p_mid1, second, getattr(p2, second))
+        pts.append(p_mid2)
+        pts.append(p2)
+    else:
+        pts.append(p2)
+
+    return _dedup_points(pts), a1, a2
+
+
+def conectar_objetos_en_L():
+    doc = FreeCAD.ActiveDocument
+    if doc is None:
+        FreeCAD.Console.PrintError("No hay documento activo.\n")
+        return
+
+    selected = list(FreeCADGui.Selection.getSelectionEx() or [])
+    if len(selected) != 2:
+        FreeCAD.Console.PrintError("Debe seleccionar exactamente dos objetos/subobjetos.\n")
+        return
+
+    p1 = _point_from_selection(selected[0])
+    p2 = _point_from_selection(selected[1])
+    if p1 is None or p2 is None:
+        FreeCAD.Console.PrintError("No se pudieron resolver los puntos de conexion.\n")
+        return
+
+    deltas = _axis_deltas(p1, p2)
+    order = sorted(["x", "y", "z"], key=lambda a: deltas[a], reverse=True)
+    axis_primary = order[0]
+    axis_secondary = order[1]
+
+    mode = _choose_l_mode(axis_primary, axis_secondary)
+    if mode is None:
+        FreeCAD.Console.PrintWarning("Operacion cancelada por el usuario.\n")
+        return
+
+    points, ax1, ax2 = _build_l_points(p1, p2, mode)
+    if len(points) < 2:
+        FreeCAD.Console.PrintError("No se pudo construir una ruta valida.\n")
+        return
+
+    max_r = _max_fillet(points)
+    default_r = min(100.0, max_r) if max_r > 0.0 else 0.0
+    radio, ok = QtWidgets.QInputDialog.getDouble(
+        None,
+        "Radio de curvatura",
+        "Radio de fillet (mm):",
+        float(default_r),
+        0.0,
+        10000.0,
+        1,
+    )
+    if not ok:
+        FreeCAD.Console.PrintWarning("Operacion cancelada por el usuario.\n")
+        return
+    radio = float(radio)
+    if max_r > 0.0:
+        radio = min(radio, float(max_r))
+    else:
+        radio = 0.0
+
+    obj_a = getattr(selected[0], "Object", None)
+    obj_b = getattr(selected[1], "Object", None)
+    label_a = _safe_text(getattr(obj_a, "Label", "")) or _safe_text(getattr(obj_a, "Name", "A"))
+    label_b = _safe_text(getattr(obj_b, "Label", "")) or _safe_text(getattr(obj_b, "Name", "B"))
+
+    doc.openTransaction("Conectar objetos en L")
+    try:
+        group = ensure_conexiones_group(
+            doc,
+            objects=[obj_a, obj_b],
+        )
+        wire = _make_wire(points)
+        wire.Label = f"Conexion_L_{label_a}_{label_b}"
+        if hasattr(wire, "FilletRadius"):
+            try:
+                wire.FilletRadius = float(radio)
+            except Exception:
+                pass
+        if group is not None:
+            try:
+                group.addObject(wire)
+            except Exception:
+                pass
+        doc.recompute()
+        doc.commitTransaction()
+    except Exception as ex:
+        try:
+            doc.abortTransaction()
+        except Exception:
+            pass
+        FreeCAD.Console.PrintError(f"No se pudo crear la conexion en L: {ex}\n")
+        return
+
+    FreeCAD.Console.PrintMessage(
+        "[CONEXION_L] Conexion creada "
+        f"| modo={mode} | ejes={ax1.upper()}-{ax2.upper()} "
+        f"| puntos={len(points)} | radio={radio:.1f}\n"
+    )
+
+
+conectar_objetos_en_L()

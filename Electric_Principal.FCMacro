@@ -1,0 +1,542 @@
+# -*- coding: utf-8 -*-
+"""
+Electric_Principal.FCMacro
+Descripcion (sin acentos):
+  - ObjetoElectromecanico (FeaturePython + GroupExtension) con BasePlacement
+  - Prototipos unicos importados desde Resources:
+      * Toma_2d.step  -> ProtoToma2D  (Part::Feature unico)
+      * Toma_3d.step  -> ProtoToma3D  (Part::Feature unico)
+  - Consolidacion del STEP: se crea un solo Part::Feature por proto
+      * 3D: compound de todos los solids (o faces si no hay solids)
+      * 2D: compound de shapes (edges/faces) planos
+      * se ocultan en arbol y se ubican en electrico/_lib
+      * no se reimporta si ya existen protos validos
+  - Instancias: padre + dos App::Link que apuntan a los protos
+  - execute-only: onChanged solo touch; transforms/visibilidad en execute()
+  - AlturaRel solo mueve el Link3D en Z local
+  - Logs [ELEC]
+
+Version: 2025-09-18 (consolidacion STEP)
+"""
+
+import FreeCAD as App
+import math
+import os
+from datetime import datetime
+
+# GUI flag
+GUI_UP = False
+try:
+    import FreeCADGui as Gui
+    GUI_UP = True
+except Exception:
+    GUI_UP = False
+
+SCHEMA_VERSION = "1.0.0"
+
+# ----------------------------
+# logging
+# ----------------------------
+
+def _ts():
+    try:
+        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return "NA"
+
+def log_info(msg):
+    App.Console.PrintMessage(f"[{_ts()}][ELEC][INFO] {msg}\n")
+
+def log_warn(msg):
+    App.Console.PrintWarning(f"[{_ts()}][ELEC][WARN] {msg}\n")
+
+def log_err(msg):
+    App.Console.PrintError(f"[{_ts()}][ELEC][ERROR] {msg}\n")
+
+log_info("Electric_Principal loaded (start)")
+
+# ----------------------------
+# groups
+# ----------------------------
+
+def ensure_groups(doc):
+    g_elec = doc.getObject("electrico")
+    if not g_elec:
+        g_elec = doc.addObject("App::DocumentObjectGroup", "electrico")
+        log_info("created group 'electrico'")
+    g_lib = doc.getObject("_lib")
+    if not g_lib:
+        g_lib = doc.addObject("App::DocumentObjectGroup", "_lib")
+        g_elec.addObject(g_lib)
+        log_info("created subgroup '_lib'")
+    g_inst = doc.getObject("instancias")
+    if not g_inst:
+        g_inst = doc.addObject("App::DocumentObjectGroup", "instancias")
+        g_elec.addObject(g_inst)
+        log_info("created subgroup 'instancias'")
+    return g_elec, g_lib, g_inst
+
+# ----------------------------
+# insertar y consolidar STEP -> un Part::Feature unico por proto
+# ----------------------------
+
+def _insert_file_return_created(path, doc):
+    try:
+        import ImportGui
+    except Exception as ex:
+        log_err(f"ImportGui not available: {ex}")
+        return []
+    before = set(o.Name for o in doc.Objects)
+    try:
+        ImportGui.insert(path, doc.Name)
+    except Exception as ex:
+        log_err(f"failed to insert resource: {path} -> {ex}")
+        return []
+    after = set(o.Name for o in doc.Objects)
+    created_names = list(after - before)
+    created_objs = [doc.getObject(n) for n in created_names if doc.getObject(n)]
+    log_info(f"inserted resource '{os.path.basename(path)}' -> {len(created_objs)} object(s)")
+    return created_objs
+
+
+def _collect_shapes_for_3d(objs):
+    """Devuelve lista de shapes 3D (solids si hay, si no faces) desde objs creados."""
+    solids = []
+    faces = []
+    for o in objs:
+        try:
+            sh = getattr(o, "Shape", None)
+            if not sh:
+                continue
+            if hasattr(sh, "Solids") and len(sh.Solids) > 0:
+                solids.extend(sh.Solids)
+            elif hasattr(sh, "Faces") and len(sh.Faces) > 0:
+                faces.extend(sh.Faces)
+        except Exception:
+            continue
+    if solids:
+        return solids
+    return faces
+
+
+def _collect_shapes_for_2d(objs):
+    """Devuelve lista de shapes planos (edges/wires/faces) desde objs."""
+    shapes = []
+    for o in objs:
+        try:
+            sh = getattr(o, "Shape", None)
+            if not sh:
+                continue
+            # cualquier shape con edges/faces sirve para 2D
+            if (hasattr(sh, "Edges") and len(sh.Edges) > 0) or (hasattr(sh, "Faces") and len(sh.Faces) > 0):
+                shapes.append(sh)
+        except Exception:
+            continue
+    return shapes
+
+
+def _collect_shapes_for_2d_from_shape(shape):
+    if shape is None:
+        return []
+    try:
+        faces = list(getattr(shape, "Faces", []) or [])
+    except Exception:
+        faces = []
+    if faces:
+        return faces
+    try:
+        edges = list(getattr(shape, "Edges", []) or [])
+    except Exception:
+        edges = []
+    if edges:
+        return edges
+    return [shape]
+
+
+def _collect_shapes_for_3d_from_shape(shape):
+    if shape is None:
+        return []
+    try:
+        solids = list(getattr(shape, "Solids", []) or [])
+    except Exception:
+        solids = []
+    if solids:
+        return solids
+    try:
+        faces = list(getattr(shape, "Faces", []) or [])
+    except Exception:
+        faces = []
+    if faces:
+        return faces
+    return []
+
+
+def _read_step_shape(path):
+    try:
+        import Part
+    except Exception:
+        return None
+    try:
+        return Part.read(path)
+    except Exception:
+        return None
+
+
+def _make_feature_from_shapes(doc, shapes, name_label):
+    import Part
+    try:
+        comp = Part.makeCompound(shapes)
+    except Exception:
+        # fallback: tomar la primera shape
+        comp = shapes[0]
+    feat = doc.addObject("Part::Feature", name_label)
+    feat.Shape = comp
+    feat.Label = name_label
+    return feat
+
+
+def _delete_created(doc, created):
+    for o in created:
+        try:
+            if o and doc.getObject(o.Name):
+                doc.removeObject(o.Name)
+        except Exception:
+            pass
+
+
+def ensure_prototypes_from_resources(doc, resources_dir):
+    """Crea/asegura ProtoToma2D y ProtoToma3D como Part::Feature unicos en electrico/_lib.
+       - No reimporta si ya existen y tienen Shape valido (2D: edges/faces; 3D: solids o faces).
+       - Si existen pero son planos/ejes, intenta reconstruir desde Resources.
+    """
+    import Part
+    _, g_lib, _ = ensure_groups(doc)
+
+    def _hide_in_tree(o):
+        if GUI_UP and hasattr(o, "ViewObject"):
+            try:
+                o.ViewObject.ShowInTree = False
+            except Exception:
+                pass
+
+    # --- 2D ---
+    p2d = doc.getObject("ProtoToma2D")
+    def _is_valid_2d(o):
+        try:
+            sh = getattr(o, "Shape", None)
+            return bool(sh and (len(getattr(sh, "Edges", [])) > 0 or len(getattr(sh, "Faces", [])) > 0))
+        except Exception:
+            return False
+
+    if not _is_valid_2d(p2d):
+        # intentar crear desde Resources
+        f2d = os.path.join(resources_dir or "", "Toma_2d.step")
+        if not (resources_dir and os.path.exists(f2d)):
+            log_err("Resources missing Toma_2d.step")
+        else:
+            created = []
+            shapes = []
+            step_shape = _read_step_shape(f2d)
+            if step_shape is not None:
+                shapes = _collect_shapes_for_2d_from_shape(step_shape)
+            if not shapes:
+                created = _insert_file_return_created(f2d, doc)
+                shapes = _collect_shapes_for_2d(created)
+            if shapes:
+                if p2d and doc.getObject(p2d.Name):
+                    try:
+                        doc.removeObject(p2d.Name)
+                    except Exception:
+                        pass
+                p2d = _make_feature_from_shapes(doc, shapes, "ProtoToma2D")
+                _hide_in_tree(p2d)
+                g_lib.addObject(p2d)
+                log_info("ProtoToma2D consolidated from Toma_2d.step")
+            else:
+                log_err("Could not consolidate 2D shapes from Toma_2d.step")
+            if created:
+                _delete_created(doc, created)
+
+    else:
+        if p2d not in g_lib.Group:
+            g_lib.addObject(p2d)
+        _hide_in_tree(p2d)
+
+    # --- 3D ---
+    p3d = doc.getObject("ProtoToma3D")
+
+    def _is_valid_3d(o):
+        try:
+            sh = getattr(o, "Shape", None)
+            if not sh:
+                return False
+            solids = getattr(sh, "Solids", [])
+            faces = getattr(sh, "Faces", [])
+            return len(solids) > 0 or len(faces) > 0
+        except Exception:
+            return False
+
+    if not _is_valid_3d(p3d):
+        f3d = os.path.join(resources_dir or "", "Toma_3d.step")
+        if not (resources_dir and os.path.exists(f3d)):
+            log_err("Resources missing Toma_3d.step")
+        else:
+            created = []
+            shapes = []
+            step_shape = _read_step_shape(f3d)
+            if step_shape is not None:
+                shapes = _collect_shapes_for_3d_from_shape(step_shape)
+            if not shapes:
+                created = _insert_file_return_created(f3d, doc)
+                shapes = _collect_shapes_for_3d(created)
+            if shapes:
+                if p3d and doc.getObject(p3d.Name):
+                    try:
+                        doc.removeObject(p3d.Name)
+                    except Exception:
+                        pass
+                p3d = _make_feature_from_shapes(doc, shapes, "ProtoToma3D")
+                _hide_in_tree(p3d)
+                g_lib.addObject(p3d)
+                log_info("ProtoToma3D consolidated from Toma_3d.step")
+            else:
+                log_err("Could not consolidate 3D solids/faces from Toma_3d.step")
+            if created:
+                _delete_created(doc, created)
+    else:
+        if p3d not in g_lib.Group:
+            g_lib.addObject(p3d)
+        _hide_in_tree(p3d)
+
+    return p2d, p3d
+
+# ----------------------------
+# FeaturePython (BasePlacement + execute-only)
+# ----------------------------
+
+class ElectromechProxy(object):
+    def __init__(self):
+        self.initialized = False
+        self._executing = False
+
+    def attach(self, obj):
+        obj.addExtension("App::GroupExtensionPython")
+        obj.addProperty("App::PropertyPlacement", "BasePlacement", "Core", "internal placement for links")
+        obj.BasePlacement = App.Placement()
+
+        # core
+        obj.addProperty("App::PropertyEnumeration", "Categoria", "Core", "").Categoria = ["Pared","Cielo","Piso"]
+        obj.addProperty("App::PropertyEnumeration", "Tipo", "Core", "").Tipo = ["Toma","Apagador","Luminaria","Sensor","Rociador","Altavoz","Camara"]
+        obj.addProperty("App::PropertyEnumeration", "ModoVisual", "Core", "").ModoVisual = ["Ambos","Solo2D","Solo3D"]
+        obj.addProperty("App::PropertyAngle", "Giro", "Core", "").Giro = 0.0
+        obj.addProperty("App::PropertyDistance", "OffsetX", "Core", "").OffsetX = 0.0
+        obj.addProperty("App::PropertyDistance", "OffsetY", "Core", "").OffsetY = 0.0
+        obj.addProperty("App::PropertyDistance", "AlturaRel", "Core", "").AlturaRel = 0.0
+
+        # meta
+        obj.addProperty("App::PropertyString", "EtiquetaPlano", "Meta", "")
+        obj.addProperty("App::PropertyString", "CircuitoID", "Meta", "")
+        obj.addProperty("App::PropertyString", "UUID", "Meta", "")
+        obj.addProperty("App::PropertyString", "SchemaVersion", "Meta", "")
+
+        # pared
+        obj.addProperty("App::PropertyEnumeration", "OrientacionPared", "Pared", "").OrientacionPared = ["Vertical","Horizontal","Auto"]
+        obj.addProperty("App::PropertyEnumeration", "MontajePared", "Pared", "").MontajePared = ["Sobrepuesto","Empotrado"]
+        obj.addProperty("App::PropertyBool", "Flip", "Pared", "")
+        obj.addProperty("App::PropertyDistance", "SeparacionPared", "Pared", "").SeparacionPared = 0.0
+        obj.addProperty("App::PropertyDistance", "ProfundidadEmpotrar", "Pared", "").ProfundidadEmpotrar = 0.0
+
+        # internas
+        obj.addProperty("App::PropertyString", "Link2DName", "Internal", "")
+        obj.addProperty("App::PropertyString", "Link3DName", "Internal", "")
+
+        self.initialized = True
+        log_info(f"attach properties on {obj.Name}")
+
+    def _ensure_links(self, obj, proto2d, proto3d):
+        doc = obj.Document
+        if not (proto2d and proto3d):
+            log_err("prototypes missing; cannot create links")
+            return None, None
+        l2n = f"{obj.Name}_2D"; l3n = f"{obj.Name}_3D"
+        l2 = doc.getObject(l2n)
+        if not l2:
+            l2 = doc.addObject("App::Link", l2n); l2.LinkedObject = proto2d
+            log_info(f"created link 2D: {l2n}")
+        l3 = doc.getObject(l3n)
+        if not l3:
+            l3 = doc.addObject("App::Link", l3n); l3.LinkedObject = proto3d
+            log_info(f"created link 3D: {l3n}")
+        try:
+            obj.addObject(l2); obj.addObject(l3)
+        except Exception as ex:
+            log_warn(f"addObject to parent failed: {ex}")
+        obj.Link2DName = l2.Name; obj.Link3DName = l3.Name
+        if GUI_UP:
+            try:
+                l2.ViewObject.ShowInTree = False; l3.ViewObject.ShowInTree = False
+            except Exception:
+                pass
+        return l2, l3
+
+    def _apply_visual_mode(self, obj):
+        if not GUI_UP:
+            return
+        l2 = obj.Document.getObject(obj.Link2DName) if obj.Link2DName else None
+        l3 = obj.Document.getObject(obj.Link3DName) if obj.Link3DName else None
+        if not l2 or not l3:
+            return
+        try:
+            if obj.ModoVisual == "Ambos":
+                l2.ViewObject.Visibility = True;  l3.ViewObject.Visibility = True
+            elif obj.ModoVisual == "Solo2D":
+                l2.ViewObject.Visibility = True;  l3.ViewObject.Visibility = False
+            elif obj.ModoVisual == "Solo3D":
+                l2.ViewObject.Visibility = False; l3.ViewObject.Visibility = True
+        except Exception as ex:
+            log_warn(f"view toggle failed: {ex}")
+
+    def _apply_transforms(self, obj):
+        base_pl = obj.BasePlacement
+        off = App.Vector(float(obj.OffsetX), float(obj.OffsetY), 0.0)
+        off_world = base_pl.Rotation.multVec(off)
+        final_base = base_pl.Base + off_world
+        final_rot = base_pl.Rotation
+        # link3D: AlturaRel en Z local
+        l3 = obj.Document.getObject(obj.Link3DName) if obj.Link3DName else None
+        if l3:
+            dz = App.Vector(0, 0, float(obj.AlturaRel))
+            dz_world = final_rot.multVec(dz)
+            l3.Placement = App.Placement(final_base + dz_world, final_rot)
+        # link2D: base exacta
+        l2 = obj.Document.getObject(obj.Link2DName) if obj.Link2DName else None
+        if l2:
+            l2.Placement = App.Placement(final_base, final_rot)
+
+    def onChanged(self, obj, prop):
+        if not self.initialized:
+            return
+        if prop in ("ModoVisual","OffsetX","OffsetY","AlturaRel","Giro","BasePlacement"):
+            try:
+                obj.touch()
+            except Exception:
+                pass
+
+    def execute(self, obj):
+        if self._executing:
+            return
+        self._executing = True
+        try:
+            self._apply_visual_mode(obj)
+            self._apply_transforms(obj)
+        finally:
+            self._executing = False
+
+# ----------------------------
+# factory
+# ----------------------------
+
+def new_objeto_electromecanico(doc, name_base="Toma", tipo="Toma", resources_dir=None):
+    ensure_groups(doc)
+    if not resources_dir:
+        log_warn("resources_dir not provided; relying on in-doc prototypes if any")
+    p2d, p3d = (None, None)
+    if resources_dir:
+        p2d, p3d = ensure_prototypes_from_resources(doc, resources_dir)
+    if not (p2d and p3d):
+        # try existing ones
+        p2d = p2d or doc.getObject("ProtoToma2D")
+        p3d = p3d or doc.getObject("ProtoToma3D")
+
+    parent = doc.addObject("App::FeaturePython", f"{name_base}")
+    proxy = ElectromechProxy(); proxy.attach(parent); parent.Proxy = proxy
+    parent.Tipo = tipo; parent.Categoria = "Pared"; parent.ModoVisual = "Ambos"
+    parent.OrientacionPared = "Vertical"; parent.MontajePared = "Sobrepuesto"
+    parent.SchemaVersion = SCHEMA_VERSION
+    try:
+        import uuid; parent.UUID = str(uuid.uuid4())
+    except Exception:
+        parent.UUID = ""
+
+    proxy._ensure_links(parent, p2d, p3d)
+    _, _, g_inst = ensure_groups(doc); g_inst.addObject(parent)
+    doc.recompute(); log_info(f"created instance '{parent.Name}'")
+    return parent
+
+# ----------------------------
+# seleccion + insercion (MVP)
+# ----------------------------
+
+def _selection_info():
+    if not GUI_UP:
+        log_warn("GUI not available; selection ignored.")
+        return (None, None, None, None, None, None)
+    sel = Gui.Selection.getSelectionEx()
+    if not sel:
+        return (None, None, None, None, None, None)
+    s0 = sel[0]; subobjs = s0.SubObjects
+    if not subobjs:
+        return (s0.Object, None, None, None, None, None)
+    so = subobjs[0]
+    import Part
+    if isinstance(so, Part.Face):
+        u = so.ParameterRange[0] + (so.ParameterRange[2]-so.ParameterRange[0]) * 0.5
+        v = so.ParameterRange[1] + (so.ParameterRange[3]-so.ParameterRange[1]) * 0.5
+        pnt = so.valueAt(u, v); nrm = so.normalAt(u, v)
+        return (s0.Object, so, "Face", pnt, None, nrm)
+    if isinstance(so, Part.Edge):
+        umin, umax = so.ParameterRange; umid = (umin+umax)*0.5
+        pnt = so.valueAt(umid)
+        try:
+            tng = so.tangentAt(umid)
+        except Exception:
+            try:
+                eps = (umax-umin)*1e-3
+                p1 = so.valueAt(max(umin, umid-eps)); p2 = so.valueAt(min(umax, umid+eps))
+                tng = (p2 - p1)
+            except Exception:
+                tng = App.Vector(1,0,0)
+        return (s0.Object, so, "Edge", pnt, tng, None)
+    try:
+        pnt = so.Point
+    except Exception:
+        pnt = App.Vector(0,0,0)
+    return (s0.Object, so, "Other", pnt, None, None)
+
+
+def _yaw_from_tangent(tng):
+    if not tng: return 0.0
+    v = App.Vector(tng.x, tng.y, 0)
+    if v.Length == 0: return 0.0
+    return math.degrees(math.atan2(v.y, v.x))
+
+
+def insertar_toma_pared_MVP(doc, name_hint="Toma", resources_dir=None):
+    inst = new_objeto_electromecanico(doc, name_base=name_hint, tipo="Toma", resources_dir=resources_dir)
+    sel_obj, sub, kind, pnt, tng, nrm = _selection_info()
+    yaw = 0.0; base = App.Vector(0,0,0)
+    if kind == "Face":
+        base = pnt; yaw = 0.0; log_info("placement from face center")
+    elif kind == "Edge":
+        base = pnt; yaw = _yaw_from_tangent(tng); log_info(f"placement from edge midpoint, yaw={yaw:.2f}")
+    else:
+        log_warn("no valid selection; using origin (demo)")
+    delta = 0.0
+    if inst.OrientacionPared == "Horizontal": delta = 90.0
+    elif inst.OrientacionPared == "Auto": delta = 90.0 if kind == "Edge" else 0.0
+    rot = App.Rotation(App.Vector(0,0,1), yaw + float(inst.Giro) + delta)
+    inst.BasePlacement = App.Placement(base, rot)
+    inst.touch(); doc.recompute()
+    return inst
+
+# ----------------------------
+# helpers
+# ----------------------------
+
+def set_modo_visual(obj, mode="Ambos"):
+    if mode not in ("Ambos","Solo2D","Solo3D"):
+        log_warn(f"invalid ModoVisual '{mode}'"); return
+    obj.ModoVisual = mode; obj.touch()
+    if obj.Document: obj.Document.recompute()
+
+log_info("Electric_Principal loaded (end)")

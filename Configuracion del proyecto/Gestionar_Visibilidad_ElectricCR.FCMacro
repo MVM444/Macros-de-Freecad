@@ -1,0 +1,1329 @@
+# -*- coding: utf-8 -*-
+# MenuText: Gestionar visibilidad ElectricCR
+# Icon: Gestionar_Visibilidad_ElectricCR.svg
+
+"""
+Gestionar_Visibilidad_ElectricCR.FCMacro
+
+Control de visibilidad por categorias para proyectos grandes de ElectricCR.
+Permite ocultar/mostrar/aislar:
+- Elementos 2D
+- Rutas criticas y conexiones
+- Luminarias
+- Anotaciones
+- Biblioteca interna (_lib)
+
+Tambien puede forzar ModoVisual en dispositivos:
+- No cambiar / Ambos / Solo2D / Solo3D
+"""
+
+import os
+import re
+import sys
+import importlib
+import unicodedata
+
+import FreeCAD as App
+
+try:
+    import FreeCADGui as Gui
+except Exception:
+    Gui = None
+
+try:
+    from PySide2 import QtWidgets, QtCore, QtGui
+except Exception:
+    try:
+        from PySide import QtGui as QtWidgets  # type: ignore
+        from PySide import QtCore  # type: ignore
+        QtGui = QtWidgets
+    except Exception:
+        QtWidgets = None
+        QtCore = None
+        QtGui = None
+
+
+TAG = "[VIS]"
+
+_CLASSIFIER = None
+_COORD_RE = re.compile(r"[-+]?\d+(?:[.,]\d+)?\s*[,;]\s*[-+]?\d+(?:[.,]\d+)?")
+_TOMA_MODULE = None
+
+
+def _info(msg):
+    App.Console.PrintMessage(f"{TAG}[INFO] {msg}\n")
+
+
+def _warn(msg):
+    App.Console.PrintWarning(f"{TAG}[WARN] {msg}\n")
+
+
+def _err(msg):
+    App.Console.PrintError(f"{TAG}[ERROR] {msg}\n")
+
+
+def _safe_text(value):
+    try:
+        return str(value or "")
+    except Exception:
+        return ""
+
+
+def _norm(value):
+    text = _safe_text(value).strip().lower()
+    if not text:
+        return ""
+    text = unicodedata.normalize("NFKD", text)
+    return "".join(ch for ch in text if not unicodedata.combining(ch))
+
+
+def _has_any(text_norm, patterns):
+    for p in patterns:
+        if p in text_norm:
+            return True
+    return False
+
+
+def _is_group(obj):
+    if obj is None:
+        return False
+    try:
+        if obj.isDerivedFrom("App::DocumentObjectGroup"):
+            return True
+    except Exception:
+        pass
+    try:
+        if obj.isDerivedFrom("App::Part"):
+            return True
+    except Exception:
+        pass
+    return hasattr(obj, "Group")
+
+
+def _has_view_object(obj):
+    try:
+        return getattr(obj, "ViewObject", None) is not None
+    except Exception:
+        return False
+
+
+def _set_visibility(obj, visible):
+    if not _has_view_object(obj):
+        return False
+    try:
+        cur = bool(obj.ViewObject.Visibility)
+    except Exception:
+        cur = None
+    try:
+        obj.ViewObject.Visibility = bool(visible)
+    except Exception:
+        return False
+    return cur != bool(visible)
+
+
+def _load_classifier():
+    global _CLASSIFIER
+    if _CLASSIFIER is not None:
+        return _CLASSIFIER
+    here = os.path.dirname(__file__) if "__file__" in globals() else ""
+    conectar_dir = os.path.normpath(os.path.join(here, "..", "Conectar"))
+    if os.path.isdir(conectar_dir) and conectar_dir not in sys.path:
+        sys.path.insert(0, conectar_dir)
+    try:
+        import component_classifier as classifier
+
+        _CLASSIFIER = classifier
+    except Exception:
+        _CLASSIFIER = False
+    return _CLASSIFIER
+
+
+def _resolve_dialog_icon():
+    here = os.path.dirname(__file__) if "__file__" in globals() else ""
+    candidates = [
+        os.path.normpath(os.path.join(here, "..", "ElectricCR", "icons", "Gestionar_Visibilidad_ElectricCR.svg")),
+        os.path.normpath(os.path.join(here, "..", "ElectricCR", "icons", "Rayo.svg")),
+    ]
+    for path in candidates:
+        if os.path.isfile(path):
+            return path
+    return ""
+
+
+def _electriccr_logs_dir():
+    here = os.path.dirname(__file__) if "__file__" in globals() else ""
+    path = os.path.normpath(os.path.join(here, "..", "ElectricCR", "logs"))
+    try:
+        os.makedirs(path, exist_ok=True)
+    except Exception:
+        pass
+    return path
+
+
+def _append_codex_issue_log(title, detail_lines):
+    log_dir = _electriccr_logs_dir()
+    if not log_dir:
+        return
+    path = os.path.join(log_dir, "codex_issue_log.md")
+    try:
+        from datetime import datetime
+
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        ts = ""
+    lines = [f"- [{ts}] {title}"]
+    for ln in (detail_lines or []):
+        txt = _safe_text(ln).strip()
+        if txt:
+            lines.append(f"  - {txt}")
+    try:
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+    except Exception:
+        pass
+
+
+def _to_float(value, default=0.0):
+    try:
+        return float(value)
+    except Exception:
+        pass
+    try:
+        return float(getattr(value, "Value", default))
+    except Exception:
+        return float(default)
+
+
+def _load_toma_module():
+    global _TOMA_MODULE
+    if _TOMA_MODULE is not None:
+        return _TOMA_MODULE
+
+    # Asegurar ruta del paquete ElectricCR relativo a esta macro.
+    here = os.path.dirname(__file__) if "__file__" in globals() else ""
+    pkg_dir = os.path.normpath(os.path.join(here, "..", "ElectricCR"))
+    pkg_parent = os.path.dirname(pkg_dir)
+    if os.path.isdir(pkg_parent) and pkg_parent not in sys.path:
+        sys.path.insert(0, pkg_parent)
+
+    for mod_name in (
+        "ElectricCR.electriccr.features.objeto_toma_uno",
+        "electriccr.features.objeto_toma_uno",
+    ):
+        try:
+            _TOMA_MODULE = importlib.import_module(mod_name)
+            return _TOMA_MODULE
+        except Exception:
+            continue
+    _TOMA_MODULE = False
+    return _TOMA_MODULE
+
+
+def _parent_groups(obj):
+    out = []
+    seen = set()
+    pending = []
+    try:
+        pending = list(getattr(obj, "InList", []) or [])
+    except Exception:
+        pending = []
+    while pending:
+        parent = pending.pop(0)
+        name = _safe_text(getattr(parent, "Name", ""))
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        if _is_group(parent):
+            out.append(parent)
+            try:
+                pending.extend(list(getattr(parent, "InList", []) or []))
+            except Exception:
+                pass
+    return out
+
+
+def _iter_group_descendants(group_obj, seen=None):
+    if seen is None:
+        seen = set()
+    if group_obj is None or not _is_group(group_obj):
+        return
+    key = _safe_text(getattr(group_obj, "Name", ""))
+    if key and key in seen:
+        return
+    if key:
+        seen.add(key)
+    children = []
+    try:
+        children = list(getattr(group_obj, "Group", []) or [])
+    except Exception:
+        children = []
+    for child in children:
+        yield child
+        if _is_group(child):
+            for nested in _iter_group_descendants(child, seen=seen):
+                yield nested
+
+
+def _selection_scope_objects():
+    out = set()
+    if Gui is None:
+        return out
+    sel = []
+    try:
+        sel = list(Gui.Selection.getSelection() or [])
+    except Exception:
+        sel = []
+    for obj in sel:
+        out.add(obj)
+        if _is_group(obj):
+            for child in _iter_group_descendants(obj):
+                out.add(child)
+    return out
+
+
+def _parse_scope_tokens(text):
+    raw = _safe_text(text)
+    if not raw:
+        return []
+    parts = re.split(r"[;,|]+", raw)
+    tokens = []
+    for p in parts:
+        n = _norm(p)
+        if n:
+            tokens.append(n)
+    return tokens
+
+
+def _object_group_blob(obj):
+    parts = [
+        _safe_text(getattr(obj, "Name", "")),
+        _safe_text(getattr(obj, "Label", "")),
+    ]
+    for pg in _parent_groups(obj):
+        parts.append(_safe_text(getattr(pg, "Name", "")))
+        parts.append(_safe_text(getattr(pg, "Label", "")))
+    return _norm(" ".join(parts))
+
+
+def _scope_candidates(doc, scope_mode, scope_tokens_text):
+    all_objs = [o for o in list(getattr(doc, "Objects", []) or []) if _has_view_object(o)]
+    if scope_mode == "all":
+        return set(all_objs), ""
+
+    if scope_mode == "selection":
+        scoped = {o for o in _selection_scope_objects() if _has_view_object(o)}
+        if not scoped:
+            return set(all_objs), "Sin seleccion, se uso todo el documento."
+        return scoped, ""
+
+    if scope_mode == "groups":
+        tokens = _parse_scope_tokens(scope_tokens_text)
+        if not tokens:
+            return set(all_objs), "Sin texto de grupos/directorios, se uso todo el documento."
+        scoped = set()
+        for obj in all_objs:
+            blob = _object_group_blob(obj)
+            if any(t in blob for t in tokens):
+                scoped.add(obj)
+        if not scoped:
+            return set(), "No hubo coincidencias con grupos/directorios."
+        return scoped, ""
+
+    return set(all_objs), ""
+
+
+def _obj_text_blob(obj, parent_groups):
+    parts = [
+        _safe_text(getattr(obj, "Name", "")),
+        _safe_text(getattr(obj, "Label", "")),
+        _safe_text(getattr(obj, "TypeId", "")),
+    ]
+    for pname in (
+        "Tipo",
+        "Categoria",
+        "KeyRegistro",
+        "ModoVisual",
+        "RecursoProto2D",
+        "RecursoProto3D",
+    ):
+        try:
+            if hasattr(obj, pname):
+                parts.append(_safe_text(getattr(obj, pname)))
+        except Exception:
+            pass
+    for pg in parent_groups:
+        parts.append(_safe_text(getattr(pg, "Name", "")))
+        parts.append(_safe_text(getattr(pg, "Label", "")))
+    return _norm(" ".join(parts))
+
+
+def _extract_text_payload(obj):
+    for pname in ("Text", "String", "LabelText"):
+        try:
+            if not hasattr(obj, pname):
+                continue
+            val = getattr(obj, pname)
+            if isinstance(val, (list, tuple)):
+                return " ".join(_safe_text(x) for x in val if _safe_text(x))
+            return _safe_text(val)
+        except Exception:
+            continue
+    return ""
+
+
+def _is_library_object(obj, text_blob):
+    own = _norm(getattr(obj, "Name", "")) + " " + _norm(getattr(obj, "Label", ""))
+    return own.startswith("_lib") or "_lib " in text_blob or " _lib_" in text_blob
+
+
+def _is_route_object(obj, text_blob):
+    if _has_any(
+        text_blob,
+        (
+            "ruta critica",
+            "ruta_critica",
+            "conexiones",
+            "conexion_hacia",
+            "conector",
+        ),
+    ):
+        return True
+    if _is_group(obj):
+        name = _norm(getattr(obj, "Name", ""))
+        label = _norm(getattr(obj, "Label", ""))
+        return name.startswith("conexiones") or label.startswith("conexiones")
+    return False
+
+
+def _is_annotation_object(obj, text_blob):
+    typeid = _norm(getattr(obj, "TypeId", ""))
+    if _has_any(
+        typeid,
+        (
+            "draft::text",
+            "draft::dimension",
+            "techdraw::",
+            "drawing::",
+            "app::annotation",
+        ),
+    ):
+        return True
+    return _has_any(
+        text_blob,
+        (
+            "etiqueta",
+            "texto",
+            "text",
+            "label",
+            "cota",
+            "dimension",
+            "anotacion",
+            "annotation",
+        ),
+    )
+
+
+def _is_coordinate_annotation(obj, text_blob):
+    typeid = _norm(getattr(obj, "TypeId", ""))
+    payload = _norm(_extract_text_payload(obj))
+    if not payload and "draft::text" not in typeid and "draft::label" not in typeid:
+        return False
+
+    if _has_any(
+        f"{text_blob} {payload}",
+        (
+            "coord",
+            "coordenada",
+            "coordenadas",
+            "x=",
+            "y=",
+            "z=",
+            "posicion",
+            "position",
+            "xy:",
+        ),
+    ):
+        return True
+
+    try:
+        if _COORD_RE.search(payload):
+            return True
+    except Exception:
+        pass
+
+    return False
+
+
+def _is_luminaire_object(obj, text_blob):
+    classifier = _load_classifier()
+    if classifier and classifier is not False:
+        try:
+            ctype = classifier.get_component_type(obj)
+            if ctype == "Luminaria":
+                return True
+        except Exception:
+            pass
+    return _has_any(
+        text_blob,
+        (
+            "luminaria",
+            "lampara",
+            "iluminacion",
+            "iluminacion",
+            "light",
+        ),
+    )
+
+
+def _is_2d_object(obj, text_blob):
+    typeid = _norm(getattr(obj, "TypeId", ""))
+    name = _norm(getattr(obj, "Name", ""))
+    label = _norm(getattr(obj, "Label", ""))
+
+    if _has_any(typeid, ("part2d", "sketcher::", "techdraw::")):
+        return True
+
+    if name.endswith("_2d") or label.endswith("_2d"):
+        return True
+
+    if _has_any(
+        text_blob,
+        (
+            "shape2dview",
+            " 2d",
+            "_2d",
+            "solo2d",
+            "simbolo",
+            "symbol2d",
+            "planta",
+        ),
+    ):
+        return True
+
+    try:
+        if hasattr(obj, "ModoVisual"):
+            mv = _norm(getattr(obj, "ModoVisual", ""))
+            if mv == "solo2d":
+                return True
+    except Exception:
+        pass
+
+    try:
+        has_2d = _norm(getattr(obj, "RecursoProto2D", ""))
+        has_3d = _norm(getattr(obj, "RecursoProto3D", ""))
+        if has_2d and not has_3d:
+            return True
+    except Exception:
+        pass
+
+    return False
+
+
+def _is_component_like(obj, text_blob):
+    for pname in ("KeyRegistro", "Tipo", "Categoria", "RecursoProto2D", "RecursoProto3D", "CircuitoID"):
+        try:
+            if hasattr(obj, pname):
+                return True
+        except Exception:
+            pass
+    if _is_luminaire_object(obj, text_blob):
+        return True
+    if _has_any(text_blob, ("toma", "tomacorriente", "apagador", "sensor", "luminaria", "dispositivo")):
+        return True
+    return False
+
+
+def _looks_3d_object(obj, text_blob):
+    if _has_any(text_blob, ("_3d", "solo3d", "proto3d", "model3d")):
+        return True
+    try:
+        shp = getattr(obj, "Shape", None)
+        if shp and (not shp.isNull()):
+            try:
+                if len(getattr(shp, "Solids", []) or []) > 0:
+                    return True
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return False
+
+
+def _matches_filters(obj, filters, text_blob):
+    if filters.get("f_2d") and _is_2d_object(obj, text_blob):
+        return True
+    if filters.get("f_routes") and _is_route_object(obj, text_blob):
+        return True
+    if filters.get("f_lights") and _is_luminaire_object(obj, text_blob):
+        return True
+    if filters.get("f_notes") and _is_annotation_object(obj, text_blob):
+        return True
+    if filters.get("f_coords") and _is_coordinate_annotation(obj, text_blob):
+        return True
+    if filters.get("f_lib") and _is_library_object(obj, text_blob):
+        return True
+    return False
+
+
+def _collect_targets(doc, filters, candidates=None):
+    targets = []
+    source = candidates if candidates is not None else list(getattr(doc, "Objects", []) or [])
+    for obj in list(source):
+        if not _has_view_object(obj):
+            continue
+        pgs = _parent_groups(obj)
+        blob = _obj_text_blob(obj, pgs)
+        if _matches_filters(obj, filters, blob):
+            targets.append(obj)
+    return targets
+
+
+def _count_targets_by_category(doc, candidates=None):
+    counts = {
+        "2D": 0,
+        "Rutas": 0,
+        "Luminarias": 0,
+        "Anotaciones": 0,
+        "Coordenadas": 0,
+        "Biblioteca": 0,
+    }
+    source = candidates if candidates is not None else list(getattr(doc, "Objects", []) or [])
+    for obj in list(source):
+        if not _has_view_object(obj):
+            continue
+        pgs = _parent_groups(obj)
+        blob = _obj_text_blob(obj, pgs)
+        if _is_2d_object(obj, blob):
+            counts["2D"] += 1
+        if _is_route_object(obj, blob):
+            counts["Rutas"] += 1
+        if _is_luminaire_object(obj, blob):
+            counts["Luminarias"] += 1
+        if _is_annotation_object(obj, blob):
+            counts["Anotaciones"] += 1
+        if _is_coordinate_annotation(obj, blob):
+            counts["Coordenadas"] += 1
+        if _is_library_object(obj, blob):
+            counts["Biblioteca"] += 1
+    return counts
+
+
+def _expand_with_ancestor_groups(targets):
+    expanded = set(targets)
+    for obj in list(targets):
+        for pg in _parent_groups(obj):
+            if _has_view_object(pg):
+                expanded.add(pg)
+    return expanded
+
+
+def _canon_mode(value):
+    n = _norm(value)
+    if n in ("solo3d", "solo 3d"):
+        return "Solo3D"
+    if n in ("solo2d", "solo 2d"):
+        return "Solo2D"
+    if n in ("ambos", "both"):
+        return "Ambos"
+    return ""
+
+
+def _safe_obj_name(obj):
+    return _safe_text(getattr(obj, "Name", "")) or f"id_{id(obj)}"
+
+
+def _set_mode_value(obj, mode_value):
+    try:
+        plist = list(getattr(obj, "PropertiesList", []) or [])
+    except Exception:
+        plist = []
+    if ("ModoVisual" not in plist) and (not hasattr(obj, "ModoVisual")):
+        return False
+    try:
+        cur = _safe_text(getattr(obj, "ModoVisual", ""))
+        if cur != mode_value:
+            obj.ModoVisual = mode_value
+            try:
+                if hasattr(obj, "touch"):
+                    obj.touch()
+            except Exception:
+                pass
+            return True
+        try:
+            if hasattr(obj, "touch"):
+                obj.touch()
+        except Exception:
+            pass
+    except Exception:
+        return False
+    return False
+
+
+def _set_named_link_visibility(doc, name_value, visible):
+    name = _safe_text(name_value).strip()
+    if not name:
+        return 0
+    try:
+        obj = doc.getObject(name)
+    except Exception:
+        obj = None
+    if obj is None:
+        return 0
+    return 1 if _set_visibility(obj, visible) else 0
+
+
+def _looks_like_electric_link(obj):
+    try:
+        if _safe_text(getattr(obj, "TypeId", "")) != "App::Link":
+            return False
+    except Exception:
+        return False
+    names = ("KeyRegistro", "Tipo", "AlturaRel", "OrientacionPared", "ModoVisual")
+    for pname in names:
+        try:
+            if hasattr(obj, pname):
+                return True
+        except Exception:
+            pass
+    try:
+        linked = getattr(obj, "LinkedObject", None)
+    except Exception:
+        linked = None
+    if linked is None:
+        return False
+    for pname in ("KeyRegistro", "Tipo", "ModoVisual", "RecursoProto2D", "RecursoProto3D"):
+        try:
+            if hasattr(linked, pname):
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def _retarget_link_master_for_mode(doc, obj, mode_value):
+    if not _looks_like_electric_link(obj):
+        return 0
+    mod = _load_toma_module()
+    if not mod or mod is False:
+        return 0
+    get_master = getattr(mod, "_get_or_create_master_toma", None)
+    if not callable(get_master):
+        return 0
+
+    try:
+        linked = getattr(obj, "LinkedObject", None)
+    except Exception:
+        linked = None
+
+    key_registro = _safe_text(getattr(obj, "KeyRegistro", ""))
+    tipo_logico = _safe_text(getattr(obj, "Tipo", ""))
+    orientacion = _safe_text(getattr(obj, "OrientacionPared", ""))
+    altura_rel = _to_float(getattr(obj, "AlturaRel", 300.0), 300.0)
+    if linked is not None:
+        if not key_registro:
+            key_registro = _safe_text(getattr(linked, "KeyRegistro", ""))
+        if not tipo_logico:
+            tipo_logico = _safe_text(getattr(linked, "Tipo", ""))
+        if not orientacion:
+            orientacion = _safe_text(getattr(linked, "OrientacionPared", ""))
+        if "AlturaRel" in list(getattr(linked, "PropertiesList", []) or []):
+            altura_rel = _to_float(getattr(linked, "AlturaRel", altura_rel), altura_rel)
+
+    if not orientacion:
+        orientacion = "Vertical"
+
+    try:
+        master = get_master(
+            doc=doc,
+            key_registro=key_registro,
+            tipo_logico=tipo_logico,
+            modo_visual=mode_value,
+            altura_rel=altura_rel,
+            orientacion_pared=orientacion,
+            hide_master=True,
+        )
+    except Exception:
+        return 0
+
+    if master is None:
+        return 0
+
+    changed = 0
+    try:
+        cur = getattr(obj, "LinkedObject", None)
+    except Exception:
+        cur = None
+    if cur is not master:
+        try:
+            obj.LinkedObject = master
+            changed += 1
+        except Exception:
+            pass
+    try:
+        if hasattr(obj, "touch"):
+            obj.touch()
+    except Exception:
+        pass
+    return changed
+
+
+def _enforce_mode_visibility_for_obj(doc, obj, mode_value):
+    changed = 0
+    try:
+        l2_name = _safe_text(getattr(obj, "Link2DName", ""))
+    except Exception:
+        l2_name = ""
+    try:
+        l3_name = _safe_text(getattr(obj, "Link3DName", ""))
+    except Exception:
+        l3_name = ""
+    if mode_value == "Solo3D":
+        changed += _set_named_link_visibility(doc, l2_name, False)
+        changed += _set_named_link_visibility(doc, l3_name, True)
+    elif mode_value == "Solo2D":
+        changed += _set_named_link_visibility(doc, l2_name, True)
+        changed += _set_named_link_visibility(doc, l3_name, False)
+    elif mode_value == "Ambos":
+        changed += _set_named_link_visibility(doc, l2_name, True)
+        changed += _set_named_link_visibility(doc, l3_name, True)
+    return changed
+
+
+def _base_tokens_for_obj(obj):
+    tokens = []
+    for raw in (_safe_text(getattr(obj, "Name", "")), _safe_text(getattr(obj, "Label", ""))):
+        n = _norm(raw)
+        if not n:
+            continue
+        n = re.sub(r"(?:_?solo[23]d|_?2d|_?3d)$", "", n)
+        n = re.sub(r"_+", "_", n).strip("_")
+        if n and n not in tokens:
+            tokens.append(n)
+    return tokens
+
+
+def _enforce_mode_by_peer_names(doc, obj, mode_value):
+    if mode_value not in ("Solo3D", "Solo2D", "Ambos"):
+        return 0
+    tokens = _base_tokens_for_obj(obj)
+    if not tokens:
+        return 0
+    changed = 0
+    for cand in list(getattr(doc, "Objects", []) or []):
+        if not _has_view_object(cand):
+            continue
+        c_name = _norm(getattr(cand, "Name", ""))
+        c_label = _norm(getattr(cand, "Label", ""))
+        c_blob = f"{c_name} {c_label}"
+        if not any(t in c_blob for t in tokens):
+            continue
+
+        is2 = c_name.endswith("_2d") or c_label.endswith("_2d") or ("_2d" in c_blob and "link" in c_blob)
+        is3 = c_name.endswith("_3d") or c_label.endswith("_3d") or ("_3d" in c_blob and "link" in c_blob)
+        if not (is2 or is3):
+            continue
+
+        if mode_value == "Solo3D":
+            if is2 and _set_visibility(cand, False):
+                changed += 1
+            if is3 and _set_visibility(cand, True):
+                changed += 1
+        elif mode_value == "Solo2D":
+            if is2 and _set_visibility(cand, True):
+                changed += 1
+            if is3 and _set_visibility(cand, False):
+                changed += 1
+        else:
+            if _set_visibility(cand, True):
+                changed += 1
+    return changed
+
+
+def _expand_mode_targets(source_objs):
+    out = []
+    seen = set()
+    for obj in list(source_objs or []):
+        if obj is None:
+            continue
+        key = _safe_obj_name(obj)
+        if key not in seen:
+            seen.add(key)
+            out.append(obj)
+        # App::Link: tambien aplicar al master/linked object
+        try:
+            typeid = _safe_text(getattr(obj, "TypeId", ""))
+        except Exception:
+            typeid = ""
+        if typeid == "App::Link":
+            try:
+                linked = getattr(obj, "LinkedObject", None)
+            except Exception:
+                linked = None
+            if linked is not None:
+                lkey = _safe_obj_name(linked)
+                if lkey not in seen:
+                    seen.add(lkey)
+                    out.append(linked)
+    return out
+
+
+def _apply_component_mode_fallback(doc, mode_value, candidates):
+    if mode_value not in ("Solo3D", "Solo2D", "Ambos"):
+        return 0
+    changed = 0
+    for obj in list(candidates or []):
+        if not _has_view_object(obj):
+            continue
+        pgs = _parent_groups(obj)
+        blob = _obj_text_blob(obj, pgs)
+        if not _is_component_like(obj, blob):
+            continue
+
+        is2 = _is_2d_object(obj, blob)
+        is3 = _looks_3d_object(obj, blob)
+
+        if mode_value == "Solo3D":
+            if is2 and _set_visibility(obj, False):
+                changed += 1
+            elif is3 and _set_visibility(obj, True):
+                changed += 1
+        elif mode_value == "Solo2D":
+            if is2 and _set_visibility(obj, True):
+                changed += 1
+            elif is3 and _set_visibility(obj, False):
+                changed += 1
+        elif mode_value == "Ambos":
+            if (is2 or is3) and _set_visibility(obj, True):
+                changed += 1
+    return changed
+
+
+def _apply_mode_override(doc, mode_value, candidates=None):
+    mode = _canon_mode(mode_value)
+    if not mode:
+        return {
+            "mode_changed": 0,
+            "link_vis_changed": 0,
+            "retargeted_links": 0,
+            "fallback_vis_changed": 0,
+            "targets": 0,
+        }
+
+    source = candidates if candidates is not None else list(getattr(doc, "Objects", []) or [])
+    targets = _expand_mode_targets(source)
+
+    mode_changed = 0
+    link_vis_changed = 0
+    retargeted_links = 0
+    for obj in targets:
+        retargeted_links += _retarget_link_master_for_mode(doc, obj, mode)
+        if _set_mode_value(obj, mode):
+            mode_changed += 1
+        link_vis_changed += _enforce_mode_visibility_for_obj(doc, obj, mode)
+        link_vis_changed += _enforce_mode_by_peer_names(doc, obj, mode)
+
+    fallback_vis_changed = _apply_component_mode_fallback(doc, mode, source)
+
+    # Registro de incidencias recurrentes de sincronia visual 2D/3D.
+    if mode == "Solo3D" and (mode_changed > 0 or link_vis_changed > 0 or fallback_vis_changed > 0):
+        _append_codex_issue_log(
+            "ModoVisual Solo3D aplicado con sincronizacion reforzada",
+            [
+                "Problema recurrente reportado: objetos seguian viendose en Ambos tras cambiar a Solo3D.",
+                f"Objetos con ModoVisual actualizados: {mode_changed}.",
+                f"Ajustes directos de visibilidad Link2D/Link3D: {link_vis_changed}.",
+                f"Links retargeted a master de modo correcto: {retargeted_links}.",
+                f"Ajustes fallback por deteccion componente 2D/3D: {fallback_vis_changed}.",
+            ],
+        )
+    elif mode in ("Solo3D", "Solo2D") and (mode_changed + link_vis_changed + retargeted_links + fallback_vis_changed == 0):
+        samples = []
+        for obj in list(source or []):
+            if not _has_view_object(obj):
+                continue
+            pgs = _parent_groups(obj)
+            blob = _obj_text_blob(obj, pgs)
+            if not _is_component_like(obj, blob):
+                continue
+            mv = _safe_text(getattr(obj, "ModoVisual", ""))
+            samples.append(
+                f"{_safe_text(getattr(obj, 'Name', ''))} | "
+                f"{_safe_text(getattr(obj, 'TypeId', ''))} | "
+                f"ModoVisual={mv}"
+            )
+            if len(samples) >= 20:
+                break
+        _append_codex_issue_log(
+            "ModoVisual sin efecto detectable (diagnostico automatico)",
+            [f"Modo solicitado: {mode}", *samples],
+        )
+
+    return {
+        "mode_changed": mode_changed,
+        "link_vis_changed": link_vis_changed,
+        "retargeted_links": retargeted_links,
+        "fallback_vis_changed": fallback_vis_changed,
+        "targets": len(targets),
+    }
+
+
+def _apply_visibility(doc, targets, action):
+    changed = 0
+    if action == "hide":
+        for obj in targets:
+            if _set_visibility(obj, False):
+                changed += 1
+        return changed
+
+    if action == "show":
+        for obj in targets:
+            if _set_visibility(obj, True):
+                changed += 1
+        return changed
+
+    if action == "isolate":
+        keep = _expand_with_ancestor_groups(targets)
+        for obj in list(getattr(doc, "Objects", []) or []):
+            if not _has_view_object(obj):
+                continue
+            want = obj in keep
+            if _set_visibility(obj, want):
+                changed += 1
+        return changed
+
+    return changed
+
+
+def _show_all(doc, keep_coords_hidden=True, candidates=None):
+    changed = 0
+    kept_hidden = 0
+    source = candidates if candidates is not None else list(getattr(doc, "Objects", []) or [])
+    coord_hidden = set()
+    if keep_coords_hidden:
+        coord_filters = {
+            "f_2d": False,
+            "f_routes": False,
+            "f_lights": False,
+            "f_notes": False,
+            "f_coords": True,
+            "f_lib": False,
+        }
+        coord_hidden = set(_collect_targets(doc, coord_filters, candidates=source))
+    for obj in list(source):
+        if not _has_view_object(obj):
+            continue
+        if obj in coord_hidden:
+            if _set_visibility(obj, False):
+                changed += 1
+            kept_hidden += 1
+            continue
+        if _set_visibility(obj, True):
+            changed += 1
+    return changed, kept_hidden
+
+
+class VisibilityTaskPanel:
+    def __init__(self, doc):
+        self.doc = doc
+        self.form = QtWidgets.QWidget()
+        self.form.setObjectName("ElectricCRVisibilityTaskPanel")
+        self.form.setStyleSheet(
+            "QGroupBox { font-weight: 600; margin-top: 8px; }"
+            "QGroupBox::title { subcontrol-origin: margin; left: 6px; padding: 0 4px; }"
+            "QPushButton { min-height: 28px; padding: 4px 10px; }"
+        )
+        self._build_ui()
+        self._on_preview()
+
+    def _build_ui(self):
+        root = QtWidgets.QVBoxLayout(self.form)
+
+        head = QtWidgets.QHBoxLayout()
+        icon_lbl = QtWidgets.QLabel("")
+        if QtGui is not None:
+            icon_path = _resolve_dialog_icon()
+            if icon_path:
+                try:
+                    pix = QtGui.QPixmap(icon_path)
+                    icon_lbl.setPixmap(pix.scaled(20, 20, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation))
+                except Exception:
+                    pass
+        head.addWidget(icon_lbl)
+        title_lbl = QtWidgets.QLabel("<b>Gestionar visibilidad - ElectricCR</b>")
+        head.addWidget(title_lbl)
+        head.addStretch(1)
+        root.addLayout(head)
+
+        info = QtWidgets.QLabel(
+            "Seleccione filtros, elija la operacion y aplique.\n"
+            "Use ModoVisual=Solo3D para apagar 2D en dispositivos con esa propiedad."
+        )
+        info.setWordWrap(True)
+        root.addWidget(info)
+
+        grp = QtWidgets.QGroupBox("Filtros de objetos")
+        grid = QtWidgets.QGridLayout(grp)
+        self.chk_2d = QtWidgets.QCheckBox("Elementos 2D (Shape2DView, *_2D, Solo2D)")
+        self.chk_routes = QtWidgets.QCheckBox("Rutas criticas / Conexiones")
+        self.chk_lights = QtWidgets.QCheckBox("Luminarias")
+        self.chk_notes = QtWidgets.QCheckBox("Anotaciones / etiquetas")
+        self.chk_coords = QtWidgets.QCheckBox("Coordenadas auxiliares de luminarias")
+        self.chk_lib = QtWidgets.QCheckBox("Biblioteca interna (_lib)")
+
+        self.chk_2d.setChecked(True)
+        self.chk_routes.setChecked(False)
+        self.chk_lights.setChecked(False)
+        self.chk_notes.setChecked(False)
+        self.chk_coords.setChecked(False)
+        self.chk_lib.setChecked(False)
+
+        grid.addWidget(self.chk_2d, 0, 0, 1, 2)
+        grid.addWidget(self.chk_routes, 1, 0, 1, 2)
+        grid.addWidget(self.chk_lights, 2, 0, 1, 2)
+        grid.addWidget(self.chk_notes, 3, 0, 1, 2)
+        grid.addWidget(self.chk_coords, 4, 0, 1, 2)
+        grid.addWidget(self.chk_lib, 5, 0, 1, 2)
+        root.addWidget(grp)
+
+        form = QtWidgets.QFormLayout()
+        self.cmb_scope = QtWidgets.QComboBox()
+        self.cmb_scope.addItem("Todo el documento", "all")
+        self.cmb_scope.addItem("Solo seleccion actual", "selection")
+        self.cmb_scope.addItem("Grupos/Directorios por nombre", "groups")
+        form.addRow("Ambito", self.cmb_scope)
+
+        self.ed_scope_groups = QtWidgets.QLineEdit()
+        self.ed_scope_groups.setPlaceholderText("ej: electrico, luminarias, conexiones")
+        self.ed_scope_groups.setEnabled(False)
+        form.addRow("Grupos/Dirs", self.ed_scope_groups)
+
+        self.cmb_action = QtWidgets.QComboBox()
+        self.cmb_action.addItem("Ocultar seleccion", "hide")
+        self.cmb_action.addItem("Mostrar seleccion", "show")
+        self.cmb_action.addItem("Solo seleccion (oculta el resto)", "isolate")
+        form.addRow("Operacion", self.cmb_action)
+
+        self.cmb_mode = QtWidgets.QComboBox()
+        self.cmb_mode.addItem("No cambiar", "__NO_CHANGE__")
+        self.cmb_mode.addItem("Ambos", "Ambos")
+        self.cmb_mode.addItem("Solo2D", "Solo2D")
+        self.cmb_mode.addItem("Solo3D", "Solo3D")
+        form.addRow("ModoVisual dispositivos", self.cmb_mode)
+        self.chk_keep_coords_showall = QtWidgets.QCheckBox(
+            "Al usar 'Mostrar todo', mantener ocultas coordenadas auxiliares"
+        )
+        self.chk_keep_coords_showall.setChecked(True)
+        form.addRow("Recuperacion", self.chk_keep_coords_showall)
+        root.addLayout(form)
+
+        self.lbl_preview = QtWidgets.QLabel("Vista previa: pulse 'Analizar' para conteos por categoria.")
+        self.lbl_preview.setWordWrap(True)
+        root.addWidget(self.lbl_preview)
+
+        self.lbl_status = QtWidgets.QLabel("Listo")
+        self.lbl_status.setWordWrap(True)
+        root.addWidget(self.lbl_status)
+
+        btn_row = QtWidgets.QHBoxLayout()
+        self.btn_apply = QtWidgets.QPushButton("Aplicar")
+        self.btn_preview = QtWidgets.QPushButton("Analizar")
+        self.btn_show_all = QtWidgets.QPushButton("Mostrar todo")
+        self.btn_close = QtWidgets.QPushButton("Cerrar panel")
+        btn_row.addWidget(self.btn_apply)
+        btn_row.addWidget(self.btn_preview)
+        btn_row.addWidget(self.btn_show_all)
+        btn_row.addStretch(1)
+        btn_row.addWidget(self.btn_close)
+        root.addLayout(btn_row)
+
+        self._set_button_icons()
+        self.btn_apply.clicked.connect(self._on_apply)
+        self.btn_preview.clicked.connect(self._on_preview)
+        self.btn_show_all.clicked.connect(self._on_show_all)
+        self.btn_close.clicked.connect(self._close_panel)
+        self.cmb_scope.currentIndexChanged.connect(self._update_scope_ui)
+        self.ed_scope_groups.textChanged.connect(self._on_preview)
+
+    def _set_button_icons(self):
+        style = self.form.style()
+        try:
+            self.btn_apply.setIcon(style.standardIcon(QtWidgets.QStyle.SP_DialogApplyButton))
+            self.btn_preview.setIcon(style.standardIcon(QtWidgets.QStyle.SP_FileDialogDetailedView))
+            self.btn_show_all.setIcon(style.standardIcon(QtWidgets.QStyle.SP_BrowserReload))
+            self.btn_close.setIcon(style.standardIcon(QtWidgets.QStyle.SP_DialogCloseButton))
+        except Exception:
+            pass
+
+    def _filters(self):
+        return {
+            "f_2d": self.chk_2d.isChecked(),
+            "f_routes": self.chk_routes.isChecked(),
+            "f_lights": self.chk_lights.isChecked(),
+            "f_notes": self.chk_notes.isChecked(),
+            "f_coords": self.chk_coords.isChecked(),
+            "f_lib": self.chk_lib.isChecked(),
+        }
+
+    def _scope(self):
+        mode = self.cmb_scope.currentData()
+        text = _safe_text(self.ed_scope_groups.text())
+        return mode, text
+
+    def _update_scope_ui(self):
+        mode, _text = self._scope()
+        self.ed_scope_groups.setEnabled(mode == "groups")
+        self._on_preview()
+
+    def _on_preview(self):
+        scope_mode, scope_text = self._scope()
+        scope_set, scope_msg = _scope_candidates(self.doc, scope_mode, scope_text)
+        counts = _count_targets_by_category(self.doc, candidates=scope_set)
+        filters = self._filters()
+        if any(filters.values()):
+            selected = len(_collect_targets(self.doc, filters, candidates=scope_set))
+        else:
+            selected = 0
+        txt = (
+            "Conteos: "
+            f"2D={counts['2D']} | Rutas={counts['Rutas']} | Luminarias={counts['Luminarias']} | "
+            f"Anotaciones={counts['Anotaciones']} | Coordenadas={counts['Coordenadas']} | "
+            f"Biblioteca={counts['Biblioteca']} | Seleccion actual={selected} | "
+            f"Ambito objetos={len(scope_set)}"
+        )
+        if scope_msg:
+            txt += f" | Nota: {scope_msg}"
+        self.lbl_preview.setText(txt)
+
+    def _on_apply(self):
+        filters = self._filters()
+        mode_value = self.cmb_mode.currentData()
+        has_mode_request = bool(_canon_mode(mode_value))
+        if (not any(filters.values())) and (not has_mode_request):
+            self.lbl_status.setText("Seleccione al menos un filtro o un ModoVisual.")
+            return
+        action = self.cmb_action.currentData()
+        scope_mode, scope_text = self._scope()
+        scope_set, scope_msg = _scope_candidates(self.doc, scope_mode, scope_text)
+        if not scope_set:
+            self.lbl_status.setText("Ambito vacio: no hay objetos para procesar.")
+            return
+
+        targets = _collect_targets(self.doc, filters, candidates=scope_set)
+        vis_changed = _apply_visibility(self.doc, targets, action)
+        mode_info = _apply_mode_override(self.doc, mode_value, candidates=scope_set)
+        mode_changed = int(mode_info.get("mode_changed", 0))
+        link_mode_fixed = int(mode_info.get("link_vis_changed", 0))
+        retargeted = int(mode_info.get("retargeted_links", 0))
+        fallback_mode_fixed = int(mode_info.get("fallback_vis_changed", 0))
+
+        if vis_changed or mode_changed or link_mode_fixed or retargeted or fallback_mode_fixed:
+            try:
+                self.doc.recompute()
+            except Exception:
+                pass
+
+        msg = (
+            f"Objetos filtrados: {len(targets)} | "
+            f"Visibilidad modificada: {vis_changed} | "
+            f"ModoVisual modificado: {mode_changed} | "
+            f"Sync links 2D/3D: {link_mode_fixed} | "
+            f"Links retargeted: {retargeted} | "
+            f"Fallback sync: {fallback_mode_fixed}"
+        )
+        if scope_msg:
+            msg += f" | Nota: {scope_msg}"
+        self.lbl_status.setText(msg)
+        _info(msg)
+        self._on_preview()
+
+    def _on_show_all(self):
+        scope_mode, scope_text = self._scope()
+        scope_set, scope_msg = _scope_candidates(self.doc, scope_mode, scope_text)
+        if not scope_set:
+            self.lbl_status.setText("Ambito vacio: no hay objetos para mostrar.")
+            return
+        changed, kept_hidden = _show_all(
+            self.doc,
+            keep_coords_hidden=self.chk_keep_coords_showall.isChecked(),
+            candidates=scope_set,
+        )
+        if changed:
+            try:
+                self.doc.recompute()
+            except Exception:
+                pass
+        msg = (
+            f"Objetos visibles restaurados: {changed} | "
+            f"Coordenadas ocultas: {kept_hidden} | Ambito objetos: {len(scope_set)}"
+        )
+        if scope_msg:
+            msg += f" | Nota: {scope_msg}"
+        self.lbl_status.setText(msg)
+        _info(msg)
+        self._on_preview()
+
+    def _close_panel(self):
+        if Gui is not None and hasattr(Gui, "Control"):
+            try:
+                Gui.Control.closeDialog()
+                return
+            except Exception:
+                pass
+        try:
+            self.form.window().close()
+        except Exception:
+            pass
+
+    # TaskPanel API (FreeCAD)
+    def getStandardButtons(self):
+        try:
+            return int(QtWidgets.QDialogButtonBox.Close)
+        except Exception:
+            return 0
+
+    def accept(self):
+        self._close_panel()
+        return True
+
+    def reject(self):
+        self._close_panel()
+        return True
+
+
+def main():
+    doc = App.ActiveDocument
+    if doc is None:
+        _err("No hay documento activo.")
+        return
+    if QtWidgets is None:
+        _err("Qt no disponible para abrir el panel.")
+        return
+    panel = VisibilityTaskPanel(doc)
+    if Gui is not None and hasattr(Gui, "Control"):
+        try:
+            Gui.Control.closeDialog()
+        except Exception:
+            pass
+        try:
+            Gui.Control.showDialog(panel)
+            return
+        except Exception:
+            pass
+
+    # Fallback si Task Panel no esta disponible
+    parent = None
+    if Gui is not None:
+        try:
+            parent = Gui.getMainWindow()
+        except Exception:
+            parent = None
+    dlg = QtWidgets.QDialog(parent)
+    dlg.setWindowTitle("Gestionar visibilidad - ElectricCR")
+    dlg.resize(720, 560)
+    lay = QtWidgets.QVBoxLayout(dlg)
+    lay.addWidget(panel.form)
+    dlg.exec_()
+
+
+if __name__ == "__main__":
+    main()

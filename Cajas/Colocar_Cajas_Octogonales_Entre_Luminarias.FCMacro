@@ -1,0 +1,2126 @@
+# -*- coding: utf-8 -*-
+# MenuText: Colocar Cajas Octogonales entre Luminarias
+# Icon: Cajas/Colocar_Cajas_Octogonales_Entre_Luminarias.svg
+"""
+Genera cajas EMT octogonales entre luminarias agrupadas por recinto/circuito.
+
+Algoritmo base:
+- Detecta luminarias (seleccion o documento completo).
+- Agrupa por (Circuito, Recinto).
+- Si detecta filas, aplica pares por fila (1 caja entre cada 2 luminarias).
+- Lo que no calza como fila usa clusters de cercania de 1..MAX_LUMINARIAS_POR_CAJA.
+- Inserta una caja octogonal por cluster en el centro XY del cluster.
+- Guarda cajas en:
+  electrico/Iluminacion/<Circuito>/<Recinto>/Cajas_Octogonales
+- Guarda conexiones 3D en:
+  electrico/Iluminacion/<Circuito>/<Recinto>/Conexiones_3D
+
+Notas:
+- No mueve luminarias.
+- Genera conexiones 3D spline entre caja y luminaria.
+- Las cajitas de conexion sobre luminaria se gestionan con macro separada.
+- Limpia solo objetos generados por esta macro (tag GeneradoPor).
+"""
+
+from pathlib import Path
+import importlib
+import json
+import re
+import sys
+import unicodedata
+
+import FreeCAD as App
+import Part
+
+try:
+    import FreeCADGui as Gui
+    GUI_UP = True
+except Exception:
+    Gui = None
+    GUI_UP = False
+
+try:
+    from PySide2 import QtWidgets, QtCore
+except Exception:
+    try:
+        from PySide import QtGui as QtWidgets  # type: ignore
+        from PySide import QtCore  # type: ignore
+    except Exception:
+        QtWidgets = None
+        QtCore = None
+
+
+MAX_LUMINARIAS_POR_CAJA = 2
+DEFAULT_DIAMETER = 22.2
+DEFAULT_SNPT = 3000.0
+Z_OFFSET = 0.0
+MIN_DROP_MM = 120.0
+CAJAS_LABEL = "Cajas_Octogonales"
+CONEXIONES_LABEL = "Conexiones_3D"
+LEGACY_CONEXIONES_LABELS = ("Conexiones_Luminarias_Cajas", "Conexiones_Luminarias_Cajas_3D")
+GENERATED_TAG = "CAJA_LUM_CLUSTER_V1"
+APPROACH_PERP_MM = 100.0
+FINAL_APPROACH_MM = 120.0
+
+FALLBACK_CIRCUITO = "Sin_Circuito"
+FALLBACK_RECINTO = "Sin_Recinto"
+
+CIRCUIT_ATTRS = ("CircuitoID", "Circuito_Grupo", "Circuito", "CircuitID", "Circuit")
+AREA_ATTRS = ("Recinto", "Area", "AreaID", "AreaNombre", "Habitacion", "Local", "Espacio", "Zona")
+GENERIC_NAMES = {
+    "electrico",
+    "iluminacion",
+    "iluminacion ",
+    "circuitos",
+    "circuitos de iluminacion",
+    "recintos",
+    "areas",
+    "area",
+    "apagadores",
+    "luminarias",
+}
+LIBRARY_HINTS = {
+    "componente",
+    "componentes",
+    "prototipo",
+    "prototype",
+    "catalogo",
+    "catalog",
+    "biblioteca",
+    "resource",
+    "resources",
+    "recurso",
+    "plantilla",
+    "template",
+    "master",
+}
+LUM_HINTS = {
+    "luminaria",
+    "lampara",
+    "luz",
+    "downlight",
+    "spot",
+    "plafon",
+    "plafond",
+    "panel led",
+    "redonda",
+    "redondo",
+    "circular",
+    "round",
+}
+RECINTO_SKIP_HINTS = {
+    "apagador",
+    "switch",
+    "interruptor",
+    "caja",
+    "conexion",
+    "conexiones",
+}
+NON_LUM_HINTS = {
+    "caja",
+    "conexion",
+    "conexiones",
+    "wire",
+    "linea",
+    "line",
+    "canal",
+    "tubo",
+    "emt",
+    "soporte",
+    "apoyo",
+    "inspeccion",
+    "componente",
+    "componentes",
+    "octogonal",
+}
+
+PARAM_PATH = "User parameter:BaseApp/Preferences/Mod/ElectricCR/CajasLuminarias"
+
+
+def _log(msg):
+    App.Console.PrintMessage(f"[CAJA_LUM][INFO] {msg}\n")
+
+
+def _warn(msg):
+    App.Console.PrintWarning(f"[CAJA_LUM][WARN] {msg}\n")
+
+
+def _err(msg):
+    App.Console.PrintError(f"[CAJA_LUM][ERROR] {msg}\n")
+
+
+def _prefs():
+    try:
+        return App.ParamGet(PARAM_PATH)
+    except Exception:
+        return None
+
+
+def _pref_get_bool(key, default):
+    p = _prefs()
+    if p is None:
+        return bool(default)
+    try:
+        return bool(p.GetBool(str(key), bool(default)))
+    except Exception:
+        return bool(default)
+
+
+def _pref_get_float(key, default):
+    p = _prefs()
+    if p is None:
+        return float(default)
+    try:
+        return float(p.GetFloat(str(key), float(default)))
+    except Exception:
+        return float(default)
+
+
+def _pref_get_str(key, default):
+    p = _prefs()
+    if p is None:
+        return str(default)
+    try:
+        v = p.GetString(str(key), str(default))
+        return str(v) if v is not None else str(default)
+    except Exception:
+        return str(default)
+
+
+def _save_cfg(cfg):
+    p = _prefs()
+    if p is None:
+        return
+    try:
+        p.SetString("scope", str(cfg.get("scope", "document")))
+        p.SetFloat("altura_mm", float(cfg.get("altura_mm", DEFAULT_SNPT)))
+        p.SetBool("cleanup_prev", bool(cfg.get("cleanup_prev", True)))
+        p.SetBool("row_pair_mode", bool(cfg.get("row_pair_mode", True)))
+        p.SetFloat("max_spline_mm", float(cfg.get("max_spline_mm", 3000.0)))
+    except Exception:
+        pass
+
+
+def _default_cfg(has_selection):
+    scope_default = "selection" if has_selection else "document"
+    scope = _pref_get_str("scope", scope_default)
+    if scope not in {"selection", "document"}:
+        scope = scope_default
+    return {
+        "scope": scope,
+        "altura_mm": _pref_get_float("altura_mm", DEFAULT_SNPT),
+        "cleanup_prev": _pref_get_bool("cleanup_prev", True),
+        "row_pair_mode": _pref_get_bool("row_pair_mode", True),
+        "max_spline_mm": _pref_get_float("max_spline_mm", 3000.0),
+    }
+
+
+def _run_config_dialog(has_selection):
+    cfg = _default_cfg(bool(has_selection))
+    if (not GUI_UP) or (QtWidgets is None):
+        return cfg
+
+    parent = None
+    try:
+        parent = Gui.getMainWindow()
+    except Exception:
+        parent = None
+
+    dlg = QtWidgets.QDialog(parent)
+    dlg.setWindowTitle("Cajas Octogonales entre Luminarias")
+    dlg.setMinimumWidth(480)
+    if QtCore is not None:
+        dlg.setWindowModality(QtCore.Qt.WindowModal)
+
+    info = QtWidgets.QLabel(
+        "Regla principal: maximo 2 luminarias por caja.\n"
+        "Opcional: detectar filas y colocar 1 caja entre cada 2 luminarias.\n"
+        "Si una fila es impar, la sobrante se trata como caso aparte."
+    )
+    info.setWordWrap(True)
+    info.setStyleSheet("color:#4b5563;")
+
+    # Alcance.
+    grp_scope = QtWidgets.QGroupBox("Alcance")
+    rb_doc = QtWidgets.QRadioButton("Todo el documento")
+    rb_sel = QtWidgets.QRadioButton("Solo seleccion actual")
+    rb_sel.setEnabled(bool(has_selection))
+    if bool(has_selection) and cfg.get("scope") == "selection":
+        rb_sel.setChecked(True)
+    else:
+        rb_doc.setChecked(True)
+    lay_scope = QtWidgets.QVBoxLayout(grp_scope)
+    lay_scope.addWidget(rb_doc)
+    lay_scope.addWidget(rb_sel)
+    if not has_selection:
+        msg = QtWidgets.QLabel("No hay seleccion activa; se usara todo el documento.")
+        msg.setWordWrap(True)
+        msg.setStyleSheet("color:#888;")
+        lay_scope.addWidget(msg)
+
+    # Altura.
+    grp_alt = QtWidgets.QGroupBox("Altura")
+    sp_alt = QtWidgets.QDoubleSpinBox()
+    sp_alt.setRange(-5000.0, 20000.0)
+    sp_alt.setDecimals(1)
+    sp_alt.setSuffix(" mm")
+    sp_alt.setValue(float(cfg.get("altura_mm", DEFAULT_SNPT)))
+    form_alt = QtWidgets.QFormLayout(grp_alt)
+    form_alt.addRow("Altura de cajas (Z):", sp_alt)
+
+    # Opciones.
+    grp_opt = QtWidgets.QGroupBox("Opciones")
+    chk_cleanup = QtWidgets.QCheckBox("Eliminar cajas previas generadas por esta macro")
+    chk_cleanup.setChecked(bool(cfg.get("cleanup_prev", True)))
+    chk_rows = QtWidgets.QCheckBox("Detectar filas y usar pares (1 caja entre cada 2 luminarias)")
+    chk_rows.setChecked(bool(cfg.get("row_pair_mode", True)))
+    sp_len = QtWidgets.QDoubleSpinBox()
+    sp_len.setRange(500.0, 20000.0)
+    sp_len.setDecimals(1)
+    sp_len.setSuffix(" mm")
+    sp_len.setValue(float(cfg.get("max_spline_mm", 3000.0)))
+    txt_rule = QtWidgets.QLabel("Fallback: para no-filas se mantiene maximo 2 luminarias por caja.")
+    txt_rule.setStyleSheet("color:#4b5563;")
+    lay_opt = QtWidgets.QVBoxLayout(grp_opt)
+    lay_opt.addWidget(chk_cleanup)
+    lay_opt.addWidget(chk_rows)
+    row_len = QtWidgets.QHBoxLayout()
+    row_len.addWidget(QtWidgets.QLabel("Longitud spline recomendada:"))
+    row_len.addWidget(sp_len)
+    row_len.addStretch(1)
+    lay_opt.addLayout(row_len)
+    lay_opt.addWidget(txt_rule)
+
+    buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+    buttons.accepted.connect(dlg.accept)
+    buttons.rejected.connect(dlg.reject)
+
+    lay = QtWidgets.QVBoxLayout(dlg)
+    lay.addWidget(info)
+    lay.addWidget(grp_scope)
+    lay.addWidget(grp_alt)
+    lay.addWidget(grp_opt)
+    lay.addWidget(buttons)
+
+    if dlg.exec_() != QtWidgets.QDialog.Accepted:
+        return None
+
+    cfg["scope"] = "selection" if (bool(has_selection) and rb_sel.isChecked()) else "document"
+    cfg["altura_mm"] = float(sp_alt.value())
+    cfg["cleanup_prev"] = bool(chk_cleanup.isChecked())
+    cfg["row_pair_mode"] = bool(chk_rows.isChecked())
+    cfg["max_spline_mm"] = float(sp_len.value())
+    _save_cfg(cfg)
+    return cfg
+
+
+def _safe_text(value):
+    try:
+        return str(value or "")
+    except Exception:
+        return ""
+
+
+def _normalize(text):
+    s = _safe_text(text).strip().lower()
+    if not s:
+        return ""
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    s = s.replace("\\", "/")
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _token(text, fallback="obj"):
+    t = _normalize(text)
+    t = re.sub(r"[^0-9a-zA-Z_]+", "_", t)
+    t = re.sub(r"_+", "_", t).strip("_")
+    return t or fallback
+
+
+def _contains_hint(text, hints):
+    n = _normalize(text)
+    if not n:
+        return False
+    return any(h in n for h in hints)
+
+
+def _is_group(obj):
+    return getattr(obj, "TypeId", "") == "App::DocumentObjectGroup"
+
+
+def _is_link(obj):
+    return getattr(obj, "TypeId", "") == "App::Link"
+
+
+def _linked_object(obj):
+    if obj is None:
+        return None
+    for attr in ("LinkedObject", "Link"):
+        try:
+            ref = getattr(obj, attr, None)
+            if ref is not None:
+                return ref
+        except Exception:
+            pass
+    return None
+
+
+def _is_generated_index_link(obj):
+    if not _is_link(obj):
+        return False
+    try:
+        gen = _safe_text(getattr(obj, "GeneradoPor", "")).strip()
+        if gen in {"ORG_LUM_IDX", GENERATED_TAG}:
+            return True
+    except Exception:
+        pass
+    name = _normalize(f"{getattr(obj, 'Name', '')} {getattr(obj, 'Label', '')}")
+    return name.startswith("idxlum_")
+
+
+def _iter_doc_groups(doc):
+    for obj in (doc.Objects or []):
+        if _is_group(obj):
+            yield obj
+
+
+def _find_parent_group_linear(doc, obj):
+    for grp in _iter_doc_groups(doc):
+        try:
+            if obj in (getattr(grp, "Group", []) or []):
+                return grp
+        except Exception:
+            continue
+    return None
+
+
+def _get_parent_group(doc, obj):
+    gp = getattr(obj, "getParentGroup", None)
+    if callable(gp):
+        try:
+            p = gp()
+            if p:
+                return p
+        except Exception:
+            pass
+    return _find_parent_group_linear(doc, obj)
+
+
+def _ancestor_groups(doc, obj, max_depth=40):
+    chain = []
+    seen = set()
+    cur = _get_parent_group(doc, obj)
+    while cur is not None and len(chain) < max_depth:
+        gid = getattr(cur, "Name", None) or id(cur)
+        if gid in seen:
+            break
+        seen.add(gid)
+        chain.append(cur)
+        cur = _get_parent_group(doc, cur)
+    return chain
+
+
+def _object_in_lum_context(doc, obj):
+    for grp in _ancestor_groups(doc, obj):
+        txt = _normalize(f"{getattr(grp, 'Label', '')} {getattr(grp, 'Name', '')}")
+        if _contains_hint(txt, LUM_HINTS):
+            return True
+    return False
+
+
+def _unique_doc_name(doc, base_name):
+    name = _token(base_name, "obj")
+    if doc.getObject(name) is None:
+        return name
+    i = 2
+    while True:
+        cand = f"{name}_{i:02d}"
+        if doc.getObject(cand) is None:
+            return cand
+        i += 1
+
+
+def _ensure_group(doc, parent, label, prefix):
+    n_label = _normalize(label)
+    if parent is None:
+        for grp in _iter_doc_groups(doc):
+            if _normalize(getattr(grp, "Label", "")) == n_label:
+                return grp
+            # Reusar variantes existentes con sufijo numerico.
+            if _group_matches_label(grp, label):
+                return grp
+        name = _unique_doc_name(doc, prefix + "_" + _token(label, "grupo"))
+        grp = doc.addObject("App::DocumentObjectGroup", name)
+        grp.Label = _safe_text(label).strip() or "Grupo"
+        return grp
+
+    for child in (getattr(parent, "Group", []) or []):
+        if not _is_group(child):
+            continue
+        if _normalize(getattr(child, "Label", "")) == n_label:
+            return child
+        # Reusar variantes existentes con sufijo numerico.
+        if _group_matches_label(child, label):
+            return child
+    name = _unique_doc_name(doc, prefix + "_" + _token(label, "grupo"))
+    grp = doc.addObject("App::DocumentObjectGroup", name)
+    grp.Label = _safe_text(label).strip() or "Grupo"
+    parent.addObject(grp)
+    return grp
+
+
+def _canon_group_key(text):
+    s = _normalize(text)
+    s = re.sub(r"[^0-9a-z]+", "", s)
+    return s
+
+
+def _split_suffix_digits(key):
+    m = re.match(r"^(.*?)(\d+)$", key)
+    if m:
+        return m.group(1), m.group(2)
+    return key, ""
+
+
+def _keys_compatible(target_key, own_key):
+    if (not target_key) or (not own_key):
+        return False
+    if target_key == own_key:
+        return True
+
+    # Compatibilidad controlada:
+    # - acepta "Cobros" <-> "Cobros002"
+    # - evita mezclar "Circuito1" con "Circuito10"
+    t_base, t_suf = _split_suffix_digits(target_key)
+    o_base, o_suf = _split_suffix_digits(own_key)
+    if t_base and (t_base == o_base):
+        if (not t_suf and o_suf) or (t_suf and not o_suf):
+            return True
+    return False
+
+
+def _iter_child_groups(parent):
+    if parent is None:
+        return
+    for child in (getattr(parent, "Group", []) or []):
+        if _is_group(child):
+            yield child
+
+
+def _group_matches_label(group_obj, label):
+    target_key = _canon_group_key(label)
+    if not target_key:
+        return False
+    own_keys = {
+        _canon_group_key(getattr(group_obj, "Label", "")),
+        _canon_group_key(getattr(group_obj, "Name", "")),
+    }
+    own_keys.discard("")
+    for own_key in own_keys:
+        if _keys_compatible(target_key, own_key):
+            return True
+    return False
+
+
+def _find_child_group_flexible(parent, label):
+    for child in _iter_child_groups(parent):
+        if _group_matches_label(child, label):
+            return child
+    return None
+
+
+def _is_circuit_bucket_group(group_obj):
+    txt = _normalize(f"{getattr(group_obj, 'Label', '')} {getattr(group_obj, 'Name', '')}")
+    return "circuit" in txt
+
+
+def _is_recintos_bucket_group(group_obj):
+    txt = _normalize(f"{getattr(group_obj, 'Label', '')} {getattr(group_obj, 'Name', '')}")
+    return ("recinto" in txt) or ("area" in txt) or ("espacio" in txt)
+
+
+def _resolve_target_circuit_group(doc, g_ilum, circuito_label):
+    if g_ilum is None:
+        return _ensure_group(doc, None, _safe_text(circuito_label).strip() or FALLBACK_CIRCUITO, "G03")
+
+    # 1) Estructura directa: Iluminacion/<Circuito>.
+    hit = _find_child_group_flexible(g_ilum, circuito_label)
+    if hit is not None:
+        return hit
+
+    # 2) Compatibilidad legacy: Iluminacion/Circuitos/<Circuito>.
+    for child in _iter_child_groups(g_ilum):
+        if not _is_circuit_bucket_group(child):
+            continue
+        hit = _find_child_group_flexible(child, circuito_label)
+        if hit is not None:
+            return hit
+
+    # 3) Fallback: crear circuito directamente bajo Iluminacion (sin crear buckets).
+    return _ensure_group(doc, g_ilum, _safe_text(circuito_label).strip() or FALLBACK_CIRCUITO, "G03")
+
+
+def _resolve_target_recinto_group(doc, g_circuito, recinto_label):
+    if g_circuito is None:
+        return _ensure_group(doc, None, _safe_text(recinto_label).strip() or FALLBACK_RECINTO, "G05")
+
+    # 1) Estructura directa: Circuito/<Recinto>.
+    hit = _find_child_group_flexible(g_circuito, recinto_label)
+    if hit is not None:
+        return hit
+
+    # 2) Compatibilidad legacy: Circuito/Recintos/<Recinto>.
+    for child in _iter_child_groups(g_circuito):
+        if not _is_recintos_bucket_group(child):
+            continue
+        hit = _find_child_group_flexible(child, recinto_label)
+        if hit is not None:
+            return hit
+
+    # 3) Fallback: crear recinto directamente bajo Circuito (sin crear buckets).
+    return _ensure_group(doc, g_circuito, _safe_text(recinto_label).strip() or FALLBACK_RECINTO, "G05")
+
+
+def _ensure_path(doc, labels):
+    if not labels:
+        return None
+    cur = _ensure_group(doc, None, labels[0], "G00")
+    for i, label in enumerate(labels[1:], start=1):
+        cur = _ensure_group(doc, cur, label, f"G{i:02d}")
+    return cur
+
+
+def _remove_from_all_groups(doc, obj, keep_group=None):
+    for grp in _iter_doc_groups(doc):
+        if keep_group is not None and grp == keep_group:
+            continue
+        try:
+            if obj in (getattr(grp, "Group", []) or []):
+                grp.removeObject(obj)
+        except Exception:
+            continue
+
+
+def _collect_from_group_recursive(group_obj, out, seen):
+    gid = getattr(group_obj, "Name", None) or id(group_obj)
+    if gid in seen:
+        return
+    seen.add(gid)
+    for child in (getattr(group_obj, "Group", []) or []):
+        if _is_group(child):
+            _collect_from_group_recursive(child, out, seen)
+        else:
+            cid = getattr(child, "Name", None) or id(child)
+            if cid not in seen:
+                seen.add(cid)
+                out.append(child)
+
+
+def _collect_candidates(doc):
+    try:
+        sel = Gui.Selection.getSelection() or [] if GUI_UP else []
+    except Exception:
+        sel = []
+
+    out = []
+    seen = set()
+    if sel:
+        for obj in sel:
+            if _is_group(obj):
+                _collect_from_group_recursive(obj, out, seen)
+            else:
+                oid = getattr(obj, "Name", None) or id(obj)
+                if oid not in seen:
+                    seen.add(oid)
+                    out.append(obj)
+        return out, True
+
+    for obj in (doc.Objects or []):
+        if not _is_group(obj):
+            out.append(obj)
+    return out, False
+
+
+def _collect_document_objects(doc):
+    out = []
+    for obj in (doc.Objects or []):
+        if not _is_group(obj):
+            out.append(obj)
+    return out
+
+
+def _find_iluminacion_scope_group(doc):
+    best = None
+    best_score = -1
+    for grp in _iter_doc_groups(doc):
+        lbl_n = _normalize(getattr(grp, "Label", ""))
+        name_n = _normalize(getattr(grp, "Name", ""))
+        if (lbl_n != "iluminacion") and (name_n != "iluminacion"):
+            continue
+        score = 0
+        if lbl_n == "iluminacion":
+            score += 3
+        if name_n == "iluminacion":
+            score += 1
+        for anc in _ancestor_groups(doc, grp):
+            if _normalize(getattr(anc, "Label", "")) == "electrico":
+                score += 5
+                break
+        try:
+            score += min(3, len(getattr(grp, "Group", []) or []))
+        except Exception:
+            pass
+        if score > best_score:
+            best_score = score
+            best = grp
+    return best
+
+
+def _is_within_scope_group(doc, obj, scope_group):
+    if scope_group is None:
+        return True
+    if obj is None:
+        return False
+    for grp in _ancestor_groups(doc, obj):
+        if grp == scope_group:
+            return True
+    return False
+
+
+def _source_group_key(doc, obj, scope_group=None):
+    parent = _get_parent_group(doc, obj)
+    if parent is None:
+        return "__NO_GROUP__"
+    parts = []
+    cur = parent
+    for _ in range(20):
+        if cur is None:
+            break
+        nm = _safe_text(getattr(cur, "Name", "")).strip()
+        lb = _safe_text(getattr(cur, "Label", "")).strip()
+        parts.append(nm or lb or f"id{id(cur)}")
+        if scope_group is not None and cur == scope_group:
+            break
+        cur = _get_parent_group(doc, cur)
+    if not parts:
+        return "__NO_GROUP__"
+    return "/".join(reversed(parts))
+
+
+def _import_component_type():
+    try:
+        this_dir = Path(__file__).resolve().parent
+    except Exception:
+        this_dir = None
+
+    if this_dir is not None:
+        con_dir = this_dir.parent / "Conectar"
+        if con_dir.exists() and str(con_dir) not in sys.path:
+            sys.path.insert(0, str(con_dir))
+    try:
+        mod = importlib.import_module("component_classifier")
+        return getattr(mod, "get_component_type", None)
+    except Exception:
+        return None
+
+
+def _is_library_object(doc, obj):
+    if obj is None:
+        return True
+    txt = _normalize(f"{getattr(obj, 'Label', '')} {getattr(obj, 'Name', '')}")
+    if txt in {"componentes", "componente", "resources", "resource", "prototipos", "prototipo"}:
+        return True
+    if _contains_hint(txt, LIBRARY_HINTS):
+        if not any(hasattr(obj, attr) for attr in ("Tipo", "TipoLogico", "Categoria", "KeyRegistro", "CircuitoID")):
+            return True
+    try:
+        if hasattr(obj, "EsPrototipo") and bool(getattr(obj, "EsPrototipo")):
+            return True
+    except Exception:
+        pass
+    for grp in _ancestor_groups(doc, obj):
+        if _contains_hint(getattr(grp, "Label", ""), LIBRARY_HINTS):
+            return True
+    return False
+
+
+def _is_luminaria(doc, obj, get_component_type):
+    if _is_generated_index_link(obj):
+        return False
+
+    base_obj = obj
+    if _is_link(obj):
+        ref = _linked_object(obj)
+        if ref is not None:
+            base_obj = ref
+
+    if _is_library_object(doc, obj):
+        return False
+    if callable(get_component_type):
+        try:
+            ctype = get_component_type(base_obj)
+            if ctype:
+                return ctype == "Luminaria"
+        except Exception:
+            pass
+    txt = _normalize(
+        f"{getattr(base_obj, 'Label', '')} "
+        f"{getattr(base_obj, 'Name', '')} "
+        f"{getattr(base_obj, 'Tipo', '')} "
+        f"{getattr(base_obj, 'TipoLogico', '')} "
+        f"{getattr(base_obj, 'Categoria', '')} "
+        f"{getattr(base_obj, 'KeyRegistro', '')}"
+    )
+    if ("sensor" in txt) or ("humo" in txt) or ("detector" in txt):
+        return False
+    if _contains_hint(txt, NON_LUM_HINTS):
+        return False
+    if any(tok in txt for tok in LUM_HINTS):
+        return True
+
+    # Fallback: objeto circular dentro de contexto de luminarias.
+    if _object_in_lum_context(doc, obj):
+        try:
+            shp = getattr(obj, "Shape", None)
+            if shp is not None and not shp.isNull():
+                bb = shp.BoundBox
+                if (bb.XLength > 50.0 and bb.YLength > 50.0 and bb.ZLength >= 0.0):
+                    return True
+        except Exception:
+            pass
+    return False
+
+
+def _first_valid_property(obj, attrs):
+    for attr in attrs:
+        try:
+            if hasattr(obj, attr):
+                val = _safe_text(getattr(obj, attr)).strip()
+                if val:
+                    return val
+        except Exception:
+            continue
+    return ""
+
+
+def _valid_group_label(label):
+    txt = _safe_text(label).strip()
+    if not txt:
+        return ""
+    n = _normalize(txt)
+    if n in GENERIC_NAMES:
+        return ""
+    if _contains_hint(n, LUM_HINTS):
+        return ""
+    if _contains_hint(n, {"circuit", "circuito", "tp-", "tp "}):
+        return ""
+    return txt
+
+
+def _resolve_circuito(doc, obj):
+    prop = _first_valid_property(obj, CIRCUIT_ATTRS)
+    if prop:
+        return prop
+
+    chain = _ancestor_groups(doc, obj)
+    # Caso: .../<Circuito>/<Luminarias>
+    for grp in chain:
+        label = _safe_text(getattr(grp, "Label", "")).strip()
+        n = _normalize(label)
+        if re.match(r"^(c|ckt|circuito)\s*[-_ ]*\d+$", n):
+            return label
+
+    # Caso: .../Circuitos.../<Circuito>/...
+    for idx, grp in enumerate(chain):
+        n = _normalize(getattr(grp, "Label", ""))
+        if ("circuit" in n) and idx > 0:
+            near = _valid_group_label(getattr(chain[idx - 1], "Label", ""))
+            if near:
+                return near
+
+    # Fallback: buscar desde arriba para evitar grupos internos de luminaria.
+    for grp in reversed(chain):
+        lbl = _safe_text(getattr(grp, "Label", "")).strip()
+        n = _normalize(lbl)
+        if ("circuit" in n) or n.startswith("tp-") or n.startswith("tp "):
+            return lbl if lbl else FALLBACK_CIRCUITO
+    for grp in reversed(chain):
+        lbl = _safe_text(getattr(grp, "Label", "")).strip()
+        n = _normalize(lbl)
+        if n in GENERIC_NAMES:
+            continue
+        if _contains_hint(n, LUM_HINTS):
+            continue
+        if _contains_hint(n, RECINTO_SKIP_HINTS):
+            continue
+        return lbl
+    return FALLBACK_CIRCUITO
+
+
+def _resolve_recinto(doc, obj):
+    prop = _first_valid_property(obj, AREA_ATTRS)
+    if prop:
+        return prop
+
+    chain = _ancestor_groups(doc, obj)
+    for idx, grp in enumerate(chain):
+        n = _normalize(getattr(grp, "Label", ""))
+        if (("recinto" in n) or ("area" in n) or ("espacio" in n) or ("habitacion" in n) or ("local" in n)) and idx > 0:
+            near = _valid_group_label(getattr(chain[idx - 1], "Label", ""))
+            if near:
+                return near
+
+    for grp in chain:
+        label = _safe_text(getattr(grp, "Label", "")).strip()
+        n = _normalize(label)
+        if ("recinto" in n) and label:
+            return label
+
+    # Fallback: desde arriba para preferir el recinto real sobre subgrupos de luminaria.
+    for grp in reversed(chain):
+        lbl = _safe_text(getattr(grp, "Label", "")).strip()
+        n = _normalize(lbl)
+        if n in GENERIC_NAMES:
+            continue
+        if _contains_hint(n, LUM_HINTS):
+            continue
+        if _contains_hint(n, {"circuit", "circuito", "tp-", "tp "}):
+            continue
+        if _contains_hint(n, RECINTO_SKIP_HINTS):
+            continue
+        return lbl
+    return FALLBACK_RECINTO
+
+
+def _resolve_rotation(obj):
+    try:
+        rot = obj.Placement.Rotation
+    except Exception:
+        rot = App.Rotation()
+    try:
+        giro = float(getattr(obj, "Giro", 0.0) or 0.0)
+        if abs(giro) > 1e-9:
+            extra = App.Rotation(App.Vector(0.0, 0.0, 1.0), giro)
+            try:
+                rot = rot.multiply(extra)
+            except Exception:
+                rot = rot * extra
+    except Exception:
+        pass
+    return rot
+
+
+def _as_float(value, default=0.0):
+    try:
+        if hasattr(value, "Value"):
+            return float(value.Value)
+        return float(value)
+    except Exception:
+        return float(default)
+
+
+def _luminaria_world_point(obj):
+    def _center_from_bb(bb):
+        return App.Vector(
+            0.5 * (bb.XMin + bb.XMax),
+            0.5 * (bb.YMin + bb.YMax),
+            0.5 * (bb.ZMin + bb.ZMax),
+        )
+
+    def _center_from_shapes(shapes):
+        xmin = ymin = zmin = float("inf")
+        xmax = ymax = zmax = float("-inf")
+        used = False
+        for sh in shapes:
+            try:
+                bb = sh.BoundBox
+            except Exception:
+                continue
+            xmin = min(xmin, bb.XMin)
+            ymin = min(ymin, bb.YMin)
+            zmin = min(zmin, bb.ZMin)
+            xmax = max(xmax, bb.XMax)
+            ymax = max(ymax, bb.YMax)
+            zmax = max(zmax, bb.ZMax)
+            used = True
+        if not used:
+            return None
+        return App.Vector(
+            0.5 * (xmin + xmax),
+            0.5 * (ymin + ymax),
+            0.5 * (zmin + zmax),
+        )
+
+    try:
+        shape = getattr(obj, "Shape", None)
+        if shape is not None and not shape.isNull():
+            solids = list(getattr(shape, "Solids", []) or [])
+            if solids:
+                c_sol = _center_from_shapes(solids)
+                if c_sol:
+                    return c_sol
+            faces3d = []
+            for fc in (getattr(shape, "Faces", []) or []):
+                try:
+                    fbb = fc.BoundBox
+                    if fbb.ZLength > 1e-3:
+                        faces3d.append(fc)
+                except Exception:
+                    pass
+            if faces3d:
+                c_f = _center_from_shapes(faces3d)
+                if c_f:
+                    return c_f
+            return _center_from_bb(shape.BoundBox)
+    except Exception:
+        pass
+
+    try:
+        base = obj.Placement.Base
+    except Exception:
+        base = App.Vector(0.0, 0.0, 0.0)
+    offx = _as_float(getattr(obj, "OffsetX", 0.0), 0.0)
+    offy = _as_float(getattr(obj, "OffsetY", 0.0), 0.0)
+    altura = _as_float(getattr(obj, "AlturaRel", 0.0), 0.0)
+    local = App.Vector(offx, offy, altura)
+    return base + _resolve_rotation(obj).multVec(local)
+
+
+def _luminaria_identity(obj):
+    oid = _safe_text(getattr(obj, "Name", "")).strip()
+    if oid:
+        return f"OBJ:{oid}"
+    if _is_link(obj):
+        ref = _linked_object(obj)
+        if ref is not None:
+            rid = _safe_text(getattr(ref, "Name", "")).strip()
+            if rid:
+                return f"REF:{rid}|ID:{id(obj)}"
+    return f"ID:{id(obj)}"
+
+
+def _dist2_xy(p1, p2):
+    dx = float(p1.x - p2.x)
+    dy = float(p1.y - p2.y)
+    return dx * dx + dy * dy
+
+
+def _median(values):
+    vals = [float(v) for v in (values or [])]
+    if not vals:
+        return 0.0
+    vals.sort()
+    n = len(vals)
+    mid = n // 2
+    if n % 2 == 1:
+        return float(vals[mid])
+    return 0.5 * float(vals[mid - 1] + vals[mid])
+
+
+def _nearest_neighbor_distance(items):
+    if len(items) <= 1:
+        return 0.0
+    dlist = []
+    for i, it in enumerate(items):
+        p = it["point"]
+        best = None
+        for j, jt in enumerate(items):
+            if i == j:
+                continue
+            d2 = _dist2_xy(p, jt["point"])
+            if best is None or d2 < best:
+                best = d2
+        if best is not None:
+            dlist.append(best ** 0.5)
+    return _median(dlist)
+
+
+def _row_axis(items):
+    if len(items) < 4:
+        return None
+    xs = [float(it["point"].x) for it in items]
+    ys = [float(it["point"].y) for it in items]
+    sx = (max(xs) - min(xs)) if xs else 0.0
+    sy = (max(ys) - min(ys)) if ys else 0.0
+    if sx <= 1e-9 and sy <= 1e-9:
+        return None
+
+    # Si hay anisotropia clara, usar el eje dominante.
+    ratio = (max(sx, sy) / max(min(sx, sy), 1e-6))
+    if ratio >= 2.2:
+        return "x" if sx >= sy else "y"
+
+    # Fallback por anisotropia en vecino mas cercano.
+    nn_dx = []
+    nn_dy = []
+    for i, it in enumerate(items):
+        p = it["point"]
+        best_j = None
+        best_d2 = None
+        for j, jt in enumerate(items):
+            if i == j:
+                continue
+            d2 = _dist2_xy(p, jt["point"])
+            if best_d2 is None or d2 < best_d2:
+                best_d2 = d2
+                best_j = j
+        if best_j is not None:
+            q = items[best_j]["point"]
+            nn_dx.append(abs(float(p.x - q.x)))
+            nn_dy.append(abs(float(p.y - q.y)))
+    mdx = _median(nn_dx)
+    mdy = _median(nn_dy)
+    if mdx > (mdy * 1.8):
+        return "x"
+    if mdy > (mdx * 1.8):
+        return "y"
+    return None
+
+
+def _row_band_tolerance(items, axis):
+    nn = _nearest_neighbor_distance(items)
+    base = max(75.0, float(nn) * 0.35)
+    if not items:
+        return base
+    vals = [float(it["point"].y if axis == "x" else it["point"].x) for it in items]
+    span = max(vals) - min(vals) if vals else 0.0
+    if span > 0.0:
+        base = min(base, span * 0.45)
+    return max(base, 25.0)
+
+
+def _split_rows(items, axis, band_tol):
+    if not items:
+        return []
+    if axis == "x":
+        along = lambda it: float(it["point"].x)
+        perp = lambda it: float(it["point"].y)
+    else:
+        along = lambda it: float(it["point"].y)
+        perp = lambda it: float(it["point"].x)
+
+    ordered = sorted(
+        items,
+        key=lambda it: (
+            perp(it),
+            along(it),
+            _safe_text(getattr(it["obj"], "Label", "")).lower(),
+        ),
+    )
+
+    rows = []
+    for it in ordered:
+        v = perp(it)
+        placed = False
+        for row in rows:
+            if abs(v - row["center"]) <= float(band_tol):
+                row["items"].append(it)
+                row["center"] = (
+                    row["center"] * float(len(row["items"]) - 1) + v
+                ) / float(len(row["items"]))
+                placed = True
+                break
+        if not placed:
+            rows.append({"center": v, "items": [it]})
+
+    out = []
+    for row in rows:
+        ritems = list(row["items"])
+        ritems.sort(
+            key=lambda it: (
+                along(it),
+                _safe_text(getattr(it["obj"], "Label", "")).lower(),
+            )
+        )
+        out.append(ritems)
+    return out
+
+
+def _row_is_valid(row_items, axis, band_tol):
+    if len(row_items) < 2:
+        return False
+    if axis == "x":
+        along_vals = [float(it["point"].x) for it in row_items]
+        perp_vals = [float(it["point"].y) for it in row_items]
+    else:
+        along_vals = [float(it["point"].y) for it in row_items]
+        perp_vals = [float(it["point"].x) for it in row_items]
+
+    along_span = max(along_vals) - min(along_vals) if along_vals else 0.0
+    perp_span = max(perp_vals) - min(perp_vals) if perp_vals else 0.0
+    if len(row_items) == 2:
+        return along_span > max(perp_span * 1.2, float(band_tol) * 0.7)
+    return along_span > max(perp_span * 2.5, float(band_tol))
+
+
+def _clusterize_rows_pairwise(items):
+    axis = _row_axis(items)
+    if axis is None:
+        return [], list(items), 0, 0
+    band_tol = _row_band_tolerance(items, axis)
+    rows = _split_rows(items, axis, band_tol)
+    if not rows:
+        return [], list(items), 0, 0
+
+    pair_clusters = []
+    leftovers = []
+    valid_rows = 0
+    attached = 0
+    for row in rows:
+        if not _row_is_valid(row, axis, band_tol):
+            leftovers.extend(row)
+            continue
+        valid_rows += 1
+        i = 0
+        while i + 1 < len(row):
+            pair_clusters.append(
+                {
+                    "members": [row[i], row[i + 1]],
+                    "anchor": [row[i], row[i + 1]],
+                    "mode": "row_pair",
+                }
+            )
+            i += 2
+        if i < len(row):
+            leftovers.append(row[i])
+
+    if valid_rows == 0:
+        return [], list(items), 0, 0
+
+    # No anexar sobrantes a pares: evitar grupos de 3 luminarias.
+    return pair_clusters, list(leftovers), valid_rows, 0
+
+
+def _clusterize(items, max_size=4):
+    if not items:
+        return []
+    max_size = max(1, int(max_size))
+    ordered = sorted(
+        items,
+        key=lambda it: (
+            -float(it["point"].y),
+            float(it["point"].x),
+            _safe_text(getattr(it["obj"], "Label", "")).lower(),
+        ),
+    )
+    remaining = list(ordered)
+    clusters = []
+    while remaining:
+        seed = remaining.pop(0)
+        cluster = [seed]
+        while remaining and len(cluster) < max_size:
+            cx = sum(float(it["point"].x) for it in cluster) / float(len(cluster))
+            cy = sum(float(it["point"].y) for it in cluster) / float(len(cluster))
+            center = App.Vector(cx, cy, 0.0)
+            best_idx = min(range(len(remaining)), key=lambda i: _dist2_xy(remaining[i]["point"], center))
+            cluster.append(remaining.pop(best_idx))
+        clusters.append({"members": cluster, "anchor": list(cluster), "mode": "proximity"})
+    return clusters
+
+
+def _clusterize_mixed(items, max_size=4, row_pair_mode=True):
+    if not items:
+        return [], {"rows_valid": 0, "pairs": 0, "leftovers": 0, "attached": 0}
+    if not row_pair_mode:
+        clusters = _clusterize(items, max_size=min(2, int(max_size)))
+        return clusters, {"rows_valid": 0, "pairs": 0, "leftovers": 0, "attached": 0}
+
+    pair_clusters, leftovers, valid_rows, attached = _clusterize_rows_pairwise(items)
+    other_clusters = _clusterize(leftovers, max_size=min(2, int(max_size)))
+    clusters = list(pair_clusters) + list(other_clusters)
+    return clusters, {
+        "rows_valid": int(valid_rows),
+        "pairs": int(len(pair_clusters)),
+        "leftovers": int(len(leftovers)),
+        "attached": int(attached),
+    }
+
+
+def _cluster_radius_xy(cluster):
+    members = list(cluster.get("members", []) or [])
+    if not members:
+        return 0.0
+    center = _cluster_center(cluster)
+    vals = []
+    for m in members:
+        vals.append((_dist2_xy(m["point"], center)) ** 0.5)
+    return max(vals) if vals else 0.0
+
+
+def _enforce_cluster_radius(clusters, max_radius_mm, max_size):
+    if not clusters:
+        return clusters, 0
+    max_radius_mm = float(max_radius_mm)
+    if max_radius_mm <= 0.0:
+        return clusters, 0
+
+    out = list(clusters)
+    splits = 0
+    for _ in range(6):
+        changed = False
+        new_list = []
+        for cl in out:
+            members = list(cl.get("members", []) or [])
+            if len(members) <= 1:
+                new_list.append(cl)
+                continue
+            if _cluster_radius_xy(cl) <= max_radius_mm:
+                new_list.append(cl)
+                continue
+
+            size = max(1, min(2, len(members) - 1))
+            sub = _clusterize(members, max_size=size)
+            if len(sub) <= 1:
+                sub = [{"members": [m], "anchor": [m], "mode": "radius_split"} for m in members]
+            if len(sub) > 1:
+                splits += (len(sub) - 1)
+                changed = True
+            new_list.extend(sub)
+        out = new_list
+        if not changed:
+            break
+    return out, splits
+
+
+def _ensure_property(obj, ptype, pname, pgroup, pdesc):
+    try:
+        if pname not in getattr(obj, "PropertiesList", []):
+            obj.addProperty(ptype, pname, pgroup, pdesc)
+    except Exception:
+        pass
+
+
+def _mark_generated(box, cluster_id, circuito, recinto, lum_names, nivel_snpt):
+    _ensure_property(box, "App::PropertyString", "GeneradoPor", "ElectricCR", "Macro generadora")
+    _ensure_property(box, "App::PropertyString", "ClusterID", "ElectricCR", "ID cluster luminarias")
+    _ensure_property(box, "App::PropertyInteger", "ClusterSize", "ElectricCR", "Cantidad luminarias en cluster")
+    _ensure_property(box, "App::PropertyString", "CircuitoID", "Circuito", "Circuito inferido")
+    _ensure_property(box, "App::PropertyString", "Recinto", "ElectricCR", "Recinto inferido")
+    _ensure_property(box, "App::PropertyString", "LuminariasCSV", "ElectricCR", "Nombres de luminarias del cluster")
+    _ensure_property(box, "App::PropertyFloat", "NivelSNPT", "Red", "Nivel SNPT (mm)")
+    try:
+        box.GeneradoPor = GENERATED_TAG
+    except Exception:
+        pass
+    try:
+        box.ClusterID = _safe_text(cluster_id)
+    except Exception:
+        pass
+    try:
+        box.ClusterSize = int(len(lum_names))
+    except Exception:
+        pass
+    try:
+        box.CircuitoID = _safe_text(circuito)
+    except Exception:
+        pass
+    try:
+        box.Recinto = _safe_text(recinto)
+    except Exception:
+        pass
+    try:
+        box.LuminariasCSV = "; ".join(_safe_text(x) for x in lum_names)
+    except Exception:
+        pass
+    try:
+        box.NivelSNPT = float(nivel_snpt)
+    except Exception:
+        pass
+
+
+def _cluster_center(cluster):
+    anchor = list(cluster.get("anchor", []) or [])
+    if not anchor:
+        anchor = list(cluster.get("members", []) or [])
+    if not anchor:
+        return App.Vector(0.0, 0.0, 0.0)
+    return _avg_point(anchor)
+
+
+def _vlen_xy(v):
+    return ((float(v.x) * float(v.x)) + (float(v.y) * float(v.y))) ** 0.5
+
+
+def _vnorm_xy(v, fallback=None):
+    n = _vlen_xy(v)
+    if n <= 1e-9:
+        if fallback is not None:
+            return _vnorm_xy(fallback, None)
+        return App.Vector(1.0, 0.0, 0.0)
+    return App.Vector(float(v.x) / n, float(v.y) / n, 0.0)
+
+
+def _box_ports_world(box):
+    raw = _safe_text(getattr(box, "PuertosJSON", "")).strip()
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return []
+    if not isinstance(data, list):
+        return []
+    ports = []
+    pl = getattr(box, "Placement", None)
+    rot = pl.Rotation if pl is not None else App.Rotation()
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        pos = item.get("position")
+        direc = item.get("direction")
+        if not isinstance(pos, list) or len(pos) != 3:
+            continue
+        try:
+            lp = App.Vector(float(pos[0]), float(pos[1]), float(pos[2]))
+        except Exception:
+            continue
+        if pl is not None:
+            wp = pl.multVec(lp)
+        else:
+            wp = lp
+        if isinstance(direc, list) and len(direc) == 3:
+            try:
+                ld = App.Vector(float(direc[0]), float(direc[1]), float(direc[2]))
+                wd = rot.multVec(ld)
+            except Exception:
+                wd = App.Vector(1.0, 0.0, 0.0)
+        else:
+            wd = App.Vector(1.0, 0.0, 0.0)
+        ports.append(
+            {
+                "name": _safe_text(item.get("name", "")),
+                "point": wp,
+                "dir": wd,
+            }
+        )
+    return ports
+
+
+def _select_box_port(box, target_point, used_names=None):
+    ports = _box_ports_world(box)
+    if not ports:
+        base = getattr(getattr(box, "Placement", None), "Base", App.Vector(0.0, 0.0, 0.0))
+        return App.Vector(float(base.x), float(base.y), float(base.z)), App.Vector(1.0, 0.0, 0.0), ""
+
+    used_names = set(used_names or [])
+
+    def _score(prt):
+        p = prt["point"]
+        d = prt["dir"]
+        vec = App.Vector(float(target_point.x - p.x), float(target_point.y - p.y), float(target_point.z - p.z))
+        dxy = _vlen_xy(vec)
+        dot = (float(d.x) * float(vec.x)) + (float(d.y) * float(vec.y))
+        penalty = 0.0
+        if abs(float(d.z)) > 0.80:
+            penalty += 400.0
+        if dot < 0.0:
+            penalty += 220.0
+        if _safe_text(prt.get("name", "")) in used_names:
+            penalty += 180.0
+        return dxy + penalty + (abs(float(vec.z)) * 0.03)
+
+    best = min(ports, key=_score)
+    return best["point"], best["dir"], _safe_text(best.get("name", ""))
+
+
+def _connection_target_from_lum(lum_point, z_start):
+    p = App.Vector(float(lum_point.x), float(lum_point.y), float(lum_point.z))
+    z = float(p.z)
+    if z >= (float(z_start) - float(MIN_DROP_MM)):
+        z = float(z_start) - float(MIN_DROP_MM)
+    return App.Vector(float(p.x), float(p.y), float(z))
+
+
+def _connection_target_from_lum_obj(lum_obj, lum_point, z_start):
+    p = App.Vector(float(lum_point.x), float(lum_point.y), float(lum_point.z))
+    try:
+        shp = getattr(lum_obj, "Shape", None)
+        if shp is not None and not shp.isNull():
+            bb = shp.BoundBox
+            z_low = float(bb.ZMin) - 8.0
+            z_up = float(bb.ZMax) + 8.0
+            zc = float(z_start)
+            z_mid = 0.5 * (float(bb.ZMin) + float(bb.ZMax))
+            # Si la caja esta arriba, entrar por la cara superior de la luminaria.
+            if zc >= z_mid:
+                return App.Vector(float(p.x), float(p.y), float(z_up))
+            # Si la caja esta abajo, entrar por la cara inferior.
+            return App.Vector(float(p.x), float(p.y), float(z_low))
+    except Exception:
+        pass
+    return _connection_target_from_lum(p, z_start)
+
+
+def _offset_point_towards(p_from, p_to, distance_mm):
+    pf = App.Vector(float(p_from.x), float(p_from.y), float(p_from.z))
+    pt = App.Vector(float(p_to.x), float(p_to.y), float(p_to.z))
+    vec = App.Vector(float(pt.x - pf.x), float(pt.y - pf.y), 0.0)
+    d = _vlen_xy(vec)
+    if d <= 1e-9:
+        return pf
+    k = float(distance_mm) / float(d)
+    return App.Vector(float(pf.x + (vec.x * k)), float(pf.y + (vec.y * k)), float(pf.z))
+
+
+def _lum_box_center_from_lum(lum_obj, lum_point, z_start, z_offset_mm, toward_point=None, xy_offset_mm=0.0):
+    p = App.Vector(float(lum_point.x), float(lum_point.y), float(lum_point.z))
+    z_off = max(0.0, float(z_offset_mm))
+    place_above = True
+    try:
+        shp = getattr(lum_obj, "Shape", None)
+        if shp is not None and not shp.isNull():
+            bb = shp.BoundBox
+            if float(z_start) < float(bb.ZMin):
+                place_above = False
+            if place_above:
+                p.z = float(bb.ZMax) + z_off
+            else:
+                p.z = float(bb.ZMin) - z_off
+    except Exception:
+        if float(z_start) >= float(p.z):
+            p.z = float(p.z) + z_off
+        else:
+            p.z = float(p.z) - z_off
+
+    if toward_point is not None and float(xy_offset_mm) > 1e-6:
+        try:
+            p = _offset_point_towards(p, toward_point, float(xy_offset_mm))
+        except Exception:
+            pass
+    return p
+
+
+def _spline_points_3d(start_pt, start_dir, end_pt):
+    p0 = App.Vector(float(start_pt.x), float(start_pt.y), float(start_pt.z))
+    p5 = App.Vector(float(end_pt.x), float(end_pt.y), float(end_pt.z))
+    vec = App.Vector(p5.x - p0.x, p5.y - p0.y, p5.z - p0.z)
+    dxy = _vlen_xy(vec)
+    if dxy <= 1e-6:
+        pre_z = float(p5.z + (float(FINAL_APPROACH_MM) if p0.z >= p5.z else -float(FINAL_APPROACH_MM)))
+        p4 = App.Vector(float(p5.x), float(p5.y), pre_z)
+        return [p0, p4, p5]
+
+    dir_xy = _vnorm_xy(vec)
+    start_xy = _vnorm_xy(start_dir, fallback=dir_xy)
+    perp = App.Vector(-dir_xy.y, dir_xy.x, 0.0)
+    amp = min(max(dxy * 0.10, 45.0), 220.0)
+    drop = abs(float(vec.z))
+    p1 = App.Vector(
+        p0.x + (start_xy.x * min(max(dxy * 0.22, 90.0), 260.0)),
+        p0.y + (start_xy.y * min(max(dxy * 0.22, 90.0), 260.0)),
+        p0.z - min(max(drop * 0.20, 25.0), 220.0),
+    )
+    p2 = App.Vector(
+        p0.x + (vec.x * 0.45) + (perp.x * amp),
+        p0.y + (vec.y * 0.45) + (perp.y * amp),
+        p0.z + (vec.z * 0.55) - min(max(drop * 0.15, 20.0), 180.0),
+    )
+
+    # Acercamiento perpendicular antes de la luminaria:
+    # 1) tramo en XY perpendicular, a cota previa (no en la cota final)
+    # 2) ultimo tramo vertical para entrar desde arriba/abajo de forma directa.
+    vertical_sign = 1.0 if float(p0.z) >= float(p5.z) else -1.0
+    vertical_mm = max(60.0, min(float(FINAL_APPROACH_MM), max(abs(float(vec.z)) * 0.6, 80.0)))
+    z_pre = float(p5.z + (vertical_sign * vertical_mm))
+    near_mm = min(float(APPROACH_PERP_MM), max(20.0, float(dxy) * 0.45))
+    cand_a = App.Vector(float(p5.x - (perp.x * near_mm)), float(p5.y - (perp.y * near_mm)), z_pre)
+    cand_b = App.Vector(float(p5.x + (perp.x * near_mm)), float(p5.y + (perp.y * near_mm)), z_pre)
+    try:
+        da = float(cand_a.distanceToPoint(p2))
+        db = float(cand_b.distanceToPoint(p2))
+        p3 = cand_a if da <= db else cand_b
+    except Exception:
+        p3 = cand_a
+    p4 = App.Vector(float(p5.x), float(p5.y), z_pre)
+    return [p0, p1, p2, p3, p4, p5]
+
+
+def _style_spline(obj):
+    try:
+        vo = getattr(obj, "ViewObject", None)
+        if vo is None:
+            return
+        try:
+            vo.DisplayMode = "Wireframe"
+        except Exception:
+            pass
+        try:
+            vo.LineColor = (1.0, 0.45, 0.05)
+        except Exception:
+            pass
+        try:
+            vo.PointColor = (1.0, 0.45, 0.05)
+        except Exception:
+            pass
+        try:
+            vo.LineWidth = 2.0
+        except Exception:
+            pass
+        try:
+            vo.ShapeColor = (1.0, 0.45, 0.05)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+def _style_lum_box(obj):
+    try:
+        vo = getattr(obj, "ViewObject", None)
+        if vo is None:
+            return
+        try:
+            vo.ShapeColor = (0.95, 0.95, 0.95)
+        except Exception:
+            pass
+        try:
+            vo.LineColor = (0.65, 0.65, 0.65)
+        except Exception:
+            pass
+        try:
+            vo.Transparency = 0
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+def _create_lum_connection_box(doc, target_point, size_mm, cluster_id, circuito, recinto, lum_name, towards_z=None):
+    size = max(20.0, float(size_mm))
+    h = max(15.0, size * 0.45)
+    base = App.Vector(
+        float(target_point.x - (size * 0.5)),
+        float(target_point.y - (size * 0.5)),
+        float(target_point.z - (h * 0.5)),
+    )
+    try:
+        shp = Part.makeBox(size, size, h, base)
+    except Exception:
+        return None, target_point
+
+    name = _unique_doc_name(doc, "Caja_Conexion_Luminaria")
+    obj = doc.addObject("Part::Feature", name)
+    obj.Shape = shp
+    try:
+        obj.Label = f"Caja Conexion {lum_name}"
+    except Exception:
+        pass
+    _ensure_property(obj, "App::PropertyString", "GeneradoPor", "ElectricCR", "Macro generadora")
+    _ensure_property(obj, "App::PropertyString", "ClusterID", "ElectricCR", "ID cluster luminarias")
+    _ensure_property(obj, "App::PropertyString", "CircuitoID", "Circuito", "Circuito inferido")
+    _ensure_property(obj, "App::PropertyString", "Recinto", "ElectricCR", "Recinto inferido")
+    _ensure_property(obj, "App::PropertyString", "LuminariaRef", "ElectricCR", "Luminaria de origen")
+    _ensure_property(obj, "App::PropertyString", "TipoConexion", "ElectricCR", "Tipo de conexion")
+    try:
+        obj.GeneradoPor = GENERATED_TAG
+    except Exception:
+        pass
+    try:
+        obj.ClusterID = _safe_text(cluster_id)
+    except Exception:
+        pass
+    try:
+        obj.CircuitoID = _safe_text(circuito)
+    except Exception:
+        pass
+    try:
+        obj.Recinto = _safe_text(recinto)
+    except Exception:
+        pass
+    try:
+        obj.LuminariaRef = _safe_text(lum_name)
+    except Exception:
+        pass
+    try:
+        obj.TipoConexion = "CajaConexionLuminaria"
+    except Exception:
+        pass
+    _style_lum_box(obj)
+    # Conectar a la cara de la cajita orientada hacia la octogonal.
+    if towards_z is None:
+        towards_z = float(target_point.z + h)
+    if float(towards_z) >= float(target_point.z):
+        end_pt = App.Vector(float(target_point.x), float(target_point.y), float(target_point.z + (h * 0.5)))
+    else:
+        end_pt = App.Vector(float(target_point.x), float(target_point.y), float(target_point.z - (h * 0.5)))
+    return obj, end_pt
+
+
+def _create_spline_connection(doc, p_start, start_dir, p_end, label, cluster_id, circuito, recinto, lum_name):
+    pts = _spline_points_3d(p_start, start_dir, p_end)
+    if len(pts) < 2:
+        return None, 0.0
+    try:
+        curve = Part.BSplineCurve()
+        curve.interpolate(pts)
+        shape = curve.toShape()
+    except Exception:
+        # Fallback a linea si falla la spline.
+        try:
+            shape = Part.makeLine(pts[0], pts[-1])
+        except Exception:
+            return None, 0.0
+
+    name = _unique_doc_name(doc, "Conexion_Lum_Caja")
+    obj = doc.addObject("Part::Feature", name)
+    obj.Shape = shape
+    try:
+        obj.Label = _safe_text(label) or name
+    except Exception:
+        pass
+
+    _ensure_property(obj, "App::PropertyString", "GeneradoPor", "ElectricCR", "Macro generadora")
+    _ensure_property(obj, "App::PropertyString", "ClusterID", "ElectricCR", "ID cluster luminarias")
+    _ensure_property(obj, "App::PropertyString", "CircuitoID", "Circuito", "Circuito inferido")
+    _ensure_property(obj, "App::PropertyString", "Recinto", "ElectricCR", "Recinto inferido")
+    _ensure_property(obj, "App::PropertyString", "LuminariaRef", "ElectricCR", "Luminaria de origen")
+    _ensure_property(obj, "App::PropertyString", "TipoConexion", "ElectricCR", "Tipo de conexion")
+    try:
+        obj.GeneradoPor = GENERATED_TAG
+    except Exception:
+        pass
+    try:
+        obj.ClusterID = _safe_text(cluster_id)
+    except Exception:
+        pass
+    try:
+        obj.CircuitoID = _safe_text(circuito)
+    except Exception:
+        pass
+    try:
+        obj.Recinto = _safe_text(recinto)
+    except Exception:
+        pass
+    try:
+        obj.LuminariaRef = _safe_text(lum_name)
+    except Exception:
+        pass
+    try:
+        obj.TipoConexion = "Spline2Curvas"
+    except Exception:
+        pass
+    _style_spline(obj)
+    length = 0.0
+    try:
+        length = float(getattr(shape, "Length", 0.0) or 0.0)
+    except Exception:
+        length = 0.0
+    return obj, length
+
+
+def _iter_group_tree(root_group):
+    if root_group is None:
+        return
+    stack = [root_group]
+    seen = set()
+    while stack:
+        grp = stack.pop()
+        gid = getattr(grp, "Name", None) or id(grp)
+        if gid in seen:
+            continue
+        seen.add(gid)
+        yield grp
+        for child in (getattr(grp, "Group", []) or []):
+            if _is_group(child):
+                stack.append(child)
+
+
+def _cleanup_previous_generated(doc):
+    to_delete = set()
+    for obj in (doc.Objects or []):
+        if _is_group(obj):
+            continue
+        try:
+            if hasattr(obj, "GeneradoPor") and _safe_text(getattr(obj, "GeneradoPor", "")).strip() == GENERATED_TAG:
+                to_delete.add(obj.Name)
+        except Exception:
+            continue
+
+    # Fallback adicional: limpiar contenidos de grupos dedicados de esta macro.
+    g_elec = None
+    for grp in _iter_doc_groups(doc):
+        if _normalize(getattr(grp, "Label", "")) == "electrico":
+            g_elec = grp
+            break
+    if g_elec is not None:
+        conex_labels_norm = {_normalize(CONEXIONES_LABEL)}
+        for lb in LEGACY_CONEXIONES_LABELS:
+            conex_labels_norm.add(_normalize(lb))
+        for grp in _iter_group_tree(g_elec):
+            lbl = _normalize(getattr(grp, "Label", ""))
+            if lbl in {
+                *conex_labels_norm,
+                _normalize("Cajas_Conexion_Luminarias"),
+                _normalize(CAJAS_LABEL),
+            }:
+                for child in (getattr(grp, "Group", []) or []):
+                    if _is_group(child):
+                        continue
+                    c_name = _safe_text(getattr(child, "Name", "")).strip()
+                    c_lbl = _normalize(getattr(child, "Label", ""))
+                    if not c_name:
+                        continue
+                    # En Cajas_Octogonales solo limpiar las que parecen autogeneradas.
+                    if lbl == _normalize(CAJAS_LABEL):
+                        if (not c_name.startswith("Link_Caja_EMT_Octogonal_")) and ("caja emt octogonal" not in c_lbl):
+                            continue
+                    to_delete.add(c_name)
+
+    removed = 0
+    for name in sorted(to_delete):
+        try:
+            doc.removeObject(name)
+            removed += 1
+        except Exception:
+            pass
+    return int(removed)
+
+
+def _ensure_electriccr_on_path():
+    for mod_name in ("ElectricCR", "electriccr"):
+        try:
+            importlib.import_module(mod_name)
+            return True
+        except ImportError:
+            pass
+
+    try:
+        here = Path(__file__).resolve()
+    except Exception:
+        here = None
+    cands = []
+    if here is not None:
+        for parent in [here.parent, *here.parents]:
+            pkg = parent / "ElectricCR"
+            if pkg.is_dir():
+                cands.extend([str(pkg.parent), str(pkg)])
+
+    try:
+        base = Path(App.getUserAppDataDir())
+    except Exception:
+        base = Path.home() / "AppData" / "Roaming" / "FreeCAD"
+    for folder in ("Macro", "Macros"):
+        pkg = base / folder / "ElectricCR"
+        if pkg.is_dir():
+            cands.extend([str(pkg.parent), str(pkg)])
+
+    for path in cands:
+        if path and path not in sys.path:
+            sys.path.insert(0, path)
+
+    importlib.invalidate_caches()
+    for mod_name in ("ElectricCR", "electriccr"):
+        try:
+            importlib.import_module(mod_name)
+            return True
+        except ImportError:
+            pass
+    return False
+
+
+def _import_box_functions():
+    if not _ensure_electriccr_on_path():
+        return None, None
+    for mod_name in ("ElectricCR.electriccr.features.caja_emt_octogonal", "electriccr.features.caja_emt_octogonal"):
+        try:
+            mod = importlib.import_module(mod_name)
+            ins = getattr(mod, "insertar_caja_emt_octogonal_link", None)
+            mst = getattr(mod, "crear_caja_emt_octogonal_master", None)
+            if callable(ins) and callable(mst):
+                return ins, mst
+        except Exception:
+            continue
+    return None, None
+
+
+def _detect_circuit_bucket_label(g_ilum):
+    if g_ilum is None:
+        return "Circuitos"
+    for child in (getattr(g_ilum, "Group", []) or []):
+        if not _is_group(child):
+            continue
+        lbl = _safe_text(getattr(child, "Label", ""))
+        if "circuit" in _normalize(lbl):
+            return lbl
+    return "Circuitos"
+
+
+def _detect_recintos_bucket_label(g_circuito):
+    if g_circuito is None:
+        return "Recintos"
+    for child in (getattr(g_circuito, "Group", []) or []):
+        if not _is_group(child):
+            continue
+        lbl = _safe_text(getattr(child, "Label", ""))
+        n = _normalize(lbl)
+        if ("recinto" in n) or ("area" in n) or ("espacio" in n):
+            return lbl
+    return "Recintos"
+
+
+def _avg_point(cluster):
+    n = float(len(cluster))
+    cx = sum(float(it["point"].x) for it in cluster) / n
+    cy = sum(float(it["point"].y) for it in cluster) / n
+    cz = sum(float(it["point"].z) for it in cluster) / n
+    return App.Vector(cx, cy, cz)
+
+
+def _avg_altura(cluster):
+    vals = []
+    for it in cluster:
+        obj = it["obj"]
+        if hasattr(obj, "AlturaRel"):
+            vals.append(_as_float(getattr(obj, "AlturaRel", 0.0), 0.0))
+    if not vals:
+        return 0.0
+    return sum(vals) / float(len(vals))
+
+
+def main():
+    doc = App.ActiveDocument
+    if doc is None:
+        _err("No hay documento activo.")
+        return
+
+    if MAX_LUMINARIAS_POR_CAJA < 1:
+        _err("MAX_LUMINARIAS_POR_CAJA debe ser >= 1.")
+        return
+
+    insert_box, create_master = _import_box_functions()
+    if insert_box is None or create_master is None:
+        _err("No se pudo importar insertar/crear caja EMT octogonal.")
+        return
+
+    selection_candidates, has_selection = _collect_candidates(doc)
+    cfg = _run_config_dialog(has_selection)
+    if cfg is None:
+        _warn("Operacion cancelada por el usuario.")
+        return
+
+    if cfg.get("scope") == "selection" and has_selection:
+        candidates = selection_candidates
+        from_selection = True
+    else:
+        candidates = _collect_document_objects(doc)
+        from_selection = False
+
+    scope_group = _find_iluminacion_scope_group(doc)
+    scope_group_label = ""
+    omitted_outside_scope = 0
+    if scope_group is not None:
+        scope_group_label = (
+            _safe_text(getattr(scope_group, "Label", "")).strip()
+            or _safe_text(getattr(scope_group, "Name", "")).strip()
+            or "Iluminacion"
+        )
+        before_scope = len(candidates)
+        candidates = [o for o in candidates if _is_within_scope_group(doc, o, scope_group)]
+        omitted_outside_scope = max(0, before_scope - len(candidates))
+        if omitted_outside_scope > 0:
+            _log(
+                f"Filtro de grupo aplicado: grupo={scope_group_label} | fuera_omitidos={omitted_outside_scope}"
+            )
+    else:
+        _warn("No se encontro grupo 'Iluminacion'; se usa el alcance sin filtro de grupo.")
+
+    altura_z = float(cfg.get("altura_mm", DEFAULT_SNPT))
+    if abs(altura_z) < 1e-6:
+        altura_z = float(DEFAULT_SNPT)
+
+    get_component_type = _import_component_type()
+    luminarias = []
+    seen_lum = set()
+    dup_lum = 0
+    for obj in candidates:
+        if _is_luminaria(doc, obj, get_component_type):
+            meta_obj = _linked_object(obj) if _is_link(obj) else obj
+            if meta_obj is None:
+                meta_obj = obj
+            key = _luminaria_identity(obj)
+            if key in seen_lum:
+                dup_lum += 1
+                continue
+            seen_lum.add(key)
+            # Importante: para ubicar por circuito/recinto usar el objeto instanciado
+            # en el arbol del proyecto (no el prototipo linkeado de biblioteca).
+            circuito = _resolve_circuito(doc, obj)
+            recinto = _resolve_recinto(doc, obj)
+            if (circuito == FALLBACK_CIRCUITO) and (meta_obj is not obj):
+                circuito = _resolve_circuito(doc, meta_obj)
+            if (recinto == FALLBACK_RECINTO) and (meta_obj is not obj):
+                recinto = _resolve_recinto(doc, meta_obj)
+            luminarias.append(
+                {
+                    "obj": obj,
+                    "point": _luminaria_world_point(obj),
+                    "rot": _resolve_rotation(obj),
+                    "circuito": circuito,
+                    "recinto": recinto,
+                    "grupo_origen": _source_group_key(doc, obj, scope_group=scope_group),
+                }
+            )
+
+    if not luminarias:
+        _warn("No se detectaron luminarias para procesar.")
+        return
+
+    try:
+        master = create_master(doc=doc, hide_master=True)
+        bb = master.Shape.BoundBox
+        anchor_local = App.Vector(
+            0.5 * (bb.XMin + bb.XMax),
+            0.5 * (bb.YMin + bb.YMax),
+            0.5 * (bb.ZMin + bb.ZMax),
+        )
+    except Exception as ex:
+        _err(f"No se pudo preparar master de caja EMT: {ex}")
+        return
+
+    # Raiz destino en estructura vigente: electrico/Iluminacion/<Circuito>/<Recinto>/...
+    g_elec = _ensure_group(doc, None, "electrico", "GRoot")
+    g_ilum = _ensure_group(doc, g_elec, "Iluminacion", "G01")
+
+    removed = 0
+    if bool(cfg.get("cleanup_prev", True)):
+        removed = _cleanup_previous_generated(doc)
+
+    grouped = {}
+    for item in luminarias:
+        key = (item["circuito"], item["recinto"], item.get("grupo_origen", "__NO_GROUP__"))
+        grouped.setdefault(key, []).append(item)
+
+    created = 0
+    cluster_total = 0
+    rows_detected = 0
+    pair_clusters_total = 0
+    leftovers_total = 0
+    attached_to_pairs = 0
+    radius_splits = 0
+    conexiones_creadas = 0
+    spline_largas = 0
+    spline_max = 0.0
+    max_spline_cfg = max(500.0, float(cfg.get("max_spline_mm", 3000.0)))
+    max_radius = max(800.0, max_spline_cfg * 0.90)
+    try:
+        doc.openTransaction("ElectricCR: cajas octogonales entre luminarias")
+        for (circuito, recinto, grupo_src), items in sorted(
+            grouped.items(),
+            key=lambda kv: (_normalize(kv[0][0]), _normalize(kv[0][1]), _normalize(kv[0][2])),
+        ):
+            clusters, cstats = _clusterize_mixed(
+                items,
+                max_size=MAX_LUMINARIAS_POR_CAJA,
+                row_pair_mode=bool(cfg.get("row_pair_mode", True)),
+            )
+            clusters, split_count = _enforce_cluster_radius(
+                clusters,
+                max_radius_mm=max_radius,
+                max_size=MAX_LUMINARIAS_POR_CAJA,
+            )
+            radius_splits += int(split_count)
+            cluster_total += len(clusters)
+            rows_detected += int(cstats.get("rows_valid", 0))
+            pair_clusters_total += int(cstats.get("pairs", 0))
+            leftovers_total += int(cstats.get("leftovers", 0))
+            attached_to_pairs += int(cstats.get("attached", 0))
+
+            # Crear/usar destino por circuito/recinto respetando la jerarquia actual.
+            g_circuito = _resolve_target_circuit_group(doc, g_ilum, circuito)
+            g_recinto = _resolve_target_recinto_group(doc, g_circuito, recinto)
+            g_cajas = _ensure_group(doc, g_recinto, CAJAS_LABEL, "G06")
+            g_conex = _ensure_group(doc, g_recinto, CONEXIONES_LABEL, "G07")
+
+            for idx, cluster in enumerate(clusters, start=1):
+                members = list(cluster.get("members", []) or [])
+                if not members:
+                    continue
+                center = _cluster_center(cluster)
+                z_level = float(altura_z) + float(Z_OFFSET)
+                rot = members[0]["rot"] if members else App.Rotation()
+                center_world = App.Vector(float(center.x), float(center.y), float(z_level))
+                base = center_world - rot.multVec(anchor_local)
+                placement = App.Placement(base, rot)
+
+                lum_names = []
+                for c in members:
+                    o = c["obj"]
+                    lum_names.append(_safe_text(getattr(o, "Label", "")) or _safe_text(getattr(o, "Name", "")))
+
+                cluster_id = f"{circuito}|{recinto}|{_token(grupo_src, 'grp')}|{idx:02d}"
+                name_prefix = f"Caja EMT Octogonal {recinto} {idx:02d}"
+                box = insert_box(
+                    doc=doc,
+                    name_prefix=name_prefix,
+                    placement=placement,
+                    diametro_emt=float(DEFAULT_DIAMETER),
+                    recompute=False,
+                    hide_master=True,
+                )
+                _mark_generated(box, cluster_id, circuito, recinto, lum_names, z_level)
+                _remove_from_all_groups(doc, box, keep_group=g_cajas)
+                g_cajas.addObject(box)
+                created += 1
+
+                # Conectar cada luminaria del cluster a su caja con spline de 2 curvas.
+                used_ports = set()
+                for c in members:
+                    lum_obj = c["obj"]
+                    lum_label = _safe_text(getattr(lum_obj, "Label", "")) or _safe_text(getattr(lum_obj, "Name", "Luminaria"))
+                    lum_target = _connection_target_from_lum_obj(lum_obj, c["point"], z_level)
+                    p_start, p_dir, p_name = _select_box_port(box, lum_target, used_names=used_ports)
+                    if p_name:
+                        used_ports.add(p_name)
+
+                    conn, len_mm = _create_spline_connection(
+                        doc,
+                        p_start,
+                        p_dir,
+                        lum_target,
+                        label=f"Conexion {lum_label} -> Caja {idx:02d}",
+                        cluster_id=cluster_id,
+                        circuito=circuito,
+                        recinto=recinto,
+                        lum_name=lum_label,
+                    )
+                    if conn is not None:
+                        _remove_from_all_groups(doc, conn, keep_group=g_conex)
+                        g_conex.addObject(conn)
+                        conexiones_creadas += 1
+                        spline_max = max(float(spline_max), float(len_mm))
+                        if float(len_mm) > float(max_spline_cfg):
+                            spline_largas += 1
+
+        doc.recompute()
+        doc.commitTransaction()
+    except Exception as ex:
+        try:
+            doc.abortTransaction()
+        except Exception:
+            pass
+        _err(f"Fallo general: {ex}")
+        return
+
+    scope = "seleccion" if from_selection else "documento completo"
+    _log(
+        "Finalizado. "
+        f"Luminarias={len(luminarias)} | grupos={len(grouped)} | clusters={cluster_total} | "
+        f"cajas_creadas={created} | conexiones_creadas={conexiones_creadas} | "
+        f"cajas_previas_eliminadas={removed} | "
+        f"grupo_filtro={scope_group_label or 'NO_ENCONTRADO'} | "
+        f"fuera_grupo_omitidos={omitted_outside_scope} | "
+        f"luminarias_duplicadas_omitidas={dup_lum} | "
+        f"max_lum_por_caja={MAX_LUMINARIAS_POR_CAJA} | altura_z={altura_z:.1f} mm | "
+        f"modo_filas={'SI' if bool(cfg.get('row_pair_mode', True)) else 'NO'} | "
+        f"filas_detectadas={rows_detected} | pares_filas={pair_clusters_total} | "
+        f"sobrantes_filas={leftovers_total} | anexadas_a_par={attached_to_pairs} | "
+        f"ajustes_por_longitud={radius_splits} | spline_recomendada={max_spline_cfg:.1f} mm | "
+        f"splines_largas={spline_largas} | spline_max={spline_max:.1f} mm | "
+        f"alcance={scope}"
+    )
+
+
+if __name__ == "__main__":
+    main()

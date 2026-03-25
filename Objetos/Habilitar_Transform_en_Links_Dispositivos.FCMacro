@@ -1,0 +1,132 @@
+# -*- coding: utf-8 -*-
+# MenuText: Habilitar Transform en links de dispositivos
+# Icon: RotarTomacorriente.svg
+# Toolbar: Objetos
+
+import FreeCAD as App
+import FreeCADGui as Gui
+
+
+def _log(msg):
+    App.Console.PrintMessage("[LINK_FIX][INFO] {}\n".format(msg))
+
+
+def _warn(msg):
+    App.Console.PrintWarning("[LINK_FIX][WARN] {}\n".format(msg))
+
+
+def _is_device_link(obj):
+    if getattr(obj, "TypeId", "") != "App::Link":
+        return False
+
+    key = ""
+    try:
+        key = str(getattr(obj, "KeyRegistro", "") or "")
+    except Exception:
+        key = ""
+    tipo = ""
+    try:
+        tipo = str(getattr(obj, "Tipo", "") or "")
+    except Exception:
+        tipo = ""
+
+    merged = (key + " " + tipo).lower()
+    if any(t in merged for t in ("apagador", "toma", "luminaria", "sensor", "rociador", "altavoz", "camara", "switch")):
+        return True
+
+    linked = getattr(obj, "LinkedObject", None)
+    if linked is not None:
+        lk = str(getattr(linked, "KeyRegistro", "") or "").lower()
+        lt = str(getattr(linked, "Tipo", "") or "").lower()
+        m2 = lk + " " + lt
+        if any(t in m2 for t in ("apagador", "toma", "luminaria", "sensor", "rociador", "altavoz", "camara", "switch")):
+            return True
+
+    return False
+
+
+def _iter_targets(doc):
+    sel = []
+    try:
+        sel = Gui.Selection.getSelection() or []
+    except Exception:
+        sel = []
+
+    if sel:
+        for o in sel:
+            if _is_device_link(o):
+                yield o
+        return
+
+    for o in (doc.Objects or []):
+        if _is_device_link(o):
+            yield o
+
+
+def _unlock_transform(obj):
+    changed = False
+    try:
+        if getattr(obj, "LinkTransform", True) is False:
+            obj.LinkTransform = True
+            changed = True
+    except Exception:
+        pass
+
+    try:
+        obj.setEditorMode("Placement", 0)
+    except Exception:
+        pass
+    try:
+        obj.setEditorMode("LinkPlacement", 0)
+    except Exception:
+        pass
+    try:
+        obj.setPropertyStatus("Placement", [])
+    except Exception:
+        pass
+    try:
+        obj.setPropertyStatus("LinkPlacement", [])
+    except Exception:
+        pass
+    try:
+        if hasattr(obj, "LinkPlacement"):
+            obj.LinkPlacement = getattr(obj, "LinkPlacement")
+    except Exception:
+        pass
+
+    try:
+        if hasattr(obj, "ViewObject") and obj.ViewObject is not None:
+            if getattr(obj.ViewObject, "Selectable", True) is False:
+                obj.ViewObject.Selectable = True
+                changed = True
+    except Exception:
+        pass
+
+    return changed
+
+
+def main():
+    doc = App.ActiveDocument
+    if doc is None:
+        _warn("No hay documento activo.")
+        return
+
+    total = 0
+    changed = 0
+    for obj in _iter_targets(doc):
+        total += 1
+        try:
+            if _unlock_transform(obj):
+                changed += 1
+        except Exception as ex:
+            _warn("No se pudo actualizar {}: {}".format(getattr(obj, "Name", "?"), ex))
+
+    try:
+        doc.recompute()
+    except Exception:
+        pass
+
+    _log("Listo. links_dispositivo={} | actualizados={}".format(int(total), int(changed)))
+
+
+main()

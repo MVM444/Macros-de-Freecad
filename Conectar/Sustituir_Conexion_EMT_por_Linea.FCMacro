@@ -1,0 +1,463 @@
+# -*- coding: utf-8 -*-
+# MenuText: [ACTIVA] Sustituir Conexion EMT por Linea
+# Icon: Sustituir_Conexion_EMT_por_Linea.svg
+"""
+Macro: Sustituir_Conexion_EMT_por_Linea
+
+Uso:
+1) Seleccione la conexion EMT existente (defectuosa) y una linea/wire nueva.
+2) Ejecute la macro.
+
+Resultado:
+- La linea nueva hereda la metadata EMT de la conexion existente.
+- Se mantiene la etiqueta de la conexion anterior.
+- Se agrega la linea nueva a los mismos grupos de la conexion anterior.
+- Se elimina la conexion anterior.
+
+La deteccion es independiente del orden de seleccion.
+"""
+
+import math
+
+import FreeCAD as App
+
+try:
+    import FreeCADGui as Gui
+except Exception:
+    Gui = None
+
+
+TAG = "[SUSTITUIR_EMT]"
+EPS = 1e-9
+POINT_TOL = 0.1
+
+
+def log_info(msg):
+    App.Console.PrintMessage(f"{TAG} {msg}\n")
+
+
+def log_warn(msg):
+    App.Console.PrintWarning(f"{TAG} {msg}\n")
+
+
+def log_error(msg):
+    App.Console.PrintError(f"{TAG} {msg}\n")
+
+
+def _safe_text(v):
+    try:
+        return str(v or "")
+    except Exception:
+        return ""
+
+
+def _vec(x=0.0, y=0.0, z=0.0):
+    return App.Vector(float(x), float(y), float(z))
+
+
+def _dedup_points(points, tol=POINT_TOL):
+    out = []
+    for p in (points or []):
+        if not out:
+            out.append(_vec(p.x, p.y, p.z))
+            continue
+        if out[-1].distanceToPoint(p) > float(tol):
+            out.append(_vec(p.x, p.y, p.z))
+    return out
+
+
+def _polyline_points_from_object(obj):
+    if obj is None:
+        return []
+
+    try:
+        pts_attr = list(getattr(obj, "Points", []) or [])
+        if len(pts_attr) >= 2:
+            pts = []
+            for p in pts_attr:
+                if p is None:
+                    continue
+                pts.append(_vec(p.x, p.y, p.z))
+            if len(pts) >= 2:
+                return _dedup_points(pts)
+    except Exception:
+        pass
+
+    shape = getattr(obj, "Shape", None)
+    if shape is None:
+        return []
+
+    try:
+        wires = list(getattr(shape, "Wires", []) or [])
+    except Exception:
+        wires = []
+    if wires:
+        cands = []
+        for wire in wires:
+            pts = []
+            for vtx in (getattr(wire, "OrderedVertexes", []) or []):
+                pt = getattr(vtx, "Point", None)
+                if pt is not None:
+                    pts.append(_vec(pt.x, pt.y, pt.z))
+            if len(pts) >= 2:
+                cands.append(_dedup_points(pts))
+        if cands:
+            cands.sort(key=lambda it: len(it), reverse=True)
+            return cands[0]
+
+    try:
+        pts = []
+        for vtx in (getattr(shape, "OrderedVertexes", []) or []):
+            pt = getattr(vtx, "Point", None)
+            if pt is not None:
+                pts.append(_vec(pt.x, pt.y, pt.z))
+        if len(pts) >= 2:
+            return _dedup_points(pts)
+    except Exception:
+        pass
+
+    try:
+        pts = []
+        for vtx in (getattr(shape, "Vertexes", []) or []):
+            pt = getattr(vtx, "Point", None)
+            if pt is not None:
+                pts.append(_vec(pt.x, pt.y, pt.z))
+        if len(pts) >= 2:
+            return _dedup_points(pts)
+    except Exception:
+        pass
+    return []
+
+
+def _props(obj):
+    try:
+        return set(getattr(obj, "PropertiesList", []) or [])
+    except Exception:
+        return set()
+
+
+def _is_route_like(obj):
+    if obj is None:
+        return False
+    p = _props(obj)
+    if {"AutoRouteKey", "ConduitType", "CircuitoID", "LinkKind", "OrigenName", "DestinoName"} & p:
+        return True
+    tipo = _safe_text(getattr(obj, "Tipo", "")).strip().lower()
+    if tipo == "conduitpath":
+        return True
+    txt = " ".join(
+        [
+            _safe_text(getattr(obj, "Label", "")).lower(),
+            _safe_text(getattr(obj, "Name", "")).lower(),
+            _safe_text(getattr(obj, "TypeId", "")).lower(),
+        ]
+    )
+    if "->" in txt and any(tok in txt for tok in ("emt", "conduit", "alimentador", "ramal", "circuito")):
+        return True
+    return False
+
+
+def _route_score(obj):
+    if obj is None:
+        return -999.0
+    pts = _polyline_points_from_object(obj)
+    if len(pts) < 2:
+        return -999.0
+    p = _props(obj)
+    score = 0.0
+    if _is_route_like(obj):
+        score += 60.0
+    if "AutoRouteKey" in p and _safe_text(getattr(obj, "AutoRouteKey", "")).strip():
+        score += 60.0
+    if "ConduitType" in p and _safe_text(getattr(obj, "ConduitType", "")).strip():
+        score += 35.0
+    if "LinkKind" in p and _safe_text(getattr(obj, "LinkKind", "")).strip():
+        score += 20.0
+    if "CircuitoID" in p and _safe_text(getattr(obj, "CircuitoID", "")).strip():
+        score += 18.0
+    if "OrigenName" in p and "DestinoName" in p:
+        score += 12.0
+    if _safe_text(getattr(obj, "Tipo", "")).strip().lower() == "conduitpath":
+        score += 25.0
+    txt = _safe_text(getattr(obj, "Label", ""))
+    if "->" in txt:
+        score += 10.0
+    return float(score)
+
+
+def _replacement_score(obj):
+    if obj is None:
+        return -999.0
+    pts = _polyline_points_from_object(obj)
+    if len(pts) < 2:
+        return -999.0
+    score = 50.0
+    p = _props(obj)
+    if _is_route_like(obj):
+        score -= 40.0
+    if "AutoRouteKey" in p and _safe_text(getattr(obj, "AutoRouteKey", "")).strip():
+        score -= 90.0
+    if "ConduitType" not in p:
+        score += 10.0
+    if "Tipo" not in p:
+        score += 5.0
+    return float(score)
+
+
+def _selection_objects():
+    if Gui is None:
+        return []
+    out = []
+    seen = set()
+    for sx in (Gui.Selection.getSelectionEx("", 0) or []):
+        obj = getattr(sx, "Object", None)
+        if obj is None:
+            continue
+        name = _safe_text(getattr(obj, "Name", ""))
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append(obj)
+    return out
+
+
+def _pick_objects(objs):
+    if len(objs) < 2:
+        return None, None
+
+    # Prefer obvious pair when exactly two are selected.
+    if len(objs) == 2:
+        a, b = objs[0], objs[1]
+        ar = _is_route_like(a)
+        br = _is_route_like(b)
+        if ar and (not br):
+            return a, b
+        if br and (not ar):
+            return b, a
+
+    scored_routes = []
+    for idx, obj in enumerate(objs):
+        scored_routes.append((_route_score(obj), idx, obj))
+    scored_routes.sort(key=lambda it: (-it[0], it[1]))
+    route_obj = scored_routes[0][2]
+
+    repl_cands = []
+    for idx, obj in enumerate(objs):
+        if obj is route_obj:
+            continue
+        repl_cands.append((_replacement_score(obj), idx, obj))
+    if not repl_cands:
+        return route_obj, None
+    repl_cands.sort(key=lambda it: (-it[0], it[1]))
+    repl_obj = repl_cands[0][2]
+    return route_obj, repl_obj
+
+
+def _ensure_property(obj, ptype, pname, pgroup, pdesc):
+    try:
+        if pname not in (getattr(obj, "PropertiesList", []) or []):
+            obj.addProperty(ptype, pname, pgroup, pdesc)
+    except Exception:
+        pass
+
+
+def _float_or_default(v, default=0.0):
+    try:
+        x = float(v)
+        if math.isfinite(x):
+            return x
+    except Exception:
+        pass
+    return float(default)
+
+
+def _copy_metadata(template_obj, replacement_obj):
+    defs = [
+        ("App::PropertyString", "Tipo", "ElectricCR", "Tipo logico de objeto"),
+        ("App::PropertyString", "ConduitType", "ElectricCR", "Tipo de canalizacion"),
+        ("App::PropertyFloat", "DiametroConduit", "ElectricCR", "Diametro de canalizacion (mm)"),
+        ("App::PropertyFloat", "RadioCurvatura", "ElectricCR", "Radio de curvatura (mm)"),
+        ("App::PropertyString", "CircuitoID", "Circuito", "Identificador de circuito"),
+        ("App::PropertyString", "OrigenName", "Vinculo", "Objeto origen"),
+        ("App::PropertyString", "DestinoName", "Vinculo", "Objeto destino"),
+        ("App::PropertyString", "PuertoOrigen", "Vinculo", "Puerto origen"),
+        ("App::PropertyString", "PuertoDestino", "Vinculo", "Puerto destino"),
+        ("App::PropertyString", "LinkKind", "Vinculo", "Tipo de enlace generado"),
+        ("App::PropertyString", "AutoRouteKey", "Vinculo", "Llave unica para evitar duplicados"),
+        ("App::PropertyString", "GeneradoPor", "Vinculo", "Macro generadora"),
+        ("App::PropertyInteger", "IndiceEnlace", "ElectricCR", "Indice de enlace"),
+    ]
+    for ptype, pname, pgroup, pdesc in defs:
+        _ensure_property(replacement_obj, ptype, pname, pgroup, pdesc)
+
+    conduit_type = _safe_text(getattr(template_obj, "ConduitType", "")).strip() or "EMT"
+    diameter = _float_or_default(getattr(template_obj, "DiametroConduit", 0.0), default=0.0)
+    bend = _float_or_default(getattr(template_obj, "RadioCurvatura", 0.0), default=0.0)
+    if bend <= 0.0:
+        bend = _float_or_default(getattr(template_obj, "FilletRadius", 0.0), default=0.0)
+    if bend <= 0.0:
+        bend = 100.0
+
+    try:
+        replacement_obj.Tipo = "ConduitPath"
+    except Exception:
+        pass
+    try:
+        replacement_obj.ConduitType = conduit_type
+    except Exception:
+        pass
+    try:
+        replacement_obj.DiametroConduit = float(diameter)
+    except Exception:
+        pass
+    try:
+        replacement_obj.RadioCurvatura = float(bend)
+    except Exception:
+        pass
+    try:
+        replacement_obj.CircuitoID = _safe_text(getattr(template_obj, "CircuitoID", ""))
+    except Exception:
+        pass
+    try:
+        replacement_obj.OrigenName = _safe_text(getattr(template_obj, "OrigenName", ""))
+    except Exception:
+        pass
+    try:
+        replacement_obj.DestinoName = _safe_text(getattr(template_obj, "DestinoName", ""))
+    except Exception:
+        pass
+    try:
+        replacement_obj.PuertoOrigen = _safe_text(getattr(template_obj, "PuertoOrigen", ""))
+    except Exception:
+        pass
+    try:
+        replacement_obj.PuertoDestino = _safe_text(getattr(template_obj, "PuertoDestino", ""))
+    except Exception:
+        pass
+    try:
+        replacement_obj.LinkKind = _safe_text(getattr(template_obj, "LinkKind", ""))
+    except Exception:
+        pass
+    try:
+        replacement_obj.AutoRouteKey = _safe_text(getattr(template_obj, "AutoRouteKey", ""))
+    except Exception:
+        pass
+    try:
+        replacement_obj.GeneradoPor = _safe_text(getattr(template_obj, "GeneradoPor", "Conectar_Cajas_a_Tablero_Auto"))
+    except Exception:
+        pass
+    try:
+        replacement_obj.IndiceEnlace = int(getattr(template_obj, "IndiceEnlace", 0) or 0)
+    except Exception:
+        pass
+    try:
+        if hasattr(replacement_obj, "FilletRadius"):
+            replacement_obj.FilletRadius = max(0.0, float(bend))
+    except Exception:
+        pass
+
+
+def _copy_label_and_style(template_obj, replacement_obj):
+    try:
+        replacement_obj.Label = _safe_text(getattr(template_obj, "Label", "")) or _safe_text(getattr(replacement_obj, "Label", ""))
+    except Exception:
+        pass
+    vo_src = getattr(template_obj, "ViewObject", None)
+    vo_dst = getattr(replacement_obj, "ViewObject", None)
+    if vo_src is None or vo_dst is None:
+        return
+    for attr in ("LineColor", "PointColor", "ShapeColor", "LineWidth", "DrawStyle", "Transparency"):
+        try:
+            setattr(vo_dst, attr, getattr(vo_src, attr))
+        except Exception:
+            pass
+
+
+def _groups_of(obj):
+    out = []
+    seen = set()
+    for parent in (getattr(obj, "InList", []) or []):
+        if parent is None or not hasattr(parent, "Group"):
+            continue
+        name = _safe_text(getattr(parent, "Name", ""))
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append(parent)
+    return out
+
+
+def _attach_to_groups(obj, groups):
+    for g in (groups or []):
+        try:
+            members = list(getattr(g, "Group", []) or [])
+            if obj not in members:
+                g.addObject(obj)
+        except Exception:
+            pass
+
+
+def main():
+    if Gui is None:
+        log_error("FreeCADGui no disponible. Ejecute desde FreeCAD con interfaz.")
+        return
+    doc = App.ActiveDocument
+    if doc is None:
+        log_error("No hay documento activo.")
+        return
+
+    objs = _selection_objects()
+    if len(objs) < 2:
+        log_warn("Seleccione la conexion EMT existente y una linea/wire nueva.")
+        return
+
+    template_obj, replacement_obj = _pick_objects(objs)
+    if template_obj is None or replacement_obj is None:
+        log_error("No se pudo identificar conexion origen y linea reemplazo en la seleccion.")
+        return
+    if template_obj is replacement_obj:
+        log_error("La conexion origen y la linea reemplazo no pueden ser el mismo objeto.")
+        return
+
+    route_pts = _polyline_points_from_object(template_obj)
+    repl_pts = _polyline_points_from_object(replacement_obj)
+    if len(route_pts) < 2:
+        log_error("La conexion EMT seleccionada no tiene geometria valida.")
+        return
+    if len(repl_pts) < 2:
+        log_error("La linea seleccionada no tiene geometria valida.")
+        return
+
+    template_name = _safe_text(getattr(template_obj, "Label", "")) or _safe_text(getattr(template_obj, "Name", ""))
+    replacement_name = _safe_text(getattr(replacement_obj, "Label", "")) or _safe_text(getattr(replacement_obj, "Name", ""))
+
+    doc.openTransaction("Sustituir conexion EMT por linea")
+    try:
+        groups = _groups_of(template_obj)
+        _copy_metadata(template_obj, replacement_obj)
+        _copy_label_and_style(template_obj, replacement_obj)
+        _attach_to_groups(replacement_obj, groups)
+        old_name = _safe_text(getattr(template_obj, "Name", "")).strip()
+        if old_name:
+            doc.removeObject(old_name)
+        doc.recompute()
+        doc.commitTransaction()
+    except Exception as ex:
+        try:
+            doc.abortTransaction()
+        except Exception:
+            pass
+        log_error(f"No se pudo sustituir la conexion: {ex}")
+        return
+
+    new_label = _safe_text(getattr(replacement_obj, "Label", "")) or _safe_text(getattr(replacement_obj, "Name", ""))
+    key_txt = _safe_text(getattr(replacement_obj, "AutoRouteKey", "")).strip()
+    log_info(
+        "Conexion sustituida: "
+        f"anterior='{template_name}' | nueva_linea='{replacement_name}' | resultado='{new_label}' "
+        f"| puntos={len(route_pts)}->{len(repl_pts)} | route_key={'SI' if key_txt else 'NO'}"
+    )
+
+
+if __name__ == "__main__":
+    main()

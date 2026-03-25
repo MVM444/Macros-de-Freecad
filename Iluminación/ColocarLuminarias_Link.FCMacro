@@ -1,0 +1,635 @@
+# -*- coding: utf-8 -*-
+# MenuText: Colocar Luminarias Link
+# ToolTip: Colocar luminarias por rejilla usando App::Link
+# Icon: ColocarLuminarias.svg
+# Transaction: self
+"""
+ColocarLuminarias_Link.FCMacro
+
+Same flow as ColocarLuminarias_Objeto, but instances are App::Link.
+No clones are used.
+"""
+
+from pathlib import Path
+import json
+
+import FreeCAD as App
+import FreeCADGui as Gui
+
+try:
+    from PySide2 import QtWidgets
+except Exception:
+    from PySide import QtGui as QtWidgets
+
+
+REG_PATH = Path(
+    r"C:\Users\marco\OneDrive - Caja Costarricense de Seguro Social\Documentos\FreeCAD\Macros\Macros-de-Freecad\Resources\registry\registry_electric.json"
+)
+
+
+def _ts():
+    from datetime import datetime
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def log_i(msg):
+    App.Console.PrintMessage("[{}][LNKRECT][INFO] {}\n".format(_ts(), msg))
+
+
+def log_w(msg):
+    App.Console.PrintWarning("[{}][LNKRECT][WARN] {}\n".format(_ts(), msg))
+
+
+def log_e(msg):
+    App.Console.PrintError("[{}][LNKRECT][ERROR] {}\n".format(_ts(), msg))
+
+
+def load_registry():
+    try:
+        data = json.loads(REG_PATH.read_text(encoding="utf-8-sig"))
+        if isinstance(data, dict) and "types" in data:
+            log_i("Registro cargado: {}".format(REG_PATH))
+            return data
+        log_w("Registro sin 'types': {}".format(REG_PATH))
+    except Exception as ex:
+        log_e("No se pudo leer el registro: {}".format(ex))
+    return {"schema": "1.0.0", "types": {}}
+
+
+def type_keys_sorted_for_ui(reg):
+    keys = list((reg.get("types") or {}).keys())
+    keys.sort(key=lambda k: (0 if "lumin" in k.lower() else 1, k.lower()))
+    return keys
+
+
+def ensure_electriccr_on_path():
+    import importlib
+    import sys
+
+    for name in ("ElectricCR", "electriccr"):
+        try:
+            importlib.import_module(name)
+            return True
+        except Exception:
+            pass
+
+    try:
+        here = Path(__file__).resolve()
+        cands = []
+        for parent in [here.parent] + list(here.parents):
+            cand = parent / "ElectricCR"
+            if cand.is_dir():
+                cands.append(str(cand.parent))
+                cands.append(str(cand))
+        try:
+            base = Path(App.getUserAppDataDir())
+        except Exception:
+            base = Path.home() / "AppData" / "Roaming" / "FreeCAD"
+        for nm in ("Macro", "Macros"):
+            cand = base / nm / "ElectricCR"
+            if cand.is_dir():
+                cands.append(str(cand.parent))
+                cands.append(str(cand))
+        for p in cands:
+            if p and p not in sys.path:
+                sys.path.insert(0, p)
+        importlib.invalidate_caches()
+        for name in ("ElectricCR", "electriccr"):
+            try:
+                importlib.import_module(name)
+                return True
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    log_w("No se pudo localizar el paquete ElectricCR.")
+    return False
+
+
+def get_crear_toma_uno():
+    if not ensure_electriccr_on_path():
+        return None
+    try:
+        from ElectricCR.electriccr.features.objeto_toma_uno import crear_toma_uno
+        return crear_toma_uno
+    except Exception:
+        pass
+    try:
+        from electriccr.features.objeto_toma_uno import crear_toma_uno
+        return crear_toma_uno
+    except Exception as ex:
+        log_e("No se pudo importar crear_toma_uno: {}".format(ex))
+        return None
+
+
+def collect_rectangles_from_selection():
+    rects = []
+    sel = Gui.Selection.getSelection() or []
+    for obj in sel:
+        if getattr(obj, "TypeId", "") == "App::DocumentObjectGroup":
+            for child in (obj.Group or []):
+                if getattr(getattr(child, "Proxy", None), "Type", "") == "Rectangle":
+                    rects.append(child)
+        else:
+            if getattr(getattr(obj, "Proxy", None), "Type", "") == "Rectangle":
+                rects.append(obj)
+    return rects
+
+
+def rect_dims_cols_rows(rect):
+    try:
+        width = float(rect.Length.Value)
+        height = float(rect.Height.Value)
+    except Exception:
+        return None
+    if not hasattr(rect, "Columns") or not hasattr(rect, "Rows"):
+        return None
+    try:
+        cols = int(rect.Columns)
+        rows = int(rect.Rows)
+    except Exception:
+        return None
+    return width, height, cols, rows
+
+
+def _sanitize_token(text, fallback="Obj"):
+    raw = str(text or "").strip()
+    chars = []
+    for ch in raw:
+        chars.append(ch if (ch.isalnum() or ch == "_") else "_")
+    out = "".join(chars).strip("_")
+    if not out:
+        out = fallback
+    if out[0].isdigit():
+        out = "{}_{}".format(fallback, out)
+    return out
+
+
+def _unique_name(doc, base):
+    token = _sanitize_token(base, "Obj")
+    cand = token
+    idx = 1
+    while doc.getObject(cand) is not None:
+        cand = "{}_{:03d}".format(token, idx)
+        idx += 1
+    return cand
+
+
+def ensure_main_group(doc):
+    grp = doc.getObject("electrico")
+    if grp is None:
+        grp = doc.addObject("App::DocumentObjectGroup", "electrico")
+        grp.Label = "electrico"
+        log_i("Grupo creado: electrico")
+    return grp
+
+
+def ensure_link_output_group(doc, prefix_label):
+    main = ensure_main_group(doc)
+    label = (str(prefix_label or "").rstrip("_") or "Luminarias") + "_Link"
+    for child in getattr(main, "Group", []) or []:
+        if getattr(child, "TypeId", "") == "App::DocumentObjectGroup" and getattr(child, "Label", "") == label:
+            return child
+    name = _unique_name(doc, label)
+    grp = doc.addObject("App::DocumentObjectGroup", name)
+    grp.Label = label
+    main.addObject(grp)
+    log_i("Subgrupo creado: {}".format(label))
+    return grp
+
+
+def ensure_link_library_group(doc):
+    main = ensure_main_group(doc)
+
+    glib = doc.getObject("_lib")
+    if glib is None:
+        glib = doc.addObject("App::DocumentObjectGroup", "_lib")
+        glib.Label = "_lib"
+    if glib not in (getattr(main, "Group", []) or []):
+        try:
+            main.addObject(glib)
+        except Exception:
+            pass
+
+    target_label = "Luminarias_Link_Masters"
+    for child in getattr(glib, "Group", []) or []:
+        if getattr(child, "TypeId", "") == "App::DocumentObjectGroup" and getattr(child, "Label", "") == target_label:
+            return child
+
+    name = _unique_name(doc, target_label)
+    grp = doc.addObject("App::DocumentObjectGroup", name)
+    grp.Label = target_label
+    glib.addObject(grp)
+    return grp
+
+
+def ensure_prop(obj, ptype, pname, pgroup, pdoc):
+    if hasattr(obj, pname):
+        return
+    try:
+        obj.addProperty(ptype, pname, pgroup, pdoc)
+    except Exception:
+        pass
+
+
+def _near(a, b, eps=1e-6):
+    try:
+        return abs(float(a) - float(b)) <= float(eps)
+    except Exception:
+        return False
+
+
+def find_existing_master(doc, key_registro, altura_rel, modo_visual):
+    for obj in doc.Objects:
+        tid = str(getattr(obj, "TypeId", "") or "")
+        if tid == "App::Link":
+            continue
+        k = str(getattr(obj, "LnkMasterKey", "") or "")
+        if k != str(key_registro):
+            continue
+        m = str(getattr(obj, "LnkMasterMode", "") or "")
+        if m != str(modo_visual):
+            continue
+        h = getattr(obj, "LnkMasterAltura", None)
+        if not _near(h, altura_rel):
+            continue
+        return obj
+    return None
+
+
+def ensure_link_master(doc, crear_toma_uno, key_registro, altura_rel, modo_visual, reuse=True):
+    if reuse:
+        old = find_existing_master(doc, key_registro, altura_rel, modo_visual)
+        if old is not None:
+            return old
+
+    master = crear_toma_uno(
+        doc,
+        name_prefix="MasterLink_",
+        key_registro=key_registro,
+        tipo_logico="Luminaria",
+    )
+    if master is None:
+        log_e("crear_toma_uno devolvio None para '{}'".format(key_registro))
+        return None
+
+    try:
+        master.AlturaRel = float(altura_rel)
+    except Exception:
+        pass
+    try:
+        master.ModoVisual = str(modo_visual)
+    except Exception:
+        pass
+    try:
+        master.OrientacionPared = "Vertical"
+    except Exception:
+        pass
+    try:
+        master.Placement = App.Placement(App.Vector(0, 0, 0), App.Rotation())
+    except Exception:
+        pass
+
+    ensure_prop(master, "App::PropertyString", "LnkMasterKey", "Link", "Key de registro del master link")
+    ensure_prop(master, "App::PropertyFloat", "LnkMasterAltura", "Link", "Altura del master link")
+    ensure_prop(master, "App::PropertyString", "LnkMasterMode", "Link", "Modo visual del master link")
+    try:
+        master.LnkMasterKey = str(key_registro)
+        master.LnkMasterAltura = float(altura_rel)
+        master.LnkMasterMode = str(modo_visual)
+    except Exception:
+        pass
+
+    try:
+        master.Label = "Master Link {} {}mm {}".format(
+            str(key_registro), int(round(float(altura_rel))), str(modo_visual)
+        )
+    except Exception:
+        pass
+
+    glib = ensure_link_library_group(doc)
+    if master not in (getattr(glib, "Group", []) or []):
+        try:
+            glib.addObject(master)
+        except Exception:
+            pass
+
+    try:
+        if hasattr(master, "ViewObject"):
+            master.ViewObject.Visibility = False
+            if hasattr(master.ViewObject, "Selectable"):
+                master.ViewObject.Selectable = False
+            if hasattr(master.ViewObject, "Pickable"):
+                master.ViewObject.Pickable = False
+    except Exception:
+        pass
+
+    return master
+
+
+def insert_link_in_cell(doc, master, prefix, rect, rect_pos, rect_rot, x_local, y_local, idx_global, group=None):
+    base = rect_pos + rect_rot.multVec(App.Vector(float(x_local), float(y_local), 0.0))
+    obj_name = _unique_name(doc, "{}{:03d}".format(_sanitize_token(prefix, "Luminaria_"), idx_global))
+    link = doc.addObject("App::Link", obj_name)
+    if hasattr(link, "LinkedObject"):
+        link.LinkedObject = master
+    else:
+        link.Link = master
+    try:
+        if hasattr(link, "LinkTransform"):
+            link.LinkTransform = True
+    except Exception:
+        pass
+    link.Placement = App.Placement(base, rect_rot)
+    try:
+        link.Label = "{}_{}{:03d}".format(rect.Label, str(prefix), idx_global)
+    except Exception:
+        pass
+    try:
+        vo = getattr(link, "ViewObject", None)
+        if vo is not None:
+            if hasattr(vo, "Selectable"):
+                vo.Selectable = True
+            if hasattr(vo, "Pickable"):
+                vo.Pickable = True
+    except Exception:
+        pass
+    if group is not None:
+        try:
+            group.addObject(link)
+        except Exception:
+            pass
+    return link
+
+
+def ensure_group_links_selectable(group_obj):
+    if group_obj is None:
+        return 0
+    cnt = 0
+    for obj in getattr(group_obj, "Group", []) or []:
+        if str(getattr(obj, "TypeId", "") or "") != "App::Link":
+            continue
+        try:
+            vo = getattr(obj, "ViewObject", None)
+            if vo is not None:
+                if hasattr(vo, "Selectable"):
+                    vo.Selectable = True
+                if hasattr(vo, "Pickable"):
+                    vo.Pickable = True
+                cnt += 1
+        except Exception:
+            pass
+    return cnt
+
+
+def ensure_all_links_selectable(doc):
+    if doc is None:
+        return 0
+    cnt = 0
+    for obj in getattr(doc, "Objects", []) or []:
+        if str(getattr(obj, "TypeId", "") or "") != "App::Link":
+            continue
+        try:
+            vo = getattr(obj, "ViewObject", None)
+            if vo is not None:
+                if hasattr(vo, "Selectable"):
+                    vo.Selectable = True
+                if hasattr(vo, "Pickable"):
+                    vo.Pickable = True
+                cnt += 1
+        except Exception:
+            pass
+    return cnt
+
+
+def unlock_pick_chain_for_links(doc):
+    if doc is None:
+        return 0
+    touched = 0
+    visited = set()
+    for obj in getattr(doc, "Objects", []) or []:
+        if str(getattr(obj, "TypeId", "") or "") != "App::Link":
+            continue
+        stack = [obj]
+        stack.extend(getattr(obj, "InList", []) or [])
+        stack.extend(getattr(obj, "OutList", []) or [])
+        while stack:
+            cur = stack.pop()
+            if cur is None:
+                continue
+            name = str(getattr(cur, "Name", "") or "")
+            if name and name in visited:
+                continue
+            if name:
+                visited.add(name)
+            try:
+                vo = getattr(cur, "ViewObject", None)
+                if vo is not None:
+                    changed = False
+                    if hasattr(vo, "Selectable"):
+                        vo.Selectable = True
+                        changed = True
+                    if hasattr(vo, "Pickable"):
+                        vo.Pickable = True
+                        changed = True
+                    if changed:
+                        touched += 1
+            except Exception:
+                pass
+            for n in getattr(cur, "InList", []) or []:
+                stack.append(n)
+            for n in getattr(cur, "OutList", []) or []:
+                stack.append(n)
+    return touched
+
+
+class PickTypeDialog(QtWidgets.QDialog):
+    def __init__(self, reg, parent=None):
+        super(PickTypeDialog, self).__init__(parent)
+        self.setWindowTitle("Insertar luminarias Link en rectangulos")
+        self.setMinimumWidth(440)
+        self.reg = reg
+
+        self.cmb_tipo = QtWidgets.QComboBox()
+        self.cmb_tipo.addItems(type_keys_sorted_for_ui(self.reg))
+        self.cmb_tipo.currentIndexChanged.connect(self._on_tipo_changed)
+
+        self.le_prefix = QtWidgets.QLineEdit("Luminaria_")
+
+        self.sp_altura = QtWidgets.QDoubleSpinBox()
+        self.sp_altura.setRange(0.0, 10000.0)
+        self.sp_altura.setDecimals(1)
+        self.sp_altura.setSuffix(" mm")
+        self.sp_altura.setValue(300.0)
+
+        self.cmb_modo = QtWidgets.QComboBox()
+        self.cmb_modo.addItems(["Ambos", "Solo2D", "Solo3D"])
+
+        self.chk_reuse = QtWidgets.QCheckBox("Reusar master Link existente")
+        self.chk_reuse.setChecked(True)
+
+        form = QtWidgets.QFormLayout()
+        form.addRow("Tipo (registro):", self.cmb_tipo)
+        form.addRow("Prefijo:", self.le_prefix)
+        form.addRow("Altura:", self.sp_altura)
+        form.addRow("Modo visual:", self.cmb_modo)
+        form.addRow("", self.chk_reuse)
+
+        btn_ok = QtWidgets.QPushButton("Insertar")
+        btn_cancel = QtWidgets.QPushButton("Cancelar")
+        btn_ok.clicked.connect(self.accept)
+        btn_cancel.clicked.connect(self.reject)
+        row = QtWidgets.QHBoxLayout()
+        row.addStretch(1)
+        row.addWidget(btn_cancel)
+        row.addWidget(btn_ok)
+
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.addLayout(form)
+        lay.addStretch(1)
+        lay.addLayout(row)
+
+        self._apply_defaults()
+
+    def selected_key(self):
+        return str(self.cmb_tipo.currentText()).strip()
+
+    def selected_prefix(self):
+        return str(self.le_prefix.text()).strip() or "Luminaria_"
+
+    def selected_altura(self):
+        return float(self.sp_altura.value())
+
+    def selected_mode(self):
+        return str(self.cmb_modo.currentText()).strip() or "Ambos"
+
+    def reuse_master(self):
+        return bool(self.chk_reuse.isChecked())
+
+    def _apply_defaults(self):
+        info = (self.reg.get("types") or {}).get(self.selected_key(), {}) or {}
+        d = info.get("defaults", {}) or {}
+        try:
+            self.sp_altura.setValue(float(d.get("altura", 300.0)))
+        except Exception:
+            pass
+        modo = str(d.get("modo", "Both") or "Both")
+        mode_map = {
+            "Both": "Ambos",
+            "Ambos": "Ambos",
+            "Solo2D": "Solo2D",
+            "Solo 2D": "Solo2D",
+            "Solo3D": "Solo3D",
+            "Solo 3D": "Solo3D",
+        }
+        target = mode_map.get(modo, "Ambos")
+        idx = self.cmb_modo.findText(target)
+        if idx >= 0:
+            self.cmb_modo.setCurrentIndex(idx)
+
+    def _on_tipo_changed(self, _idx):
+        self._apply_defaults()
+
+
+def run():
+    doc = App.ActiveDocument or App.newDocument("Electrico")
+
+    rects = collect_rectangles_from_selection()
+    if not rects:
+        log_e("Debe seleccionar al menos un rectangulo (o grupo con rectangulos).")
+        return
+
+    reg = load_registry()
+    if not (reg.get("types") or {}):
+        log_e("El registro no tiene tipos definidos.")
+        return
+
+    dlg = PickTypeDialog(reg, Gui.getMainWindow())
+    if dlg.exec_() != QtWidgets.QDialog.Accepted:
+        return
+
+    key = dlg.selected_key()
+    prefix = dlg.selected_prefix()
+    altura_rel = dlg.selected_altura()
+    modo_visual = dlg.selected_mode()
+    reuse_master = dlg.reuse_master()
+
+    crear_toma_uno = get_crear_toma_uno()
+    if not crear_toma_uno:
+        return
+
+    created = 0
+    doc.openTransaction("ElectricCR: Colocar Luminarias Link")
+    try:
+        master = ensure_link_master(
+            doc,
+            crear_toma_uno,
+            key_registro=key,
+            altura_rel=altura_rel,
+            modo_visual=modo_visual,
+            reuse=reuse_master,
+        )
+        if master is None:
+            raise RuntimeError("No se pudo crear/resolver master Link.")
+
+        out_group = ensure_link_output_group(doc, prefix)
+
+        for rect in rects:
+            dims = rect_dims_cols_rows(rect)
+            if not dims:
+                log_w("Rectangulo '{}' sin Length/Height/Columns/Rows validos.".format(rect.Label))
+                continue
+            width, height, cols, rows = dims
+            if cols < 1 or rows < 1:
+                log_w("Rectangulo '{}' con cols/rows invalidos ({}x{}).".format(rect.Label, cols, rows))
+                continue
+
+            dist_x = width / float(cols)
+            dist_y = height / float(rows)
+            rect_pl = rect.Placement
+            rect_pos = rect_pl.Base
+            rect_rot = rect_pl.Rotation
+
+            log_i("Procesando {}: {}x{} | W={:.1f} H={:.1f}".format(rect.Label, cols, rows, width, height))
+
+            for r in range(rows):
+                for c in range(cols):
+                    x = (c + 0.5) * dist_x
+                    y = (r + 0.5) * dist_y
+                    insert_link_in_cell(
+                        doc,
+                        master=master,
+                        prefix=prefix,
+                        rect=rect,
+                        rect_pos=rect_pos,
+                        rect_rot=rect_rot,
+                        x_local=x,
+                        y_local=y,
+                        idx_global=created + 1,
+                        group=out_group,
+                    )
+                    created += 1
+
+        unlocked = ensure_group_links_selectable(out_group)
+        if unlocked:
+            log_i("Links seleccionables asegurados: {}".format(unlocked))
+        unlocked_all = ensure_all_links_selectable(doc)
+        if unlocked_all:
+            log_i("Links seleccionables globales: {}".format(unlocked_all))
+        chain = unlock_pick_chain_for_links(doc)
+        if chain:
+            log_i("Cadena pick de links desbloqueada: {}".format(chain))
+
+        doc.recompute()
+        doc.commitTransaction()
+    except Exception as ex:
+        doc.abortTransaction()
+        log_e("Insercion cancelada: {}".format(ex))
+        return
+
+    log_i("Insercion Link finalizada. Creados: {} | Tipo: '{}'".format(created, key))
+
+
+if __name__ == "__main__":
+    run()

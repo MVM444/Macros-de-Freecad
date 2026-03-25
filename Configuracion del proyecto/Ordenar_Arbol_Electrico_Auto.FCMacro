@@ -1,0 +1,305 @@
+# -*- coding: utf-8 -*-
+# MenuText: Ordenar arbol electrico (auto)
+# Icon: Ordenar_Grupos_ElectricCR.svg
+"""
+Ordena el arbol de grupos del documento con prioridad electrica.
+
+Objetivo:
+- Mejorar legibilidad y navegacion del arbol.
+- Dejar una estructura mas consistente para macros como Ramales.
+
+Reglas:
+- No mueve objetos entre grupos (solo reordena hermanos).
+- Prioriza grupos electricos/circuitos.
+- Ordena recursivamente.
+"""
+
+import re
+import unicodedata
+
+import FreeCAD as App
+
+TAG = "[ORDEN_ARBOL_AUTO]"
+
+ROOT_PRIORITY = [
+    "electrico",
+    "areas",
+    "area_de_sensores_de_humo",
+    "tablero_electrico",
+    "proyecto_acometida",
+    "componentes",
+    "clones_de_salida",
+    "cuarto_electrico_y_servidor",
+    "conexiones_huerfanas",
+]
+
+ELECTRICO_PRIORITY = [
+    "_lib",
+    "iluminacion",
+    "tomacorrientes",
+    "cajas",
+    "conexiones",
+    "rutas_guia_2d",
+    "deteccion",
+    "sensor",
+]
+
+ILUMINACION_PRIORITY = [
+    "circuitos_iluminacion",
+    "apagadores",
+    "luminarias",
+    "cajas_octogonales",
+    "conexiones",
+    "componentes",
+    "recintos",
+    "sin_circuito",
+]
+
+TOMAS_PRIORITY = [
+    "conexiones",
+    "ramales_emt",
+    "alimentadores_emt",
+    "cajas_",
+]
+
+
+def info(msg):
+    App.Console.PrintMessage(f"{TAG} {msg}\n")
+
+
+def warn(msg):
+    App.Console.PrintWarning(f"{TAG} {msg}\n")
+
+
+def err(msg):
+    App.Console.PrintError(f"{TAG} {msg}\n")
+
+
+def txt(value):
+    try:
+        return str(value or "")
+    except Exception:
+        return ""
+
+
+def norm(value):
+    s = txt(value).strip().lower()
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    s = re.sub(r"[^\w\s\-]+", "_", s)
+    s = re.sub(r"[\s\-]+", "_", s).strip("_")
+    return s
+
+
+def natural_key(value):
+    s = txt(value)
+    return [int(t) if t.isdigit() else t.lower() for t in re.split(r"([0-9]+)", s)]
+
+
+def is_group(obj):
+    if obj is None:
+        return False
+    type_id = txt(getattr(obj, "TypeId", ""))
+    if type_id.startswith("App::DocumentObjectGroup"):
+        return True
+    if type_id.startswith("App::Part"):
+        return True
+    return hasattr(obj, "Group")
+
+
+def _display_label(obj):
+    return txt(getattr(obj, "Label", "")) or txt(getattr(obj, "Name", ""))
+
+
+def _root_objects(doc):
+    if hasattr(doc, "RootObjects"):
+        try:
+            return list(doc.RootObjects)
+        except Exception:
+            pass
+    if hasattr(doc, "getRootObjects"):
+        try:
+            return list(doc.getRootObjects())
+        except Exception:
+            pass
+    roots = []
+    for obj in list(getattr(doc, "Objects", []) or []):
+        try:
+            in_list = list(getattr(obj, "InList", []) or [])
+        except Exception:
+            in_list = []
+        if any(is_group(parent) for parent in in_list):
+            continue
+        roots.append(obj)
+    return roots
+
+
+def _merge_subset(original, subset, pred):
+    it = iter(subset)
+    out = []
+    for obj in original:
+        if pred(obj):
+            try:
+                out.append(next(it))
+            except StopIteration:
+                out.append(obj)
+        else:
+            out.append(obj)
+    return out
+
+
+def _priority_index(key, table):
+    for idx, token in enumerate(table):
+        if key == token or key.startswith(token):
+            return idx
+    return None
+
+
+def _extract_circuit_info(key):
+    key2 = key.replace("_", " ")
+    if "sin circuito" in key2 or "sin_circuito" in key:
+        return (2, 9999)
+    m_tp = re.search(r"\btp[\s\-]*0*([0-9]+)\b", key2)
+    if m_tp:
+        return (0, int(m_tp.group(1)))
+    m_c = re.search(r"\bcircuito[\s\-]*0*([0-9]+)\b", key2)
+    if m_c:
+        return (1, int(m_c.group(1)))
+    return None
+
+
+def _group_rank(obj, ancestors):
+    label = _display_label(obj)
+    key = norm(label)
+    name_key = norm(txt(getattr(obj, "Name", "")))
+    combo = key or name_key
+    ancestor_path = "/".join(ancestors)
+
+    if "shape2dview" in combo or combo.startswith("origin") or combo == "grupo":
+        return (900, 0, natural_key(label))
+
+    cinfo = _extract_circuit_info(combo)
+
+    if not ancestors:
+        idx = _priority_index(combo, ROOT_PRIORITY)
+        if idx is not None:
+            return (idx, 0, natural_key(label))
+        if cinfo is not None:
+            return (80, cinfo[0], cinfo[1], natural_key(label))
+        return (500, 0, natural_key(label))
+
+    if "electrico" in ancestor_path:
+        if len(ancestors) == 1 and ancestors[0] == "electrico":
+            idx = _priority_index(combo, ELECTRICO_PRIORITY)
+            if idx is not None:
+                return (idx, 0, natural_key(label))
+
+        if "iluminacion" in ancestor_path:
+            if cinfo is not None:
+                return (10, cinfo[0], cinfo[1], natural_key(label))
+            idx = _priority_index(combo, ILUMINACION_PRIORITY)
+            if idx is not None:
+                return (30 + idx, 0, natural_key(label))
+
+        if "tomacorrientes" in ancestor_path:
+            if cinfo is not None:
+                return (10, cinfo[0], cinfo[1], natural_key(label))
+            idx = _priority_index(combo, TOMAS_PRIORITY)
+            if idx is not None:
+                return (40 + idx, 0, natural_key(label))
+
+    if cinfo is not None:
+        return (50, cinfo[0], cinfo[1], natural_key(label))
+    return (500, 0, natural_key(label))
+
+
+def _sort_groups(groups, ancestors):
+    return sorted(list(groups or []), key=lambda g: _group_rank(g, ancestors))
+
+
+def _apply_root_order(doc, ordered):
+    if not ordered:
+        return False
+    if hasattr(doc, "reorderObjects"):
+        try:
+            doc.reorderObjects(ordered)
+            return True
+        except Exception:
+            try:
+                doc.reorderObjects([txt(getattr(o, "Name", "")) for o in ordered])
+                return True
+            except Exception:
+                return False
+    return False
+
+
+def _reorder_group(group_obj, ancestors, seen):
+    changed = 0
+    gname = txt(getattr(group_obj, "Name", ""))
+    if gname and gname in seen:
+        return changed
+    if gname:
+        seen.add(gname)
+
+    children = list(getattr(group_obj, "Group", []) or [])
+    subgroups = [c for c in children if is_group(c)]
+    if subgroups:
+        ordered_subgroups = _sort_groups(subgroups, ancestors)
+        merged = _merge_subset(children, ordered_subgroups, is_group)
+        if merged != children:
+            try:
+                group_obj.Group = merged
+                changed += 1
+            except Exception as ex:
+                warn(f"No se pudo ordenar '{_display_label(group_obj)}': {ex}")
+        for sub in ordered_subgroups:
+            child_anc = list(ancestors)
+            child_anc.append(norm(_display_label(group_obj)))
+            changed += _reorder_group(sub, child_anc, seen)
+    return changed
+
+
+def main():
+    doc = App.ActiveDocument
+    if doc is None:
+        err("No hay documento activo.")
+        return
+
+    root = _root_objects(doc)
+    root_groups = [o for o in root if is_group(o)]
+    if not root_groups:
+        warn("No hay grupos raiz para ordenar.")
+        return
+
+    changed_count = 0
+    try:
+        doc.openTransaction("ElectricCR: ordenar arbol electrico auto")
+    except Exception:
+        pass
+
+    ordered_root_groups = _sort_groups(root_groups, [])
+    merged_root = _merge_subset(root, ordered_root_groups, is_group)
+    if merged_root != root:
+        if _apply_root_order(doc, merged_root):
+            changed_count += 1
+        else:
+            warn("No se pudo aplicar orden en raiz con API del documento.")
+
+    seen = set()
+    for grp in ordered_root_groups:
+        changed_count += _reorder_group(grp, [], seen)
+
+    try:
+        doc.recompute()
+    except Exception:
+        pass
+
+    try:
+        doc.commitTransaction()
+    except Exception:
+        pass
+
+    info(f"Orden aplicado. root_groups={len(root_groups)} | cambios={changed_count}")
+
+
+main()

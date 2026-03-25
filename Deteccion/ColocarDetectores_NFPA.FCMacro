@@ -1,0 +1,1447 @@
+# -*- coding: utf-8 -*-
+# Icon: Deteccion/ColocarDetectores_NFPA.svg
+"""
+ColocarDetectores_NFPA.FCMacro
+-------------------------------------------------
+Coloca detectores (sensores) en rectangulos segun:
+- NFPA: reticula por S y verificacion de cobertura con Rcov=0.7*S.
+- Regla rapida: umbral de area A1 (m2).
+
+Incluye filtrado de luminarias para evitar falsos choques.
+Autor: Marco / ElectricCR - 2026-02-16
+"""
+
+from pathlib import Path
+import json
+import math
+
+import FreeCAD as App
+import FreeCADGui as Gui
+
+try:
+    from PySide2 import QtCore, QtWidgets
+except Exception:
+    from PySide import QtCore
+    from PySide import QtGui as QtWidgets
+
+# ---------------------------------------------------------------------------
+# Config (registro de dispositivos)
+# ---------------------------------------------------------------------------
+REG_PATH = Path(
+    r"C:\Users\marco\OneDrive - Caja Costarricense de Seguro Social\Documentos\FreeCAD\Macros\Macros-de-Freecad\Resources\registry\registry_electric.json"
+)
+
+MM_PER_M = 1000.0
+
+MODE_NFPA = "Por NFPA (reticula por S y verificacion 0.7S)"
+MODE_A1 = "Por umbral de area A1 (m2)"
+
+GENERIC_SENSOR_LABEL = "Sensor_Humo (generico)"
+
+PARAM_ROOT = "User parameter:BaseApp/Preferences/ElectricCR/DetectoresNFPA"
+
+def _pget():
+    return App.ParamGet(PARAM_ROOT)
+
+def _get_str(k, d=""):
+    try:
+        return _pget().GetString(k, d)
+    except Exception:
+        return d
+
+def _set_str(k, v):
+    try:
+        _pget().SetString(k, str(v))
+    except Exception:
+        pass
+
+def _get_bool(k, d=False):
+    try:
+        return _pget().GetBool(k, d)
+    except Exception:
+        return d
+
+def _set_bool(k, v):
+    try:
+        _pget().SetBool(k, bool(v))
+    except Exception:
+        pass
+
+def _doc_sidecar_path(doc):
+    try:
+        fn = getattr(doc, "FileName", "") or ""
+        if not fn:
+            return None
+        p = Path(fn)
+        return p.with_suffix(".nfpa.json")
+    except Exception:
+        return None
+
+def _load_sidecar(doc):
+    p = _doc_sidecar_path(doc)
+    if not p or not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+def _save_sidecar(doc, data):
+    p = _doc_sidecar_path(doc)
+    if not p:
+        return False
+    try:
+        p.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        return True
+    except Exception:
+        return False
+
+# ---------------------------------------------------------------------------
+# Logs
+# ---------------------------------------------------------------------------
+def _ts():
+    from datetime import datetime
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+def log_i(msg): App.Console.PrintMessage(f"[{_ts()}][NFPA][INFO] {msg}\n")
+def log_w(msg): App.Console.PrintWarning(f"[{_ts()}][NFPA][WARN] {msg}\n")
+def log_e(msg): App.Console.PrintError(f"[{_ts()}][NFPA][ERROR] {msg}\n")
+
+# ---------------------------------------------------------------------------
+# Registro
+# ---------------------------------------------------------------------------
+def load_registry() -> dict:
+    try:
+        data = json.loads(REG_PATH.read_text(encoding="utf-8-sig"))
+        if isinstance(data, dict) and "types" in data:
+            log_i(f"Registro cargado: {REG_PATH}")
+            return data
+        log_w(f"El registro no contiene 'types': {REG_PATH}")
+    except Exception as ex:
+        log_e(f"No se pudo leer el registro: {ex}")
+    return {"schema": "1.0.0", "types": {}}
+
+def type_keys_sorted_for_ui(reg: dict) -> list:
+    """Devuelve solo tipos de sensores/detectores. Si no hay, ofrece generico."""
+    keys = list((reg.get("types") or {}).keys())
+    sensor_keys = []
+    for k in keys:
+        s = k.lower()
+        if ("sensor" in s) or ("detector" in s) or ("humo" in s):
+            sensor_keys.append(k)
+    sensor_keys.sort(key=lambda k: k.lower())
+    if not sensor_keys:
+        return [GENERIC_SENSOR_LABEL]
+    return sensor_keys
+
+# ---------------------------------------------------------------------------
+# Resolver ElectricCR.crear_toma_uno
+# ---------------------------------------------------------------------------
+def ensure_electriccr_on_path() -> bool:
+    import importlib, sys
+    # Intento directo
+    for name in ("ElectricCR", "electriccr"):
+        try:
+            importlib.import_module(name)
+            return True
+        except ImportError:
+            pass
+    # Busqueda local y en %APPDATA%
+    try:
+        here = Path(__file__).resolve()
+        cands = []
+        for parent in [here.parent, *here.parents]:
+            cand = parent / "ElectricCR"
+            if cand.is_dir():
+                cands += [str(cand.parent), str(cand)]
+        try:
+            base = Path(App.getUserAppDataDir())
+        except Exception:
+            base = Path.home() / "AppData" / "Roaming" / "FreeCAD"
+        for nm in ("Macro", "Macros"):
+            cand = base / nm / "ElectricCR"
+            if cand.is_dir():
+                cands += [str(cand.parent), str(cand)]
+        for p in cands:
+            if p and p not in sys.path:
+                sys.path.insert(0, p)
+        importlib.invalidate_caches()
+        for name in ("ElectricCR", "electriccr"):
+            try:
+                importlib.import_module(name)
+                return True
+            except ImportError:
+                pass
+    except Exception:
+        pass
+    log_w("No se pudo localizar el paquete ElectricCR en sys.path.")
+    return False
+
+def get_crear_toma_uno():
+    if not ensure_electriccr_on_path():
+        return None
+    try:
+        import importlib
+        import ElectricCR.electriccr.features.objeto_toma_uno as mod
+        importlib.reload(mod)
+        return mod.crear_toma_uno
+    except Exception:
+        try:
+            import importlib
+            import electriccr.features.objeto_toma_uno as mod
+            importlib.reload(mod)
+            return mod.crear_toma_uno
+        except Exception as ex:
+            log_e(f"No se pudo importar crear_toma_uno: {ex}")
+            return None
+
+# ---------------------------------------------------------------------------
+# Utilidades
+# ---------------------------------------------------------------------------
+def m_to_mm(v): return float(v) * MM_PER_M
+def mm_to_m(v): return float(v) / MM_PER_M
+
+def _sanitize_group_name(doc, base):
+    base = (base or 'Sensores').strip()
+    sanitized = ''.join(ch if ch.isalnum() else '_' for ch in base) or 'Sensores'
+    candidate = sanitized
+    idx = 1
+    while doc.getObject(candidate):
+        candidate = f"{sanitized}_{idx:02d}"
+        idx += 1
+    return candidate
+
+def ensure_sensor_group(doc, prefix_label):
+    main = doc.getObject('electrico')
+    if main is None:
+        try:
+            main = doc.addObject('App::DocumentObjectGroup', 'electrico')
+            main.Label = 'electrico'
+            log_i('created group electrico')
+        except Exception:
+            main = doc.getObject('electrico')
+    if main is None:
+        return None
+    label = (prefix_label or 'Sensores').strip() or 'Sensores'
+    target = None
+    for child in getattr(main, 'Group', []) or []:
+        if getattr(child, 'Label', '') == label:
+            target = child
+            break
+    if target is None:
+        name = _sanitize_group_name(doc, label)
+        try:
+            target = doc.addObject('App::DocumentObjectGroup', name)
+            target.Label = label
+            if hasattr(main, 'addObject'):
+                main.addObject(target)
+            log_i(f"created subgroup {label}")
+        except Exception:
+            target = doc.getObject(name)
+    return target
+
+def _is_rectangle(obj):
+    return getattr(getattr(obj, "Proxy", None), "Type", "") == "Rectangle"
+
+def collect_rectangles_from_selection():
+    """Devuelve lista de objetos Draft Rectangle seleccionados o dentro de grupos."""
+    rects = []
+    sel = Gui.Selection.getSelection()
+    for o in sel:
+        if o.TypeId == "App::DocumentObjectGroup":
+            for g in (o.Group or []):
+                if _is_rectangle(g):
+                    rects.append(g)
+        else:
+            if _is_rectangle(o):
+                rects.append(o)
+    return rects
+
+def rect_dims(rect):
+    try:
+        width = float(rect.Length.Value)
+        height = float(rect.Height.Value)
+    except Exception:
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    return width, height
+
+def rect_grid(rect):
+    try:
+        if not hasattr(rect, "Columns") or not hasattr(rect, "Rows"):
+            return None
+        cols = int(rect.Columns)
+        rows = int(rect.Rows)
+        if cols < 1 or rows < 1:
+            return None
+        if cols == 1 and rows == 1:
+            return None
+        return cols, rows
+    except Exception:
+        return None
+
+def _is_library_object(doc, obj):
+    try:
+        if str(getattr(obj, "Name", "")).startswith("Proto") or str(getattr(obj, "Label", "")).startswith("Proto"):
+            return True
+    except Exception:
+        pass
+    try:
+        for g in doc.Objects:
+            if g.TypeId == "App::DocumentObjectGroup" and (g.Name == "_lib" or g.Label == "_lib"):
+                if obj in (g.Group or []):
+                    return True
+    except Exception:
+        pass
+    return False
+
+def _is_luminaire(obj):
+    try:
+        if hasattr(obj, "Tipo") and str(obj.Tipo) == "Luminaria":
+            return True
+    except Exception:
+        pass
+    name = f"{getattr(obj, 'Name', '')} {getattr(obj, 'Label', '')}".lower()
+    if "lumin" in name:
+        return True
+    if obj.TypeId == "App::Link":
+        try:
+            lo = getattr(obj, "LinkedObject", None)
+            if lo:
+                if hasattr(lo, "Tipo") and str(lo.Tipo) == "Luminaria":
+                    return True
+                name2 = f"{getattr(lo, 'Name', '')} {getattr(lo, 'Label', '')}".lower()
+                if "lumin" in name2:
+                    return True
+        except Exception:
+            pass
+    return False
+
+def _object_point_world(obj):
+    try:
+        sh = getattr(obj, "Shape", None)
+        if sh and not sh.isNull():
+            bb = sh.BoundBox
+            return App.Vector((bb.XMin + bb.XMax) / 2.0, (bb.YMin + bb.YMax) / 2.0, (bb.ZMin + bb.ZMax) / 2.0)
+    except Exception:
+        pass
+    try:
+        return obj.Placement.Base
+    except Exception:
+        return None
+
+def _group_label_matches(obj, tokens):
+    name = f"{getattr(obj, 'Name', '')} {getattr(obj, 'Label', '')}".lower()
+    return any(t in name for t in tokens)
+
+def _collect_group_members(group, out_set):
+    try:
+        for child in (group.Group or []):
+            if child is None:
+                continue
+            out_set.add(child)
+            if getattr(child, "TypeId", "") == "App::DocumentObjectGroup":
+                _collect_group_members(child, out_set)
+    except Exception:
+        pass
+
+def _find_groups_by_labels(doc, labels):
+    groups = []
+    if not labels:
+        return groups
+    labels_norm = [str(x).strip().lower() for x in labels if str(x).strip()]
+    if not labels_norm:
+        return groups
+    all_groups = [o for o in (doc.Objects or []) if getattr(o, "TypeId", "") == "App::DocumentObjectGroup"]
+    # Primero exactos
+    for g in all_groups:
+        name = str(getattr(g, "Name", "")).lower()
+        label = str(getattr(g, "Label", "")).lower()
+        for t in labels_norm:
+            if t == name or t == label:
+                groups.append(g)
+                break
+    # Luego parciales si no se encontraron todos
+    if len(groups) < len(labels_norm):
+        for g in all_groups:
+            if g in groups:
+                continue
+            name = str(getattr(g, "Name", "")).lower()
+            label = str(getattr(g, "Label", "")).lower()
+            for t in labels_norm:
+                if t in name or t in label:
+                    groups.append(g)
+                    break
+    return groups
+
+def collect_luminaires(doc, group_labels=None):
+    """Recolecta luminarias/objetos en grupos especificados y retorna puntos world."""
+    pts = []
+    groups = _find_groups_by_labels(doc, group_labels or [])
+    if group_labels:
+        if not groups:
+            return [], "ninguno"
+        objs = set()
+        for g in groups:
+            _collect_group_members(g, objs)
+        for obj in objs:
+            if obj is None:
+                continue
+            if _is_library_object(doc, obj):
+                continue
+            # Si esta dentro de grupo de luminarias, aceptarlo aunque no cumpla _is_luminaire
+            p = _object_point_world(obj)
+            if p is not None:
+                pts.append(p)
+        return pts, "grupos"
+
+    return pts, "ninguno"
+
+def _world_to_rect_local(p_world, rect_pos, rect_rot, rect_pl):
+    # Prefer Placement.inverse() to avoid Rotation API differences.
+    try:
+        if rect_pl is not None and hasattr(rect_pl, "inverse"):
+            inv_pl = rect_pl.inverse()
+            return inv_pl.multVec(p_world)
+    except Exception:
+        pass
+    inv_rot = None
+    try:
+        if rect_rot is not None and hasattr(rect_rot, "inverse"):
+            inv_rot = rect_rot.inverse()
+    except Exception:
+        inv_rot = None
+    if inv_rot is None:
+        try:
+            if rect_rot is not None and hasattr(rect_rot, "inverted"):
+                inv_rot = rect_rot.inverted()
+        except Exception:
+            inv_rot = None
+    if inv_rot is not None:
+        try:
+            return inv_rot.multVec(p_world - rect_pos)
+        except Exception:
+            pass
+    # Fallback: sin rotacion
+    return p_world - rect_pos
+
+def filter_luminaires_for_rect(lum_world_pts, rect_pos, rect_rot, rect_pl, width_mm, height_mm,
+                               use_only_inside, use_band, band_mm, inside_margin_mm=0.0):
+    if not lum_world_pts:
+        return []
+    pts_local = []
+    min_x = inside_margin_mm
+    min_y = inside_margin_mm
+    max_x = width_mm - inside_margin_mm
+    max_y = height_mm - inside_margin_mm
+    for p in lum_world_pts:
+        lp = _world_to_rect_local(p, rect_pos, rect_rot, rect_pl)
+        x, y = lp.x, lp.y
+        if use_band:
+            if (x >= -band_mm and x <= width_mm + band_mm and y >= -band_mm and y <= height_mm + band_mm):
+                pts_local.append((x, y))
+        elif use_only_inside:
+            if (x >= min_x and x <= max_x and y >= min_y and y <= max_y):
+                pts_local.append((x, y))
+        else:
+            pts_local.append((x, y))
+    return pts_local
+
+def validate_point(x_mm, y_mm, width_mm, height_mm, margin_mm, lum_pts_local, d_lum_mm):
+    if margin_mm > 0:
+        if x_mm < margin_mm or x_mm > (width_mm - margin_mm) or y_mm < margin_mm or y_mm > (height_mm - margin_mm):
+            return False, "borde"
+    if d_lum_mm > 0 and lum_pts_local:
+        d2 = d_lum_mm * d_lum_mm
+        for lx, ly in lum_pts_local:
+            dx = x_mm - lx
+            dy = y_mm - ly
+            if (dx * dx + dy * dy) <= d2:
+                return False, "luminaria"
+    return True, ""
+
+def _score_point(px, py, width_mm, height_mm, margin_mm, lum_pts_local):
+    border_dist = min(px - margin_mm, (width_mm - margin_mm) - px, py - margin_mm, (height_mm - margin_mm) - py)
+    # Distancia a esquinas (minima)
+    c1 = math.hypot(px - margin_mm, py - margin_mm)
+    c2 = math.hypot((width_mm - margin_mm) - px, py - margin_mm)
+    c3 = math.hypot(px - margin_mm, (height_mm - margin_mm) - py)
+    c4 = math.hypot((width_mm - margin_mm) - px, (height_mm - margin_mm) - py)
+    min_corner = min(c1, c2, c3, c4)
+    if not lum_pts_local:
+        # Preferir puntos lejos de esquinas y bordes
+        return (min_corner, border_dist, 1e9, 1e9)
+    dists = []
+    for lx, ly in lum_pts_local:
+        dx = px - lx
+        dy = py - ly
+        dists.append(math.hypot(dx, dy))
+    dists.sort()
+    min_d = dists[0]
+    k = min(3, len(dists))
+    avg_d = sum(dists[:k]) / float(k)
+    # Balancear: evitar quedar pegado a esquina aunque la luminaria este lejos
+    primary = min(min_d, min_corner)
+    return (primary, min_d, min_corner, border_dist, avg_d)
+
+def _best_point_from_candidates(cands, width_mm, height_mm, margin_mm, lum_pts_local, d_lum_mm):
+    best = None
+    best_score = None
+    for (px, py) in cands:
+        ok, _reason = validate_point(px, py, width_mm, height_mm, margin_mm, lum_pts_local, d_lum_mm)
+        if not ok:
+            continue
+        score = _score_point(px, py, width_mm, height_mm, margin_mm, lum_pts_local)
+        if best is None or score > best_score:
+            best = (px, py)
+            best_score = score
+    return best
+
+def _best_centerline_point(width_mm, height_mm, margin_mm, lum_pts_local, d_lum_mm):
+    if not lum_pts_local:
+        return None
+    cx = width_mm / 2.0
+    cy = height_mm / 2.0
+    tol = max(50.0, min(width_mm, height_mm) * 0.05)
+    cands = []
+    # Horizontal centerline
+    lum_h = [(x, y) for (x, y) in lum_pts_local if abs(y - cy) <= tol]
+    lum_h.sort(key=lambda p: p[0])
+    for i in range(len(lum_h) - 1):
+        x1, _y1 = lum_h[i]
+        x2, _y2 = lum_h[i + 1]
+        midx = (x1 + x2) / 2.0
+        cands.append((midx, cy))
+    # Vertical centerline
+    lum_v = [(x, y) for (x, y) in lum_pts_local if abs(x - cx) <= tol]
+    lum_v.sort(key=lambda p: p[1])
+    for i in range(len(lum_v) - 1):
+        _x1, y1 = lum_v[i]
+        _x2, y2 = lum_v[i + 1]
+        midy = (y1 + y2) / 2.0
+        cands.append((cx, midy))
+    if not cands:
+        return None
+    return _best_point_from_candidates(cands, width_mm, height_mm, margin_mm, lum_pts_local, d_lum_mm)
+
+def _best_point_global(width_mm, height_mm, margin_mm, lum_pts_local, d_lum_mm):
+    # Muestreo global 11x11 (ajustado a margenes)
+    steps = 11
+    if width_mm <= 2.0 * margin_mm or height_mm <= 2.0 * margin_mm:
+        return None
+    x0 = margin_mm
+    y0 = margin_mm
+    x1 = width_mm - margin_mm
+    y1 = height_mm - margin_mm
+    dx = (x1 - x0) / float(steps - 1)
+    dy = (y1 - y0) / float(steps - 1)
+    cands = []
+    for i in range(steps):
+        for j in range(steps):
+            cands.append((x0 + i * dx, y0 + j * dy))
+    return _best_point_from_candidates(cands, width_mm, height_mm, margin_mm, lum_pts_local, d_lum_mm)
+
+def _lum_pts_cell_local(lum_pts_local, x0, y0, x1, y1, d_lum_mm):
+    expand = max(0.0, float(d_lum_mm or 0.0))
+    pts = []
+    for lx, ly in lum_pts_local:
+        if (lx >= x0 - expand and lx <= x1 + expand and ly >= y0 - expand and ly <= y1 + expand):
+            pts.append((lx - x0, ly - y0))
+    return pts
+
+def plan_per_cell(width_mm, height_mm, cols, rows, margin_mm, lum_pts_local, d_lum_mm):
+    if cols < 1 or rows < 1:
+        return [], 0
+    dx = width_mm / float(cols)
+    dy = height_mm / float(rows)
+    pts = []
+    skipped = 0
+    for r in range(rows):
+        for c in range(cols):
+            x0 = c * dx
+            y0 = r * dy
+            x1 = x0 + dx
+            y1 = y0 + dy
+            if dx <= 2.0 * margin_mm or dy <= 2.0 * margin_mm:
+                skipped += 1
+                continue
+            lum_cell = _lum_pts_cell_local(lum_pts_local, x0, y0, x1, y1, d_lum_mm)
+            # Centro de celda
+            cx = dx / 2.0
+            cy = dy / 2.0
+            ok, _reason = validate_point(cx, cy, dx, dy, margin_mm, lum_cell, d_lum_mm)
+            if ok:
+                pts.append((x0 + cx, y0 + cy))
+                continue
+            # Entre luminarias en linea central de la celda
+            mid = _best_centerline_point(dx, dy, margin_mm, lum_cell, d_lum_mm)
+            if mid:
+                pts.append((x0 + mid[0], y0 + mid[1]))
+                continue
+            # Mejor punto global dentro de la celda
+            best = _best_point_global(dx, dy, margin_mm, lum_cell, d_lum_mm)
+            if best:
+                pts.append((x0 + best[0], y0 + best[1]))
+                continue
+            skipped += 1
+    return pts, skipped
+
+def _grid_step_mm(width_mm, height_mm, rcov_mm):
+    step = max(250.0, min(1000.0, rcov_mm / 6.0))
+    max_points = 20000
+    nx = int(math.ceil(width_mm / step)) + 1
+    ny = int(math.ceil(height_mm / step)) + 1
+    if nx * ny > max_points:
+        scale = math.sqrt((nx * ny) / float(max_points))
+        step *= scale
+    return step
+
+def coverage_ok(width_mm, height_mm, sensors_local, rcov_mm):
+    if not sensors_local:
+        return False
+    step = _grid_step_mm(width_mm, height_mm, rcov_mm)
+    rcov2 = rcov_mm * rcov_mm
+    y = 0.0
+    while y <= height_mm + 1e-6:
+        x = 0.0
+        while x <= width_mm + 1e-6:
+            dmin2 = None
+            for sx, sy in sensors_local:
+                dx = x - sx
+                dy = y - sy
+                d2 = dx * dx + dy * dy
+                if dmin2 is None or d2 < dmin2:
+                    dmin2 = d2
+            if dmin2 is None or dmin2 > rcov2:
+                return False
+            x += step
+        y += step
+    return True
+
+def _grid_positions(width_mm, height_mm, cols, rows, margin_mm):
+    inner_w = width_mm - 2.0 * margin_mm
+    inner_h = height_mm - 2.0 * margin_mm
+    if inner_w <= 0 or inner_h <= 0:
+        return []
+    dx = inner_w / float(cols)
+    dy = inner_h / float(rows)
+    pts = []
+    for r in range(rows):
+        for c in range(cols):
+            x = margin_mm + (c + 0.5) * dx
+            y = margin_mm + (r + 0.5) * dy
+            pts.append((x, y, dx, dy))
+    return pts
+
+def _adjust_point(x_mm, y_mm, dx_mm, dy_mm, width_mm, height_mm, margin_mm, lum_pts_local, d_lum_mm):
+    # Muestrear dentro de la celda (5x5) para buscar el punto mas lejos de luminarias/bordes.
+    step_x = dx_mm * 0.2
+    step_y = dy_mm * 0.2
+    offsets = []
+    for ix in (-2, -1, 0, 1, 2):
+        for iy in (-2, -1, 0, 1, 2):
+            offsets.append((ix * step_x, iy * step_y))
+
+    best = None
+    best_score = None
+    first_reason = ""
+    for ox, oy in offsets:
+        nx = x_mm + ox
+        ny = y_mm + oy
+        ok, _reason = validate_point(nx, ny, width_mm, height_mm, margin_mm, lum_pts_local, d_lum_mm)
+        if not ok:
+            if not first_reason and _reason:
+                first_reason = _reason
+            continue
+        score = _score_point(nx, ny, width_mm, height_mm, margin_mm, lum_pts_local)
+        if best is None or score > best_score:
+            best = (nx, ny)
+            best_score = score
+    if best:
+        return best, True, ""
+    return None, False, first_reason or "interferencia"
+
+def plan_nfpa(width_mm, height_mm, s_mm, rcov_mm, margin_mm, lum_pts_local, d_lum_mm):
+    # 1) Centro
+    center = (width_mm / 2.0, height_mm / 2.0)
+    center_ok, center_reason = validate_point(center[0], center[1], width_mm, height_mm, margin_mm, lum_pts_local, d_lum_mm)
+    corner_dist = math.hypot(width_mm / 2.0, height_mm / 2.0)
+    if center_ok and corner_dist <= rcov_mm:
+        return [center], "centro ok", {"luminaria": 0, "borde": 0}, ""
+
+    note = ""
+    if not center_ok and center_reason:
+        note = f"interferencia -> {center_reason}"
+
+    # 2) Dos puntos en eje largo
+    if width_mm >= height_mm:
+        pts2 = [(width_mm / 3.0, height_mm / 2.0), (2.0 * width_mm / 3.0, height_mm / 2.0)]
+    else:
+        pts2 = [(width_mm / 2.0, height_mm / 3.0), (width_mm / 2.0, 2.0 * height_mm / 3.0)]
+    ok2 = True
+    reason2 = ""
+    for x, y in pts2:
+        ok, _reason = validate_point(x, y, width_mm, height_mm, margin_mm, lum_pts_local, d_lum_mm)
+        if not ok:
+            ok2 = False
+            reason2 = _reason
+            break
+    if ok2 and coverage_ok(width_mm, height_mm, pts2, rcov_mm):
+        return pts2, "2_sensores", {"luminaria": 0, "borde": 0}, note
+    if not ok2 and not note and reason2:
+        note = f"interferencia -> {reason2}"
+
+    # 3) Reticula por S hasta cubrir
+    inner_w = width_mm - 2.0 * margin_mm
+    inner_h = height_mm - 2.0 * margin_mm
+    if inner_w <= 0 or inner_h <= 0:
+        return [], "sin_espacio_por_margen", {"luminaria": 0, "borde": 0}, note
+
+    cols = max(1, int(math.ceil(inner_w / max(1.0, s_mm))))
+    rows = max(1, int(math.ceil(inner_h / max(1.0, s_mm))))
+    invalid_reasons = {"luminaria": 0, "borde": 0}
+
+    last_pts = []
+    last_invalid = {"luminaria": 0, "borde": 0}
+    for _ in range(60):
+        pts = []
+        invalid_reasons = {"luminaria": 0, "borde": 0}
+        any_invalid = False
+        grid = _grid_positions(width_mm, height_mm, cols, rows, margin_mm)
+        for x, y, dx, dy in grid:
+            pt, ok, reason = _adjust_point(x, y, dx, dy, width_mm, height_mm, margin_mm, lum_pts_local, d_lum_mm)
+            if ok and pt:
+                pts.append(pt)
+            else:
+                any_invalid = True
+                if reason in invalid_reasons:
+                    invalid_reasons[reason] += 1
+        last_pts = pts
+        last_invalid = invalid_reasons
+        if not pts:
+            return [], "sin_puntos_validos", invalid_reasons, note
+        if coverage_ok(width_mm, height_mm, pts, rcov_mm) and not any_invalid:
+            return pts, "reticula", invalid_reasons, note
+        # Aumentar densidad
+        if (inner_w / cols) >= (inner_h / rows):
+            cols += 1
+        else:
+            rows += 1
+
+    # Fallback: devolver ultima reticula valida encontrada
+    return last_pts, "reticula_con_interferencias", last_invalid, note
+
+def plan_a1(width_mm, height_mm, a1_m2, margin_mm, lum_pts_local, d_lum_mm):
+    area_m2 = (width_mm * height_mm) / 1e6
+    a1 = max(0.1, float(a1_m2))
+    n = max(1, int(math.ceil(area_m2 / a1)))
+    # Preferir centro si es valido y hay al menos 1 sensor
+    center = (width_mm / 2.0, height_mm / 2.0)
+    center_ok, _center_reason = validate_point(center[0], center[1], width_mm, height_mm, margin_mm, lum_pts_local, d_lum_mm)
+    pts_pref = []
+    if n >= 1 and center_ok:
+        pts_pref.append(center)
+        n_rem = n - 1
+    else:
+        n_rem = n
+    # Si solo se requiere 1 sensor y el centro no es valido, buscar entre luminarias en linea central
+    if n == 1 and not center_ok:
+        mid = _best_centerline_point(width_mm, height_mm, margin_mm, lum_pts_local, d_lum_mm)
+        if mid:
+            return [mid], "entre_luminarias", {"luminaria": 0, "borde": 0}, ""
+        best = _best_point_global(width_mm, height_mm, margin_mm, lum_pts_local, d_lum_mm)
+        if best:
+            return [best], "mejor_punto", {"luminaria": 0, "borde": 0}, ""
+    aspect = width_mm / height_mm if height_mm > 0 else 1.0
+    cols = max(1, int(math.ceil(math.sqrt(max(1, n_rem) * aspect))))
+    rows = max(1, int(math.ceil(max(1, n_rem) / float(cols))))
+    last_pts = []
+    last_invalid = {"luminaria": 0, "borde": 0}
+    for _ in range(40):
+        grid = _grid_positions(width_mm, height_mm, cols, rows, margin_mm)
+        pts = list(pts_pref)
+        invalid_reasons = {"luminaria": 0, "borde": 0}
+        for x, y, dx, dy in grid:
+            if len(pts) >= n:
+                break
+            # Evitar duplicar el centro
+            if pts_pref:
+                if abs(x - center[0]) < (dx * 0.25) and abs(y - center[1]) < (dy * 0.25):
+                    continue
+            pt, ok, reason = _adjust_point(x, y, dx, dy, width_mm, height_mm, margin_mm, lum_pts_local, d_lum_mm)
+            if ok and pt:
+                pts.append(pt)
+            else:
+                if reason in invalid_reasons:
+                    invalid_reasons[reason] += 1
+        last_pts = pts
+        last_invalid = invalid_reasons
+        if len(pts) >= n:
+            return pts, "umbral_A1", invalid_reasons, ""
+        # Aumentar densidad para buscar mas puntos validos
+        if (width_mm / cols) >= (height_mm / rows):
+            cols += 1
+        else:
+            rows += 1
+    return last_pts, "umbral_A1_incompleto", last_invalid, ""
+
+# ---------------------------------------------------------------------------
+# UI
+# ---------------------------------------------------------------------------
+class DetectorNFPADialog(QtWidgets.QDialog):
+    def __init__(self, reg: dict, doc=None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Colocar detectores (NFPA)")
+        self.setMinimumWidth(520)
+        self.reg = reg
+        self.doc = doc
+        self._restoring = False
+        self._altura_user_set = False
+        self._has_saved = False
+
+        # General
+        self.cmbTipo = QtWidgets.QComboBox()
+        self.cmbTipo.addItems(type_keys_sorted_for_ui(self.reg))
+        self.cmbTipo.currentIndexChanged.connect(self._on_tipo_changed)
+
+        self.lePrefix = QtWidgets.QLineEdit("Sensor_")
+
+        self.spAltura = QtWidgets.QDoubleSpinBox()
+        self.spAltura.setRange(0.0, 10000.0)
+        self.spAltura.setDecimals(1)
+        self.spAltura.setSuffix(" mm")
+        self.spAltura.setValue(2400.0)
+        self.spAltura.valueChanged.connect(self._on_altura_changed)
+
+        # NFPA
+        self.cmbModo = QtWidgets.QComboBox()
+        self.cmbModo.addItems([MODE_A1, MODE_NFPA])
+        self.cmbModo.currentIndexChanged.connect(self._on_mode_changed)
+
+        self.spS = QtWidgets.QDoubleSpinBox()
+        self.spS.setRange(0.1, 50.0)
+        self.spS.setDecimals(2)
+        self.spS.setSuffix(" m")
+        self.spS.setValue(9.1)
+        self.spS.valueChanged.connect(self._update_rcov)
+
+        self.leRcov = QtWidgets.QLineEdit()
+        self.leRcov.setReadOnly(True)
+
+        self.spA1 = QtWidgets.QDoubleSpinBox()
+        self.spA1.setRange(1.0, 1000.0)
+        self.spA1.setDecimals(1)
+        self.spA1.setSuffix(" m2")
+        self.spA1.setValue(80.0)
+
+        self.spDHVAC = QtWidgets.QDoubleSpinBox()
+        self.spDHVAC.setRange(0.0, 10.0)
+        self.spDHVAC.setDecimals(2)
+        self.spDHVAC.setSuffix(" m")
+        self.spDHVAC.setValue(0.91)
+
+        self.spDLum = QtWidgets.QDoubleSpinBox()
+        self.spDLum.setRange(0.0, 10.0)
+        self.spDLum.setDecimals(2)
+        self.spDLum.setSuffix(" m")
+        self.spDLum.setValue(0.50)
+
+        self.spMargen = QtWidgets.QDoubleSpinBox()
+        self.spMargen.setRange(0.0, 10.0)
+        self.spMargen.setDecimals(2)
+        self.spMargen.setSuffix(" m")
+        self.spMargen.setValue(0.30)
+
+        # Interferencias > Luminarias
+        self.chkSoloInternas = QtWidgets.QCheckBox("Usar solo luminarias dentro del rectangulo")
+        self.chkSoloInternas.setChecked(True)
+
+        self.chkBanda = QtWidgets.QCheckBox("Considerar luminarias a X metros del borde")
+        self.chkBanda.setChecked(False)
+        self.chkBanda.toggled.connect(self._on_band_toggled)
+
+        self.spBanda = QtWidgets.QDoubleSpinBox()
+        self.spBanda.setRange(0.0, 10.0)
+        self.spBanda.setDecimals(2)
+        self.spBanda.setSuffix(" m")
+        self.spBanda.setValue(0.50)
+
+        self.lstGroupsAvail = QtWidgets.QListWidget()
+        self.lstGroupsSel = QtWidgets.QListWidget()
+        self.btnGroupAdd = QtWidgets.QPushButton("Agregar >>")
+        self.btnGroupRem = QtWidgets.QPushButton("<< Quitar")
+        self.btnGroupClr = QtWidgets.QPushButton("Limpiar")
+        self.btnGroupRef = QtWidgets.QPushButton("Refrescar")
+        self.btnGroupAdd.clicked.connect(self._on_groups_add)
+        self.btnGroupRem.clicked.connect(self._on_groups_remove)
+        self.btnGroupClr.clicked.connect(self._on_groups_clear)
+        self.btnGroupRef.clicked.connect(self._on_groups_refresh)
+
+        self.lblGroupsNote = QtWidgets.QLabel(
+            "Seleccione los grupos que contienen luminarias u otros elementos a evitar."
+        )
+        self.lblGroupsNote.setWordWrap(True)
+
+        self.lblBandNote = QtWidgets.QLabel(
+            "Nota: si 'a X del borde' esta activo, domina y usa rectangulo expandido,\n"
+            "aunque 'solo internas' este activo."
+        )
+        self.lblBandNote.setWordWrap(True)
+
+        self.lblHelp = QtWidgets.QLabel(
+            "S define la reticula nominal. La cobertura se verifica con Rcov=0.7*S para todo punto del rectangulo.\n"
+            "D_HVAC evita ubicar detectores cerca de difusores/retornos (guia 0.91 m).\n"
+            "Filtro de luminarias: solo internas reduce falsos choques; 'a X del borde' captura interferencias cercanas al perimetro."
+        )
+        self.lblHelp.setWordWrap(True)
+
+        # Layouts
+        grp_gen = QtWidgets.QGroupBox("General")
+        gen_form = QtWidgets.QFormLayout(grp_gen)
+        gen_form.addRow("Tipo (registro):", self.cmbTipo)
+        gen_form.addRow("Prefijo de nombre:", self.lePrefix)
+        gen_form.addRow("Altura (mm):", self.spAltura)
+
+        grp_nfpa = QtWidgets.QGroupBox("NFPA")
+        nfpa_form = QtWidgets.QFormLayout(grp_nfpa)
+        nfpa_form.addRow("Modo de calculo:", self.cmbModo)
+        nfpa_form.addRow("S (m):", self.spS)
+        nfpa_form.addRow("Rcov = 0.7*S (m):", self.leRcov)
+        nfpa_form.addRow("Umbral A1 (m2):", self.spA1)
+        nfpa_form.addRow("D_HVAC (m):", self.spDHVAC)
+        nfpa_form.addRow("D_lum (m):", self.spDLum)
+        nfpa_form.addRow("Margen_borde (m):", self.spMargen)
+
+        grp_int = QtWidgets.QGroupBox("Interferencias > Luminarias")
+        int_lay = QtWidgets.QVBoxLayout(grp_int)
+        int_lay.addWidget(self.chkSoloInternas)
+        row_band = QtWidgets.QHBoxLayout()
+        row_band.addWidget(self.chkBanda)
+        row_band.addWidget(self.spBanda)
+        row_band.addStretch(1)
+        int_lay.addLayout(row_band)
+        grp_pick = QtWidgets.QGroupBox("Grupos a considerar")
+        gp = QtWidgets.QGridLayout(grp_pick)
+        gp.addWidget(QtWidgets.QLabel("Disponibles"), 0, 0)
+        gp.addWidget(QtWidgets.QLabel("Seleccionados"), 0, 2)
+        gp.addWidget(self.lstGroupsAvail, 1, 0, 4, 1)
+        btn_col = QtWidgets.QVBoxLayout()
+        btn_col.addWidget(self.btnGroupAdd)
+        btn_col.addWidget(self.btnGroupRem)
+        btn_col.addWidget(self.btnGroupClr)
+        btn_col.addWidget(self.btnGroupRef)
+        btn_col.addStretch(1)
+        gp.addLayout(btn_col, 1, 1, 4, 1)
+        gp.addWidget(self.lstGroupsSel, 1, 2, 4, 1)
+        int_lay.addWidget(grp_pick)
+        int_lay.addWidget(self.lblGroupsNote)
+        int_lay.addWidget(self.lblBandNote)
+
+        btn_ok = QtWidgets.QPushButton("Insertar")
+        btn_cancel = QtWidgets.QPushButton("Cancelar")
+        btn_ok.clicked.connect(self.accept)
+        btn_cancel.clicked.connect(self.reject)
+
+        btn_row = QtWidgets.QHBoxLayout()
+        btn_row.addStretch(1)
+        btn_row.addWidget(btn_cancel)
+        btn_row.addWidget(btn_ok)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addWidget(grp_gen)
+        layout.addWidget(grp_nfpa)
+        layout.addWidget(grp_int)
+        layout.addWidget(self.lblHelp)
+        layout.addLayout(btn_row)
+
+        self._apply_defaults()
+        self._update_rcov()
+        self._on_mode_changed()
+        self._on_band_toggled(self.chkBanda.isChecked())
+        self._on_groups_refresh()
+        self._restore_params()
+        if not self._has_saved:
+            self._apply_defaults()
+
+    def _apply_defaults(self):
+        info = (self.reg.get("types") or {}).get(self.selected_key(), {}) or {}
+        defaults = info.get("defaults", {}) or {}
+        altura = defaults.get("altura")
+        if altura is not None and not self._altura_user_set:
+            try:
+                self.spAltura.setValue(float(altura))
+            except Exception:
+                pass
+
+    def _on_tipo_changed(self, _index):
+        self._apply_defaults()
+
+    def _on_altura_changed(self, _val):
+        if self._restoring:
+            return
+        self._altura_user_set = True
+
+    def _update_rcov(self):
+        rcov = 0.7 * float(self.spS.value())
+        self.leRcov.setText(f"{rcov:.2f}")
+
+    def _on_mode_changed(self):
+        is_a1 = self.cmbModo.currentText() == MODE_A1
+        self.spA1.setEnabled(is_a1)
+
+    def _on_band_toggled(self, checked):
+        self.spBanda.setEnabled(bool(checked))
+
+    def selected_key(self) -> str:
+        txt = self.cmbTipo.currentText().strip()
+        if txt == GENERIC_SENSOR_LABEL:
+            return ""
+        return txt
+
+    def name_prefix(self) -> str:
+        return self.lePrefix.text().strip() or "Sensor_"
+
+    def selected_altura(self) -> float:
+        return float(self.spAltura.value())
+
+    def modo_calc(self) -> str:
+        return self.cmbModo.currentText().strip()
+
+    def S_m(self) -> float:
+        return float(self.spS.value())
+
+    def Rcov_m(self) -> float:
+        return 0.7 * float(self.spS.value())
+
+    def A1_m2(self) -> float:
+        return float(self.spA1.value())
+
+    def D_HVAC_m(self) -> float:
+        return float(self.spDHVAC.value())
+
+    def D_lum_m(self) -> float:
+        return float(self.spDLum.value())
+
+    def margen_borde_m(self) -> float:
+        return float(self.spMargen.value())
+
+    def use_only_inside(self) -> bool:
+        return bool(self.chkSoloInternas.isChecked())
+
+    def use_band(self) -> bool:
+        return bool(self.chkBanda.isChecked())
+
+    def band_m(self) -> float:
+        return float(self.spBanda.value())
+
+    def group_labels(self) -> list:
+        labels = []
+        for i in range(self.lstGroupsSel.count()):
+            it = self.lstGroupsSel.item(i)
+            name = it.data(QtCore.Qt.UserRole)
+            if name:
+                labels.append(name)
+            else:
+                labels.append(it.text())
+        return labels
+
+    def _on_groups_refresh(self):
+        self.lstGroupsAvail.clear()
+        if not self.doc:
+            return
+        groups = [o for o in (self.doc.Objects or []) if getattr(o, "TypeId", "") == "App::DocumentObjectGroup"]
+        # Excluir grupos seleccionados ya
+        selected_names = set()
+        for i in range(self.lstGroupsSel.count()):
+            it = self.lstGroupsSel.item(i)
+            nm = it.data(QtCore.Qt.UserRole) or it.text()
+            selected_names.add(str(nm))
+        for g in groups:
+            name = getattr(g, "Name", "")
+            label = getattr(g, "Label", "") or name
+            if name in selected_names:
+                continue
+            text = f"{label} ({name})" if label != name else label
+            it = QtWidgets.QListWidgetItem(text)
+            it.setData(QtCore.Qt.UserRole, name)
+            self.lstGroupsAvail.addItem(it)
+
+    def _on_groups_add(self):
+        items = self.lstGroupsAvail.selectedItems()
+        if not items:
+            return
+        # evitar duplicados
+        existing = set()
+        for i in range(self.lstGroupsSel.count()):
+            it = self.lstGroupsSel.item(i)
+            nm = it.data(QtCore.Qt.UserRole) or it.text()
+            existing.add(str(nm))
+        for it in items:
+            name = it.data(QtCore.Qt.UserRole) or it.text()
+            if str(name) in existing:
+                continue
+            new_it = QtWidgets.QListWidgetItem(it.text())
+            new_it.setData(QtCore.Qt.UserRole, name)
+            self.lstGroupsSel.addItem(new_it)
+        self._on_groups_refresh()
+
+    def _on_groups_remove(self):
+        for it in self.lstGroupsSel.selectedItems():
+            row = self.lstGroupsSel.row(it)
+            self.lstGroupsSel.takeItem(row)
+        self._on_groups_refresh()
+
+    def _on_groups_clear(self):
+        self.lstGroupsSel.clear()
+        self._on_groups_refresh()
+
+    def _restore_params(self):
+        self._restoring = True
+        data = _load_sidecar(self.doc) if self.doc else None
+        if not data and (not self.doc or not getattr(self.doc, "FileName", "")):
+            # Documento sin archivo: usar valores globales
+            data = {
+                "tipo": _get_str("tipo", ""),
+                "modo_calc": _get_str("modo_calc", ""),
+                "S_m": _get_str("S_m", ""),
+                "A1_m2": _get_str("A1_m2", ""),
+                "D_HVAC_m": _get_str("D_HVAC_m", ""),
+                "D_lum_m": _get_str("D_lum_m", ""),
+                "Margen_m": _get_str("Margen_m", ""),
+                "Banda_m": _get_str("Banda_m", ""),
+                "Altura_mm": _get_str("Altura_mm", ""),
+                "solo_internas": _get_bool("solo_internas", self.chkSoloInternas.isChecked()),
+                "usar_banda": _get_bool("usar_banda", self.chkBanda.isChecked()),
+                "grupos": _get_str("grupos", ""),
+            }
+        if data:
+            self._has_saved = True
+            # Combo tipo
+            last_type = str(data.get("tipo") or "")
+            if last_type:
+                idx = self.cmbTipo.findText(last_type)
+                if idx >= 0:
+                    self.cmbTipo.setCurrentIndex(idx)
+            # Modo
+            last_modo = str(data.get("modo_calc") or "")
+            if last_modo:
+                idx = self.cmbModo.findText(last_modo)
+                if idx >= 0:
+                    self.cmbModo.setCurrentIndex(idx)
+            # Numericos
+            for key, widget in [
+                ("S_m", self.spS),
+                ("A1_m2", self.spA1),
+                ("D_HVAC_m", self.spDHVAC),
+                ("D_lum_m", self.spDLum),
+                ("Margen_m", self.spMargen),
+                ("Banda_m", self.spBanda),
+                ("Altura_mm", self.spAltura),
+            ]:
+                if key in data and data.get(key) not in (None, ""):
+                    try:
+                        widget.setValue(float(data.get(key)))
+                    except Exception:
+                        pass
+            # Checkboxes
+            if "solo_internas" in data:
+                self.chkSoloInternas.setChecked(bool(data.get("solo_internas")))
+            if "usar_banda" in data:
+                self.chkBanda.setChecked(bool(data.get("usar_banda")))
+
+            # Grupos seleccionados por nombre
+            raw = str(data.get("grupos") or "")
+            if raw:
+                names = [t.strip() for t in raw.split(",") if t.strip()]
+            else:
+                names = []
+            if names and self.doc:
+                self.lstGroupsSel.clear()
+                for nm in names:
+                    g = self.doc.getObject(nm)
+                    if not g:
+                        continue
+                    label = getattr(g, "Label", "") or nm
+                    text = f"{label} ({nm})" if label != nm else label
+                    it = QtWidgets.QListWidgetItem(text)
+                    it.setData(QtCore.Qt.UserRole, nm)
+                    self.lstGroupsSel.addItem(it)
+                self._on_groups_refresh()
+            # Altura viene de usuario -> no sobreescribir con defaults
+            if "Altura_mm" in data and data.get("Altura_mm") not in (None, ""):
+                self._altura_user_set = True
+        self._restoring = False
+
+    def _save_params(self):
+        data = {
+            "tipo": self.cmbTipo.currentText().strip(),
+            "modo_calc": self.cmbModo.currentText().strip(),
+            "S_m": self.spS.value(),
+            "A1_m2": self.spA1.value(),
+            "D_HVAC_m": self.spDHVAC.value(),
+            "D_lum_m": self.spDLum.value(),
+            "Margen_m": self.spMargen.value(),
+            "Banda_m": self.spBanda.value(),
+            "Altura_mm": self.spAltura.value(),
+            "solo_internas": self.chkSoloInternas.isChecked(),
+            "usar_banda": self.chkBanda.isChecked(),
+        }
+        names = []
+        for i in range(self.lstGroupsSel.count()):
+            it = self.lstGroupsSel.item(i)
+            nm = it.data(QtCore.Qt.UserRole) or it.text()
+            names.append(str(nm))
+        data["grupos"] = ",".join(names)
+
+        # Si hay archivo, guardar sidecar; si no, guardar global
+        if not _save_sidecar(self.doc, data):
+            _set_str("tipo", data["tipo"])
+            _set_str("modo_calc", data["modo_calc"])
+            _set_str("S_m", data["S_m"])
+            _set_str("A1_m2", data["A1_m2"])
+            _set_str("D_HVAC_m", data["D_HVAC_m"])
+            _set_str("D_lum_m", data["D_lum_m"])
+            _set_str("Margen_m", data["Margen_m"])
+            _set_str("Banda_m", data["Banda_m"])
+            _set_str("Altura_mm", data["Altura_mm"])
+            _set_bool("solo_internas", data["solo_internas"])
+            _set_bool("usar_banda", data["usar_banda"])
+            _set_str("grupos", data["grupos"])
+
+    def accept(self):
+        self._save_params()
+        super().accept()
+
+    def reject(self):
+        self._save_params()
+        super().reject()
+
+# ---------------------------------------------------------------------------
+# Insercion
+# ---------------------------------------------------------------------------
+def insert_sensor(doc, crear_toma_uno, key_reg: str, name_prefix: str,
+                  rect, rect_pos, rect_rot, x_local_mm, y_local_mm, idx_global: int,
+                  group=None, altura_rel=300.0, modo_visual="Ambos"):
+    obj = crear_toma_uno(
+        doc,
+        name_prefix=name_prefix,
+        key_registro=key_reg,
+        tipo_logico="Sensor"
+    )
+    if obj is None:
+        log_w("crear_toma_uno devolvio None; se omite.")
+        return None
+
+    try:
+        obj.AlturaRel = float(altura_rel)
+    except Exception:
+        pass
+    try:
+        obj.ModoVisual = modo_visual
+    except Exception:
+        pass
+    try:
+        obj.Categoria = "Cielo"
+    except Exception:
+        pass
+    # Forzar recurso 3D si el registro no lo tiene cargado aun
+    if key_reg == "Sensor_Humo":
+        try:
+            if hasattr(obj, "RecursoProto3D") and not getattr(obj, "RecursoProto3D"):
+                obj.RecursoProto3D = "Sensor de Humo.step"
+        except Exception:
+            pass
+
+    base = rect_pos + rect_rot.multVec(App.Vector(float(x_local_mm), float(y_local_mm), 0.0))
+    obj.Placement = App.Placement(base, rect_rot)
+
+    try:
+        obj.Label = f"{rect.Label}_{name_prefix}{idx_global:02d}"
+    except Exception:
+        pass
+
+    if group and hasattr(group, 'addObject'):
+        try:
+            group.addObject(obj)
+        except Exception:
+            pass
+
+    try:
+        obj.touch()
+    except Exception:
+        pass
+
+    return obj
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+def run():
+    doc = App.ActiveDocument or App.newDocument("Electrico")
+
+    rects = collect_rectangles_from_selection()
+    if not rects:
+        log_e("Debe seleccionar al menos un rectangulo (o grupo con rectangulos).")
+        return
+
+    reg = load_registry()
+    if not (reg.get("types") or {}):
+        log_e("El registro no tiene tipos definidos.")
+        return
+
+    dlg = DetectorNFPADialog(reg, doc, Gui.getMainWindow())
+    if dlg.exec_() != QtWidgets.QDialog.Accepted:
+        return
+
+    key = dlg.selected_key()
+    key_reg = key if key else None
+    name_prefix = dlg.name_prefix()
+    altura_rel = float(dlg.selected_altura())
+    modo_calc = dlg.modo_calc()
+    s_m = dlg.S_m()
+    rcov_m = dlg.Rcov_m()
+    a1_m2 = dlg.A1_m2()
+    d_hvac_m = dlg.D_HVAC_m()  # reservado (no se usa aun)
+    d_lum_m = dlg.D_lum_m()
+    margen_m = dlg.margen_borde_m()
+    use_only_inside = dlg.use_only_inside()
+    use_band = dlg.use_band()
+    band_m = dlg.band_m()
+
+    info_tipo = (reg.get('types') or {}).get(key, {}) or {}
+    defaults_tipo = info_tipo.get('defaults', {}) or {}
+    modo_raw = str(defaults_tipo.get('modo', 'Both'))
+    modo_map = {
+        'Both': 'Ambos', 'Ambos': 'Ambos',
+        'Solo2D': 'Solo2D', 'Solo 2D': 'Solo2D',
+        'Solo3D': 'Solo3D', 'Solo 3D': 'Solo3D'
+    }
+    modo_visual = modo_map.get(modo_raw, 'Ambos')
+
+    crear_toma_uno = get_crear_toma_uno()
+    if not crear_toma_uno:
+        return
+
+    group_labels = dlg.group_labels()
+    lum_world_pts, lum_source = collect_luminaires(doc, group_labels)
+    if group_labels:
+        log_i(f"Grupos indicados: {', '.join(group_labels)}")
+    log_i(f"Luminarias/objetos detectados: {len(lum_world_pts)} (fuente: {lum_source})")
+
+    group_label = (name_prefix.rstrip('_') or name_prefix or 'Sensores').strip()
+    group = ensure_sensor_group(doc, group_label)
+
+    created = 0
+    for rect in rects:
+        dims = rect_dims(rect)
+        if not dims:
+            log_e(f"El rectangulo '{rect.Label}' no tiene Length/Height validos.")
+            continue
+        width_mm, height_mm = dims
+        width_m = mm_to_m(width_mm)
+        height_m = mm_to_m(height_mm)
+
+        s_mm = m_to_mm(s_m)
+        rcov_mm = m_to_mm(rcov_m)
+        d_lum_mm = m_to_mm(d_lum_m)
+        margen_mm = m_to_mm(margen_m)
+        band_mm = m_to_mm(band_m)
+
+        rect_pl = rect.Placement
+        rect_pos = rect_pl.Base
+        rect_rot = rect_pl.Rotation
+
+        lum_local = filter_luminaires_for_rect(
+            lum_world_pts,
+            rect_pos,
+            rect_rot,
+            rect_pl,
+            width_mm,
+            height_mm,
+            use_only_inside,
+            use_band,
+            band_mm,
+            inside_margin_mm=margen_mm  # margen opcional para filtro interno
+        )
+
+        if use_band:
+            lum_desc = f"banda {band_m:.2f} m"
+        elif use_only_inside:
+            lum_desc = "internas"
+        else:
+            lum_desc = "todas"
+        if group_labels:
+            lum_desc = f"{lum_desc} | grupos: {', '.join(group_labels)}"
+
+        grid = rect_grid(rect)
+        if grid:
+            log_i(
+                f"Area {rect.Label}: W={width_m:.2f} m H={height_m:.2f} m | "
+                f"Cols={grid[0]} Rows={grid[1]} | modo=por_celda"
+            )
+        else:
+            log_i(
+                f"Area {rect.Label}: W={width_m:.2f} m H={height_m:.2f} m | "
+                f"S={s_m:.2f} m Rcov={rcov_m:.2f} m | modo={modo_calc}"
+            )
+
+        points_local = []
+        reason = ""
+        invalid_reasons = {"luminaria": 0, "borde": 0}
+        note = ""
+
+        if grid:
+            points_local, skipped = plan_per_cell(
+                width_mm, height_mm, grid[0], grid[1], margen_mm, lum_local, d_lum_mm
+            )
+            reason = "por_celda"
+            if skipped > 0:
+                note = f"celdas_sin_punto={skipped}"
+        else:
+            if modo_calc == MODE_A1:
+                points_local, reason, invalid_reasons, note = plan_a1(
+                    width_mm, height_mm, a1_m2, margen_mm, lum_local, d_lum_mm
+                )
+            else:
+                points_local, reason, invalid_reasons, note = plan_nfpa(
+                    width_mm, height_mm, s_mm, rcov_mm, margen_mm, lum_local, d_lum_mm
+                )
+
+        if not points_local:
+            log_w(f"Area {rect.Label}: no se generaron puntos validos (motivo={reason}).")
+            continue
+
+        for pt in points_local:
+            if insert_sensor(
+                doc, crear_toma_uno, key_reg, name_prefix, rect, rect_pos, rect_rot,
+                pt[0], pt[1], created + 1, group, altura_rel, modo_visual
+            ):
+                created += 1
+
+        inter_msg = ""
+        if invalid_reasons.get("luminaria", 0) > 0:
+            inter_msg = "interferencia -> luminaria"
+        elif invalid_reasons.get("borde", 0) > 0:
+            inter_msg = "interferencia -> borde"
+        if note and not inter_msg:
+            inter_msg = note
+
+        log_i(
+            f"Area {rect.Label}: sensores={len(points_local)} | motivo={reason}"
+            + (f" | {inter_msg}" if inter_msg else "")
+            + f" | luminarias consideradas: {lum_desc}"
+        )
+
+    try:
+        doc.recompute()
+    except Exception:
+        pass
+
+    tipo_txt = key if key else "Sensor (generico)"
+    log_i(f"Insercion finalizada. Creados {created} detector(es) de tipo '{tipo_txt}'.")
+    if d_hvac_m > 0:
+        log_i("Nota: D_HVAC esta disponible en el dialogo pero no se aplica aun.")
+
+if __name__ == "__main__":
+    run()

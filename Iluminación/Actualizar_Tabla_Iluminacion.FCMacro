@@ -1,0 +1,334 @@
+# -*- coding: utf-8 -*-
+"""
+Actualizar_Tabla_Iluminacion.FCMacro
+Actualiza la hoja "Tabla Iluminacion" a partir de "DatosRecintos".
+"""
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Draft
+import unicodedata
+
+doc = App.ActiveDocument
+if doc is None:
+    doc = App.newDocument("Iluminacion")
+
+
+def _col_index(letter):
+    try:
+        return ord(letter.upper()) - 64
+    except Exception:
+        return 0
+
+
+def _ensure_min_cols(sheet, min_cols):
+    try:
+        if hasattr(sheet, "ColumnCount") and sheet.ColumnCount < min_cols:
+            sheet.ColumnCount = min_cols
+    except Exception:
+        pass
+
+
+def _ensure_min_rows(sheet, min_rows):
+    try:
+        if hasattr(sheet, "RowCount") and sheet.RowCount < min_rows:
+            sheet.RowCount = min_rows
+    except Exception:
+        pass
+
+
+def _safe_get(sheet, addr, default=""):
+    try:
+        col = _col_index(addr[:1])
+        row = int(addr[1:])
+        if hasattr(sheet, "ColumnCount") and sheet.ColumnCount < col:
+            return default
+        if hasattr(sheet, "RowCount") and sheet.RowCount < row:
+            return default
+        return sheet.get(addr)
+    except Exception:
+        return default
+
+
+def _safe_set(sheet, addr, value):
+    try:
+        col = _col_index(addr[:1])
+        row = int(addr[1:])
+        _ensure_min_cols(sheet, col)
+        _ensure_min_rows(sheet, row)
+        sheet.set(addr, value)
+        return True
+    except Exception:
+        return False
+
+
+def _find_sheet(names_or_labels):
+    for obj in doc.Objects:
+        if obj.TypeId != "Spreadsheet::Sheet":
+            continue
+        if obj.Name in names_or_labels or obj.Label in names_or_labels:
+            return obj
+    return None
+
+
+def _find_sheet_label_prefix(prefix):
+    for obj in doc.Objects:
+        if obj.TypeId != "Spreadsheet::Sheet":
+            continue
+        try:
+            if obj.Label.startswith(prefix):
+                return obj
+        except Exception:
+            pass
+    return None
+
+
+def _remove_leading_apostrophe(txt):
+    if txt.startswith("'"):
+        return txt[1:].strip()
+    return txt
+
+
+def _remove_accents(txt):
+    s_norm = unicodedata.normalize("NFD", txt)
+    out = []
+    for c in s_norm:
+        if unicodedata.category(c) == "Mn":
+            continue
+        if c in ("ñ", "Ñ"):
+            out.append("n" if c == "ñ" else "N")
+        else:
+            out.append(c)
+    return "".join(out)
+
+
+def _truncar_area(area_str):
+    try:
+        val = float(area_str)
+        return f"{val:.2f} m2"
+    except Exception:
+        return area_str
+
+
+def _truncar_ilum(ilum_str):
+    try:
+        val = float(ilum_str)
+        return f"{val:.0f}%"
+    except Exception:
+        return ilum_str
+
+
+def _get_parent_group(obj):
+    if hasattr(obj, "InList") and obj.InList:
+        for padre in obj.InList:
+            if hasattr(padre, "Group"):
+                return padre
+    return None
+
+
+def _pick_target_group():
+    try:
+        sel = Gui.Selection.getSelection()
+    except Exception:
+        sel = []
+    if sel:
+        for obj in sel:
+            if hasattr(obj, "Group"):
+                return obj
+            parent = _get_parent_group(obj)
+            if parent:
+                return parent
+    fallback = doc.getObject("electrico")
+    if fallback and hasattr(fallback, "Group"):
+        return fallback
+    return None
+
+
+source = _find_sheet({"DatosRecintos"})
+if source is None:
+    source = _find_sheet({"Datos Recintos", "Datos_Recintos", "Hoja_Recintos", "Recintos"})
+source_found = source is not None
+if source is None:
+    App.Console.PrintWarning("No se encontro la hoja 'DatosRecintos'. Se actualiza solo encabezado de tabla.\n")
+
+dest = _find_sheet({"Tabla_Iluminacion", "Tabla Iluminacion"})
+if dest is None:
+    dest = _find_sheet_label_prefix("Tabla Iluminacion")
+if dest is None:
+    dest = doc.addObject("Spreadsheet::Sheet", "Tabla Iluminacion")
+    dest.Label = "Tabla Iluminacion"
+
+
+encabezados = [
+    "Recinto",
+    "Area (m2)",
+    "Largo (m)",
+    "Ancho (m)",
+    "Altura (m)",
+    "Filas",
+    "Columnas",
+    "Descripcion",
+    "Cantidad Seleccionada",
+    "Luminaria (Lm)",
+    "Iluminancia Media Deseada (Lux)",
+    "Flujo Luminoso Total (Lumens)",
+    "Numero Luminarias",
+    "E Final (Lux)",
+    "% Iluminacion Recomendada",
+]
+
+_ensure_min_cols(dest, len(encabezados))
+_ensure_min_rows(dest, 2)
+
+for col_index, header in enumerate(encabezados):
+    cell = chr(65 + col_index) + "1"
+    _safe_set(dest, cell, header)
+
+iluminancia_recomendada = {
+    "Oficina": 500,
+    "Pasillo": 50,
+    "Servicio Sanitario": 100,
+    "Sala de Reuniones": 300,
+    "Bodega": 70,
+    "Cocina": 300,
+    "Caja": 500,
+    "Plataforma": 500,
+    "Sala de Espera": 200,
+    "Archivo": 400,
+    "Cochera": 50,
+    "Parqueo": 20,
+    "Exteriores": 20,
+    "Trabajo Minucioso": 750,
+    "Taller": 200,
+    "Dormitorio": 200,
+}
+
+factor_utilizacion = 0.8
+factor_mantenimiento = 0.7
+
+data_range = ["A", "B", "C", "D", "E", "F", "G", "H"]
+row = 2
+
+while True:
+    valor_A = _safe_get(source, "A" + str(row))
+    if valor_A is None or valor_A == "":
+        break
+
+    fila_vacia = all(_safe_get(source, col + str(row)) in [None, ""] for col in data_range)
+    if fila_vacia:
+        break
+
+    for col_letter in data_range:
+        source_cell = col_letter + str(row)
+        dest_cell = col_letter + str(row)
+        valor = _safe_get(source, source_cell)
+        if valor in [None, ""]:
+            valor = ""
+        _safe_set(dest, dest_cell, str(valor))
+
+    descripcion = _safe_get(source, "H" + str(row))
+    if descripcion is None or descripcion == "":
+        descripcion = "Desconocido"
+
+    iluminancia = iluminancia_recomendada.get(str(descripcion).strip(), 300)
+
+    _safe_set(dest, "I" + str(row), f"=F{row}*G{row}")
+    _safe_set(dest, "J" + str(row), "4000")
+    _safe_set(dest, "K" + str(row), str(iluminancia))
+    _safe_set(dest, "L" + str(row), f"=B{row}*K{row}")
+    _safe_set(dest, "M" + str(row), f"=L{row}/J{row}")
+    _safe_set(dest, "N" + str(row), f"=(I{row}*J{row}/B{row})*{factor_utilizacion}*{factor_mantenimiento}")
+    _safe_set(dest, "O" + str(row), f"=(N{row}/K{row})*100")
+
+    row += 1
+
+dest.recompute()
+doc.recompute()
+
+if source_found:
+    App.Console.PrintMessage("Tabla Iluminacion actualizada desde DatosRecintos.\n")
+else:
+    App.Console.PrintWarning("Tabla Iluminacion actualizada sin fuente de recintos.\n")
+
+# ----------------------------
+# Actualizar etiquetas (si hay grupo seleccionado o electrico)
+# ----------------------------
+grupo = _pick_target_group()
+if not grupo:
+    App.Console.PrintWarning("No se encontro grupo para etiquetas (seleccion vacia y sin 'electrico').\n")
+else:
+    try:
+        num_filas = dest.RowCount
+    except Exception:
+        num_filas = 100
+
+    info_por_recinto = {}
+    for i in range(2, num_filas + 1):
+        rec = str(_safe_get(dest, f"A{i}") or "").strip()
+        if not rec:
+            break
+        rec_sin_ap = _remove_leading_apostrophe(rec)
+        rec_norm = _remove_accents(rec_sin_ap)
+        area = str(_safe_get(dest, f"B{i}") or "").strip()
+        desc = str(_safe_get(dest, f"H{i}") or "").strip()
+        ilum = str(_safe_get(dest, f"O{i}") or "").strip()
+        info_por_recinto[rec_norm] = (area, desc, ilum)
+
+    subgrupo_label = "Etiquetas"
+    subgrupo = None
+    for item in getattr(grupo, "Group", []) or []:
+        if getattr(item, "Label", "") == subgrupo_label and hasattr(item, "Group"):
+            subgrupo = item
+            break
+    if not subgrupo:
+        subgrupo = doc.addObject("App::DocumentObjectGroup", subgrupo_label)
+        grupo.addObject(subgrupo)
+    else:
+        # limpiar etiquetas previas
+        to_remove = list(getattr(subgrupo, "Group", []) or [])
+        for obj in to_remove:
+            try:
+                doc.removeObject(obj.Name)
+            except Exception:
+                pass
+
+    created = 0
+    for rect in getattr(grupo, "Group", []) or []:
+        if rect == subgrupo:
+            continue
+        rect_label = getattr(rect, "Label", "").strip()
+        if not rect_label:
+            continue
+        label_sin_ap = _remove_leading_apostrophe(rect_label)
+        label_norm = _remove_accents(label_sin_ap)
+        if label_norm not in info_por_recinto:
+            continue
+        area_str, desc_str, ilum_str = info_por_recinto[label_norm]
+        area_final = _truncar_area(area_str)
+        ilum_final = _truncar_ilum(ilum_str)
+        lineas = [label_sin_ap, area_final, desc_str, ilum_final]
+
+        if hasattr(rect, "Shape") and rect.Shape and hasattr(rect.Shape, "BoundBox"):
+            centro = rect.Shape.BoundBox.Center
+        else:
+            centro = rect.Placement.Base
+
+        texto_obj = Draft.make_text(lineas)
+        texto_obj.Label = "Etiqueta_" + label_sin_ap
+        texto_obj.Placement.Base = centro
+        if hasattr(texto_obj.ViewObject, "DrawStyle"):
+            try:
+                texto_obj.ViewObject.DrawStyle = "3D"
+            except Exception:
+                pass
+        if hasattr(texto_obj.ViewObject, "FontSize"):
+            texto_obj.ViewObject.FontSize = "200 mm"
+
+        try:
+            subgrupo.addObject(texto_obj)
+        except Exception:
+            pass
+        created += 1
+
+    doc.recompute()
+    App.Console.PrintMessage(f"Etiquetas actualizadas: {created}\n")

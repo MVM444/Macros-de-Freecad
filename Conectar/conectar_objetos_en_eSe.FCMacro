@@ -1,14 +1,24 @@
+# Icon: conectar_objetos_en_eSe.svg
+
 import FreeCAD
 import FreeCADGui
 import Part
 import Draft
 import math
-
+import os
+import sys
+_THIS_DIR = os.path.dirname(__file__) if '__file__' in globals() else ''
+if _THIS_DIR and _THIS_DIR not in sys.path:
+    sys.path.insert(0, _THIS_DIR)
+import importlib
+import conexiones_grouping as _conexiones_grouping_mod
+_conexiones_grouping_mod = importlib.reload(_conexiones_grouping_mod)
+ensure_conexiones_group = _conexiones_grouping_mod.ensure_conexiones_group
 def conectar_objetos_en_eSe():
     """
-    Esta macro conecta dos objetos seleccionados (aristas o caras) con una conexión en forma de "S".
-    La primera línea siempre saldrá perpendicular a la cara o la arista seleccionada.
-    Se aplicará un fillet en los vértices con radios más pequeños para evitar problemas.
+    Esta macro conecta dos objetos seleccionados (aristas o caras) con una conexiÃƒÂ³n en forma de "S".
+    La primera lÃƒÂ­nea siempre saldrÃƒÂ¡ perpendicular a la cara o la arista seleccionada.
+    Se aplicarÃƒÂ¡ un fillet en los vÃƒÂ©rtices con radios mÃƒÂ¡s pequeÃƒÂ±os para evitar problemas.
     """
     doc = FreeCAD.ActiveDocument
     selected_objects = FreeCADGui.Selection.getSelectionEx()
@@ -21,7 +31,7 @@ def conectar_objetos_en_eSe():
 
     def obtener_punto_y_direccion(selection_detail):
         """
-        Obtiene el punto central de una arista o cara y su dirección perpendicular.
+        Obtiene el punto central de una arista o cara y su direcciÃƒÂ³n perpendicular.
         """
         if selection_detail.HasSubObjects:
             for sub_obj in selection_detail.SubObjects:
@@ -41,7 +51,7 @@ def conectar_objetos_en_eSe():
     punto2, direccion2 = obtener_punto_y_direccion(selected_objects[1])
 
     if punto1 is None or punto2 is None:
-        FreeCAD.Console.PrintError("Error al obtener los puntos de conexión.\n")
+        FreeCAD.Console.PrintError("Error al obtener los puntos de conexiÃƒÂ³n.\n")
         return
 
     # Calcular las distancias en cada eje
@@ -65,30 +75,32 @@ def conectar_objetos_en_eSe():
     distancia_fillet = (punto_intermedio2 - punto_intermedio1).Length / 2
     radio_fillet = max(5 * (math.floor(distancia_fillet / 5)), 2, min(distancia_fillet / 2, 10))
 
-    # Crear subdirectorio para conexiones si no existe
-    grupo_conexiones = doc.getObject("Grupo_Conexiones")
-    if not grupo_conexiones:
-        grupo_conexiones = doc.addObject("App::DocumentObjectGroup", "Grupo_Conexiones")
+    grupo_conexiones = ensure_conexiones_group(
+        doc,
+        objects=[selected_objects[0].Object, selected_objects[1].Object],
+    )
 
-    # Imprimir puntos generados para depuración
-    FreeCAD.Console.PrintMessage("\nPuntos generados para la conexión:\n")
+    # Imprimir puntos generados para depuraciÃƒÂ³n
+    FreeCAD.Console.PrintMessage("\nPuntos generados para la conexiÃƒÂ³n:\n")
     FreeCAD.Console.PrintMessage(f"  - Punto 1 (Inicio): {punto1}\n")
     FreeCAD.Console.PrintMessage(f"  - Salida Perpendicular 1: {punto_intermedio1}\n")
     FreeCAD.Console.PrintMessage(f"  - Salida Perpendicular 2: {punto_intermedio2}\n")
     FreeCAD.Console.PrintMessage(f"  - Punto 4 (Final): {punto2}\n")
     FreeCAD.Console.PrintMessage(f"  - Radio de Fillet: {radio_fillet}\n")
 
-    # Crear la conexión con los puntos definidos
+    # Crear la conexiÃƒÂ³n con los puntos definidos
     puntos = [punto1, punto_intermedio1, punto_intermedio2, punto2]
     wire = Draft.make_wire(puntos, closed=False)
     wire.Label = f'Conexion_eSe_{selected_objects[0].Object.Name}_{selected_objects[1].Object.Name}'
     wire.FilletRadius = radio_fillet  # Aplicar fillet directamente en el Wire
 
-    # Agregar la conexión al grupo de conexiones
+    # Agregar la conexiÃƒÂ³n al grupo de conexiones
     grupo_conexiones.addObject(wire)
 
     # Actualizar documento
     doc.recompute()
 
-# Ejecutar la función
+# Ejecutar la funciÃƒÂ³n
 conectar_objetos_en_eSe()
+
+

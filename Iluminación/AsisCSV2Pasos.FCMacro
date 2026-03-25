@@ -1,0 +1,3437 @@
+# -*- coding: utf-8 -*-
+# MenuText: Asistente CSV 2 Pasos
+# ToolTip: Paso 1 CSV a Sketch, Paso 2 Sketch a Objetos
+# Icon: ColocarLuminarias.svg
+# Toolbar: Importar y Exportar
+
+import csv
+import io
+import json
+import os
+import collections
+import datetime
+import unicodedata
+import importlib
+
+import FreeCAD as App
+try:
+    import FreeCADGui as Gui
+except Exception:
+    Gui = None
+
+try:
+    from PySide2 import QtWidgets
+except Exception:
+    try:
+        from PySide import QtGui as QtWidgets
+    except Exception:
+        QtWidgets = None
+
+CSV_PATH = ""
+REGISTRY_PATH = r"C:\Users\marco\OneDrive - Caja Costarricense de Seguro Social\Documentos\FreeCAD\Macros\Macros-de-Freecad\Resources\registry\registry_electric.json"
+
+WORKBENCH_ID = "ElectricCRWorkbench"
+SCALE_DEFAULT = 1000.0
+ANCHOR_MODE_DEFAULT = "centroid"    # first | centroid
+MISSING_POLICY_DEFAULT = "skip"      # skip | fallback
+ALIGN_MODE_DEFAULT = "none"          # none | selected | object
+BASE_MODE_DEFAULT = "auto"           # auto | fallback_all
+LUM_INSERT_ENGINE_DEFAULT = "base"   # base | registry_link
+
+ELECTRICO_LABEL = "electrico"
+ELECTRICO_NAME = "electrico"
+ILUMINACION_LABEL = "Iluminacion"
+ILUMINACION_NAME = "Iluminacion"
+IMPORT_GROUP_LABEL = "CSV_Sketch_Import"
+IMPORT_GROUP_NAME = "CSV_Sketch_Import"
+POINTS_GROUP_LABEL = "Puntos_CSV_por_Tipo"
+POINTS_GROUP_NAME = "Puntos_CSV_por_Tipo"
+REF_GROUP_LABEL = "Referencias_CSV"
+REF_GROUP_NAME = "Referencias_CSV"
+ANCHOR_NAME = "CSV_Anchor"
+ANCHOR_LABEL = "CSV_Anchor"
+TARGET_NAME = "CSV_Target"
+TARGET_LABEL = "CSV_Target"
+OUTPUT_GROUP_LABEL = "Luminarias_Importadas"
+OUTPUT_GROUP_NAME = "Luminarias_Importadas"
+SKETCH_PREFIX = "PtsCSV"
+LINK_PREFIX = "Luminaria"
+SETTINGS_OBJ_NAME = "_CSV_Asis_Config"
+SETTINGS_OBJ_LABEL = "CSV_Asis_Config"
+SETTINGS_PROP_JSON = "ConfigJSON"
+
+CSV_NAME_TO_REGISTRY_KEY = {
+    "lamp emerg": "Luminaria 60x60",
+    "panel led p27540-36": "Luminaria 60x60",
+    "luminaria hermetica": "Luminaria 60x60",
+    "cascada": "Luminaria 60x60",
+    "apagador sencillo": "Apagador_Simple",
+    "apagador doble": "Apagador_Simple",
+    "sensor pir": "Sensor_Humo",
+    "rotulo salida": "Etiqueta_Circuito",
+}
+
+ELEMENT_KIND_OPTIONS = [
+    ("Auto", "__AUTO__"),
+    ("Pendiente (no insertar)", "__PENDING__"),
+    ("Techo", "techo"),
+    ("Apagador", "apagador"),
+    ("Toma", "toma"),
+    ("Sensor", "sensor"),
+    ("Rociador", "rociador"),
+    ("Altavoz", "altavoz"),
+    ("Camara", "camara"),
+    ("Etiqueta", "etiqueta"),
+    ("Otro", "otro"),
+]
+
+DEFAULT_REGKEY_BY_KIND = {
+    "apagador": "Apagador_Simple",
+    "toma": "Tomacorriente_120V",
+    "sensor": "Sensor_Humo",
+    "techo": "Luminaria 60x60",
+    "etiqueta": "Etiqueta_Circuito",
+}
+
+BASE_POSITIVE_HINTS = (
+    "master", "proto", "base", "plantilla", "lumin", "apagador",
+    "toma", "sensor", "etiqueta", "symbol", "modelo"
+)
+BASE_NOISE_HINTS = (
+    "conexion", "conector", "wire", "ruta", "linea", "line", "axis", "eje"
+)
+
+
+def log(msg):
+    App.Console.PrintMessage(str(msg) + "\n")
+
+
+def to_ascii(text):
+    if text is None:
+        return ""
+    n = unicodedata.normalize("NFKD", str(text))
+    return n.encode("ascii", "ignore").decode("ascii")
+
+
+def keynorm(text):
+    return "".join(ch for ch in to_ascii(text).lower() if ch.isalnum())
+
+
+def sanitize_name(text, fallback):
+    raw = to_ascii(text).strip()
+    chars = []
+    for ch in raw:
+        chars.append(ch if (ch.isalnum() or ch == "_") else "_")
+    name = "".join(chars).strip("_") or fallback
+    if name[0].isdigit():
+        name = "{}_{}".format(fallback, name)
+    return name
+
+
+def unique_value(base, used):
+    c = base
+    i = 1
+    while c in used:
+        c = "{}_{:03d}".format(base, i)
+        i += 1
+    used.add(c)
+    return c
+
+
+def is_group(obj):
+    if obj is None:
+        return False
+    t = getattr(obj, "TypeId", "")
+    if t.startswith("App::DocumentObjectGroup"):
+        return True
+    return hasattr(obj, "addObject") and hasattr(obj, "Group")
+
+
+def find_obj(doc, token):
+    if not token:
+        return None
+    obj = doc.getObject(token)
+    if obj is not None:
+        return obj
+    for it in doc.Objects:
+        if getattr(it, "Label", "") == token:
+            return it
+    return None
+
+
+def find_child_group(parent, label=None, name=None):
+    for child in getattr(parent, "Group", []) or []:
+        if not is_group(child):
+            continue
+        if label is not None and getattr(child, "Label", "") == label:
+            return child
+        if name is not None and getattr(child, "Name", "") == name:
+            return child
+    return None
+
+
+def make_unique_object_name(doc, base):
+    c = base
+    i = 1
+    while doc.getObject(c) is not None:
+        c = "{}_{:02d}".format(base, i)
+        i += 1
+    return c
+
+
+def create_group(doc, label, pref_name, parent=None):
+    name = make_unique_object_name(doc, sanitize_name(pref_name or label, "Group"))
+    g = doc.addObject("App::DocumentObjectGroup", name)
+    g.Label = label
+    if parent is not None:
+        parent.addObject(g)
+    return g
+
+
+def ensure_root_group(doc, label, pref_name):
+    by_name = doc.getObject(pref_name) if pref_name else None
+    if is_group(by_name):
+        return by_name
+    for obj in doc.Objects:
+        if is_group(obj) and getattr(obj, "Label", "") == label:
+            return obj
+    g = create_group(doc, label, pref_name)
+    log("[INFO] Grupo creado: {}".format(label))
+    return g
+
+
+def ensure_child_group(doc, parent, label, pref_name):
+    g = find_child_group(parent, label=label)
+    if g is not None:
+        return g
+    g = find_child_group(parent, name=pref_name)
+    if g is not None:
+        if getattr(g, "Label", "") != label:
+            g.Label = label
+        return g
+    g = create_group(doc, label, pref_name, parent)
+    log("[INFO] Subgrupo creado: {}/{}".format(parent.Label, label))
+    return g
+
+
+def parse_number(v, field, row):
+    t = str(v).strip() if v is not None else ""
+    if t == "":
+        raise ValueError("fila {}: {} vacio".format(row, field))
+    t = t.replace("\u00a0", "").replace(" ", "")
+    if "," in t and "." in t:
+        # Resolve mixed separators, keeping the last punctuation as decimal separator.
+        if t.rfind(",") > t.rfind("."):
+            t = t.replace(".", "").replace(",", ".")
+        else:
+            t = t.replace(",", "")
+    elif "," in t:
+        t = t.replace(",", ".")
+    try:
+        return float(t)
+    except Exception:
+        raise ValueError("fila {}: {} invalido ({})".format(row, field, t))
+
+
+def parse_number_optional(v):
+    if v is None:
+        return None
+    t = str(v).strip()
+    if not t:
+        return None
+    t = t.replace("\u00a0", "").replace(" ", "")
+    if "," in t and "." in t:
+        if t.rfind(",") > t.rfind("."):
+            t = t.replace(".", "").replace(",", ".")
+        else:
+            t = t.replace(",", "")
+    elif "," in t:
+        t = t.replace(",", ".")
+    try:
+        return float(t)
+    except Exception:
+        return None
+
+
+def open_csv_reader(path):
+    with open(path, "rb") as f:
+        raw = f.read()
+    text = None
+    used = None
+    tried = []
+    for enc in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
+        try:
+            text = raw.decode(enc)
+            used = enc
+            break
+        except Exception as ex:
+            tried.append("{} ({})".format(enc, ex))
+    if text is None:
+        raise RuntimeError("no se pudo decodificar CSV: {}".format("; ".join(tried)))
+
+    fobj = io.StringIO(text)
+    delim = ","
+    try:
+        d = csv.Sniffer().sniff(text[:4096], delimiters=",;|\t")
+        delim = d.delimiter
+    except Exception:
+        pass
+    reader = csv.DictReader(fobj, delimiter=delim)
+    return fobj, reader, used
+
+
+def get_project_dir(doc):
+    if doc is None:
+        return ""
+    fn = str(getattr(doc, "FileName", "") or "").strip()
+    if not fn:
+        return ""
+    if os.path.isfile(fn):
+        return os.path.dirname(fn)
+    if os.path.isdir(fn):
+        return fn
+    return ""
+
+
+def guess_default_csv_path(doc):
+    p = str(CSV_PATH or "").strip()
+    if p and os.path.isfile(p):
+        return p
+    root = get_project_dir(doc)
+    if not root or not os.path.isdir(root):
+        return ""
+    cand = []
+    try:
+        for nm in os.listdir(root):
+            if not str(nm).lower().endswith(".csv"):
+                continue
+            fp = os.path.join(root, nm)
+            if not os.path.isfile(fp):
+                continue
+            low = str(nm).lower()
+            score = 0
+            if "lumin" in low:
+                score += 12
+            if "eje" in low:
+                score += 3
+            try:
+                mt = os.path.getmtime(fp)
+            except Exception:
+                mt = 0.0
+            cand.append((score, mt, fp))
+    except Exception:
+        return ""
+    if not cand:
+        return ""
+    cand.sort(key=lambda t: (-t[0], -t[1], t[2].lower()))
+    return cand[0][2]
+
+
+def resolve_header(fieldnames, aliases, partials=None):
+    partials = partials or []
+    norm_map = {}
+    for h in fieldnames:
+        k = keynorm(h)
+        if k and k not in norm_map:
+            norm_map[k] = h
+    for a in aliases:
+        ka = keynorm(a)
+        if ka in norm_map:
+            return norm_map[ka]
+    for nk, orig in norm_map.items():
+        for p in partials:
+            kp = keynorm(p)
+            if kp and kp in nk:
+                return orig
+    return None
+
+
+def validate_headers(reader):
+    if not reader.fieldnames:
+        raise RuntimeError("CSV sin encabezados")
+    reader.fieldnames = [(h or "").strip() for h in reader.fieldnames]
+    kn = resolve_header(reader.fieldnames, ["nombre", "name", "blockname"], ["nombre", "name"])
+    kx = resolve_header(reader.fieldnames, ["x", "positionx", "insertionx", "coordenadax"], ["positionx", "insertionx", "coordenadax"])
+    ky = resolve_header(reader.fieldnames, ["y", "positiony", "insertiony", "coordenaday"], ["positiony", "insertiony", "coordenaday"])
+    kz = resolve_header(reader.fieldnames, ["z", "positionz", "insertionz", "coordenadaz"], ["positionz", "insertionz", "coordenadaz"])
+    miss = []
+    if kx is None:
+        miss.append("X")
+    if ky is None:
+        miss.append("Y")
+    if kz is None:
+        miss.append("Z")
+    if miss:
+        raise RuntimeError("faltan encabezados: {}".format(",".join(miss)))
+    return kn, kx, ky, kz
+
+
+def detect_optional_csv_headers(fieldnames):
+    fields = list(fieldnames or [])
+    k_unit = resolve_header(fields, ["blockunits", "units", "unidad", "unit"], ["blockunits", "unidad", "units"])
+    k_unit_factor = resolve_header(fields, ["unitfactor", "factorunidad", "factor"], ["unitfactor", "factorunidad"])
+    k_sx = resolve_header(fields, ["scalex", "escalax"], ["scalex", "escala"])
+    k_sy = resolve_header(fields, ["scaley", "escalay"], ["scaley", "escala"])
+    k_sz = resolve_header(fields, ["scalez", "escalaz"], ["scalez", "escala"])
+    return {
+        "unit": k_unit,
+        "unit_factor": k_unit_factor,
+        "sx": k_sx,
+        "sy": k_sy,
+        "sz": k_sz,
+    }
+
+
+def median_value(values):
+    vals = sorted(float(v) for v in values if v is not None)
+    n = len(vals)
+    if n == 0:
+        return None
+    mid = n // 2
+    if n % 2 == 1:
+        return vals[mid]
+    return (vals[mid - 1] + vals[mid]) / 2.0
+
+
+def quantile_value(values, q):
+    vals = sorted(float(v) for v in values if v is not None)
+    if not vals:
+        return None
+    if q <= 0.0:
+        return vals[0]
+    if q >= 1.0:
+        return vals[-1]
+    pos = (len(vals) - 1) * float(q)
+    lo = int(pos)
+    hi = min(lo + 1, len(vals) - 1)
+    frac = pos - lo
+    return vals[lo] * (1.0 - frac) + vals[hi] * frac
+
+
+def estimate_doc_extent_hint(doc):
+    if doc is None:
+        return None
+    vals = []
+    skip_names = {ANCHOR_NAME, TARGET_NAME, SETTINGS_OBJ_NAME}
+    for obj in getattr(doc, "Objects", []) or []:
+        if obj is None or is_group(obj):
+            continue
+        name = str(getattr(obj, "Name", "") or "")
+        if not name or name in skip_names:
+            continue
+        sh = getattr(obj, "Shape", None)
+        bb = getattr(sh, "BoundBox", None) if sh is not None else None
+        if bb is None:
+            continue
+        try:
+            max_abs = max(
+                abs(float(bb.XMin)), abs(float(bb.XMax)),
+                abs(float(bb.YMin)), abs(float(bb.YMax)),
+                abs(float(bb.ZMin)), abs(float(bb.ZMax)),
+            )
+            if max_abs > 1e-6:
+                vals.append(max_abs)
+        except Exception:
+            continue
+    return median_value(vals)
+
+
+def detect_unit_scale_hint(unit_values):
+    if not unit_values:
+        return None
+    unit_counter = collections.Counter(str(v or "").strip().lower() for v in unit_values if str(v or "").strip())
+    if not unit_counter:
+        return None
+    top = unit_counter.most_common(1)[0][0]
+    if "millimeter" in top or "milimetro" in top or top == "mm":
+        return 1.0
+    if "centimeter" in top or "centimetro" in top or top == "cm":
+        return 10.0
+    if "meter" in top or "metro" in top or top == "m":
+        return 1000.0
+    if "inch" in top or "pulg" in top or top == "in":
+        return 25.4
+    if "foot" in top or "pie" in top or top == "ft":
+        return 304.8
+    return None
+
+
+def suggest_scale_conservative(user_scale, raw_max, doc_hint=None, unit_hint=None):
+    scale = float(user_scale or 1.0)
+    if scale <= 0:
+        scale = 1.0
+    if raw_max <= 0:
+        return scale, ""
+
+    reasons = []
+    target = scale
+
+    # Prefer clear unit hints when they imply one of the standard import scales.
+    if unit_hint in (1.0, 10.0, 25.4, 304.8, 1000.0):
+        if scale in (1.0, 1000.0, 10.0, 25.4, 304.8) and abs(scale - unit_hint) > 1e-9:
+            target = unit_hint
+            reasons.append("unidad CSV sugiere escala {}".format(unit_hint))
+
+    # Use project geometry as safety net for under/over scale.
+    if doc_hint and doc_hint > 1.0:
+        ratio = (raw_max * target) / float(doc_hint)
+        if target <= 10.0 and raw_max < 500.0 and ratio < 0.05:
+            target = 1000.0
+            reasons.append("coordenadas muy pequenas frente al dibujo")
+        elif target >= 100.0 and raw_max > 200.0 and ratio > 20.0:
+            target = 1.0
+            reasons.append("coordenadas sobredimensionadas frente al dibujo")
+
+    return target, "; ".join(reasons)
+
+
+def detect_iqr_outlier_indexes(rows, mult=3.0):
+    if not rows or len(rows) < 8:
+        return [], {}
+
+    bounds = {}
+    for axis in ("x", "y", "z"):
+        vals = [float(it.get(axis, 0.0)) for it in rows]
+        q1 = quantile_value(vals, 0.25)
+        q3 = quantile_value(vals, 0.75)
+        if q1 is None or q3 is None:
+            continue
+        iqr = float(q3) - float(q1)
+        if abs(iqr) < 1e-12:
+            lo = min(vals) - 1e-9
+            hi = max(vals) + 1e-9
+        else:
+            lo = float(q1) - float(mult) * iqr
+            hi = float(q3) + float(mult) * iqr
+        bounds[axis] = (lo, hi)
+
+    if not bounds:
+        return [], {}
+
+    out_idx = []
+    for idx, row in enumerate(rows):
+        for axis, lim in bounds.items():
+            v = float(row.get(axis, 0.0))
+            if v < lim[0] or v > lim[1]:
+                out_idx.append(idx)
+                break
+    return out_idx, bounds
+
+def _vector_from_sub(sub):
+    if sub is None:
+        return None
+    if hasattr(sub, "Point"):
+        p = sub.Point
+        return App.Vector(float(p.x), float(p.y), float(p.z))
+    if hasattr(sub, "CenterOfMass"):
+        p = sub.CenterOfMass
+        return App.Vector(float(p.x), float(p.y), float(p.z))
+    if isinstance(sub, App.Vector):
+        return App.Vector(float(sub.x), float(sub.y), float(sub.z))
+    return None
+
+
+def get_selection_anchor_vector():
+    if not getattr(App, "GuiUp", False):
+        return None
+    try:
+        import FreeCADGui as Gui
+    except Exception:
+        return None
+
+    try:
+        sx = Gui.Selection.getSelectionEx() or []
+    except Exception:
+        sx = []
+    for ex in sx:
+        for sub in getattr(ex, "SubObjects", []) or []:
+            v = _vector_from_sub(sub)
+            if v is not None:
+                return v
+
+    try:
+        s = Gui.Selection.getSelection() or []
+    except Exception:
+        s = []
+    if not s:
+        return None
+
+    obj = s[0]
+    sh = getattr(obj, "Shape", None)
+    if sh is not None:
+        try:
+            if hasattr(sh, "CenterOfMass"):
+                c = sh.CenterOfMass
+                return App.Vector(float(c.x), float(c.y), float(c.z))
+        except Exception:
+            pass
+        try:
+            bb = sh.BoundBox
+            return App.Vector(float(bb.XMin + bb.XLength / 2.0), float(bb.YMin + bb.YLength / 2.0), float(bb.ZMin + bb.ZLength / 2.0))
+        except Exception:
+            pass
+
+    pl = getattr(obj, "Placement", None)
+    if pl is not None and getattr(pl, "Base", None) is not None:
+        b = pl.Base
+        return App.Vector(float(b.x), float(b.y), float(b.z))
+    return None
+
+
+def ensure_sketch_for_type(doc, g_points, type_name):
+    safe = type_name or "Generico"
+    label = "Puntos {}".format(safe)
+    for ch in getattr(g_points, "Group", []) or []:
+        if getattr(ch, "TypeId", "") == "Sketcher::SketchObject" and getattr(ch, "Label", "") == label:
+            return ch
+
+    base = sanitize_name("{}_{}".format(SKETCH_PREFIX, safe), SKETCH_PREFIX)
+    ex = doc.getObject(base)
+    if ex is not None and getattr(ex, "TypeId", "") == "Sketcher::SketchObject":
+        if ex not in (getattr(g_points, "Group", []) or []):
+            g_points.addObject(ex)
+        ex.Label = label
+        return ex
+
+    name = base if ex is None else make_unique_object_name(doc, base)
+    sk = doc.addObject("Sketcher::SketchObject", name)
+    sk.Label = label
+    g_points.addObject(sk)
+    return sk
+
+
+def add_point_to_sketch(sketch, x, y, z):
+    import Part
+    sketch.addGeometry(Part.Point(App.Vector(float(x), float(y), float(z))), False)
+
+
+def make_vertex_shape_origin():
+    import Part
+    creators = [
+        lambda: Part.makeVertex(0, 0, 0),
+        lambda: Part.Vertex(App.Vector(0, 0, 0)),
+        lambda: Part.Point(App.Vector(0, 0, 0)).toShape(),
+    ]
+    for fn in creators:
+        try:
+            shp = fn()
+            if shp is not None:
+                return shp
+        except Exception:
+            continue
+    raise RuntimeError("No se pudo crear vertice Part en esta version de FreeCAD")
+
+
+def ensure_ref_point(doc, g_ref, name, label, vec):
+    obj = doc.getObject(name)
+    if obj is None:
+        obj = doc.addObject("Part::Feature", name)
+        obj.Label = label
+    obj.Shape = make_vertex_shape_origin()
+    obj.Placement = App.Placement(App.Vector(float(vec.x), float(vec.y), float(vec.z)), App.Rotation())
+    if obj not in (getattr(g_ref, "Group", []) or []):
+        g_ref.addObject(obj)
+    return obj
+
+
+def clear_group_children(doc, grp):
+    for ch in list(getattr(grp, "Group", []) or []):
+        try:
+            grp.removeObject(ch)
+        except Exception:
+            pass
+        try:
+            doc.removeObject(ch.Name)
+        except Exception:
+            pass
+
+
+def extract_type_from_sketch(sk):
+    label = getattr(sk, "Label", "") or getattr(sk, "Name", "")
+    txt = str(label)
+    if txt.lower().startswith("puntos "):
+        return txt[7:].strip() or "Generico"
+    return txt.strip() or "Generico"
+
+
+def vector_from_geom(geom):
+    if geom is None:
+        return None
+    if hasattr(geom, "Point"):
+        p = geom.Point
+        return App.Vector(float(p.x), float(p.y), float(p.z))
+    if hasattr(geom, "X") and hasattr(geom, "Y") and hasattr(geom, "Z"):
+        return App.Vector(float(geom.X), float(geom.Y), float(geom.Z))
+    return None
+
+
+def rows_from_sketch_group(g_points):
+    rows = []
+    for ch in getattr(g_points, "Group", []) or []:
+        if getattr(ch, "TypeId", "") != "Sketcher::SketchObject":
+            continue
+        t = extract_type_from_sketch(ch)
+        pl = getattr(ch, "Placement", None)
+        for geom in (getattr(ch, "Geometry", []) or []):
+            v = vector_from_geom(geom)
+            if v is None:
+                continue
+            w = v
+            if pl is not None:
+                try:
+                    w = pl.multVec(v)
+                except Exception:
+                    base = getattr(pl, "Base", None)
+                    if base is not None:
+                        w = App.Vector(float(v.x) + float(base.x), float(v.y) + float(base.y), float(v.z) + float(base.z))
+            rows.append({"csv_name": t, "x": float(w.x), "y": float(w.y), "z": float(w.z)})
+    return rows
+
+
+def anchor_from_rows(rows, mode):
+    if not rows:
+        return None
+    m = str(mode or "").strip().lower()
+    if m == "first":
+        r = rows[0]
+        return App.Vector(float(r["x"]), float(r["y"]), float(r["z"]))
+    cx = sum(float(it["x"]) for it in rows) / float(len(rows))
+    cy = sum(float(it["y"]) for it in rows) / float(len(rows))
+    cz = sum(float(it["z"]) for it in rows) / float(len(rows))
+    return App.Vector(cx, cy, cz)
+
+
+def ref_point_world(obj):
+    if obj is None:
+        return None
+    pl = getattr(obj, "Placement", None)
+    if pl is not None and getattr(pl, "Base", None) is not None:
+        b = pl.Base
+        return App.Vector(float(b.x), float(b.y), float(b.z))
+    return None
+
+
+def format_vec(vec):
+    if vec is None:
+        return ""
+    return "{:.3f}, {:.3f}, {:.3f}".format(float(vec.x), float(vec.y), float(vec.z))
+
+
+def vector_to_list(vec):
+    if vec is None:
+        return []
+    return [float(vec.x), float(vec.y), float(vec.z)]
+
+
+def list_to_vector(vals):
+    if not isinstance(vals, (list, tuple)) or len(vals) != 3:
+        return None
+    try:
+        return App.Vector(float(vals[0]), float(vals[1]), float(vals[2]))
+    except Exception:
+        return None
+
+
+def set_object_selectable(obj, enabled):
+    vo = getattr(obj, "ViewObject", None)
+    if vo is None:
+        return False
+    changed = False
+    try:
+        if hasattr(vo, "Selectable"):
+            vo.Selectable = bool(enabled)
+            changed = True
+    except Exception:
+        pass
+    try:
+        if hasattr(vo, "Pickable"):
+            vo.Pickable = bool(enabled)
+            changed = True
+    except Exception:
+        pass
+    return changed
+
+
+def set_all_doc_links_selectable(doc, enabled=True):
+    if doc is None:
+        return 0
+    count = 0
+    for obj in getattr(doc, "Objects", []) or []:
+        if str(getattr(obj, "TypeId", "") or "") != "App::Link":
+            continue
+        vo = getattr(obj, "ViewObject", None)
+        if vo is None:
+            continue
+        try:
+            if hasattr(vo, "Selectable"):
+                vo.Selectable = bool(enabled)
+                count += 1
+        except Exception:
+            pass
+        try:
+            if hasattr(vo, "Pickable"):
+                vo.Pickable = bool(enabled)
+        except Exception:
+            pass
+    return count
+
+
+def unlock_pick_chain_for_links(doc):
+    if doc is None:
+        return 0
+    touched = 0
+    visited = set()
+    for obj in getattr(doc, "Objects", []) or []:
+        if str(getattr(obj, "TypeId", "") or "") != "App::Link":
+            continue
+        stack = [obj]
+        stack.extend(getattr(obj, "InList", []) or [])
+        stack.extend(getattr(obj, "OutList", []) or [])
+        while stack:
+            cur = stack.pop()
+            if cur is None:
+                continue
+            name = str(getattr(cur, "Name", "") or "")
+            if name and name in visited:
+                continue
+            if name:
+                visited.add(name)
+            vo = getattr(cur, "ViewObject", None)
+            if vo is not None:
+                changed = False
+                try:
+                    if hasattr(vo, "Selectable"):
+                        vo.Selectable = True
+                        changed = True
+                except Exception:
+                    pass
+                try:
+                    if hasattr(vo, "Pickable"):
+                        vo.Pickable = True
+                        changed = True
+                except Exception:
+                    pass
+                if changed:
+                    touched += 1
+            for n in getattr(cur, "InList", []) or []:
+                stack.append(n)
+            for n in getattr(cur, "OutList", []) or []:
+                stack.append(n)
+    return touched
+
+
+def set_selectable_recursive(root_obj, enabled, include_links=False):
+    if root_obj is None:
+        return 0
+    count = 0
+    visited = set()
+    stack = [root_obj]
+    while stack:
+        obj = stack.pop()
+        if obj is None:
+            continue
+        name = str(getattr(obj, "Name", "") or "")
+        if name and name in visited:
+            continue
+        if name:
+            visited.add(name)
+        tid = str(getattr(obj, "TypeId", "") or "")
+        if tid == "App::Link" and not include_links:
+            # Keep links selectable; only protect/unprotect masters.
+            continue
+        if set_object_selectable(obj, enabled):
+            count += 1
+        for ch in getattr(obj, "OutList", []) or []:
+            stack.append(ch)
+    return count
+
+
+def canonical_link_base(obj):
+    if obj is None:
+        return None
+
+    best_any = obj
+    best_any_depth = 0
+    best_part = None
+    best_part_depth = -1
+
+    visited = set()
+    stack = [(obj, 0)]
+    while stack:
+        node, depth = stack.pop()
+        nname = str(getattr(node, "Name", "") or "")
+        if nname and nname in visited:
+            continue
+        if nname:
+            visited.add(nname)
+
+        if depth > 0 and is_candidate_base(node):
+            if depth > best_any_depth:
+                best_any = node
+                best_any_depth = depth
+            if str(getattr(node, "TypeId", "")).startswith("App::Part"):
+                if depth > best_part_depth:
+                    best_part = node
+                    best_part_depth = depth
+
+        for parent in getattr(node, "InList", []) or []:
+            stack.append((parent, depth + 1))
+
+    return best_part if best_part is not None else best_any
+
+
+def break_selected_links_to_copies():
+    if not getattr(App, "GuiUp", False):
+        log("[ERROR] GUI no disponible para romper links.")
+        return
+    try:
+        import FreeCADGui as Gui
+    except Exception:
+        log("[ERROR] No se pudo importar FreeCADGui.")
+        return
+
+    doc = App.ActiveDocument
+    if doc is None:
+        log("[ERROR] No hay documento activo.")
+        return
+
+    sel = Gui.Selection.getSelection() or []
+    links = []
+    for obj in sel:
+        if obj is None:
+            continue
+        tid = str(getattr(obj, "TypeId", "") or "")
+        if tid == "App::Link" or hasattr(obj, "LinkedObject") or hasattr(obj, "Link"):
+            links.append(obj)
+
+    if not links:
+        log("[WARN] Seleccione al menos un App::Link.")
+        return
+
+    made = 0
+    fail = 0
+    doc.openTransaction("ElectricCR: Romper Links")
+    try:
+        for lk in links:
+            linked = None
+            try:
+                linked = getattr(lk, "LinkedObject", None)
+            except Exception:
+                linked = None
+            if linked is None:
+                try:
+                    linked = getattr(lk, "Link", None)
+                except Exception:
+                    linked = None
+            if linked is None:
+                fail += 1
+                log("[WARN] Link sin objeto base: {}".format(getattr(lk, "Name", "?")))
+                continue
+
+            dup = None
+            try:
+                dup = doc.copyObject(linked, True)
+            except Exception:
+                try:
+                    dup = doc.copyObject(linked, False)
+                except Exception as ex:
+                    fail += 1
+                    log("[WARN] No se pudo copiar '{}': {}".format(getattr(linked, "Name", "?"), ex))
+                    continue
+
+            try:
+                lp = getattr(lk, "Placement", None)
+                if lp is not None:
+                    try:
+                        dup.Placement = lp
+                    except Exception:
+                        try:
+                            dup.BasePlacement = lp
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+            try:
+                dup.Label = str(getattr(lk, "Label", "") or getattr(dup, "Label", ""))
+            except Exception:
+                pass
+
+            for parent in getattr(lk, "InList", []) or []:
+                if is_group(parent):
+                    try:
+                        parent.addObject(dup)
+                    except Exception:
+                        pass
+
+            try:
+                doc.removeObject(lk.Name)
+            except Exception:
+                pass
+            made += 1
+
+        doc.recompute()
+        doc.commitTransaction()
+    except Exception as ex:
+        doc.abortTransaction()
+        log("[ERROR] Romper links cancelado: {}".format(ex))
+        return
+
+    log("[INFO] Links convertidos a copia: {} | Fallos: {}".format(made, fail))
+
+
+def summarize_rows(rows):
+    if not rows:
+        return "sin filas"
+    xs = [float(it.get("x", 0.0)) for it in rows]
+    ys = [float(it.get("y", 0.0)) for it in rows]
+    zs = [float(it.get("z", 0.0)) for it in rows]
+    types = sorted(set(str(it.get("csv_name", "") or "") for it in rows if str(it.get("csv_name", "") or "").strip()))
+    return "N={} | X:[{:.3f},{:.3f}] Y:[{:.3f},{:.3f}] Z:[{:.3f},{:.3f}] | Tipos:{}".format(
+        len(rows), min(xs), max(xs), min(ys), max(ys), min(zs), max(zs), len(types)
+    )
+
+
+def find_group_by_label(doc, label):
+    for obj in doc.Objects:
+        if is_group(obj) and getattr(obj, "Label", "") == label:
+            return obj
+    return None
+
+
+def group_has_points_subgroup(grp):
+    if grp is None or not is_group(grp):
+        return False
+    return find_child_group(grp, label=POINTS_GROUP_LABEL, name=POINTS_GROUP_NAME) is not None
+
+
+def list_import_groups(doc):
+    out = []
+    seen = set()
+    target_norm = keynorm(IMPORT_GROUP_LABEL)
+    for obj in getattr(doc, "Objects", []) or []:
+        if not is_group(obj):
+            continue
+        name = getattr(obj, "Name", "")
+        if not name or name in seen:
+            continue
+        label = str(getattr(obj, "Label", "") or "")
+        n = keynorm(label)
+        name_n = keynorm(name)
+        if "csvsketchimport" in n or "csvsketchimport" in name_n or n == target_norm:
+            out.append(obj)
+            seen.add(name)
+
+    if not out:
+        maybe = find_group_by_label(doc, IMPORT_GROUP_LABEL)
+        if maybe is not None:
+            out.append(maybe)
+
+    def score(g):
+        pts = 0
+        if str(getattr(g, "Label", "")) == IMPORT_GROUP_LABEL:
+            pts += 8
+        if group_has_points_subgroup(g):
+            pts += 25
+        if object_in_group_tree(g, ILUMINACION_LABEL):
+            pts += 6
+        if object_in_group_tree(g, ELECTRICO_LABEL):
+            pts += 4
+        return (-pts, str(getattr(g, "Label", "")).lower(), str(getattr(g, "Name", "")).lower())
+
+    out.sort(key=score)
+    return out
+
+
+def normalize_group_token(doc, token):
+    tok = str(token or "").strip()
+    if not tok:
+        return ""
+    obj = doc.getObject(tok)
+    if is_group(obj):
+        return tok
+    if tok.endswith(")") and "(" in tok:
+        cand = tok[tok.rfind("(") + 1:-1].strip()
+        if cand:
+            obj2 = doc.getObject(cand)
+            if is_group(obj2):
+                return cand
+    return tok
+
+
+def resolve_import_group(doc, token, require_points=False):
+    tok = normalize_group_token(doc, token)
+    direct = doc.getObject(tok) if tok else None
+    if is_group(direct):
+        if require_points and not group_has_points_subgroup(direct):
+            pass
+        else:
+            return direct
+
+    candidates = list_import_groups(doc)
+    if tok:
+        labeled = [g for g in candidates if str(getattr(g, "Label", "")).strip() == tok]
+        if require_points:
+            labeled_with_pts = [g for g in labeled if group_has_points_subgroup(g)]
+            if labeled_with_pts:
+                return labeled_with_pts[0]
+        if labeled:
+            return labeled[0]
+
+    if require_points:
+        with_pts = [g for g in candidates if group_has_points_subgroup(g)]
+        if with_pts:
+            return with_pts[0]
+    if candidates:
+        return candidates[0]
+    return None
+
+
+def group_path_label(obj):
+    if obj is None:
+        return ""
+    parts = [str(getattr(obj, "Label", "") or getattr(obj, "Name", ""))]
+    seen = {getattr(obj, "Name", "")}
+    node = obj
+    for _ in range(8):
+        parents = [p for p in (getattr(node, "InList", []) or []) if is_group(p)]
+        if not parents:
+            break
+        parent = sorted(parents, key=lambda p: str(getattr(p, "Label", "") or getattr(p, "Name", "")))[0]
+        pname = getattr(parent, "Name", "")
+        if not pname or pname in seen:
+            break
+        seen.add(pname)
+        parts.append(str(getattr(parent, "Label", "") or pname))
+        node = parent
+    parts.reverse()
+    return "/".join(p for p in parts if p)
+
+
+def read_anchor_target_vectors(doc, import_token):
+    g_imp = resolve_import_group(doc, import_token, require_points=False)
+    if g_imp is None:
+        return None, None
+    g_ref = find_child_group(g_imp, label=REF_GROUP_LABEL, name=REF_GROUP_NAME)
+    if g_ref is None:
+        return None, None
+    anchor = None
+    target = None
+    for r in getattr(g_ref, "Group", []) or []:
+        n = str(getattr(r, "Name", "") or "")
+        lb = str(getattr(r, "Label", "") or "")
+        if n == ANCHOR_NAME or lb == ANCHOR_LABEL:
+            anchor = ref_point_world(r)
+        elif n == TARGET_NAME or lb == TARGET_LABEL:
+            target = ref_point_world(r)
+    return anchor, target
+
+
+def move_import_sketches_by_points(import_token, source_vec, target_vec):
+    doc = App.ActiveDocument
+    if doc is None:
+        log("[ERROR] No hay documento activo.")
+        return False
+    if source_vec is None or target_vec is None:
+        log("[ERROR] Debe definir punto origen y punto destino.")
+        return False
+
+    g_imp = resolve_import_group(doc, import_token, require_points=True)
+    if g_imp is None:
+        log("[ERROR] No existe grupo origen valido (token='{}').".format(import_token))
+        return False
+    g_pts = find_child_group(g_imp, label=POINTS_GROUP_LABEL, name=POINTS_GROUP_NAME)
+    if g_pts is None:
+        log("[ERROR] No existe subgrupo de puntos: {}".format(POINTS_GROUP_LABEL))
+        return False
+    g_ref = find_child_group(g_imp, label=REF_GROUP_LABEL, name=REF_GROUP_NAME)
+
+    dx = float(target_vec.x) - float(source_vec.x)
+    dy = float(target_vec.y) - float(source_vec.y)
+    dz = float(target_vec.z) - float(source_vec.z)
+
+    moved = 0
+    doc.openTransaction("ElectricCR: mover sketches CSV por 2 puntos")
+    try:
+        for sk in getattr(g_pts, "Group", []) or []:
+            if getattr(sk, "TypeId", "") != "Sketcher::SketchObject":
+                continue
+            pl = getattr(sk, "Placement", None)
+            if pl is None:
+                continue
+            base = getattr(pl, "Base", App.Vector(0, 0, 0))
+            sk.Placement = App.Placement(
+                App.Vector(float(base.x) + dx, float(base.y) + dy, float(base.z) + dz),
+                getattr(pl, "Rotation", App.Rotation())
+            )
+            moved += 1
+
+        if g_ref is not None:
+            for r in getattr(g_ref, "Group", []) or []:
+                n = getattr(r, "Name", "")
+                lb = getattr(r, "Label", "")
+                if n == ANCHOR_NAME or lb == ANCHOR_LABEL:
+                    pl = getattr(r, "Placement", None)
+                    if pl is not None and getattr(pl, "Base", None) is not None:
+                        b = pl.Base
+                        r.Placement = App.Placement(
+                            App.Vector(float(b.x) + dx, float(b.y) + dy, float(b.z) + dz),
+                            getattr(pl, "Rotation", App.Rotation())
+                        )
+                    break
+
+        doc.recompute()
+        doc.commitTransaction()
+        log("[INFO] Sketches movidos por 2 puntos. Delta: dX={} dY={} dZ={} | Sketches: {}".format(dx, dy, dz, moved))
+        return True
+    except Exception as ex:
+        doc.abortTransaction()
+        log("[ERROR] No se pudo mover sketches: {}".format(ex))
+        return False
+
+
+def load_registry_keys():
+    p = str(REGISTRY_PATH or "").strip()
+    if not p or not os.path.isfile(p):
+        return []
+    try:
+        with open(p, "r", encoding="utf-8-sig") as f:
+            data = json.load(f)
+        types = (data.get("types") or {}) if isinstance(data, dict) else {}
+        if isinstance(types, dict):
+            return sorted(types.keys(), key=lambda x: str(x).lower())
+    except Exception as ex:
+        log("[WARN] No se pudo leer registro: {}".format(ex))
+    return []
+
+
+def load_registry_types_dict():
+    p = str(REGISTRY_PATH or "").strip()
+    if not p or not os.path.isfile(p):
+        return {}
+    try:
+        with open(p, "r", encoding="utf-8-sig") as f:
+            data = json.load(f)
+        types = (data.get("types") or {}) if isinstance(data, dict) else {}
+        if isinstance(types, dict):
+            return dict(types)
+    except Exception as ex:
+        log("[WARN] No se pudo leer registro (types): {}".format(ex))
+    return {}
+
+
+def mode_from_registry_defaults(info):
+    defaults = (info or {}).get("defaults", {}) if isinstance(info, dict) else {}
+    raw = str(defaults.get("modo", "Both") or "Both")
+    mode_map = {
+        "Both": "Ambos",
+        "Ambos": "Ambos",
+        "Solo2D": "Solo2D",
+        "Solo 2D": "Solo2D",
+        "Solo3D": "Solo3D",
+        "Solo 3D": "Solo3D",
+    }
+    return mode_map.get(raw, "Ambos")
+
+
+def altura_from_registry_defaults(info):
+    defaults = (info or {}).get("defaults", {}) if isinstance(info, dict) else {}
+    try:
+        return float(defaults.get("altura", 300.0))
+    except Exception:
+        return 300.0
+
+
+def ensure_simple_property(obj, ptype, pname, pgroup, pdoc):
+    if obj is None:
+        return
+    if hasattr(obj, pname):
+        return
+    try:
+        obj.addProperty(ptype, pname, pgroup, pdoc)
+    except Exception:
+        pass
+
+
+def float_near(a, b, eps=1e-6):
+    try:
+        return abs(float(a) - float(b)) <= float(eps)
+    except Exception:
+        return False
+
+
+def find_existing_lnk_master(doc, key_registro, altura_rel, modo_visual):
+    if doc is None:
+        return None
+    target_key = str(key_registro or "").strip()
+    target_mode = str(modo_visual or "Ambos").strip() or "Ambos"
+    for obj in getattr(doc, "Objects", []) or []:
+        if str(getattr(obj, "TypeId", "") or "") == "App::Link":
+            continue
+        k = str(getattr(obj, "LnkMasterKey", "") or "").strip()
+        if k != target_key:
+            continue
+        m = str(getattr(obj, "LnkMasterMode", "") or "").strip()
+        if m != target_mode:
+            continue
+        h = getattr(obj, "LnkMasterAltura", None)
+        if not float_near(h, altura_rel):
+            continue
+        return obj
+    return None
+
+
+def ensure_link_library_group(doc):
+    if doc is None:
+        return None
+    g_e = ensure_root_group(doc, ELECTRICO_LABEL, ELECTRICO_NAME)
+
+    glib = doc.getObject("_lib")
+    if glib is None:
+        glib = doc.addObject("App::DocumentObjectGroup", "_lib")
+        glib.Label = "_lib"
+    if glib not in (getattr(g_e, "Group", []) or []):
+        try:
+            g_e.addObject(glib)
+        except Exception:
+            pass
+
+    target_label = "Luminarias_Link_Masters"
+    for child in getattr(glib, "Group", []) or []:
+        if getattr(child, "TypeId", "") == "App::DocumentObjectGroup" and getattr(child, "Label", "") == target_label:
+            return child
+
+    name = make_unique_object_name(doc, sanitize_name(target_label, "Group"))
+    grp = doc.addObject("App::DocumentObjectGroup", name)
+    grp.Label = target_label
+    try:
+        glib.addObject(grp)
+    except Exception:
+        pass
+    return grp
+
+
+def ensure_registry_link_master(doc, crear_toma_uno, key_registro, altura_rel, modo_visual, group=None, reuse=True):
+    if doc is None or not callable(crear_toma_uno):
+        return None
+    key_registro = str(key_registro or "").strip()
+    if not key_registro:
+        return None
+    modo_visual = str(modo_visual or "Ambos").strip() or "Ambos"
+
+    if reuse:
+        old = find_existing_lnk_master(doc, key_registro, altura_rel, modo_visual)
+        if old is not None:
+            return old
+
+    master = crear_toma_uno(
+        doc,
+        name_prefix="MasterLink_",
+        key_registro=key_registro,
+        tipo_logico="Luminaria",
+    )
+    if master is None:
+        return None
+
+    try:
+        master.AlturaRel = float(altura_rel)
+    except Exception:
+        pass
+    try:
+        master.ModoVisual = str(modo_visual)
+    except Exception:
+        pass
+    try:
+        master.OrientacionPared = "Vertical"
+    except Exception:
+        pass
+    try:
+        master.Placement = App.Placement(App.Vector(0, 0, 0), App.Rotation())
+    except Exception:
+        pass
+
+    ensure_simple_property(master, "App::PropertyString", "LnkMasterKey", "Link", "Key de registro del master link")
+    ensure_simple_property(master, "App::PropertyFloat", "LnkMasterAltura", "Link", "Altura del master link")
+    ensure_simple_property(master, "App::PropertyString", "LnkMasterMode", "Link", "Modo visual del master link")
+    try:
+        master.LnkMasterKey = str(key_registro)
+        master.LnkMasterAltura = float(altura_rel)
+        master.LnkMasterMode = str(modo_visual)
+    except Exception:
+        pass
+
+    try:
+        master.Label = "Master Link {} {}mm {}".format(
+            str(key_registro), int(round(float(altura_rel))), str(modo_visual)
+        )
+    except Exception:
+        pass
+
+    set_csv_kind_metadata(master, "techo")
+
+    if group is not None and master not in (getattr(group, "Group", []) or []):
+        try:
+            group.addObject(master)
+        except Exception:
+            pass
+
+    try:
+        vo = getattr(master, "ViewObject", None)
+        if vo is not None:
+            vo.Visibility = False
+            if hasattr(vo, "Selectable"):
+                vo.Selectable = False
+            if hasattr(vo, "Pickable"):
+                vo.Pickable = False
+    except Exception:
+        pass
+
+    return master
+
+def resolve_registry_key(csv_name, reg_keys):
+    if not csv_name:
+        return ""
+    n = keynorm(csv_name)
+    if not n:
+        return ""
+    for k, v in CSV_NAME_TO_REGISTRY_KEY.items():
+        if keynorm(k) == n:
+            return str(v).strip()
+    for rk in reg_keys:
+        nr = keynorm(rk)
+        if nr == n or n in nr or nr in n:
+            return rk
+    return ""
+
+
+def normalize_kind_token(value):
+    k = keynorm(value)
+    if k in ("", "auto"):
+        return "__AUTO__"
+    if k in ("pending", "pendiente", "noinsertar", "omitir", "skip"):
+        return "__PENDING__"
+    if k in ("techo", "cielo", "luminaria"):
+        return "techo"
+    if k in ("apagador", "interruptor", "switch"):
+        return "apagador"
+    if k in ("toma", "tomacorriente", "outlet"):
+        return "toma"
+    if k in ("sensor",):
+        return "sensor"
+    if k in ("rociador", "sprinkler"):
+        return "rociador"
+    if k in ("altavoz", "parlante", "speaker"):
+        return "altavoz"
+    if k in ("camara", "camera"):
+        return "camara"
+    if k in ("etiqueta", "rotulo", "label"):
+        return "etiqueta"
+    return "otro"
+
+
+def infer_kind_token(type_name, reg_key=""):
+    n = keynorm(type_name)
+    r = keynorm(reg_key)
+    alln = "{} {}".format(n, r)
+    if "apagador" in alln or "switch" in alln or "interruptor" in alln:
+        return "apagador"
+    if "toma" in alln or "tomacorriente" in alln or "outlet" in alln:
+        return "toma"
+    if "sensor" in alln or "pir" in alln or "humo" in alln:
+        return "sensor"
+    if "rociador" in alln or "sprinkler" in alln:
+        return "rociador"
+    if "altavoz" in alln or "parlante" in alln or "speaker" in alln:
+        return "altavoz"
+    if "camara" in alln or "camera" in alln:
+        return "camara"
+    if "etiqueta" in alln or "rotulo" in alln or "label" in alln:
+        return "etiqueta"
+    if "lumin" in alln or "techo" in alln or "cielo" in alln or "panel" in alln or "lamp" in alln:
+        return "techo"
+    return "otro"
+
+
+def kind_prefers_device(kind_token):
+    return kind_token in ("apagador", "toma", "sensor", "rociador", "altavoz", "camara")
+
+
+def logical_tipo_from_kind(kind_token):
+    if kind_token == "apagador":
+        return "Apagador"
+    if kind_token == "toma":
+        return "Toma"
+    if kind_token == "sensor":
+        return "Sensor"
+    if kind_token == "rociador":
+        return "Rociador"
+    if kind_token == "altavoz":
+        return "Altavoz"
+    if kind_token == "camara":
+        return "Camara"
+    if kind_token == "techo":
+        return "Luminaria"
+    return "Dispositivo"
+
+
+def set_csv_kind_metadata(obj, kind_token):
+    if obj is None:
+        return
+    txt = str(kind_token or "").strip()
+    try:
+        if not hasattr(obj, "CsvKind"):
+            obj.addProperty("App::PropertyString", "CsvKind", "CSV", "Tipo funcional del asistente CSV")
+        obj.CsvKind = txt
+    except Exception:
+        pass
+
+
+def ensure_electriccr_on_path():
+    for mod_name in ("ElectricCR", "electriccr"):
+        try:
+            importlib.import_module(mod_name)
+            return True
+        except Exception:
+            continue
+    return False
+
+
+def get_crear_toma_uno():
+    if not ensure_electriccr_on_path():
+        return None
+    for mod_name in (
+        "ElectricCR.electriccr.features.objeto_toma_uno",
+        "electriccr.features.objeto_toma_uno",
+    ):
+        try:
+            mod = importlib.import_module(mod_name)
+            fn = getattr(mod, "crear_toma_uno", None)
+            if callable(fn):
+                return fn
+        except Exception:
+            continue
+    return None
+
+
+def ensure_workbench():
+    if not getattr(App, "GuiUp", False):
+        return True
+    try:
+        import FreeCADGui as Gui
+    except Exception as ex:
+        log("[ERROR] No se pudo importar FreeCADGui: {}".format(ex))
+        return False
+    try:
+        wbs = Gui.listWorkbenches() or {}
+        if WORKBENCH_ID not in wbs:
+            log("[ERROR] Workbench '{}' no esta cargado.".format(WORKBENCH_ID))
+            return False
+        Gui.activateWorkbench(WORKBENCH_ID)
+        log("[INFO] Workbench activo: {}".format(WORKBENCH_ID))
+    except Exception as ex:
+        log("[ERROR] No se pudo activar workbench: {}".format(ex))
+        return False
+    return True
+
+def is_candidate_base(obj):
+    if obj is None:
+        return False
+    tid = getattr(obj, "TypeId", "")
+    if tid.startswith("App::Part"):
+        return True
+    if is_group(obj) or tid == "App::Link" or tid.startswith("Sketcher::"):
+        return False
+    if tid.startswith("App::Origin"):
+        return False
+    proxy = getattr(obj, "Proxy", None)
+    ptype = str(getattr(proxy, "Type", "") or "").lower()
+    if ptype in {"rectangle", "wire", "line", "circle", "arc", "ellipse", "bspline", "bezcurve"}:
+        return False
+    return True
+
+
+def object_in_group_tree(obj, wanted_label):
+    w = str(wanted_label or "").strip().lower()
+    if not w:
+        return False
+    visited = set()
+
+    def walk(node):
+        if node is None:
+            return False
+        key = getattr(node, "Name", None)
+        if key and key in visited:
+            return False
+        if key:
+            visited.add(key)
+        if is_group(node) and str(getattr(node, "Label", "")).strip().lower() == w:
+            return True
+        for p in getattr(node, "InList", []) or []:
+            if walk(p):
+                return True
+        return False
+
+    return walk(obj)
+
+
+def has_candidate_ancestor(obj, candidate_names):
+    if obj is None:
+        return False
+    visited = set()
+    stack = list(getattr(obj, "InList", []) or [])
+    while stack:
+        parent = stack.pop()
+        pname = getattr(parent, "Name", "")
+        if pname in visited:
+            continue
+        visited.add(pname)
+        if pname and pname in candidate_names:
+            return True
+        for p2 in getattr(parent, "InList", []) or []:
+            stack.append(p2)
+    return False
+
+
+def list_base_candidates(doc):
+    pre = []
+    for obj in doc.Objects:
+        if not is_candidate_base(obj):
+            continue
+        if not object_in_group_tree(obj, ELECTRICO_LABEL):
+            continue
+        pre.append(obj)
+
+    candidate_names = set(getattr(it, "Name", "") for it in pre)
+    out = []
+    for obj in pre:
+        # Keep only root candidates to avoid subparts (e.g. Thickness).
+        if has_candidate_ancestor(obj, candidate_names):
+            continue
+
+        txt = "{} {}".format(getattr(obj, "Name", ""), getattr(obj, "Label", "")).lower()
+        has_noise = any(tok in txt for tok in BASE_NOISE_HINTS)
+        has_positive = any(tok in txt for tok in BASE_POSITIVE_HINTS)
+        if has_noise and not has_positive:
+            continue
+        out.append(obj)
+
+    def score(item):
+        txt = "{} {}".format(getattr(item, "Name", ""), getattr(item, "Label", "")).lower()
+        pts = 0
+        if "lumin" in txt:
+            pts += 12
+        if "proto" in txt:
+            pts += 8
+        if "master" in txt:
+            pts += 6
+        if object_in_group_tree(item, "_lib"):
+            pts += 6
+        if str(getattr(item, "TypeId", "")).startswith("Part::"):
+            pts += 2
+        if str(getattr(item, "TypeId", "")).startswith("App::Part"):
+            pts += 5
+        return (-pts, getattr(item, "Label", "").lower(), getattr(item, "Name", "").lower())
+
+    out.sort(key=score)
+    return out
+
+
+def find_best_base_for_type(type_name, base_candidates):
+    if not type_name:
+        return None
+    low = str(type_name).strip().lower()
+    norm = keynorm(type_name)
+    for obj in base_candidates:
+        if getattr(obj, "Name", "").lower() == low or getattr(obj, "Label", "").lower() == low:
+            return obj
+    for obj in base_candidates:
+        if keynorm(getattr(obj, "Name", "")) == norm or keynorm(getattr(obj, "Label", "")) == norm:
+            return obj
+    for obj in base_candidates:
+        n1 = keynorm(getattr(obj, "Name", ""))
+        n2 = keynorm(getattr(obj, "Label", ""))
+        if norm and (norm in n1 or norm in n2 or n1 in norm or n2 in norm):
+            return obj
+    return None
+
+
+def list_sketch_types_from_import_group(doc, import_token):
+    g_imp = resolve_import_group(doc, import_token, require_points=True)
+    if g_imp is None:
+        return []
+    g_pts = find_child_group(g_imp, label=POINTS_GROUP_LABEL, name=POINTS_GROUP_NAME)
+    if g_pts is None:
+        return []
+    out = []
+    for ch in getattr(g_pts, "Group", []) or []:
+        if getattr(ch, "TypeId", "") != "Sketcher::SketchObject":
+            continue
+        out.append(extract_type_from_sketch(ch))
+    return sorted(set(out), key=lambda s: str(s).lower())
+
+
+def ensure_settings_object(doc, create=False):
+    obj = doc.getObject(SETTINGS_OBJ_NAME)
+    if obj is None and create:
+        obj = doc.addObject("App::DocumentObjectGroup", SETTINGS_OBJ_NAME)
+        obj.Label = SETTINGS_OBJ_LABEL
+        try:
+            if hasattr(obj, "ViewObject"):
+                obj.ViewObject.Visibility = False
+        except Exception:
+            pass
+    if obj is None:
+        return None
+    try:
+        if not hasattr(obj, SETTINGS_PROP_JSON):
+            obj.addProperty("App::PropertyString", SETTINGS_PROP_JSON, "CSV", "Configuracion del asistente CSV")
+            setattr(obj, SETTINGS_PROP_JSON, "{}")
+    except Exception:
+        pass
+    return obj
+
+
+def load_doc_settings(doc):
+    obj = ensure_settings_object(doc, create=False)
+    if obj is None:
+        return {}
+    raw = str(getattr(obj, SETTINGS_PROP_JSON, "") or "").strip()
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+    return {}
+
+
+def save_doc_settings(doc, data):
+    if not isinstance(data, dict):
+        return
+    obj = ensure_settings_object(doc, create=True)
+    if obj is None:
+        return
+    try:
+        raw = json.dumps(data, ensure_ascii=True, sort_keys=True)
+        setattr(obj, SETTINGS_PROP_JSON, raw)
+    except Exception as ex:
+        log("[WARN] No se pudo guardar configuracion CSV: {}".format(ex))
+
+
+def run_step1(params):
+    doc = App.ActiveDocument
+    if doc is None:
+        log("[ERROR] No hay documento activo.")
+        return
+
+    csv_path = str(params.get("csv_path", "")).strip()
+    if not csv_path or not os.path.isfile(csv_path):
+        log("[ERROR] CSV no encontrado: {}".format(csv_path))
+        return
+
+    scale = float(params.get("scale", 1.0))
+    auto_scale = bool(params.get("auto_scale", True))
+    filter_outliers = bool(params.get("filter_outliers", True))
+    outlier_mult = float(params.get("outlier_mult", 3.0))
+    preview_only = bool(params.get("preview_only", False))
+    if outlier_mult < 1.0:
+        outlier_mult = 3.0
+    clear_prev = bool(params.get("clear_prev", True))
+    anchor_mode = str(params.get("anchor_mode", "centroid")).strip().lower()
+    create_target = bool(params.get("create_target", True))
+
+    rows = []
+    rows_raw = []
+    skipped = 0
+    unit_values = []
+    row_scale_values = []
+    fobj, reader, enc = open_csv_reader(csv_path)
+    log("[INFO] CSV encoding detectado: {}".format(enc))
+    try:
+        kn, kx, ky, kz = validate_headers(reader)
+        hopt = detect_optional_csv_headers(getattr(reader, "fieldnames", []) or [])
+        for rn, row in enumerate(reader, start=2):
+            try:
+                x = parse_number(row.get(kx), "X", rn)
+                y = parse_number(row.get(ky), "Y", rn)
+                z = parse_number(row.get(kz), "Z", rn)
+                name = (row.get(kn) or "").strip() if kn is not None else ""
+
+                unit_txt = ""
+                if hopt.get("unit"):
+                    unit_txt = str(row.get(hopt["unit"]) or "").strip()
+                if unit_txt:
+                    unit_values.append(unit_txt)
+
+                sx = parse_number_optional(row.get(hopt["sx"])) if hopt.get("sx") else None
+                sy = parse_number_optional(row.get(hopt["sy"])) if hopt.get("sy") else None
+                sz = parse_number_optional(row.get(hopt["sz"])) if hopt.get("sz") else None
+                row_scale = median_value([v for v in (sx, sy, sz) if v is not None])
+                if row_scale is not None:
+                    row_scale_values.append(row_scale)
+
+                rows_raw.append({
+                    "row_n": rn,
+                    "csv_name": name or "Generico",
+                    "x_raw": x,
+                    "y_raw": y,
+                    "z_raw": z,
+                    "row_scale": row_scale,
+                })
+            except Exception as ex:
+                skipped += 1
+                log("[WARN] Fila {} omitida: {}".format(rn, ex))
+    finally:
+        fobj.close()
+
+    if not rows_raw:
+        log("[WARN] No hay filas validas.")
+        return
+
+    raw_max = 0.0
+    for it in rows_raw:
+        raw_max = max(raw_max, abs(float(it["x_raw"])), abs(float(it["y_raw"])), abs(float(it["z_raw"])))
+    unit_hint = detect_unit_scale_hint(unit_values)
+    doc_hint = estimate_doc_extent_hint(doc)
+
+    scale_used = float(scale)
+    if auto_scale:
+        scale_auto, scale_reason = suggest_scale_conservative(scale, raw_max, doc_hint=doc_hint, unit_hint=unit_hint)
+        if abs(float(scale_auto) - float(scale)) > 1e-12:
+            scale_used = float(scale_auto)
+            tail = " ({})".format(scale_reason) if scale_reason else ""
+            log("[INFO] Autoescala Paso 1: {} -> {}{}".format(scale, scale_used, tail))
+    log("[INFO] Escala aplicada Paso 1: {}".format(scale_used))
+
+    for it in rows_raw:
+        rows.append({
+            "row_n": it["row_n"],
+            "csv_name": it["csv_name"],
+            "x": float(it["x_raw"]) * scale_used,
+            "y": float(it["y_raw"]) * scale_used,
+            "z": float(it["z_raw"]) * scale_used,
+            "row_scale": it.get("row_scale"),
+        })
+
+    if row_scale_values:
+        med_scale = median_value(row_scale_values)
+        if med_scale and med_scale > 0:
+            strange = []
+            lo = med_scale / 5.0
+            hi = med_scale * 5.0
+            for it in rows:
+                rs = it.get("row_scale")
+                if rs is None:
+                    continue
+                if rs < lo or rs > hi:
+                    strange.append(it)
+            if strange:
+                sample = ", ".join("fila {} ({:.3f})".format(it.get("row_n", -1), float(it.get("row_scale", 0.0))) for it in strange[:8])
+                log("[WARN] Escalas de bloque atipicas: {} fila(s) (mediana {:.3f}). Ejemplo: {}".format(len(strange), med_scale, sample))
+
+    if filter_outliers:
+        out_idx, bounds = detect_iqr_outlier_indexes(rows, mult=outlier_mult)
+        if out_idx:
+            out_set = set(out_idx)
+            kept = []
+            samples = []
+            for idx, it in enumerate(rows):
+                if idx in out_set:
+                    skipped += 1
+                    if len(samples) < 10:
+                        samples.append(
+                            "fila {} '{}' ({:.3f},{:.3f},{:.3f})".format(
+                                it.get("row_n", -1),
+                                str(it.get("csv_name", "")),
+                                float(it.get("x", 0.0)),
+                                float(it.get("y", 0.0)),
+                                float(it.get("z", 0.0)),
+                            )
+                        )
+                else:
+                    kept.append(it)
+            rows = kept
+            log("[WARN] Outliers IQR omitidos: {} fila(s) [factor={}].".format(len(out_set), outlier_mult))
+            for msg in samples:
+                log("[WARN] {}".format(msg))
+        if not rows:
+            log("[WARN] Todos los puntos quedaron filtrados como outlier.")
+            return
+
+    log("[INFO] Resumen Paso 1: {}".format(summarize_rows(rows)))
+
+    max_abs = 0.0
+    for it in rows:
+        max_abs = max(max_abs, abs(float(it["x"])), abs(float(it["y"])), abs(float(it["z"])))
+    if float(scale_used) <= 10.0 and max_abs < 500.0:
+        log("[WARN] Coordenadas pequenas tras escala={} (max={:.3f}). Si CSV esta en metros use escala 1000.".format(scale_used, max_abs))
+    if float(scale_used) >= 1000.0 and max_abs > 10000000.0:
+        log("[WARN] Coordenadas muy grandes tras escala={} (max={:.3f}). Revise unidades para evitar sobreescala.".format(scale_used, max_abs))
+
+    if preview_only:
+        by_type = collections.Counter(str(it.get("csv_name", "") or "Generico") for it in rows)
+        top = ", ".join("{}:{}".format(k, v) for k, v in by_type.most_common(12))
+        log("[INFO] Preview CSV listo (sin importar). Filas validas: {} | Omitidas: {}".format(len(rows), skipped))
+        if top:
+            log("[INFO] Tipos CSV: {}".format(top))
+        return {
+            "rows": len(rows),
+            "skipped": skipped,
+            "types": dict(by_type),
+            "scale_used": float(scale_used),
+        }
+
+    doc.openTransaction("ElectricCR: CSV a Sketch")
+    try:
+        g_e = ensure_root_group(doc, ELECTRICO_LABEL, ELECTRICO_NAME)
+        g_i = ensure_child_group(doc, g_e, ILUMINACION_LABEL, ILUMINACION_NAME)
+        g_imp = ensure_child_group(doc, g_i, IMPORT_GROUP_LABEL, IMPORT_GROUP_NAME)
+        g_pts = ensure_child_group(doc, g_imp, POINTS_GROUP_LABEL, POINTS_GROUP_NAME)
+        g_ref = ensure_child_group(doc, g_imp, REF_GROUP_LABEL, REF_GROUP_NAME)
+
+        if clear_prev:
+            clear_group_children(doc, g_pts)
+            clear_group_children(doc, g_ref)
+
+        sset = set()
+        for it in rows:
+            sk = ensure_sketch_for_type(doc, g_pts, it["csv_name"])
+            add_point_to_sketch(sk, it["x"], it["y"], it["z"])
+            sset.add(sk.Name)
+
+        anchor = anchor_from_rows(rows, anchor_mode)
+        if anchor is not None:
+            ensure_ref_point(doc, g_ref, ANCHOR_NAME, ANCHOR_LABEL, anchor)
+            log("[INFO] CSV_Anchor actualizado: {}".format(anchor))
+
+        if create_target:
+            t = get_selection_anchor_vector()
+            if t is not None:
+                ensure_ref_point(doc, g_ref, TARGET_NAME, TARGET_LABEL, t)
+                log("[INFO] CSV_Target actualizado: {}".format(t))
+            else:
+                log("[WARN] No hay seleccion para CSV_Target.")
+
+        doc.recompute()
+        doc.commitTransaction()
+        log("[INFO] Paso 1 listo. Sketches: {} | Puntos: {} | Omitidos: {}".format(len(sset), len(rows), skipped))
+    except Exception as ex:
+        doc.abortTransaction()
+        log("[ERROR] Paso 1 cancelado: {}".format(ex))
+
+
+def run_step2(params):
+    doc = App.ActiveDocument
+    if doc is None:
+        log("[ERROR] No hay documento activo.")
+        return
+
+    import_token = str(params.get("import_group", IMPORT_GROUP_LABEL)).strip() or IMPORT_GROUP_LABEL
+    base_token = str(params.get("base_token", "")).strip()
+    base_mode = str(params.get("base_mode", BASE_MODE_DEFAULT)).strip().lower()
+    if base_mode not in ("auto", "fallback_all"):
+        base_mode = "auto"
+    missing = str(params.get("missing", MISSING_POLICY_DEFAULT)).strip().lower()
+    if missing != "fallback":
+        missing = "skip"
+    use_labels = bool(params.get("use_labels", True))
+    use_devices = bool(params.get("use_devices", True))
+    lum_insert_engine = str(params.get("lum_insert_engine", LUM_INSERT_ENGINE_DEFAULT) or LUM_INSERT_ENGINE_DEFAULT).strip().lower()
+    if lum_insert_engine not in ("base", "registry_link"):
+        lum_insert_engine = "base"
+    use_registry_link_for_ceiling = (lum_insert_engine == "registry_link")
+    log("[INFO] Motor luminarias techo: {}".format("registry_link" if use_registry_link_for_ceiling else "base"))
+    align_mode = str(params.get("align_mode", "none")).strip().lower()
+    align_target = str(params.get("align_target", "")).strip()
+    type_filter = str(params.get("type_filter", "__ALL__") or "__ALL__").strip()
+    conv_scale = float(params.get("conv_scale", 1.0))
+    if conv_scale <= 0:
+        conv_scale = 1.0
+    protect_masters = bool(params.get("protect_masters", True))
+    manual_map_param = params.get("manual_map", {})
+    manual_map = {}
+    if isinstance(manual_map_param, dict):
+        for mk, mv in manual_map_param.items():
+            k = str(mk or "").strip()
+            v = str(mv or "").strip()
+            if k:
+                manual_map[k] = v
+    kind_map_param = params.get("kind_map", {})
+    kind_map = {}
+    if isinstance(kind_map_param, dict):
+        for kk, kv in kind_map_param.items():
+            k = str(kk or "").strip()
+            v = normalize_kind_token(kv)
+            if k:
+                kind_map[k] = v
+
+    g_imp = resolve_import_group(doc, import_token, require_points=True)
+    if g_imp is None:
+        log("[ERROR] No existe grupo origen valido (token='{}').".format(import_token))
+        return
+
+    g_pts = find_child_group(g_imp, label=POINTS_GROUP_LABEL, name=POINTS_GROUP_NAME)
+    if g_pts is None:
+        log("[ERROR] No existe subgrupo de puntos: {}".format(POINTS_GROUP_LABEL))
+        return
+    g_ref = find_child_group(g_imp, label=REF_GROUP_LABEL, name=REF_GROUP_NAME)
+
+    rows = rows_from_sketch_group(g_pts)
+    if not rows:
+        log("[WARN] No hay puntos para convertir.")
+        return
+    log("[INFO] Resumen Paso 2 (pre-filtro): {}".format(summarize_rows(rows)))
+
+    if type_filter and type_filter != "__ALL__":
+        rows = [it for it in rows if str(it.get("csv_name", "")).strip() == type_filter]
+        if not rows:
+            log("[WARN] No hay puntos para el tipo seleccionado: '{}'".format(type_filter))
+            return
+        log("[INFO] Conversion filtrada a tipo: '{}' ({} punto(s))".format(type_filter, len(rows)))
+        log("[INFO] Resumen Paso 2 (filtrado): {}".format(summarize_rows(rows)))
+
+    if abs(conv_scale - 1.0) > 1e-12:
+        for it in rows:
+            it["x"] = float(it["x"]) * conv_scale
+            it["y"] = float(it["y"]) * conv_scale
+            it["z"] = float(it["z"]) * conv_scale
+        log("[INFO] Escala de conversion aplicada: {}".format(conv_scale))
+        log("[INFO] Resumen Paso 2 (post-escala): {}".format(summarize_rows(rows)))
+    if conv_scale > 10.0:
+        log("[WARN] Escala adicional alta ({}). Use 1.0 salvo correccion puntual.".format(conv_scale))
+
+    if align_mode != "none":
+        anchor_obj = None
+        if g_ref is not None:
+            for ch in getattr(g_ref, "Group", []) or []:
+                if getattr(ch, "Name", "") == ANCHOR_NAME or getattr(ch, "Label", "") == ANCHOR_LABEL:
+                    anchor_obj = ch
+                    break
+        a = ref_point_world(anchor_obj)
+        if a is None:
+            log("[WARN] No hay CSV_Anchor para alinear.")
+        else:
+            t = None
+            if align_mode == "selected":
+                t = get_selection_anchor_vector()
+            elif align_mode == "object":
+                tobj = find_obj(doc, align_target)
+                t = ref_point_world(tobj)
+                if t is None:
+                    t = get_selection_anchor_vector()
+            if t is None:
+                log("[WARN] No se resolvio target de alineacion.")
+            else:
+                dx = float(t.x) - float(a.x)
+                dy = float(t.y) - float(a.y)
+                dz = float(t.z) - float(a.z)
+                for it in rows:
+                    it["x"] += dx
+                    it["y"] += dy
+                    it["z"] += dz
+                log("[INFO] Delta alineacion aplicado: dX={} dY={} dZ={}".format(dx, dy, dz))
+
+    base_candidates = list_base_candidates(doc)
+    default_base = find_obj(doc, base_token) if base_token else None
+    if default_base is None and base_candidates:
+        default_base = base_candidates[0]
+    default_base = canonical_link_base(default_base)
+
+    need_registry_masters = use_registry_link_for_ceiling
+    crear_toma_uno = get_crear_toma_uno() if (use_devices or need_registry_masters) else None
+    if use_devices and crear_toma_uno is None:
+        log("[WARN] crear_toma_uno no disponible. Se hara solo Link.")
+    if need_registry_masters and crear_toma_uno is None:
+        log("[WARN] Motor techo 'registry_link' requiere Insertar_Dispositivo. Se usara motor base.")
+        use_registry_link_for_ceiling = False
+    registry_types = load_registry_types_dict() if use_registry_link_for_ceiling else {}
+
+    reg_keys = load_registry_keys()
+    type_names = sorted(set(it["csv_name"] for it in rows if it["csv_name"]))
+    type_map = {}
+    reg_map = {}
+    type_kind_map = {}
+    type_mode_map = {}
+    unresolved = []
+    for tname in type_names:
+        type_mode_map[tname] = "auto"
+
+        kind_token = normalize_kind_token(kind_map.get(tname, "__AUTO__"))
+        if kind_token == "__AUTO__":
+            kind_token = infer_kind_token(tname, "")
+        type_kind_map[tname] = kind_token
+        if kind_token == "__PENDING__":
+            type_mode_map[tname] = "pending"
+            continue
+
+        manual_token = manual_map.get(tname, "")
+        if base_mode == "fallback_all" and manual_token != "__PENDING__":
+            manual_token = "__AUTO__"
+        if manual_token:
+            if manual_token == "__FALLBACK__":
+                if default_base is not None:
+                    type_map[tname] = default_base
+                    type_mode_map[tname] = "manual_fallback"
+                    log("[INFO] Tipo '{}' resuelto por mapeo manual -> fallback '{}'".format(
+                        tname, getattr(default_base, "Name", "?")
+                    ))
+                    continue
+                log("[WARN] Tipo '{}': mapeo manual fallback sin base por defecto.".format(tname))
+            elif manual_token != "__AUTO__":
+                manual_obj = find_obj(doc, manual_token)
+                if manual_obj is not None:
+                    base_manual = canonical_link_base(manual_obj)
+                    if base_manual is not manual_obj:
+                        log("[INFO] Tipo '{}' base promovida '{}' -> '{}'".format(
+                            tname, getattr(manual_obj, "Name", "?"), getattr(base_manual, "Name", "?")
+                        ))
+                    type_map[tname] = base_manual
+                    type_mode_map[tname] = "manual_obj"
+                    log("[INFO] Tipo '{}' resuelto por mapeo manual -> '{}'".format(
+                        tname, getattr(base_manual, "Name", "?")
+                    ))
+                    continue
+                log("[WARN] Tipo '{}': objeto manual no encontrado '{}'".format(tname, manual_token))
+
+        reg_key = resolve_registry_key(tname, reg_keys)
+        if not reg_key:
+            reg_key = DEFAULT_REGKEY_BY_KIND.get(kind_token, "")
+        if reg_key:
+            reg_map[tname] = reg_key
+
+        if kind_token == "otro":
+            type_kind_map[tname] = infer_kind_token(tname, reg_key)
+
+        if base_mode == "fallback_all":
+            if default_base is not None:
+                type_map[tname] = default_base
+                type_mode_map[tname] = "fallback_all"
+            else:
+                unresolved.append(tname)
+            continue
+
+        if use_registry_link_for_ceiling and kind_token == "techo" and reg_key and type_mode_map.get(tname, "auto") == "auto":
+            type_mode_map[tname] = "registry_link_ceiling"
+            info = registry_types.get(reg_key, {}) if isinstance(registry_types, dict) else {}
+            log("[INFO] Tipo '{}' se insertara con master-link de registro '{}' (altura={}mm modo={}).".format(
+                tname, reg_key, altura_from_registry_defaults(info), mode_from_registry_defaults(info)
+            ))
+            continue
+
+        base = find_best_base_for_type(tname, base_candidates)
+        if base is None and reg_key:
+            base = find_best_base_for_type(reg_key, base_candidates)
+        if base is None:
+            if (
+                use_devices and reg_key and callable(crear_toma_uno) and kind_prefers_device(kind_token)
+                and type_mode_map.get(tname, "auto") != "manual_obj"
+            ):
+                type_mode_map[tname] = "device_only"
+                log("[INFO] Tipo '{}' se insertara como dispositivo por registro '{}'.".format(tname, reg_key))
+                continue
+            if missing == "fallback" and default_base is not None:
+                base = default_base
+            else:
+                unresolved.append(tname)
+                continue
+        base0 = base
+        base = canonical_link_base(base)
+        if base is not base0:
+            log("[INFO] Tipo '{}' base promovida '{}' -> '{}'".format(
+                tname, getattr(base0, "Name", "?"), getattr(base, "Name", "?")
+            ))
+        type_map[tname] = base
+        bpl = getattr(base, "Placement", None)
+        bb = getattr(bpl, "Base", None) if bpl is not None else None
+        if bb is not None:
+            if abs(float(bb.x)) > 1e-7 or abs(float(bb.y)) > 1e-7 or abs(float(bb.z)) > 1e-7:
+                log("[WARN] Base '{}' para tipo '{}' no esta en origen (Base={}). Puede desplazar instancias.".format(
+                    getattr(base, "Name", "?"), tname, format_vec(bb)
+                ))
+
+    if unresolved:
+        log("[WARN] Tipos sin base: {}".format(", ".join(unresolved)))
+
+    created = 0
+    skipped = 0
+    pending_count = 0
+    used_names = set(obj.Name for obj in doc.Objects)
+    used_labels = set(obj.Label for obj in doc.Objects)
+    warned_kind_without_key = set()
+    warned_registry_master = set()
+    used_master_by_name = {}
+
+    doc.openTransaction("ElectricCR: Sketch a Objetos")
+    try:
+        g_e = ensure_root_group(doc, ELECTRICO_LABEL, ELECTRICO_NAME)
+        g_i = ensure_child_group(doc, g_e, ILUMINACION_LABEL, ILUMINACION_NAME)
+        g_out = ensure_child_group(doc, g_i, OUTPUT_GROUP_LABEL, OUTPUT_GROUP_NAME)
+        g_lib = ensure_link_library_group(doc) if use_registry_link_for_ceiling else None
+        registry_master_cache = {}
+
+        def create_device_instance(row_item, type_name, key_registro, tipo_logico, kind_token):
+            dev = crear_toma_uno(
+                doc,
+                name_prefix=sanitize_name(type_name or key_registro, "Disp") + "_",
+                key_registro=key_registro,
+                tipo_logico=tipo_logico,
+            )
+            if dev is None:
+                raise RuntimeError("crear_toma_uno devolvio None")
+            pl = App.Placement(
+                App.Vector(float(row_item["x"]), float(row_item["y"]), float(row_item["z"])),
+                App.Rotation(),
+            )
+            try:
+                dev.Placement = pl
+            except Exception:
+                try:
+                    dev.BasePlacement = pl
+                except Exception:
+                    pass
+            try:
+                dev.Label = unique_value(type_name or key_registro, used_labels)
+            except Exception:
+                pass
+            set_csv_kind_metadata(dev, kind_token)
+            g_out.addObject(dev)
+            return dev
+
+        def resolve_registry_link_master(type_name, key_registro):
+            info = registry_types.get(key_registro, {}) if isinstance(registry_types, dict) else {}
+            altura_rel = altura_from_registry_defaults(info)
+            modo_visual = mode_from_registry_defaults(info)
+            cache_key = (str(key_registro), round(float(altura_rel), 6), str(modo_visual))
+            if cache_key in registry_master_cache:
+                return registry_master_cache.get(cache_key)
+
+            master = ensure_registry_link_master(
+                doc=doc,
+                crear_toma_uno=crear_toma_uno,
+                key_registro=key_registro,
+                altura_rel=altura_rel,
+                modo_visual=modo_visual,
+                group=g_lib,
+                reuse=True,
+            )
+            if master is not None:
+                registry_master_cache[cache_key] = master
+                log("[INFO] Tipo '{}' -> master-link '{}' (altura={}mm, modo={}).".format(
+                    type_name, key_registro, altura_rel, modo_visual
+                ))
+            return master
+
+        for it in rows:
+            tname = it["csv_name"]
+            base = type_map.get(tname)
+            reg_key = reg_map.get(tname, "")
+            kind_token = type_kind_map.get(tname, infer_kind_token(tname, reg_key))
+            mode_token = type_mode_map.get(tname, "auto")
+            if kind_token == "__PENDING__" or mode_token == "pending":
+                pending_count += 1
+                continue
+            tipo_logico = logical_tipo_from_kind(kind_token)
+
+            if mode_token == "registry_link_ceiling":
+                if reg_key and callable(crear_toma_uno):
+                    master = resolve_registry_link_master(tname, reg_key)
+                    if master is not None:
+                        base = master
+                    elif tname not in warned_registry_master:
+                        warned_registry_master.add(tname)
+                        log("[WARN] No se pudo crear master-link para tipo '{}'. Se intentara base/fallback.".format(tname))
+                elif tname not in warned_registry_master:
+                    warned_registry_master.add(tname)
+                    log("[WARN] Tipo '{}' sin key o sin crear_toma_uno para motor registry_link. Se intentara base/fallback.".format(tname))
+
+            wants_device = use_devices and (mode_token != "manual_obj") and kind_prefers_device(kind_token)
+            if wants_device and callable(crear_toma_uno):
+                if reg_key:
+                    try:
+                        create_device_instance(it, tname, reg_key, tipo_logico, kind_token)
+                        created += 1
+                        continue
+                    except Exception as ex:
+                        log("[WARN] Dispositivo '{}' no creado: {}".format(tname, ex))
+                        skipped += 1
+                        continue
+                elif tname not in warned_kind_without_key:
+                    warned_kind_without_key.add(tname)
+                    log("[WARN] Tipo '{}' marcado como '{}', pero sin KeyRegistro. Se intentara Link.".format(
+                        tname, kind_token
+                    ))
+
+            if base is None and use_devices and callable(crear_toma_uno) and reg_key and kind_prefers_device(kind_token):
+                try:
+                    create_device_instance(it, tname, reg_key, tipo_logico, kind_token)
+                    created += 1
+                    continue
+                except Exception as ex:
+                    log("[WARN] Dispositivo '{}' no creado: {}".format(tname, ex))
+                    skipped += 1
+                    continue
+
+            if base is None:
+                skipped += 1
+                continue
+
+            bname = str(getattr(base, "Name", "") or "")
+            if bname:
+                used_master_by_name[bname] = base
+
+            link = None
+            try:
+                oname = unique_value(sanitize_name(tname or LINK_PREFIX, LINK_PREFIX), used_names)
+                link = doc.addObject("App::Link", oname)
+                if hasattr(link, "LinkedObject"):
+                    link.LinkedObject = base
+                else:
+                    link.Link = base
+                try:
+                    if hasattr(link, "LinkTransform"):
+                        link.LinkTransform = True
+                except Exception:
+                    pass
+                try:
+                    if hasattr(link, "LinkPlacement"):
+                        link.LinkPlacement = App.Placement()
+                except Exception:
+                    pass
+                link.Placement = App.Placement(App.Vector(float(it["x"]), float(it["y"]), float(it["z"])), App.Rotation())
+                try:
+                    vo = getattr(link, "ViewObject", None)
+                    if vo is not None:
+                        if hasattr(vo, "Selectable"):
+                            vo.Selectable = True
+                        if hasattr(vo, "Pickable"):
+                            vo.Pickable = True
+                except Exception:
+                    pass
+                seed = tname if (use_labels and tname) else oname
+                link.Label = unique_value(seed, used_labels)
+                set_csv_kind_metadata(link, kind_token)
+                g_out.addObject(link)
+                created += 1
+            except Exception as ex:
+                skipped += 1
+                if link is not None:
+                    try:
+                        doc.removeObject(link.Name)
+                    except Exception:
+                        pass
+                log("[WARN] Fila omitida: {}".format(ex))
+
+        if protect_masters and used_master_by_name:
+            locked = 0
+            for b in used_master_by_name.values():
+                locked += set_selectable_recursive(b, False)
+            log("[INFO] Masters protegidos (no seleccionables): {} objeto(s)".format(locked))
+
+        # Ensure links stay clickable in 3D view even when masters are protected.
+        unlocked_links = set_all_doc_links_selectable(doc, True)
+        unlocked_chain = unlock_pick_chain_for_links(doc)
+        if unlocked_links:
+            log("[INFO] Links desbloqueados para seleccion 3D: {}".format(unlocked_links))
+        if unlocked_chain:
+            log("[INFO] Cadena de pick de links desbloqueada: {}".format(unlocked_chain))
+
+        doc.recompute()
+        doc.commitTransaction()
+        log("[INFO] Paso 2 listo. Creados: {} | Omitidos: {} | Pendientes: {}".format(created, skipped, pending_count))
+    except Exception as ex:
+        doc.abortTransaction()
+        log("[ERROR] Paso 2 cancelado: {}".format(ex))
+
+
+class AsisCsv2PasosForm(QtWidgets.QWidget):
+    def __init__(self, doc, parent=None):
+        super(AsisCsv2PasosForm, self).__init__(parent)
+        self._doc = doc
+        self._doc_cfg = load_doc_settings(doc)
+        self._default_csv_guess = guess_default_csv_path(doc)
+        self._map_dialog = None
+        self._src_vec = None
+        self._dst_vec = None
+        self._type_combo_map = {}
+        self._type_kind_map = {}
+        self._base_options = []
+        self.setWindowTitle("Asistente CSV 2 Pasos")
+        self.setMinimumWidth(740)
+        self._build_ui()
+        self.refresh_lists()
+        self._apply_doc_settings()
+
+    def _build_ui(self):
+        tabs = QtWidgets.QTabWidget()
+        t1 = QtWidgets.QWidget()
+        t2 = QtWidgets.QWidget()
+        t3 = QtWidgets.QWidget()
+        tabs.addTab(t1, "Paso 1 Importacion")
+        tabs.addTab(t2, "Paso 2 Conversion")
+        tabs.addTab(t3, "Paso 2 Opcional")
+
+        self.le_csv = QtWidgets.QLineEdit(self._default_csv_guess or CSV_PATH)
+        self.le_csv.setPlaceholderText("CSV del proyecto actual")
+        self.btn_csv = QtWidgets.QPushButton("...")
+        self.btn_csv.setFixedWidth(36)
+        self.btn_csv.clicked.connect(self.pick_csv)
+        row_csv = QtWidgets.QHBoxLayout()
+        row_csv.addWidget(self.le_csv)
+        row_csv.addWidget(self.btn_csv)
+
+        self.sp_scale = QtWidgets.QDoubleSpinBox()
+        self.sp_scale.setDecimals(8)
+        self.sp_scale.setRange(0.00000001, 1000000000.0)
+        self.sp_scale.setValue(float(SCALE_DEFAULT))
+
+        self.cmb_anchor = QtWidgets.QComboBox()
+        self.cmb_anchor.addItem("Primer punto", "first")
+        self.cmb_anchor.addItem("Centro del CSV", "centroid")
+        idx = self.cmb_anchor.findData(ANCHOR_MODE_DEFAULT)
+        if idx >= 0:
+            self.cmb_anchor.setCurrentIndex(idx)
+
+        self.chk_clear = QtWidgets.QCheckBox("Limpiar grupo previo de sketches")
+        self.chk_clear.setChecked(True)
+        self.chk_target = QtWidgets.QCheckBox("Crear CSV_Target desde seleccion")
+        self.chk_target.setChecked(True)
+        self.chk_auto_scale = QtWidgets.QCheckBox("Autoajustar escala segun dibujo")
+        self.chk_auto_scale.setChecked(True)
+        self.chk_filter_outliers = QtWidgets.QCheckBox("Filtrar outliers extremos (IQR)")
+        self.chk_filter_outliers.setChecked(True)
+
+        self.le_src = QtWidgets.QLineEdit("")
+        self.le_src.setReadOnly(True)
+        self.le_src.setPlaceholderText("Seleccione punto origen en sketch y pulse Tomar origen")
+        self.btn_src = QtWidgets.QPushButton("Tomar origen desde seleccion")
+        self.btn_src.clicked.connect(self.capture_source_point)
+
+        self.le_dst = QtWidgets.QLineEdit("")
+        self.le_dst.setReadOnly(True)
+        self.le_dst.setPlaceholderText("Seleccione punto destino en dibujo y pulse Tomar destino")
+        self.btn_dst = QtWidgets.QPushButton("Tomar destino desde seleccion")
+        self.btn_dst.clicked.connect(self.capture_target_point)
+
+        row_pt_buttons = QtWidgets.QHBoxLayout()
+        row_pt_buttons.addWidget(self.btn_src)
+        row_pt_buttons.addWidget(self.btn_dst)
+
+        self.btn_move_sk = QtWidgets.QPushButton("Mover sketches por 2 puntos (origen -> destino)")
+        self.btn_move_sk.clicked.connect(self.move_sketches_two_points)
+
+        btn_scan_csv = QtWidgets.QPushButton("Actualizar datos CSV (sin importar)")
+        btn_scan_csv.clicked.connect(self.scan_csv_only)
+        btn_run1 = QtWidgets.QPushButton("Ejecutar Paso 1")
+        btn_run1.clicked.connect(self.run1)
+
+        f1 = QtWidgets.QFormLayout()
+        f1.addRow("Archivo CSV:", row_csv)
+        f1.addRow("Escala CSV->mm:", self.sp_scale)
+        f1.addRow("Anchor:", self.cmb_anchor)
+        f1.addRow("", self.chk_clear)
+        f1.addRow("", self.chk_target)
+        f1.addRow("", self.chk_auto_scale)
+        f1.addRow("", self.chk_filter_outliers)
+        f1.addRow("Punto origen:", self.le_src)
+        f1.addRow("Punto destino:", self.le_dst)
+        f1.addRow("", row_pt_buttons)
+        f1.addRow("", self.btn_move_sk)
+        l1 = QtWidgets.QVBoxLayout(t1)
+        l1.addLayout(f1)
+        l1.addStretch(1)
+        l1.addWidget(btn_scan_csv)
+        l1.addWidget(btn_run1)
+
+        self.cmb_group = QtWidgets.QComboBox()
+        self.cmb_group.setEditable(True)
+        self.cmb_group.currentIndexChanged.connect(lambda *_: (self.refresh_type_mapping(), self._refresh_source_target_from_refs()))
+        if hasattr(self.cmb_group, "editTextChanged"):
+            self.cmb_group.editTextChanged.connect(lambda *_: (self.refresh_type_mapping(), self._refresh_source_target_from_refs()))
+        self.le_csv_state = QtWidgets.QLineEdit("")
+        self.le_csv_state.setReadOnly(True)
+        self.le_csv_state.setPlaceholderText("Estado CSV vs sketches")
+        self.cmb_base = QtWidgets.QComboBox()
+        self.cmb_base.setEditable(False)
+        self.cmb_base_mode = QtWidgets.QComboBox()
+        self.cmb_base_mode.addItem("Auto por tipo", "auto")
+        self.cmb_base_mode.addItem("Fallback para todos", "fallback_all")
+        idxbm = self.cmb_base_mode.findData(BASE_MODE_DEFAULT)
+        if idxbm >= 0:
+            self.cmb_base_mode.setCurrentIndex(idxbm)
+        self.cmb_type_filter = QtWidgets.QComboBox()
+        self.cmb_type_filter.addItem("Todos los tipos", "__ALL__")
+
+        self.sp_scale2 = QtWidgets.QDoubleSpinBox()
+        self.sp_scale2.setDecimals(8)
+        self.sp_scale2.setRange(0.00000001, 1000000000.0)
+        self.sp_scale2.setValue(1.0)
+
+        self.cmb_missing = QtWidgets.QComboBox()
+        self.cmb_missing.addItem("Omitir tipo sin base", "skip")
+        self.cmb_missing.addItem("Usar base fallback", "fallback")
+        idxm = self.cmb_missing.findData(MISSING_POLICY_DEFAULT)
+        if idxm >= 0:
+            self.cmb_missing.setCurrentIndex(idxm)
+
+        self.chk_labels = QtWidgets.QCheckBox("Usar nombre de tipo como Label")
+        self.chk_labels.setChecked(True)
+        self.chk_devices = QtWidgets.QCheckBox("Usar Insertar_Dispositivo si aplica")
+        self.chk_devices.setChecked(True)
+        self.chk_protect_masters = QtWidgets.QCheckBox("Proteger masters tras insertar (no seleccionables)")
+        self.chk_protect_masters.setChecked(True)
+        self.cmb_lum_engine = QtWidgets.QComboBox()
+        self.cmb_lum_engine.addItem("Techo: Link a base del documento", "base")
+        self.cmb_lum_engine.addItem("Techo: Link con master del registro", "registry_link")
+        idxle = self.cmb_lum_engine.findData(LUM_INSERT_ENGINE_DEFAULT)
+        if idxle >= 0:
+            self.cmb_lum_engine.setCurrentIndex(idxle)
+
+        self.cmb_align = QtWidgets.QComboBox()
+        self.cmb_align.addItem("Sin alineacion", "none")
+        self.cmb_align.addItem("Alinear anchor a seleccion", "selected")
+        self.cmb_align.addItem("Alinear anchor a objeto", "object")
+        idxa = self.cmb_align.findData(ALIGN_MODE_DEFAULT)
+        if idxa >= 0:
+            self.cmb_align.setCurrentIndex(idxa)
+        self.cmb_align.currentIndexChanged.connect(self.toggle_target_token)
+
+        self.le_align_target = QtWidgets.QLineEdit("")
+        self.le_align_target.setPlaceholderText("Name o Label target (opcional)")
+        self.toggle_target_token()
+
+        self.gb_map = QtWidgets.QGroupBox("Objeto por boceto (opcional)")
+        gb_map_layout = QtWidgets.QVBoxLayout(self.gb_map)
+        self.map_scroll = QtWidgets.QScrollArea()
+        self.map_scroll.setWidgetResizable(True)
+        self.map_scroll.setMinimumHeight(120)
+        gb_map_layout.addWidget(self.map_scroll)
+        self.gb_map.setMaximumHeight(280)
+
+        row_map_btns = QtWidgets.QHBoxLayout()
+        self.btn_map_auto = QtWidgets.QPushButton("Auto todos")
+        self.btn_map_auto.clicked.connect(lambda: self.set_all_type_mapping("__AUTO__"))
+        self.btn_map_fallback = QtWidgets.QPushButton("Fallback todos")
+        self.btn_map_fallback.clicked.connect(lambda: self.set_all_type_mapping("__FALLBACK__"))
+        self.btn_map_reload = QtWidgets.QPushButton("Recargar tipos")
+        self.btn_map_reload.clicked.connect(self.refresh_type_mapping)
+        self.cmb_kind_all = QtWidgets.QComboBox()
+        for ktxt, ktok in ELEMENT_KIND_OPTIONS:
+            if ktok == "__AUTO__":
+                continue
+            self.cmb_kind_all.addItem(ktxt, ktok)
+        self.btn_kind_all = QtWidgets.QPushButton("Tipo todos")
+        self.btn_kind_all.clicked.connect(self.apply_kind_to_all)
+        self.btn_map_float = QtWidgets.QPushButton("Ventana mapeo...")
+        self.btn_map_float.clicked.connect(self.open_mapping_window)
+        row_map_btns.addWidget(self.btn_map_auto)
+        row_map_btns.addWidget(self.btn_map_fallback)
+        row_map_btns.addWidget(self.cmb_kind_all)
+        row_map_btns.addWidget(self.btn_kind_all)
+        row_map_btns.addWidget(self.btn_map_float)
+        row_map_btns.addWidget(self.btn_map_reload)
+        row_map_btns.addStretch(1)
+        gb_map_layout.addLayout(row_map_btns)
+
+        btn_run2 = QtWidgets.QPushButton("Ejecutar Paso 2")
+        btn_run2.clicked.connect(self.run2)
+        btn_run2_opt = QtWidgets.QPushButton("Ejecutar Paso 2")
+        btn_run2_opt.clicked.connect(self.run2)
+        self.btn_protect_masters = QtWidgets.QPushButton("Proteger bases usadas")
+        self.btn_protect_masters.clicked.connect(lambda: self.set_current_base_protection(False))
+        self.btn_unprotect_masters = QtWidgets.QPushButton("Desproteger bases usadas")
+        self.btn_unprotect_masters.clicked.connect(lambda: self.set_current_base_protection(True))
+        self.btn_break_link = QtWidgets.QPushButton("Romper Link seleccionado")
+        self.btn_break_link.clicked.connect(self.break_selected_links)
+
+        f2 = QtWidgets.QFormLayout()
+        f2.addRow("Grupo origen:", self.cmb_group)
+        f2.addRow("Estado CSV:", self.le_csv_state)
+        f2.addRow("Convertir tipo:", self.cmb_type_filter)
+        f2.addRow("Base fallback:", self.cmb_base)
+        f2.addRow("Modo base:", self.cmb_base_mode)
+        f2.addRow("Si falta tipo:", self.cmb_missing)
+        l2 = QtWidgets.QVBoxLayout(t2)
+        l2.addLayout(f2)
+        l2.addStretch(1)
+        l2.addWidget(btn_run2)
+
+        f3 = QtWidgets.QFormLayout()
+        f3.addRow("Escala adicional:", self.sp_scale2)
+        f3.addRow("Insercion techo:", self.cmb_lum_engine)
+        f3.addRow("", self.chk_labels)
+        f3.addRow("", self.chk_devices)
+        f3.addRow("", self.chk_protect_masters)
+        f3.addRow("Alineacion:", self.cmb_align)
+        f3.addRow("Target objeto:", self.le_align_target)
+        row_tools = QtWidgets.QHBoxLayout()
+        row_tools.addWidget(self.btn_protect_masters)
+        row_tools.addWidget(self.btn_unprotect_masters)
+        row_tools.addWidget(self.btn_break_link)
+        row_tools.addStretch(1)
+        l3 = QtWidgets.QVBoxLayout(t3)
+        l3.addLayout(f3)
+        l3.addLayout(row_tools)
+        l3.addWidget(self.gb_map, 1)
+        l3.addWidget(btn_run2_opt)
+
+        btn_refresh = QtWidgets.QPushButton("Actualizar listas")
+        btn_refresh.clicked.connect(self.refresh_lists)
+        btn_close = QtWidgets.QPushButton("Cerrar")
+        btn_close.clicked.connect(self._close_panel)
+
+        foot = QtWidgets.QHBoxLayout()
+        foot.addWidget(btn_refresh)
+        foot.addStretch(1)
+        foot.addWidget(btn_close)
+
+        root = QtWidgets.QVBoxLayout(self)
+        root.addWidget(tabs)
+        root.addLayout(foot)
+
+    def pick_csv(self):
+        start = self.le_csv.text().strip()
+        if os.path.isfile(start):
+            start = os.path.dirname(start)
+        elif not os.path.isdir(start):
+            start = get_project_dir(self._doc) or ""
+        selected, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Seleccionar CSV", start, "CSV (*.csv);;Todos (*.*)")
+        if selected:
+            self.le_csv.setText(selected)
+
+    def toggle_target_token(self):
+        self.le_align_target.setEnabled(str(self.cmb_align.currentData() or "none") == "object")
+
+    def _close_panel(self):
+        self._save_doc_settings()
+        if self._map_dialog is not None:
+            try:
+                self._map_dialog.close()
+            except Exception:
+                pass
+            self._map_dialog = None
+        if Gui is not None and hasattr(Gui, "Control"):
+            try:
+                Gui.Control.closeDialog()
+                return
+            except Exception:
+                pass
+        try:
+            self.window().close()
+        except Exception:
+            pass
+
+    def _set_combo_value(self, combo, value):
+        if combo is None:
+            return
+        token = str(value or "").strip()
+        if not token:
+            return
+        idx = combo.findData(token)
+        if idx < 0:
+            idx = combo.findText(token)
+        if idx >= 0:
+            combo.setCurrentIndex(idx)
+            return
+        try:
+            if combo.isEditable():
+                combo.setEditText(token)
+        except Exception:
+            pass
+
+    def _current_group_token(self):
+        if not hasattr(self, "cmb_group"):
+            return IMPORT_GROUP_LABEL
+        tok = self.cmb_group.currentData()
+        if tok is None:
+            tok = self.cmb_group.currentText()
+        tok = normalize_group_token(self._doc, tok)
+        return tok or IMPORT_GROUP_LABEL
+
+    def _set_source_vec(self, vec):
+        self._src_vec = vec
+        self.le_src.setText(format_vec(vec))
+
+    def _set_target_vec(self, vec):
+        self._dst_vec = vec
+        self.le_dst.setText(format_vec(vec))
+
+    def _refresh_source_target_from_refs(self):
+        a, t = read_anchor_target_vectors(self._doc, self._current_group_token())
+        if a is not None:
+            self._set_source_vec(a)
+        if t is not None:
+            self._set_target_vec(t)
+
+    def _apply_doc_settings(self):
+        cfg = self._doc_cfg if isinstance(self._doc_cfg, dict) else {}
+        form = cfg.get("form", {}) if isinstance(cfg.get("form", {}), dict) else {}
+        if not form:
+            return
+
+        csv_path = str(form.get("csv_path", "")).strip()
+        if csv_path:
+            self.le_csv.setText(csv_path)
+        try:
+            self.sp_scale.setValue(float(form.get("scale1", self.sp_scale.value())))
+        except Exception:
+            pass
+        try:
+            self.sp_scale2.setValue(float(form.get("scale2", self.sp_scale2.value())))
+        except Exception:
+            pass
+
+        self._set_combo_value(self.cmb_anchor, form.get("anchor_mode", "centroid"))
+        self._set_combo_value(self.cmb_missing, form.get("missing", "skip"))
+        self._set_combo_value(self.cmb_base_mode, form.get("base_mode", BASE_MODE_DEFAULT))
+        self._set_combo_value(self.cmb_lum_engine, form.get("lum_insert_engine", LUM_INSERT_ENGINE_DEFAULT))
+        self._set_combo_value(self.cmb_align, form.get("align_mode", "none"))
+        self.chk_clear.setChecked(bool(form.get("clear_prev", True)))
+        self.chk_target.setChecked(bool(form.get("create_target", True)))
+        self.chk_auto_scale.setChecked(bool(form.get("auto_scale", True)))
+        self.chk_filter_outliers.setChecked(bool(form.get("filter_outliers", True)))
+        self.chk_labels.setChecked(bool(form.get("use_labels", True)))
+        self.chk_devices.setChecked(bool(form.get("use_devices", True)))
+        self.chk_protect_masters.setChecked(bool(form.get("protect_masters", True)))
+        self.le_align_target.setText(str(form.get("align_target", "") or ""))
+        svec = list_to_vector(form.get("source_vec", []))
+        dvec = list_to_vector(form.get("target_vec", []))
+        if svec is not None:
+            self._set_source_vec(svec)
+        if dvec is not None:
+            self._set_target_vec(dvec)
+
+        self._set_combo_value(self.cmb_group, form.get("import_group", IMPORT_GROUP_LABEL))
+        self.refresh_type_mapping()
+        self._set_combo_value(self.cmb_type_filter, form.get("type_filter", "__ALL__"))
+        self._set_combo_value(self.cmb_base, form.get("base_token", ""))
+        self._refresh_source_target_from_refs()
+
+    def _save_doc_settings(self, manual_map=None, kind_map=None):
+        cfg = load_doc_settings(self._doc)
+        if not isinstance(cfg, dict):
+            cfg = {}
+        form = {
+            "csv_path": self.le_csv.text().strip(),
+            "scale1": float(self.sp_scale.value()),
+            "anchor_mode": str(self.cmb_anchor.currentData() or "centroid"),
+            "clear_prev": bool(self.chk_clear.isChecked()),
+            "create_target": bool(self.chk_target.isChecked()),
+            "auto_scale": bool(self.chk_auto_scale.isChecked()),
+            "filter_outliers": bool(self.chk_filter_outliers.isChecked()),
+            "import_group": self._current_group_token(),
+            "type_filter": str(self.cmb_type_filter.currentData() or "__ALL__"),
+            "scale2": float(self.sp_scale2.value()),
+            "base_token": str(self.cmb_base.currentData() or self.cmb_base.currentText() or ""),
+            "base_mode": str(self.cmb_base_mode.currentData() or BASE_MODE_DEFAULT),
+            "missing": str(self.cmb_missing.currentData() or "skip"),
+            "lum_insert_engine": str(self.cmb_lum_engine.currentData() or LUM_INSERT_ENGINE_DEFAULT),
+            "use_labels": bool(self.chk_labels.isChecked()),
+            "use_devices": bool(self.chk_devices.isChecked()),
+            "protect_masters": bool(self.chk_protect_masters.isChecked()),
+            "align_mode": str(self.cmb_align.currentData() or "none"),
+            "align_target": self.le_align_target.text().strip(),
+            "source_vec": vector_to_list(self._src_vec),
+            "target_vec": vector_to_list(self._dst_vec),
+        }
+        cfg["v"] = 2
+        cfg["form"] = form
+
+        maps = cfg.get("maps", {})
+        if not isinstance(maps, dict):
+            maps = {}
+        import_label = form["import_group"]
+        if import_label:
+            m = maps.get(import_label, {})
+            if not isinstance(m, dict):
+                m = {}
+            if manual_map is None:
+                manual_map = {}
+                for tname, cmb in self._type_combo_map.items():
+                    tok = cmb.currentData()
+                    if tok is None:
+                        tok = cmb.currentText()
+                    tok = str(tok or "").strip()
+                    if tok:
+                        manual_map[tname] = tok
+            if kind_map is None:
+                kind_map = {}
+                for tname, cmbk in self._type_kind_map.items():
+                    ktok = cmbk.currentData()
+                    if ktok is None:
+                        ktok = cmbk.currentText()
+                    ktok = normalize_kind_token(ktok)
+                    if ktok:
+                        kind_map[tname] = ktok
+            m["manual_map"] = manual_map or {}
+            m["kind_map"] = kind_map or {}
+            maps[import_label] = m
+        cfg["maps"] = maps
+
+        save_doc_settings(self._doc, cfg)
+        self._doc_cfg = cfg
+
+    def refresh_lists(self, *_args):
+        selected_group = self._current_group_token()
+        self.cmb_group.clear()
+        groups = list_import_groups(self._doc)
+        if not groups:
+            self.cmb_group.addItem(IMPORT_GROUP_LABEL, IMPORT_GROUP_LABEL)
+        else:
+            for g in groups:
+                gname = str(getattr(g, "Name", "") or "")
+                gpath = group_path_label(g)
+                has_pts = group_has_points_subgroup(g)
+                txt = "{} ({}){}".format(gpath or getattr(g, "Label", gname), gname, "" if has_pts else " [sin puntos]")
+                self.cmb_group.addItem(txt, gname)
+        self._set_combo_value(self.cmb_group, selected_group)
+
+        self.cmb_base.clear()
+        self._base_options = []
+        for obj in list_base_candidates(self._doc):
+            txt = "{} ({}) [{}]".format(getattr(obj, "Label", "") or getattr(obj, "Name", ""), getattr(obj, "Name", ""), getattr(obj, "TypeId", ""))
+            tok = getattr(obj, "Name", "")
+            self.cmb_base.addItem(txt, tok)
+            self._base_options.append((txt, tok))
+
+        self._refresh_source_target_from_refs()
+        self.refresh_type_mapping()
+
+        log("[INFO] Listas actualizadas.")
+
+    def refresh_type_mapping(self, *_args):
+        prev = {}
+        for tname, cmb in self._type_combo_map.items():
+            token = cmb.currentData()
+            if token is None:
+                token = cmb.currentText()
+            token = str(token or "").strip()
+            if token:
+                prev[tname] = token
+        prev_kind = {}
+        for tname, cmbk in self._type_kind_map.items():
+            ktok = cmbk.currentData()
+            if ktok is None:
+                ktok = cmbk.currentText()
+            ktok = normalize_kind_token(ktok)
+            if ktok:
+                prev_kind[tname] = ktok
+
+        self._type_combo_map = {}
+        self._type_kind_map = {}
+        host = QtWidgets.QWidget()
+        form = QtWidgets.QFormLayout(host)
+
+        import_token = self._current_group_token()
+        tnames = list_sketch_types_from_import_group(self._doc, import_token)
+        self._update_csv_state_line(tnames)
+        maps = self._doc_cfg.get("maps", {}) if isinstance(self._doc_cfg, dict) else {}
+        if not isinstance(maps, dict):
+            maps = {}
+        saved = maps.get(import_token, {}) if isinstance(maps.get(import_token, {}), dict) else {}
+        if not saved:
+            gobj = resolve_import_group(self._doc, import_token, require_points=False)
+            glabel = str(getattr(gobj, "Label", "") or "")
+            if glabel and isinstance(maps.get(glabel, {}), dict):
+                saved = maps.get(glabel, {})
+        saved_manual = saved.get("manual_map", {}) if isinstance(saved.get("manual_map", {}), dict) else {}
+        saved_kind = saved.get("kind_map", {}) if isinstance(saved.get("kind_map", {}), dict) else {}
+        cur_filter = self.cmb_type_filter.currentData() if hasattr(self, "cmb_type_filter") else "__ALL__"
+        if cur_filter is None:
+            cur_filter = self.cmb_type_filter.currentText() if hasattr(self, "cmb_type_filter") else "__ALL__"
+        self._refresh_type_filter_options(tnames, cur_filter)
+
+        options = list(self._base_options or [])
+        if not options:
+            for obj in list_base_candidates(self._doc):
+                txt = "{} ({}) [{}]".format(getattr(obj, "Label", "") or getattr(obj, "Name", ""), getattr(obj, "Name", ""), getattr(obj, "TypeId", ""))
+                options.append((txt, getattr(obj, "Name", "")))
+
+        if not tnames:
+            form.addRow(QtWidgets.QLabel("No hay bocetos de puntos en este grupo."))
+        else:
+            for tname in tnames:
+                cmb = QtWidgets.QComboBox()
+                cmb.setEditable(True)
+                cmb.addItem("Auto (detectar objeto)", "__AUTO__")
+                cmb.addItem("Fallback (base por defecto)", "__FALLBACK__")
+                for txt, tok in options:
+                    cmb.addItem(txt, tok)
+
+                token = prev.get(tname, str(saved_manual.get(tname, "__AUTO__")).strip() or "__AUTO__")
+                idx = cmb.findData(token)
+                if idx < 0:
+                    idx = cmb.findText(token)
+                if idx < 0:
+                    idx = 0
+                cmb.setCurrentIndex(idx)
+
+                cmbk = QtWidgets.QComboBox()
+                cmbk.setEditable(False)
+                for ktxt, ktok in ELEMENT_KIND_OPTIONS:
+                    cmbk.addItem(ktxt, ktok)
+
+                ktok = prev_kind.get(
+                    tname,
+                    normalize_kind_token(saved_kind.get(tname, infer_kind_token(tname, "")))
+                )
+                kidx = cmbk.findData(ktok)
+                if kidx < 0:
+                    kidx = 0
+                cmbk.setCurrentIndex(kidx)
+
+                roww = QtWidgets.QWidget()
+                rowl = QtWidgets.QHBoxLayout(roww)
+                rowl.setContentsMargins(0, 0, 0, 0)
+                rowl.addWidget(QtWidgets.QLabel("Objeto:"))
+                rowl.addWidget(cmb, 2)
+                rowl.addWidget(QtWidgets.QLabel("Tipo:"))
+                rowl.addWidget(cmbk, 1)
+
+                form.addRow("Boceto '{}':".format(tname), roww)
+                self._type_combo_map[tname] = cmb
+                self._type_kind_map[tname] = cmbk
+
+        self.map_scroll.setWidget(host)
+
+    def _refresh_type_filter_options(self, type_names, keep_token="__ALL__"):
+        if not hasattr(self, "cmb_type_filter"):
+            return
+        keep_token = str(keep_token or "__ALL__").strip() or "__ALL__"
+        self.cmb_type_filter.clear()
+        self.cmb_type_filter.addItem("Todos los tipos", "__ALL__")
+        for tname in sorted(set(type_names), key=lambda s: str(s).lower()):
+            self.cmb_type_filter.addItem(str(tname), str(tname))
+        idx = self.cmb_type_filter.findData(keep_token)
+        if idx < 0:
+            idx = self.cmb_type_filter.findText(keep_token)
+        if idx < 0:
+            idx = 0
+        self.cmb_type_filter.setCurrentIndex(idx)
+
+    def set_all_type_mapping(self, token):
+        token = str(token or "").strip()
+        for cmb in self._type_combo_map.values():
+            idx = cmb.findData(token)
+            if idx >= 0:
+                cmb.setCurrentIndex(idx)
+
+    def apply_kind_to_all(self):
+        token = normalize_kind_token(self.cmb_kind_all.currentData() if hasattr(self, "cmb_kind_all") else "")
+        if not token or token == "__AUTO__":
+            return
+        for cmb in self._type_kind_map.values():
+            idx = cmb.findData(token)
+            if idx >= 0:
+                cmb.setCurrentIndex(idx)
+
+    def _collect_current_base_objects(self):
+        out = {}
+        default_obj = find_obj(self._doc, self.cmb_base.currentData() or self.cmb_base.currentText())
+        if default_obj is not None:
+            can = canonical_link_base(default_obj)
+            out[str(getattr(can, "Name", "") or "")] = can
+
+        base_candidates = list_base_candidates(self._doc)
+        for tname, cmb in self._type_combo_map.items():
+            tok = cmb.currentData()
+            if tok is None:
+                tok = cmb.currentText()
+            tok = str(tok or "").strip()
+            obj = None
+            if tok in ("", "__AUTO__", "__FALLBACK__", "__PENDING__"):
+                if tok == "__AUTO__":
+                    obj = find_best_base_for_type(tname, base_candidates)
+            else:
+                obj = find_obj(self._doc, tok)
+            if obj is None:
+                continue
+            can = canonical_link_base(obj)
+            nm = str(getattr(can, "Name", "") or "")
+            if nm:
+                out[nm] = can
+        return list(out.values())
+
+    def set_current_base_protection(self, selectable):
+        objs = self._collect_current_base_objects()
+        if not objs:
+            log("[WARN] No se encontraron bases para proteger/desproteger.")
+            if selectable:
+                n = set_all_doc_links_selectable(self._doc, True)
+                if n:
+                    log("[INFO] Links del documento desbloqueados: {}".format(n))
+            return
+        changed = 0
+        include_links = bool(selectable)
+        for obj in objs:
+            changed += set_selectable_recursive(obj, bool(selectable), include_links=include_links)
+        if selectable:
+            n = set_all_doc_links_selectable(self._doc, True)
+            if n:
+                log("[INFO] Links del documento desbloqueados: {}".format(n))
+            n2 = unlock_pick_chain_for_links(self._doc)
+            if n2:
+                log("[INFO] Cadena de pick de links desbloqueada: {}".format(n2))
+        if selectable:
+            log("[INFO] Bases desprotegidas (seleccionables): {} objeto(s)".format(changed))
+        else:
+            log("[INFO] Bases protegidas (no seleccionables): {} objeto(s)".format(changed))
+
+    def break_selected_links(self):
+        break_selected_links_to_copies()
+
+    def _collect_current_maps(self):
+        manual_map = {}
+        kind_map = {}
+        for tname, cmb in self._type_combo_map.items():
+            tok = cmb.currentData()
+            if tok is None:
+                tok = cmb.currentText()
+            tok = str(tok or "").strip()
+            if tok:
+                manual_map[tname] = tok
+        for tname, cmbk in self._type_kind_map.items():
+            ktok = cmbk.currentData()
+            if ktok is None:
+                ktok = cmbk.currentText()
+            ktok = normalize_kind_token(ktok)
+            if ktok:
+                kind_map[tname] = ktok
+        return manual_map, kind_map
+
+    def _preview_info(self):
+        cfg = load_doc_settings(self._doc)
+        if not isinstance(cfg, dict):
+            return {}
+        p = cfg.get("preview", {})
+        if not isinstance(p, dict):
+            return {}
+        out = {}
+        out["csv_path"] = str(p.get("csv_path", "") or "")
+        out["rows"] = int(p.get("rows", 0) or 0)
+        out["skipped"] = int(p.get("skipped", 0) or 0)
+        out["scale_used"] = float(p.get("scale_used", 1.0) or 1.0)
+        out["ts"] = str(p.get("ts", "") or "")
+        td = p.get("types", {})
+        if isinstance(td, dict):
+            out["types"] = dict(td)
+        else:
+            out["types"] = {}
+        return out
+
+    def _update_csv_state_line(self, sketch_types):
+        info = self._preview_info()
+        if not info:
+            self.le_csv_state.setText("Sin preview reciente del CSV.")
+            return
+        csv_types = sorted([str(k) for k in info.get("types", {}).keys() if str(k).strip()], key=lambda s: s.lower())
+        sk_types = sorted(set(str(t) for t in (sketch_types or []) if str(t).strip()), key=lambda s: s.lower())
+
+        csv_set = set(csv_types)
+        sk_set = set(sk_types)
+        only_csv = sorted(csv_set - sk_set, key=lambda s: s.lower())
+        only_sk = sorted(sk_set - csv_set, key=lambda s: s.lower())
+
+        base = "CSV preview: filas={} omitidas={} escala={}".format(
+            int(info.get("rows", 0)),
+            int(info.get("skipped", 0)),
+            float(info.get("scale_used", 1.0)),
+        )
+        ts = str(info.get("ts", "") or "").strip()
+        if ts:
+            base = "{} @ {}".format(base, ts)
+
+        if not sk_types:
+            self.le_csv_state.setText(base + " | Sin sketches importados.")
+            return
+
+        if not only_csv and not only_sk:
+            self.le_csv_state.setText(base + " | Tipos CSV y sketches coinciden.")
+        else:
+            msg = base + " | Desfase tipos"
+            if only_csv:
+                msg += " | solo CSV: {}".format(", ".join(only_csv[:6]))
+            if only_sk:
+                msg += " | solo Sketch: {}".format(", ".join(only_sk[:6]))
+            self.le_csv_state.setText(msg)
+
+    def _apply_maps_to_current_widgets(self, manual_map, kind_map):
+        manual_map = manual_map if isinstance(manual_map, dict) else {}
+        kind_map = kind_map if isinstance(kind_map, dict) else {}
+        for tname, cmb in self._type_combo_map.items():
+            tok = str(manual_map.get(tname, "") or "").strip()
+            if not tok:
+                continue
+            idx = cmb.findData(tok)
+            if idx < 0:
+                idx = cmb.findText(tok)
+            if idx >= 0:
+                cmb.setCurrentIndex(idx)
+        for tname, cmbk in self._type_kind_map.items():
+            ktok = normalize_kind_token(kind_map.get(tname, ""))
+            if not ktok:
+                continue
+            idx = cmbk.findData(ktok)
+            if idx >= 0:
+                cmbk.setCurrentIndex(idx)
+
+    def _get_saved_maps_for_import(self, import_token):
+        maps = self._doc_cfg.get("maps", {}) if isinstance(self._doc_cfg, dict) else {}
+        if not isinstance(maps, dict):
+            maps = {}
+        saved = maps.get(import_token, {}) if isinstance(maps.get(import_token, {}), dict) else {}
+        if not saved:
+            gobj = resolve_import_group(self._doc, import_token, require_points=False)
+            glabel = str(getattr(gobj, "Label", "") or "")
+            if glabel and isinstance(maps.get(glabel, {}), dict):
+                saved = maps.get(glabel, {})
+        saved_manual = saved.get("manual_map", {}) if isinstance(saved.get("manual_map", {}), dict) else {}
+        saved_kind = saved.get("kind_map", {}) if isinstance(saved.get("kind_map", {}), dict) else {}
+        return saved_manual, saved_kind
+
+    def open_mapping_window(self):
+        import_token = self._current_group_token()
+        tnames = list_sketch_types_from_import_group(self._doc, import_token)
+        if not tnames:
+            log("[WARN] No hay bocetos de puntos para mapear en este grupo.")
+            return
+
+        if self._map_dialog is not None:
+            try:
+                self._map_dialog.raise_()
+                self._map_dialog.activateWindow()
+                return
+            except Exception:
+                self._map_dialog = None
+
+        manual_cur, kind_cur = self._collect_current_maps()
+        saved_manual, saved_kind = self._get_saved_maps_for_import(import_token)
+        options = list(self._base_options or [])
+        if not options:
+            for obj in list_base_candidates(self._doc):
+                txt = "{} ({}) [{}]".format(getattr(obj, "Label", "") or getattr(obj, "Name", ""), getattr(obj, "Name", ""), getattr(obj, "TypeId", ""))
+                options.append((txt, getattr(obj, "Name", "")))
+
+        dlg = QtWidgets.QDialog(self.window())
+        dlg.setWindowTitle("Objeto por boceto - ventana flotante")
+        dlg.resize(1120, 760)
+        dlg.setModal(False)
+
+        lay = QtWidgets.QVBoxLayout(dlg)
+
+        row_top = QtWidgets.QHBoxLayout()
+        btn_auto = QtWidgets.QPushButton("Auto todos")
+        btn_fallback = QtWidgets.QPushButton("Fallback todos")
+        cmb_kind_all = QtWidgets.QComboBox()
+        for ktxt, ktok in ELEMENT_KIND_OPTIONS:
+            if ktok == "__AUTO__":
+                continue
+            cmb_kind_all.addItem(ktxt, ktok)
+        btn_kind_all = QtWidgets.QPushButton("Tipo todos")
+        row_top.addWidget(btn_auto)
+        row_top.addWidget(btn_fallback)
+        row_top.addWidget(cmb_kind_all)
+        row_top.addWidget(btn_kind_all)
+        row_top.addStretch(1)
+        lay.addLayout(row_top)
+
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        host = QtWidgets.QWidget()
+        form = QtWidgets.QFormLayout(host)
+        combo_map = {}
+        combo_kind = {}
+        for tname in sorted(set(tnames), key=lambda s: str(s).lower()):
+            cmb = QtWidgets.QComboBox()
+            cmb.setEditable(True)
+            cmb.addItem("Auto (detectar objeto)", "__AUTO__")
+            cmb.addItem("Fallback (base por defecto)", "__FALLBACK__")
+            for txt, tok in options:
+                cmb.addItem(txt, tok)
+            tok = str(manual_cur.get(tname, saved_manual.get(tname, "__AUTO__")) or "__AUTO__").strip()
+            idx = cmb.findData(tok)
+            if idx < 0:
+                idx = cmb.findText(tok)
+            if idx < 0:
+                idx = 0
+            cmb.setCurrentIndex(idx)
+
+            cmbk = QtWidgets.QComboBox()
+            cmbk.setEditable(False)
+            for ktxt, ktok in ELEMENT_KIND_OPTIONS:
+                cmbk.addItem(ktxt, ktok)
+            ktok = normalize_kind_token(kind_cur.get(tname, saved_kind.get(tname, infer_kind_token(tname, ""))))
+            kidx = cmbk.findData(ktok)
+            if kidx < 0:
+                kidx = 0
+            cmbk.setCurrentIndex(kidx)
+
+            rw = QtWidgets.QWidget()
+            hl = QtWidgets.QHBoxLayout(rw)
+            hl.setContentsMargins(0, 0, 0, 0)
+            hl.addWidget(QtWidgets.QLabel("Objeto:"))
+            hl.addWidget(cmb, 2)
+            hl.addWidget(QtWidgets.QLabel("Tipo:"))
+            hl.addWidget(cmbk, 1)
+            form.addRow("Boceto '{}':".format(tname), rw)
+            combo_map[tname] = cmb
+            combo_kind[tname] = cmbk
+
+        scroll.setWidget(host)
+        lay.addWidget(scroll, 1)
+
+        row_btns = QtWidgets.QHBoxLayout()
+        btn_apply = QtWidgets.QPushButton("Aplicar al formulario")
+        btn_apply_close = QtWidgets.QPushButton("Aplicar y cerrar")
+        btn_close = QtWidgets.QPushButton("Cerrar")
+        row_btns.addStretch(1)
+        row_btns.addWidget(btn_apply)
+        row_btns.addWidget(btn_apply_close)
+        row_btns.addWidget(btn_close)
+        lay.addLayout(row_btns)
+
+        def set_all_obj(token):
+            token = str(token or "").strip()
+            for cmb in combo_map.values():
+                idx = cmb.findData(token)
+                if idx >= 0:
+                    cmb.setCurrentIndex(idx)
+
+        def set_all_kind():
+            token = normalize_kind_token(cmb_kind_all.currentData())
+            if not token or token == "__AUTO__":
+                return
+            for cmbk in combo_kind.values():
+                idx = cmbk.findData(token)
+                if idx >= 0:
+                    cmbk.setCurrentIndex(idx)
+
+        def apply_maps():
+            out_manual = {}
+            out_kind = {}
+            for tname, cmb in combo_map.items():
+                tok = cmb.currentData()
+                if tok is None:
+                    tok = cmb.currentText()
+                tok = str(tok or "").strip()
+                if tok:
+                    out_manual[tname] = tok
+            for tname, cmbk in combo_kind.items():
+                ktok = cmbk.currentData()
+                if ktok is None:
+                    ktok = cmbk.currentText()
+                ktok = normalize_kind_token(ktok)
+                if ktok:
+                    out_kind[tname] = ktok
+            self._save_doc_settings(manual_map=out_manual, kind_map=out_kind)
+            self.refresh_type_mapping()
+            self._apply_maps_to_current_widgets(out_manual, out_kind)
+            log("[INFO] Mapeo por boceto actualizado desde ventana flotante.")
+
+        btn_auto.clicked.connect(lambda: set_all_obj("__AUTO__"))
+        btn_fallback.clicked.connect(lambda: set_all_obj("__FALLBACK__"))
+        btn_kind_all.clicked.connect(set_all_kind)
+        btn_apply.clicked.connect(apply_maps)
+        btn_apply_close.clicked.connect(lambda: (apply_maps(), dlg.close()))
+        btn_close.clicked.connect(dlg.close)
+
+        def on_closed(_ev=None):
+            self._map_dialog = None
+
+        try:
+            dlg.finished.connect(lambda *_: on_closed())
+        except Exception:
+            pass
+        self._map_dialog = dlg
+        dlg.show()
+        try:
+            dlg.raise_()
+            dlg.activateWindow()
+        except Exception:
+            pass
+
+    def run1(self):
+        self._save_doc_settings()
+        run_step1({
+            "csv_path": self.le_csv.text().strip(),
+            "scale": float(self.sp_scale.value()),
+            "anchor_mode": str(self.cmb_anchor.currentData() or "centroid"),
+            "clear_prev": bool(self.chk_clear.isChecked()),
+            "create_target": bool(self.chk_target.isChecked()),
+            "auto_scale": bool(self.chk_auto_scale.isChecked()),
+            "filter_outliers": bool(self.chk_filter_outliers.isChecked()),
+        })
+        self.refresh_lists()
+        self._refresh_source_target_from_refs()
+        self._save_doc_settings()
+
+    def scan_csv_only(self):
+        self._save_doc_settings()
+        result = run_step1({
+            "csv_path": self.le_csv.text().strip(),
+            "scale": float(self.sp_scale.value()),
+            "anchor_mode": str(self.cmb_anchor.currentData() or "centroid"),
+            "auto_scale": bool(self.chk_auto_scale.isChecked()),
+            "filter_outliers": bool(self.chk_filter_outliers.isChecked()),
+            "preview_only": True,
+        })
+        if isinstance(result, dict):
+            cfg = load_doc_settings(self._doc)
+            if not isinstance(cfg, dict):
+                cfg = {}
+            cfg["preview"] = {
+                "csv_path": self.le_csv.text().strip(),
+                "rows": int(result.get("rows", 0) or 0),
+                "skipped": int(result.get("skipped", 0) or 0),
+                "types": dict(result.get("types", {}) if isinstance(result.get("types", {}), dict) else {}),
+                "scale_used": float(result.get("scale_used", 1.0) or 1.0),
+                "ts": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            save_doc_settings(self._doc, cfg)
+            self._doc_cfg = cfg
+            self.refresh_type_mapping()
+            log("[INFO] Preview CSV guardado en documento (sin importar).")
+        self._save_doc_settings()
+
+    def capture_source_point(self):
+        v = get_selection_anchor_vector()
+        if v is None:
+            log("[WARN] Seleccione un punto/vertice para el origen.")
+            return
+        self._set_source_vec(v)
+        log("[INFO] Punto origen capturado: {}".format(format_vec(v)))
+
+    def capture_target_point(self):
+        v = get_selection_anchor_vector()
+        if v is None:
+            log("[WARN] Seleccione un punto/vertice para el destino.")
+            return
+        self._set_target_vec(v)
+        log("[INFO] Punto destino capturado: {}".format(format_vec(v)))
+
+    def move_sketches_two_points(self):
+        if self._src_vec is None or self._dst_vec is None:
+            log("[WARN] Debe capturar punto origen y punto destino.")
+            return
+        import_token = self._current_group_token()
+        ok = move_import_sketches_by_points(import_token, self._src_vec, self._dst_vec)
+        if ok:
+            self.refresh_lists()
+            self._refresh_source_target_from_refs()
+            self._save_doc_settings()
+
+    def run2(self):
+        idx = self.cmb_base.currentIndex()
+        data = self.cmb_base.itemData(idx) if idx >= 0 else None
+        base_token = str(data).strip() if data else self.cmb_base.currentText().strip()
+
+        manual_map = {}
+        for tname, cmb in self._type_combo_map.items():
+            token = cmb.currentData()
+            if token is None:
+                token = cmb.currentText()
+            token = str(token or "").strip()
+            if token:
+                manual_map[tname] = token
+        kind_map = {}
+        for tname, cmbk in self._type_kind_map.items():
+            ktok = cmbk.currentData()
+            if ktok is None:
+                ktok = cmbk.currentText()
+            ktok = normalize_kind_token(ktok)
+            if ktok:
+                kind_map[tname] = ktok
+
+        self._save_doc_settings(manual_map=manual_map, kind_map=kind_map)
+
+        run_step2({
+            "import_group": self._current_group_token(),
+            "type_filter": str(self.cmb_type_filter.currentData() or "__ALL__"),
+            "conv_scale": float(self.sp_scale2.value()),
+            "base_token": base_token,
+            "base_mode": str(self.cmb_base_mode.currentData() or BASE_MODE_DEFAULT),
+            "missing": str(self.cmb_missing.currentData() or "skip"),
+            "lum_insert_engine": str(self.cmb_lum_engine.currentData() or LUM_INSERT_ENGINE_DEFAULT),
+            "use_labels": bool(self.chk_labels.isChecked()),
+            "use_devices": bool(self.chk_devices.isChecked()),
+            "protect_masters": bool(self.chk_protect_masters.isChecked()),
+            "align_mode": str(self.cmb_align.currentData() or "none"),
+            "align_target": self.le_align_target.text().strip(),
+            "manual_map": manual_map,
+            "kind_map": kind_map,
+        })
+        self._save_doc_settings(manual_map=manual_map, kind_map=kind_map)
+
+
+class AsisCsv2PasosTaskPanel:
+    def __init__(self, doc):
+        self.form = AsisCsv2PasosForm(doc, parent=None)
+
+    def _close_panel(self):
+        if Gui is not None and hasattr(Gui, "Control"):
+            try:
+                Gui.Control.closeDialog()
+                return
+            except Exception:
+                pass
+        try:
+            self.form.window().close()
+        except Exception:
+            pass
+
+    def getStandardButtons(self):
+        try:
+            return int(QtWidgets.QDialogButtonBox.Close)
+        except Exception:
+            return 0
+
+    def accept(self):
+        self._close_panel()
+        return True
+
+    def reject(self):
+        self._close_panel()
+        return True
+
+
+def main():
+    doc = App.ActiveDocument
+    if doc is None:
+        log("[ERROR] No hay documento activo.")
+        return
+    if not ensure_workbench():
+        return
+    if QtWidgets is None or not getattr(App, "GuiUp", False):
+        log("[ERROR] GUI/Qt no disponible.")
+        return
+    panel = AsisCsv2PasosTaskPanel(doc)
+    if Gui is not None and hasattr(Gui, "Control"):
+        try:
+            Gui.Control.closeDialog()
+        except Exception:
+            pass
+        try:
+            Gui.Control.showDialog(panel)
+            return
+        except Exception as ex:
+            log("[WARN] Task Panel no disponible ({}). Se usa dialogo clasico.".format(ex))
+    parent = None
+    if Gui is not None:
+        try:
+            parent = Gui.getMainWindow()
+        except Exception:
+            parent = None
+    dlg = QtWidgets.QDialog(parent)
+    dlg.setWindowTitle("Asistente CSV 2 Pasos")
+    dlg.setMinimumWidth(860)
+    lay = QtWidgets.QVBoxLayout(dlg)
+    lay.addWidget(panel.form)
+    btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Close)
+    btns.rejected.connect(dlg.reject)
+    btns.accepted.connect(dlg.accept)
+    lay.addWidget(btns)
+    dlg.exec_()
+
+
+main()

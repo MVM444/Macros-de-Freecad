@@ -1,0 +1,189 @@
+# -*- coding: utf-8 -*-
+"""
+Reemplazar_Luminaria.FCMacro
+Reemplaza uno o varios objetos seleccionados por otro modelo 3D,
+manteniendo posicion y rotacion.
+
+Uso:
+1) Seleccione los objetos a reemplazar.
+2) Ejecute la macro.
+3) Elija la fuente del modelo:
+   - Archivo STEP/IGES/BREP
+   - Objeto seleccionado (usar el primer seleccionado como fuente)
+"""
+
+import FreeCAD as App
+import FreeCADGui as Gui
+
+try:
+    from PySide2 import QtWidgets
+except Exception:
+    from PySide import QtGui as QtWidgets
+
+try:
+    import Part
+except Exception:
+    Part = None
+
+
+def _log(msg):
+    App.Console.PrintMessage(f"[REEMP][INFO] {msg}\n")
+
+
+def _err(msg):
+    App.Console.PrintError(f"[REEMP][ERROR] {msg}\n")
+
+
+def _shape_from_object(obj):
+    try:
+        if hasattr(obj, "Shape") and obj.Shape and not obj.Shape.isNull():
+            return obj.Shape.copy()
+    except Exception:
+        pass
+    try:
+        if hasattr(obj, "LinkedObject") and obj.LinkedObject and obj.LinkedObject.Shape:
+            return obj.LinkedObject.Shape.copy()
+    except Exception:
+        pass
+    return None
+
+
+def _shape_from_file(path):
+    if Part is None:
+        _err("Modulo Part no disponible.")
+        return None
+    try:
+        return Part.read(path)
+    except Exception as ex:
+        _err(f"No se pudo leer archivo: {ex}")
+        return None
+
+
+def _pick_mode():
+    items = ["Archivo STEP/IGES/BREP", "Objeto seleccionado (primero)"]
+    choice, ok = QtWidgets.QInputDialog.getItem(
+        None,
+        "Reemplazar luminaria",
+        "Fuente del modelo:",
+        items,
+        0,
+        False,
+    )
+    return choice if ok else None
+
+
+def _pick_file():
+    path, _ = QtWidgets.QFileDialog.getOpenFileName(
+        None,
+        "Seleccionar modelo 3D",
+        "",
+        "3D (*.step *.stp *.iges *.igs *.brep);;Todos (*.*)",
+    )
+    return path or ""
+
+
+def _parent_groups(obj):
+    groups = []
+    for parent in getattr(obj, "InList", []) or []:
+        if hasattr(parent, "Group"):
+            groups.append(parent)
+    return groups
+
+
+def _replace_targets(shape, targets):
+    doc = App.ActiveDocument
+    if doc is None:
+        _err("No hay documento activo.")
+        return
+
+    replaced = 0
+    for obj in targets:
+        try:
+            placement = obj.Placement
+        except Exception:
+            placement = None
+        label = getattr(obj, "Label", "")
+        groups = _parent_groups(obj)
+
+        new_obj = doc.addObject("Part::Feature", "Luminaria")
+        try:
+            new_obj.Shape = shape.copy()
+        except Exception:
+            new_obj.Shape = shape
+
+        if placement is not None:
+            try:
+                new_obj.Placement = placement
+            except Exception:
+                pass
+        if label:
+            try:
+                new_obj.Label = label
+            except Exception:
+                pass
+
+        # copiar estilo basico
+        try:
+            if hasattr(obj, "ViewObject") and hasattr(new_obj, "ViewObject"):
+                new_obj.ViewObject.ShapeColor = obj.ViewObject.ShapeColor
+                new_obj.ViewObject.Transparency = obj.ViewObject.Transparency
+        except Exception:
+            pass
+
+        for g in groups:
+            try:
+                g.addObject(new_obj)
+                g.removeObject(obj)
+            except Exception:
+                pass
+
+        try:
+            doc.removeObject(obj.Name)
+        except Exception:
+            pass
+        replaced += 1
+
+    try:
+        doc.recompute()
+    except Exception:
+        pass
+
+    _log(f"Reemplazados: {replaced}")
+
+
+def main():
+    sel = Gui.Selection.getSelection()
+    if not sel:
+        _err("Seleccione uno o mas objetos a reemplazar.")
+        return
+
+    choice = _pick_mode()
+    if not choice:
+        return
+
+    shape = None
+    targets = sel
+
+    if choice.startswith("Objeto"):
+        if len(sel) < 2:
+            _err("Seleccione primero el objeto fuente y luego los objetos a reemplazar.")
+            return
+        source = sel[0]
+        targets = sel[1:]
+        shape = _shape_from_object(source)
+        if shape is None:
+            _err("No se pudo obtener Shape del objeto fuente.")
+            return
+    else:
+        path = _pick_file()
+        if not path:
+            return
+        shape = _shape_from_file(path)
+        if shape is None:
+            return
+
+    _replace_targets(shape, targets)
+
+
+if __name__ == "__main__":
+    main()

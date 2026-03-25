@@ -1,74 +1,881 @@
-import FreeCAD
-import FreeCADGui
+# -*- coding: utf-8 -*-
+# MenuText: Contar tomacorrientes y exportar
+
+import re
+import sys
+import importlib
+from collections import Counter
+from pathlib import Path
+
+import FreeCAD as App
+import FreeCADGui as Gui
+
+
+TAG = "[CONTAR]"
+BREAKER_STANDARDS = [15, 20, 30, 40, 50, 60, 70, 80, 90, 100, 125, 150, 175, 200]
+AWG_CMIL = {
+    "14": 4110,
+    "12": 6530,
+    "10": 10380,
+    "8": 16510,
+    "6": 26240,
+    "4": 41740,
+    "3": 52620,
+    "2": 66360,
+    "1": 83690,
+    "1/0": 105600,
+    "2/0": 133100,
+    "3/0": 167800,
+    "4/0": 211600,
+}
+
+
+def _info(msg):
+    App.Console.PrintMessage(f"{TAG}[INFO] {msg}\n")
+
+
+def _warn(msg):
+    App.Console.PrintWarning(f"{TAG}[WARN] {msg}\n")
+
+
+def _err(msg):
+    App.Console.PrintError(f"{TAG}[ERROR] {msg}\n")
+
+
+def _safe_text(value):
+    try:
+        return str(value or "")
+    except Exception:
+        return ""
+
+
+def _get_prop(obj, prop_name, default=None):
+    if obj is None:
+        return default
+    try:
+        if hasattr(obj, prop_name):
+            return getattr(obj, prop_name)
+    except Exception:
+        pass
+    try:
+        if prop_name in (getattr(obj, "PropertiesList", []) or []):
+            return obj.getPropertyByName(prop_name)
+    except Exception:
+        pass
+    return default
+
+
+def _norm_label(value):
+    s = _safe_text(value).strip().lower()
+    return re.sub(r"\s+", " ", s)
+
+
+def _this_dir():
+    try:
+        return Path(__file__).resolve().parent
+    except Exception:
+        return None
+
+
+def _load_classifier():
+    try:
+        import component_classifier as mod
+        return importlib.reload(mod)
+    except Exception:
+        pass
+    try:
+        here = _this_dir()
+        if here is not None:
+            con_dir = here.parent / "Conectar"
+            if con_dir.is_dir() and str(con_dir) not in sys.path:
+                sys.path.insert(0, str(con_dir))
+        import component_classifier as mod
+        return importlib.reload(mod)
+    except Exception:
+        return None
+
+
+def _is_group(obj):
+    if obj is None:
+        return False
+    try:
+        if obj.isDerivedFrom("App::DocumentObjectGroup"):
+            return True
+    except Exception:
+        pass
+    try:
+        if obj.isDerivedFrom("App::Part"):
+            return True
+    except Exception:
+        pass
+    return hasattr(obj, "Group")
+
+
+def _is_conexiones_group(obj):
+    label = _safe_text(getattr(obj, "Label", "")).strip().lower()
+    name = _safe_text(getattr(obj, "Name", "")).strip().lower()
+    return label.startswith("conexiones") or name.startswith("conexiones")
+
+
+def _iter_objects_in_group(grp):
+    for child in (getattr(grp, "Group", []) or []):
+        if _is_group(child):
+            if _is_conexiones_group(child):
+                continue
+            for sub in _iter_objects_in_group(child):
+                yield sub
+        else:
+            yield child
+
+
+def _is_toma(obj, classifier):
+    if obj is None:
+        return False
+    if classifier is not None:
+        try:
+            return classifier.get_component_type(obj) == "Toma"
+        except Exception:
+            pass
+    try:
+        if hasattr(obj, "Tipo") and _safe_text(getattr(obj, "Tipo")).strip().lower() == "toma":
+            return True
+    except Exception:
+        pass
+    key = _safe_text(getattr(obj, "KeyRegistro", "")).strip().lower()
+    if key.startswith("tomacorriente"):
+        return True
+    text = (_safe_text(getattr(obj, "Label", "")) + " " + _safe_text(getattr(obj, "Name", ""))).lower()
+    return ("tomacorriente" in text) or ("toma" in text)
+
+
+def _set_text(sheet, addr, value):
+    s = _safe_text(value)
+    if s.startswith("="):
+        s = "'" + s
+    sheet.set(addr, s)
+
+
+def _set_number(sheet, addr, value, decimals=2):
+    try:
+        sheet.set(addr, f"{float(value):.{decimals}f}")
+    except Exception:
+        sheet.set(addr, "")
+
+
+def _col_letter(idx):
+    # 1 -> A, 26 -> Z, 27 -> AA
+    out = ""
+    while idx > 0:
+        idx, rem = divmod(idx - 1, 26)
+        out = chr(65 + rem) + out
+    return out or "A"
+
+
+def _safe_sheet_name(base_label):
+    raw = re.sub(r"[^0-9A-Za-z_]+", "_", _safe_text(base_label)).strip("_")
+    if not raw:
+        raw = "Tomacorrientes"
+    return f"Hoja_{raw[:48]}"
+
+
+def _safe_detail_sheet_name(base_label):
+    raw = re.sub(r"[^0-9A-Za-z_]+", "_", _safe_text(base_label)).strip("_")
+    if not raw:
+        raw = "Tomacorrientes"
+    return f"Detalle_{raw[:45]}"
+
+
+def _clear_sheet(sheet):
+    try:
+        sheet.clearAll()
+    except Exception:
+        pass
+
+
+def _ensure_output_sheet(doc, group_label):
+    name = _safe_sheet_name(group_label)
+    sheet = doc.getObject(name)
+    if sheet is None:
+        sheet = doc.addObject("Spreadsheet::Sheet", name)
+    else:
+        _clear_sheet(sheet)
+    try:
+        sheet.Label = f"Hoja_{group_label}"
+    except Exception:
+        pass
+
+    # Group headers (row 1) + table headers (row 2), similar to load schedule layout.
+    _set_text(sheet, "B1", "Datos a Ingresar")
+    _set_text(sheet, "F1", "Datos a Seleccionar")
+    _set_text(sheet, "I1", "Datos a Ingresar")
+    _set_text(sheet, "M1", "Datos Calculados")
+
+    headers = [
+        "#",
+        "Descripcion",
+        "# Salidas",
+        "Potencia por Salida",
+        "Tipo de Salida",
+        "# polos",
+        "Breaker (AMP)",
+        "Conductores (AWG)",
+        "Distancia mas lejana (m)",
+        "F1",
+        "F2",
+        "F3",
+        "Breaker Calculado",
+        "Conductores (AWG)2",
+        "CAIDA TENSION (%)",
+        "CAIDA TENSION (%) Total",
+        "Panel",
+        "CAIDA UPSTREAM (%)",
+    ]
+
+    for idx, header in enumerate(headers, start=1):
+        _set_text(sheet, f"{_col_letter(idx)}2", header)
+
+    return sheet
+
+
+def _ensure_detail_sheet(doc, group_label):
+    name = _safe_detail_sheet_name(group_label)
+    sheet = doc.getObject(name)
+    if sheet is None:
+        sheet = doc.addObject("Spreadsheet::Sheet", name)
+    else:
+        _clear_sheet(sheet)
+    try:
+        sheet.Label = f"Detalle_{group_label}"
+    except Exception:
+        pass
+
+    headers = [
+        "Circuito_Grupo",
+        "Toma_Label",
+        "Toma_Name",
+        "CircuitoID",
+        "KeyRegistro",
+        "Tipo",
+        "AlturaRel_mm",
+        "X_mm",
+        "Y_mm",
+        "Z_mm",
+        "Voltaje_ref_V",
+        "Distancia_Origen_mm",
+    ]
+    for idx, header in enumerate(headers, start=1):
+        _set_text(sheet, f"{_col_letter(idx)}1", header)
+    return sheet
+
+
+def _to_float(value, default=0.0):
+    try:
+        return float(value)
+    except Exception:
+        pass
+    try:
+        return float(getattr(value, "Value", default))
+    except Exception:
+        return default
+
+
+def _to_float_text(value, default=0.0):
+    s = _safe_text(value).strip().strip('"').replace(" ", "")
+    if not s:
+        return default
+    if "," in s and "." not in s:
+        s = s.replace(",", ".")
+    try:
+        return float(s)
+    except Exception:
+        return default
+
+
+def _sheet_text(sheet, addr):
+    try:
+        return _safe_text(sheet.get(addr)).strip().strip('"')
+    except Exception:
+        return ""
+
+
+def _header_key(text):
+    s = _safe_text(text).strip().strip('"').lower()
+    s = re.sub(r"\s+", "", s)
+    return s
+
+
+def _read_acometida_chain(doc):
+    sheet = doc.getObject("Acometida")
+    if sheet is None:
+        return {}, "", ""
+
+    cols = {}
+    for idx in range(1, 80):
+        h = _header_key(_sheet_text(sheet, f"{_col_letter(idx)}1"))
+        if h:
+            cols[h] = idx
+
+    c_med = cols.get("medidor", 0)
+    c_tab = cols.get("tableroprincipal", 0)
+    c_sys = cols.get("sistema", 0)
+    c_drop_sel = cols.get("caida_sel_pct", 0)
+    c_drop_calc = cols.get("caida_calc_pct", 0)
+    if c_tab <= 0 or c_med <= 0 or (c_drop_sel <= 0 and c_drop_calc <= 0):
+        _warn("Hoja Acometida sin columnas esperadas para cadena de caida.")
+        return {}, "", ""
+
+    records = {}
+    last_row = 0
+    last_panel = ""
+    last_system = ""
+    for r in range(2, 5000):
+        tab = _sheet_text(sheet, f"{_col_letter(c_tab)}{r}").strip()
+        med = _sheet_text(sheet, f"{_col_letter(c_med)}{r}").strip()
+        sys_txt = _sheet_text(sheet, f"{_col_letter(c_sys)}{r}").strip() if c_sys > 0 else ""
+        if not tab and not med:
+            continue
+
+        drop_sel = _to_float_text(_sheet_text(sheet, f"{_col_letter(c_drop_sel)}{r}"), 0.0) if c_drop_sel > 0 else 0.0
+        drop_calc = _to_float_text(_sheet_text(sheet, f"{_col_letter(c_drop_calc)}{r}"), 0.0) if c_drop_calc > 0 else 0.0
+        drop = drop_sel if drop_sel > 0 else drop_calc
+
+        key = _norm_label(tab)
+        if not key:
+            continue
+        records[key] = {
+            "panel": tab,
+            "upstream": med,
+            "drop_pct": max(drop, 0.0),
+            "row": r,
+        }
+        if r >= last_row:
+            last_row = r
+            last_panel = tab
+            last_system = sys_txt
+    return records, last_panel, last_system
+
+
+def _upstream_drop_pct(panel_name, chain_records):
+    key = _norm_label(panel_name)
+    if not key:
+        return 0.0
+    total = 0.0
+    seen = set()
+    cur = key
+    while cur and cur not in seen and cur in chain_records:
+        seen.add(cur)
+        rec = chain_records.get(cur, {})
+        total += _to_float(rec.get("drop_pct", 0.0), 0.0)
+        cur = _norm_label(rec.get("upstream", ""))
+    return total
+
+
+def _infer_panel_from_ids(cids):
+    for cid in cids or []:
+        s = _safe_text(cid).strip()
+        if not s:
+            continue
+        m = re.match(r"^([A-Za-z]{1,10})[-_]\d+", s)
+        if m:
+            return m.group(1)
+        m = re.match(r"^([A-Za-z]{1,10})\d+$", s)
+        if m:
+            return m.group(1)
+    return ""
+
+
+def _panel_for_circuit(circuit, group_main=None, cids=None, default_panel=""):
+    for obj in (circuit, group_main):
+        if obj is None:
+            continue
+        for prop in ("Panel", "Tablero", "TableroPrincipal", "PanelName", "PanelID", "PanelId"):
+            val = _safe_text(_get_prop(obj, prop, "")).strip()
+            if val:
+                return val
+    p = _infer_panel_from_ids(cids or [])
+    if p:
+        return p
+    return _safe_text(default_panel).strip()
+
+
+def _altura_rel_obj(obj):
+    for prop_name in ("AlturaRel", "Altura", "Elevation", "Elevacion", "Z"):
+        if hasattr(obj, prop_name):
+            try:
+                return _to_float(getattr(obj, prop_name), 0.0)
+            except Exception:
+                pass
+    return 0.0
+
+
+def _connection_point(obj):
+    if not hasattr(obj, "Placement"):
+        return None
+    p = obj.Placement.Base
+    return App.Vector(_to_float(p.x, 0.0), _to_float(p.y, 0.0), _to_float(p.z, 0.0) + _altura_rel_obj(obj))
+
+
+def _farthest_toma_data(circuit, origen_obj, classifier):
+    if origen_obj is None or not hasattr(origen_obj, "Placement"):
+        return None, ""
+    p0 = _connection_point(origen_obj)
+    if p0 is None:
+        return None, ""
+
+    best_d = -1.0
+    best_label = ""
+    for obj in _iter_objects_in_group(circuit):
+        if not _is_toma(obj, classifier):
+            continue
+        p = _connection_point(obj)
+        if p is None:
+            continue
+        d = p0.distanceToPoint(p)
+        if d > best_d:
+            best_d = d
+            best_label = _safe_text(getattr(obj, "Label", getattr(obj, "Name", ""))).strip()
+    if best_d < 0:
+        return None, ""
+    return best_d, best_label
+
+
+def _bucket_from_key(key):
+    s = _safe_text(key).strip().lower()
+    if not s:
+        return "Otros"
+    if "gfci" in s:
+        return "GFCI"
+    if "240" in s:
+        return "240V"
+    if "120" in s:
+        return "120V"
+    return "Otros"
+
+
+def _voltage_from_key(key):
+    s = _safe_text(key).strip().lower().replace("_", " ")
+    if not s:
+        return None
+    # Examples: "120v", "240 v", "tomacorriente 120v"
+    m = re.search(r"(\d{2,3})\s*v", s)
+    if m:
+        try:
+            return float(m.group(1))
+        except Exception:
+            pass
+    if "240" in s:
+        return 240.0
+    if "120" in s or "gfci" in s:
+        return 120.0
+    return None
+
+
+def _join_unique(values, max_items=6):
+    clean = sorted(v for v in {_safe_text(x).strip() for x in (values or [])} if v)
+    if not clean:
+        return ""
+    if len(clean) <= max_items:
+        return ", ".join(clean)
+    return ", ".join(clean[:max_items]) + f" (+{len(clean) - max_items})"
+
+
+def _infer_tipo_salida(circuit_label, keys):
+    s = (_safe_text(circuit_label) + " " + " ".join(_safe_text(k) for k in (keys or []))).lower()
+    if "lumin" in s:
+        return "Luminarias"
+    if "tablero" in s:
+        return "Tablero"
+    if "aire" in s or "a.a" in s or " aa " in f" {s} ":
+        return "A.A."
+    if "tvss" in s or "t.v.s.s" in s:
+        return "T.V.S.S."
+    if "equipo" in s:
+        return "Equipo"
+    if "gfci" in s:
+        return "Tomas GFCI"
+    return "Tomas"
+
+
+def _next_standard_breaker(amps):
+    a = _to_float(amps, 0.0)
+    if a <= 0:
+        return 15
+    for b in BREAKER_STANDARDS:
+        if a <= float(b):
+            return int(b)
+    return int(BREAKER_STANDARDS[-1])
+
+
+def _awg_for_breaker(amps):
+    a = _to_float(amps, 0.0)
+    if a <= 15:
+        return "14"
+    if a <= 20:
+        return "12"
+    if a <= 30:
+        return "10"
+    if a <= 40:
+        return "8"
+    if a <= 55:
+        return "6"
+    if a <= 70:
+        return "4"
+    if a <= 95:
+        return "3"
+    if a <= 115:
+        return "2"
+    if a <= 130:
+        return "1"
+    if a <= 150:
+        return "1/0"
+    if a <= 175:
+        return "2/0"
+    if a <= 200:
+        return "3/0"
+    return "4/0"
+
+
+def _cmil_from_awg(awg):
+    key = _safe_text(awg).strip().upper()
+    if key in AWG_CMIL:
+        return float(AWG_CMIL[key])
+    return 0.0
+
+
+def _phase_marks(seq_idx, poles=1, phase_code="", allow_f3=True, volt_ref=0.0):
+    code = _safe_text(phase_code).strip().upper().replace("-", "")
+    explicit = {
+        "A": ("X", "", ""),
+        "B": ("", "X", ""),
+        "C": ("", "", "X"),
+        "AB": ("X", "X", ""),
+        "BC": ("", "X", "X"),
+        "CA": ("X", "", "X"),
+        "AC": ("X", "", "X"),
+        "ABC": ("X", "X", "X"),
+    }
+    if code in explicit:
+        marks = explicit[code]
+        if allow_f3:
+            return marks
+        # En monofasico, nunca usar F3; mapear cualquier referencia a C hacia F2.
+        if int(_to_float(poles, 1)) >= 2 or _to_float(volt_ref, 0.0) >= 208.0:
+            return ("X", "X", "")
+        if marks[2] == "X":
+            return ("", "X", "")
+        return marks
+
+    if poles >= 3 and allow_f3:
+        return ("X", "X", "X")
+
+    if poles == 2:
+        if not allow_f3:
+            # Monofasico 240 V: dos fases activas (F1 y F2), F3 vacia.
+            return ("X", "X", "")
+        cycle_2p = [("X", "X", ""), ("", "X", "X"), ("X", "", "X")]
+        return cycle_2p[seq_idx % len(cycle_2p)]
+
+    if not allow_f3:
+        cycle_1p = [("X", "", ""), ("", "X", "")]
+    else:
+        cycle_1p = [("X", "", ""), ("", "X", ""), ("", "", "X")]
+    return cycle_1p[seq_idx % len(cycle_1p)]
+
+
+def _voltage_drop_pct(distance_m, current_a, voltage_v, awg, poles):
+    d_m = _to_float(distance_m, 0.0)
+    i_a = _to_float(current_a, 0.0)
+    v_v = _to_float(voltage_v, 0.0)
+    cmil = _cmil_from_awg(awg)
+    if d_m <= 0 or i_a <= 0 or v_v <= 0 or cmil <= 0:
+        return 0.0
+
+    # Copper approximation (K at operating temperature), distance in feet.
+    k = 12.9
+    l_ft = d_m * 3.28084
+    if int(_to_float(poles, 1)) >= 3:
+        v_drop = (1.732 * k * i_a * l_ft) / cmil
+    else:
+        v_drop = (2.0 * k * i_a * l_ft) / cmil
+    return (v_drop / v_v) * 100.0
+
+
+def _pick_main_group(doc):
+    sel = list(Gui.Selection.getSelection() or [])
+
+    origen = None
+    grupo = None
+    if len(sel) >= 2 and hasattr(sel[0], "Placement") and _is_group(sel[1]):
+        origen = sel[0]
+        grupo = sel[1]
+        return grupo, origen
+
+    for obj in sel:
+        if _is_group(obj):
+            grupo = obj
+            break
+    for obj in sel:
+        if hasattr(obj, "Placement") and not _is_group(obj):
+            origen = obj
+            break
+    if grupo is not None:
+        return grupo, origen
+
+    for obj in getattr(doc, "Objects", []) or []:
+        if _is_group(obj):
+            label = _norm_label(getattr(obj, "Label", getattr(obj, "Name", "")))
+            if label == "tomacorrientes":
+                _warn("Se uso grupo 'Tomacorrientes' del documento (sin seleccion).")
+                return obj, origen
+    return None, origen
+
 
 def contar_tomacorrientes_y_exportar():
-    # Obtener el documento y los objetos seleccionados
-    doc = FreeCAD.ActiveDocument
-    selected_objects = FreeCADGui.Selection.getSelection()
-
-    # Verificar si se ha seleccionado algún objeto
-    if not selected_objects:
-        FreeCAD.Console.PrintError("No se ha seleccionado ningún objeto.\n")
+    doc = App.ActiveDocument
+    if doc is None:
+        _err("No hay documento activo.")
         return
 
-    # Verificar si el objeto seleccionado es un grupo
-    grupo_principal = selected_objects[0]
-    if grupo_principal.TypeId != 'App::DocumentObjectGroup':
-        FreeCAD.Console.PrintError("Debe seleccionar un grupo principal.\n")
+    classifier = _load_classifier()
+    group_main, origen_obj = _pick_main_group(doc)
+    if group_main is None:
+        _err("Seleccione un grupo principal (Tomacorrientes).")
         return
 
-    FreeCAD.Console.PrintMessage(f"Grupo seleccionado: {grupo_principal.Label}\n")
+    circuits = []
+    for child in (getattr(group_main, "Group", []) or []):
+        if _is_group(child) and not _is_conexiones_group(child):
+            circuits.append(child)
+    if not circuits:
+        _warn("No hay subgrupos directos; se procesa el grupo seleccionado como un circuito.")
+        circuits = [group_main]
 
-    # Crear o seleccionar la hoja de cálculo para los datos con el nombre del grupo principal
-    nombre_hoja = f"Hoja_{grupo_principal.Label}"
-    hoja = None
-    for obj in doc.Objects:
-        if obj.TypeId == 'Spreadsheet::Sheet' and obj.Name == nombre_hoja:
-            hoja = obj
-            break
+    if origen_obj is None:
+        _warn("Sin objeto origen seleccionado: se exportaran conteos; distancia de ruta critica quedara en blanco.")
 
-    if hoja is None:
-        hoja = doc.addObject('Spreadsheet::Sheet', nombre_hoja)
-    else:
-        # Borrar los datos existentes
-        hoja.clearAll()
-    
-    # Configurar encabezados en la hoja de cálculo
-    hoja.set("A1", "Circuito")
-    hoja.set("B1", "Cantidad de Tomacorrientes")
+    group_label = getattr(group_main, "Label", getattr(group_main, "Name", "Tomacorrientes"))
+    sheet = _ensure_output_sheet(doc, group_label)
+    detail_sheet = _ensure_detail_sheet(doc, group_label)
+    acometida_chain, fallback_panel, sistema_acometida = _read_acometida_chain(doc)
+    is_single_phase = _safe_text(sistema_acometida).strip().upper().startswith("1F")
+    if acometida_chain:
+        _info(f"Cadena de acometida cargada para {len(acometida_chain)} tablero(s).")
+    if is_single_phase:
+        _info("Sistema detectado monofasico: asignacion de fases limitada a F1/F2.")
 
-    # Función recursiva para contar tomacorrientes en grupos y subgrupos
-    def contar_tomas_en_grupo(grupo):
-        conteo = 0
-        for obj in grupo.Group:
-            # Ignorar grupos de conexiones
-            if 'Conexiones' in obj.Label:
-                continue
-            # Si el objeto es un grupo, contar los tomacorrientes dentro de él
-            if obj.TypeId == 'App::DocumentObjectGroup':
-                conteo += contar_tomas_en_grupo(obj)
-            # Si el objeto no es un grupo, verificar si es un tomacorriente
-            elif obj.TypeId == 'Part::Feature':
-                conteo += 1
-        return conteo
+    p0 = _connection_point(origen_obj) if origen_obj is not None else None
+    row = 3
+    detail_row = 2
+    total_tomas = 0
+    with_dist = 0
+    max_dist_m = 0.0
+    max_caida_pct = 0.0
 
-    # Crear un diccionario con el conteo de tomacorrientes por cada subgrupo (circuito)
-    datos_circuitos = {}
-    for obj in grupo_principal.Group:
-        if obj.TypeId == 'App::DocumentObjectGroup' and 'Conexiones' not in obj.Label:
-            conteo_tomas = contar_tomas_en_grupo(obj)
-            datos_circuitos[obj.Label] = conteo_tomas
+    for idx_c, circuit in enumerate(circuits, start=1):
+        c_label = _safe_text(getattr(circuit, "Label", getattr(circuit, "Name", "Circuito"))).strip() or "Circuito"
 
-    # Llenar la hoja de cálculo con los datos recopilados
-    fila = 2
-    for circuito, cantidad in datos_circuitos.items():
-        hoja.set(f"A{fila}", circuito)
-        hoja.set(f"B{fila}", str(cantidad))
-        fila += 1
+        toma_objs = []
+        for obj in _iter_objects_in_group(circuit):
+            if _is_toma(obj, classifier):
+                toma_objs.append(obj)
 
-    # Recomputa el documento para aplicar los cambios
-    doc.recompute()
-    FreeCAD.Console.PrintMessage("Datos exportados exitosamente a la hoja de cálculo.\n")
+        count_tomas = len(toma_objs)
+        total_tomas += count_tomas
 
-# Ejecutar la función para contar los tomacorrientes y exportar los datos
-contar_tomacorrientes_y_exportar()
+        keys = set()
+        voltajes_ref = []
+        potencias = []
+        poles_values = []
+        circuit_ids = []
+
+        for toma in toma_objs:
+            key = _safe_text(_get_prop(toma, "KeyRegistro", "")).strip()
+            cid = _safe_text(_get_prop(toma, "CircuitoID", "")).strip()
+            tipo = _safe_text(_get_prop(toma, "Tipo", "")).strip()
+            altura = _altura_rel_obj(toma)
+
+            if key:
+                keys.add(key)
+            if cid:
+                circuit_ids.append(cid)
+
+            vref = _voltage_from_key(key)
+            if vref is not None:
+                voltajes_ref.append(vref)
+
+            poles_toma = _to_float(_get_prop(toma, "Poles", _get_prop(toma, "Polos", 0.0)), 0.0)
+            if poles_toma > 0:
+                poles_values.append(int(round(poles_toma)))
+
+            for p_name in ("VA_each", "VA", "PotenciaVA", "Potencia", "W", "Watts"):
+                p_val = _to_float(_get_prop(toma, p_name, None), 0.0)
+                if p_val > 0:
+                    potencias.append(p_val)
+                    break
+
+            p = _connection_point(toma)
+            x = _to_float(getattr(getattr(toma, "Placement", None), "Base", App.Vector()).x, 0.0)
+            y = _to_float(getattr(getattr(toma, "Placement", None), "Base", App.Vector()).y, 0.0)
+            z = _to_float(getattr(getattr(toma, "Placement", None), "Base", App.Vector()).z, 0.0)
+            dist_origen = None
+            if p0 is not None and p is not None:
+                try:
+                    dist_origen = p0.distanceToPoint(p)
+                except Exception:
+                    dist_origen = None
+
+            _set_text(detail_sheet, f"A{detail_row}", c_label)
+            _set_text(detail_sheet, f"B{detail_row}", _safe_text(getattr(toma, "Label", "")).strip())
+            _set_text(detail_sheet, f"C{detail_row}", _safe_text(getattr(toma, "Name", "")).strip())
+            _set_text(detail_sheet, f"D{detail_row}", cid)
+            _set_text(detail_sheet, f"E{detail_row}", key)
+            _set_text(detail_sheet, f"F{detail_row}", tipo)
+            _set_number(detail_sheet, f"G{detail_row}", altura, decimals=2)
+            _set_number(detail_sheet, f"H{detail_row}", x, decimals=2)
+            _set_number(detail_sheet, f"I{detail_row}", y, decimals=2)
+            _set_number(detail_sheet, f"J{detail_row}", z, decimals=2)
+            if vref is None:
+                detail_sheet.set(f"K{detail_row}", "")
+            else:
+                _set_number(detail_sheet, f"K{detail_row}", vref, decimals=0)
+            if dist_origen is None:
+                detail_sheet.set(f"L{detail_row}", "")
+            else:
+                _set_number(detail_sheet, f"L{detail_row}", dist_origen, decimals=2)
+            detail_row += 1
+
+        dist, _ = _farthest_toma_data(circuit, origen_obj, classifier)
+        if dist is not None:
+            with_dist += 1
+        dist_m = (float(dist) / 1000.0) if dist is not None else None
+        if dist_m is not None:
+            max_dist_m = max(max_dist_m, dist_m)
+
+        if voltajes_ref:
+            volt_ref = float(Counter(voltajes_ref).most_common(1)[0][0])
+        elif count_tomas > 0:
+            volt_ref = 120.0
+        else:
+            volt_ref = 0.0
+
+        if poles_values:
+            poles = int(Counter(poles_values).most_common(1)[0][0])
+        else:
+            poles = 2 if volt_ref >= 208.0 else 1
+
+        tipo_salida = _infer_tipo_salida(c_label, keys)
+        if count_tomas <= 0:
+            va_por_salida = 0.0
+        elif potencias:
+            va_por_salida = sum(potencias) / float(len(potencias))
+        elif "toma" in tipo_salida.lower():
+            va_por_salida = 180.0
+        elif "lumin" in tipo_salida.lower():
+            va_por_salida = 100.0
+        else:
+            va_por_salida = 0.0
+
+        va_total = float(count_tomas) * float(va_por_salida)
+        if volt_ref > 0:
+            if int(poles) >= 3:
+                i_nom_ref = va_total / (1.732 * volt_ref)
+            else:
+                i_nom_ref = va_total / volt_ref
+        else:
+            i_nom_ref = 0.0
+
+        breaker_sel_raw = _to_float(
+            _get_prop(circuit, "Breaker", _get_prop(circuit, "Breaker_A", _get_prop(circuit, "Proteccion", 0.0))),
+            0.0,
+        )
+        if breaker_sel_raw > 0:
+            breaker_sel = _next_standard_breaker(breaker_sel_raw)
+        else:
+            breaker_sel = 20 if poles == 1 else (40 if poles == 2 else 50)
+
+        conductor_sel = _safe_text(
+            _get_prop(circuit, "ConductorAWG", _get_prop(circuit, "Cond_Phase", ""))
+        ).strip()
+        if not conductor_sel:
+            conductor_sel = _awg_for_breaker(breaker_sel)
+
+        breaker_calc = _next_standard_breaker(i_nom_ref * 1.25)
+        conductor_calc = _awg_for_breaker(breaker_calc)
+
+        phase_code = _safe_text(_get_prop(circuit, "Phase", _get_prop(circuit, "Fase", ""))).strip()
+        f1, f2, f3 = _phase_marks(
+            idx_c - 1,
+            poles=poles,
+            phase_code=phase_code,
+            allow_f3=not is_single_phase,
+            volt_ref=volt_ref,
+        )
+
+        panel_name = _panel_for_circuit(circuit, group_main=group_main, cids=circuit_ids, default_panel=fallback_panel)
+        if not panel_name and acometida_chain:
+            _warn(f"Circuito '{c_label}' sin panel identificado; caida upstream se toma como 0%.")
+        caida_upstream_pct = _upstream_drop_pct(panel_name, acometida_chain)
+        caida_pct = _voltage_drop_pct(dist_m or 0.0, i_nom_ref, volt_ref, conductor_calc, poles)
+        caida_pct_total = caida_pct + caida_upstream_pct
+        max_caida_pct = max(max_caida_pct, caida_pct_total)
+
+        _set_text(sheet, f"A{row}", f"{idx_c:02d}")
+        _set_text(sheet, f"B{row}", c_label)
+        _set_number(sheet, f"C{row}", count_tomas, decimals=0)
+        _set_number(sheet, f"D{row}", va_por_salida, decimals=2)
+        _set_text(sheet, f"E{row}", tipo_salida)
+        _set_number(sheet, f"F{row}", poles, decimals=0)
+        _set_number(sheet, f"G{row}", breaker_sel, decimals=0)
+        _set_text(sheet, f"H{row}", conductor_sel)
+        if dist_m is None:
+            sheet.set(f"I{row}", "")
+        else:
+            _set_number(sheet, f"I{row}", dist_m, decimals=2)
+        _set_text(sheet, f"J{row}", f1)
+        _set_text(sheet, f"K{row}", f2)
+        _set_text(sheet, f"L{row}", f3)
+        _set_number(sheet, f"M{row}", breaker_calc, decimals=0)
+        _set_text(sheet, f"N{row}", conductor_calc)
+        _set_number(sheet, f"O{row}", caida_pct, decimals=2)
+        _set_number(sheet, f"P{row}", caida_pct_total, decimals=2)
+        _set_text(sheet, f"Q{row}", panel_name)
+        _set_number(sheet, f"R{row}", caida_upstream_pct, decimals=2)
+        row += 1
+
+    # Totals row (without Distancia Total column by request)
+    _set_text(sheet, f"A{row}", "")
+    _set_text(sheet, f"B{row}", "TOTAL")
+    _set_number(sheet, f"C{row}", total_tomas, decimals=0)
+    if max_dist_m > 0:
+        _set_number(sheet, f"I{row}", max_dist_m, decimals=2)
+    _set_number(sheet, f"O{row}", max_caida_pct, decimals=2)
+    _set_number(sheet, f"P{row}", max_caida_pct, decimals=2)
+
+    # Summary block
+    _set_text(sheet, "T1", "Resumen")
+    _set_text(sheet, "T2", "Grupo")
+    _set_text(sheet, "U2", _safe_text(group_label))
+    _set_text(sheet, "T3", "Circuitos")
+    _set_number(sheet, "U3", len(circuits), decimals=0)
+    _set_text(sheet, "T4", "Tomas_total")
+    _set_number(sheet, "U4", total_tomas, decimals=0)
+    _set_text(sheet, "T5", "Con_distancia")
+    _set_number(sheet, "U5", with_dist, decimals=0)
+    _set_text(sheet, "T6", "Filas_detalle")
+    _set_number(sheet, "U6", detail_row - 2, decimals=0)
+
+    try:
+        sheet.recompute()
+        detail_sheet.recompute()
+        doc.recompute()
+    except Exception as ex:
+        _warn(f"Recompute con advertencia: {ex}")
+
+    _info(
+        f"Exportado: {len(circuits)} circuito(s), {total_tomas} tomacorriente(s), "
+        f"{with_dist} con distancia de ruta critica, {detail_row - 2} fila(s) en detalle."
+    )
+
+
+if __name__ == "__main__":
+    contar_tomacorrientes_y_exportar()

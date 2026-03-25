@@ -1,0 +1,413 @@
+# -*- coding: utf-8 -*-
+# MenuText: Corregir desplazamiento de tomas
+# Icon: InsertarTomacorriente.svg
+
+import json
+import sys
+import importlib
+import importlib.util
+import importlib.machinery
+from pathlib import Path
+
+import FreeCAD as App
+import FreeCADGui as Gui
+
+try:
+    from PySide2 import QtWidgets
+except Exception:
+    from PySide import QtGui as QtWidgets
+
+
+TAG = "[CORR-TOMA]"
+EPS_MM = 0.01
+
+
+def _log(msg):
+    App.Console.PrintMessage(f"{TAG}[INFO] {msg}\n")
+
+
+def _warn(msg):
+    App.Console.PrintWarning(f"{TAG}[WARN] {msg}\n")
+
+
+def _err(msg):
+    App.Console.PrintError(f"{TAG}[ERROR] {msg}\n")
+
+
+def _this_dir():
+    try:
+        return Path(__file__).resolve().parent
+    except Exception:
+        return None
+
+
+def _candidate_pkg_roots():
+    seen = set()
+    base = _this_dir()
+    if base is not None:
+        macros_dir = base.parent
+        for candidate in (macros_dir / "ElectricCR", macros_dir.parent / "ElectricCR"):
+            if candidate and candidate not in seen:
+                seen.add(candidate)
+                yield candidate
+    try:
+        user_mod = Path(App.getUserAppDataDir()) / "Mod" / "ElectricCR"
+        if user_mod not in seen:
+            seen.add(user_mod)
+            yield user_mod
+    except Exception:
+        pass
+
+
+def _ensure_paths():
+    base = _this_dir()
+    if base is not None:
+        con_dir = base.parent / "Conectar"
+        if con_dir.is_dir() and str(con_dir) not in sys.path:
+            sys.path.insert(0, str(con_dir))
+    for root in _candidate_pkg_roots():
+        try:
+            if root.is_dir() and str(root) not in sys.path:
+                sys.path.insert(0, str(root))
+        except Exception:
+            continue
+
+
+def _fallback_loader():
+    for root in _candidate_pkg_roots():
+        try:
+            cand = root / "electriccr" / "features" / "objeto_toma_uno.py"
+        except Exception:
+            continue
+        if cand.is_file():
+            loader = importlib.machinery.SourceFileLoader("objeto_toma_uno_boot", str(cand))
+            spec = importlib.util.spec_from_loader(loader.name, loader)
+            if spec is None:
+                continue
+            module = importlib.util.module_from_spec(spec)
+            loader.exec_module(module)
+            return module
+    return None
+
+
+def _load_toma_module():
+    _ensure_paths()
+    try:
+        module = importlib.import_module("electriccr.features.objeto_toma_uno")
+        importlib.reload(module)
+        return module
+    except Exception:
+        module = _fallback_loader()
+        if module is None:
+            _err("No se pudo cargar electriccr.features.objeto_toma_uno")
+            raise
+        return module
+
+
+def _load_classifier():
+    _ensure_paths()
+    try:
+        mod = importlib.import_module("component_classifier")
+        mod = importlib.reload(mod)
+        return mod
+    except Exception:
+        return None
+
+
+def _registry_path():
+    base = _this_dir()
+    if base is None:
+        return None
+    candidate = base.parent / "Resources" / "registry" / "registry_electric.json"
+    return candidate if candidate.is_file() else None
+
+
+def _load_toma_keys():
+    path = _registry_path()
+    if path is None:
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        try:
+            data = json.loads(path.read_text(encoding="latin-1"))
+        except Exception as ex:
+            _warn(f"No se pudo leer registry_electric.json: {ex}")
+            return []
+    types = data.get("types", {}) if isinstance(data, dict) else {}
+    keys = []
+    for k in types.keys():
+        s = str(k or "")
+        if s.lower().startswith("tomacorriente"):
+            keys.append(s)
+    return sorted(keys)
+
+
+def _is_group(obj):
+    if obj is None:
+        return False
+    try:
+        if obj.isDerivedFrom("App::DocumentObjectGroup"):
+            return True
+    except Exception:
+        pass
+    return hasattr(obj, "Group")
+
+
+def _is_conexiones_group(obj):
+    label = str(getattr(obj, "Label", "") or "").strip().lower()
+    name = str(getattr(obj, "Name", "") or "").strip().lower()
+    return label.startswith("conexiones") or name.startswith("conexiones")
+
+
+def _iter_group_objects(grp):
+    if not _is_group(grp):
+        return
+    for child in (getattr(grp, "Group", []) or []):
+        if _is_group(child):
+            if _is_conexiones_group(child):
+                continue
+            for sub in _iter_group_objects(child):
+                yield sub
+        else:
+            yield child
+
+
+def _find_group_by_label(doc, label):
+    target = str(label or "").strip().lower()
+    if not target:
+        return None
+    for obj in getattr(doc, "Objects", []) or []:
+        if not _is_group(obj):
+            continue
+        lbl = str(getattr(obj, "Label", "") or getattr(obj, "Name", "")).strip().lower()
+        if lbl == target:
+            return obj
+    return None
+
+
+def _collect_scope_objects(doc, scope_name):
+    if scope_name == "Seleccion actual":
+        sel = list(Gui.Selection.getSelection() or [])
+        out = []
+        for obj in sel:
+            if _is_group(obj):
+                out.extend(list(_iter_group_objects(obj)))
+            else:
+                out.append(obj)
+        return out
+    if scope_name == "Grupo Tomacorrientes":
+        grp = _find_group_by_label(doc, "Tomacorrientes")
+        if grp is None:
+            return []
+        return list(_iter_group_objects(grp))
+    out = []
+    for obj in getattr(doc, "Objects", []) or []:
+        if _is_group(obj):
+            continue
+        out.append(obj)
+    return out
+
+
+def _safe_text(v):
+    try:
+        return str(v or "")
+    except Exception:
+        return ""
+
+
+def _obj_key(obj):
+    try:
+        if hasattr(obj, "KeyRegistro"):
+            return _safe_text(getattr(obj, "KeyRegistro")).strip()
+    except Exception:
+        pass
+    return ""
+
+
+def _is_socket(obj, classifier):
+    if obj is None:
+        return False
+    if classifier is not None:
+        try:
+            return classifier.get_component_type(obj) == "Toma"
+        except Exception:
+            pass
+    key = _obj_key(obj).lower()
+    if "tomacorriente" in key:
+        return True
+    lbl = _safe_text(getattr(obj, "Label", "")).lower()
+    name = _safe_text(getattr(obj, "Name", "")).lower()
+    return lbl.startswith("toma") or name.startswith("toma") or lbl.startswith("tomacorriente")
+
+
+def _shape_center_world(obj):
+    try:
+        shp = getattr(obj, "Shape", None)
+        if shp is not None and (not shp.isNull()):
+            return shp.BoundBox.Center
+    except Exception:
+        pass
+    try:
+        return obj.Placement.Base
+    except Exception:
+        return None
+
+
+def _shift_object(obj, delta):
+    try:
+        if delta is None or delta.Length <= EPS_MM:
+            return False
+    except Exception:
+        return False
+    try:
+        pl = obj.Placement
+        obj.Placement = App.Placement(pl.Base.add(delta), pl.Rotation)
+        try:
+            obj.touch()
+        except Exception:
+            pass
+        return True
+    except Exception:
+        return False
+
+
+def _ask_items(title, label, items, current=0):
+    if not items:
+        return None, False
+    try:
+        value, ok = QtWidgets.QInputDialog.getItem(None, title, label, items, current, False)
+        return value, bool(ok)
+    except Exception:
+        return None, False
+
+
+def _prototype_local_delta(doc, module, old_key, new_key):
+    old_obj = None
+    new_obj = None
+    try:
+        old_obj = module.crear_toma_uno(doc=doc, name_prefix="TMP_OLD", key_registro=old_key, tipo_logico="Toma")
+        new_obj = module.crear_toma_uno(doc=doc, name_prefix="TMP_NEW", key_registro=new_key, tipo_logico="Toma")
+        try:
+            old_obj.Placement = App.Placement(App.Vector(0, 0, 0), App.Rotation())
+            new_obj.Placement = App.Placement(App.Vector(0, 0, 0), App.Rotation())
+            old_obj.AlturaRel = 0.0
+            new_obj.AlturaRel = 0.0
+            old_obj.touch()
+            new_obj.touch()
+        except Exception:
+            pass
+        try:
+            doc.recompute()
+        except Exception:
+            pass
+        c_old = _shape_center_world(old_obj)
+        c_new = _shape_center_world(new_obj)
+        if c_old is None or c_new is None:
+            return None
+        return c_old.sub(c_new)
+    finally:
+        for tmp in (old_obj, new_obj):
+            try:
+                if tmp is not None and getattr(tmp, "Name", None):
+                    doc.removeObject(tmp.Name)
+            except Exception:
+                pass
+        try:
+            doc.recompute()
+        except Exception:
+            pass
+
+
+def main():
+    doc = App.ActiveDocument
+    if doc is None:
+        _err("No hay documento activo.")
+        return
+
+    _ensure_paths()
+    classifier = _load_classifier()
+    module = _load_toma_module()
+    toma_keys = _load_toma_keys()
+    if len(toma_keys) < 2:
+        _err("No hay claves suficientes de tomacorriente en el registro.")
+        return
+
+    old_key, ok = _ask_items("Corregir desplazamiento", "Clave original (antes del cambio):", toma_keys, 0)
+    if not ok:
+        return
+    new_default = 0
+    for i, k in enumerate(toma_keys):
+        if k != old_key:
+            new_default = i
+            break
+    new_key, ok = _ask_items("Corregir desplazamiento", "Clave actual (despues del cambio):", toma_keys, new_default)
+    if not ok:
+        return
+
+    scope_opts = ["Seleccion actual", "Grupo Tomacorrientes", "Documento completo"]
+    scope, ok = _ask_items("Corregir desplazamiento", "Alcance:", scope_opts, 1)
+    if not ok:
+        return
+
+    delta_local = _prototype_local_delta(doc, module, old_key, new_key)
+    if delta_local is None:
+        _err("No se pudo calcular delta de correccion entre prototipos.")
+        return
+
+    objs = _collect_scope_objects(doc, scope)
+    targets = []
+    seen = set()
+    for obj in objs:
+        if obj is None:
+            continue
+        name = _safe_text(getattr(obj, "Name", ""))
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        if not _is_socket(obj, classifier):
+            continue
+        key = _obj_key(obj)
+        if key and key != new_key:
+            continue
+        if not hasattr(obj, "Placement"):
+            continue
+        targets.append(obj)
+
+    if not targets:
+        _warn("No se encontraron tomacorrientes para corregir.")
+        return
+
+    _log(
+        "Aplicando correccion local ({:.2f}, {:.2f}, {:.2f}) a {} objeto(s).".format(
+            delta_local.x, delta_local.y, delta_local.z, len(targets)
+        )
+    )
+
+    moved = 0
+    try:
+        doc.openTransaction("Corregir desplazamiento tomas")
+    except Exception:
+        pass
+    for obj in targets:
+        try:
+            rot = obj.Placement.Rotation
+            delta_world = rot.multVec(delta_local)
+            if _shift_object(obj, delta_world):
+                moved += 1
+        except Exception as ex:
+            _warn(f"Fallo en '{_safe_text(getattr(obj, 'Label', obj.Name))}': {ex}")
+    try:
+        doc.recompute()
+    except Exception as ex:
+        _warn(f"Recompute con advertencia: {ex}")
+    try:
+        doc.commitTransaction()
+    except Exception:
+        pass
+
+    _log(f"Listo. Tomacorrientes corregidos: {moved}")
+
+
+if __name__ == "__main__":
+    main()

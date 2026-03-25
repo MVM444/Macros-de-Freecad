@@ -1,48 +1,88 @@
 import FreeCAD
 import FreeCADGui
-import Part
+import Draft
+import os
+import sys
+_THIS_DIR = os.path.dirname(__file__) if '__file__' in globals() else ''
+if _THIS_DIR and _THIS_DIR not in sys.path:
+    sys.path.insert(0, _THIS_DIR)
+import importlib
+import conexiones_grouping as _conexiones_grouping_mod
+_conexiones_grouping_mod = importlib.reload(_conexiones_grouping_mod)
+ensure_conexiones_group = _conexiones_grouping_mod.ensure_conexiones_group
+def _make_wire(points):
+    maker = getattr(Draft, "make_wire", None)
+    if maker is None:
+        maker = getattr(Draft, "makeWire", None)
+    if maker is None:
+        raise RuntimeError("No se encontro Draft.make_wire ni Draft.makeWire")
+
+    attempts = [
+        lambda: maker(points, closed=False, face=False),
+        lambda: maker(points, False, False),
+        lambda: maker(points, False),
+        lambda: maker(points),
+    ]
+    last_err = None
+    for attempt in attempts:
+        try:
+            return attempt()
+        except Exception as ex:
+            last_err = ex
+    raise RuntimeError(f"No se pudo crear wire: {last_err}")
+
 
 def conectar_objetos_en_grupo():
     doc = FreeCAD.ActiveDocument
-
-    # Obtiene el objeto seleccionado
-    selected_objects = FreeCADGui.Selection.getSelection()
-
-    if not selected_objects:
-        FreeCAD.Console.PrintError("No se ha seleccionado ningún objeto.\n")
+    if doc is None:
+        FreeCAD.Console.PrintError("No hay documento activo.\n")
         return
 
-    # Verifica si el objeto seleccionado es un grupo
-    if selected_objects[0].TypeId == 'App::DocumentObjectGroup':
+    selected_objects = FreeCADGui.Selection.getSelection()
+    if not selected_objects:
+        FreeCAD.Console.PrintError("No se ha seleccionado ningun objeto.\n")
+        return
+
+    if selected_objects[0].TypeId == "App::DocumentObjectGroup":
         grupo = selected_objects[0]
     else:
-        # Si no es un grupo, busca el grupo al que pertenece el objeto
+        grupo = None
         for obj in doc.Objects:
-            if obj.TypeId == 'App::DocumentObjectGroup' and selected_objects[0] in obj.Group:
+            if obj.TypeId == "App::DocumentObjectGroup" and selected_objects[0] in obj.Group:
                 grupo = obj
                 break
-        else:
-            FreeCAD.Console.PrintError("El objeto seleccionado no pertenece a ningún grupo.\n")
+        if grupo is None:
+            FreeCAD.Console.PrintError("El objeto seleccionado no pertenece a ningun grupo.\n")
             return
 
     FreeCAD.Console.PrintMessage(f"Grupo seleccionado: {grupo.Name}\n")
 
-    # Obtener todos los objetos en el grupo que están numerados según el Label
+    candidatos = [obj for obj in grupo.Group if hasattr(obj, "Placement") and not hasattr(obj, "Group")]
     objetos_numerados = sorted(
-        [obj for obj in grupo.Group if obj.Label.isdigit() or obj.Label.isalnum()],
-        key=lambda x: int(x.Label) if x.Label.isdigit() else x.Label
+        [obj for obj in candidatos if obj.Label.isdigit() or obj.Label.isalnum()],
+        key=lambda x: int(x.Label) if x.Label.isdigit() else x.Label,
     )
 
-    # Conectar todos los objetos numerados con líneas
+    if len(objetos_numerados) < 2:
+        FreeCAD.Console.PrintError("No hay suficientes objetos conectables en el grupo.\n")
+        return
+    conexiones_grupo = ensure_conexiones_group(doc, parent_group=grupo, objects=objetos_numerados)
+
     for i in range(len(objetos_numerados) - 1):
         objeto1 = objetos_numerados[i]
         objeto2 = objetos_numerados[i + 1]
         puntos = [objeto1.Placement.Base, objeto2.Placement.Base]
-        linea = Part.makePolygon(puntos)
-        linea_obj = doc.addObject("Part::Feature", f'Conexion_{objeto1.Label}_{objeto2.Label}')
-        linea_obj.Shape = linea
+        wire_obj = _make_wire(puntos)
+        wire_obj.Label = f"Conexion_{objeto1.Label}_{objeto2.Label}"
+        try:
+            conexiones_grupo.addObject(wire_obj)
+        except Exception:
+            pass
 
-# Ejecuta la función para conectar objetos en el grupo seleccionado
+    doc.recompute()
+
+
+# Ejecuta la funcion para conectar objetos en el grupo seleccionado
 conectar_objetos_en_grupo()
 
-FreeCAD.ActiveDocument.recompute()
+

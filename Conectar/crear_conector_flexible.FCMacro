@@ -1,0 +1,300 @@
+# -*- coding: utf-8 -*-
+# MenuText: Crear Conector Flexible (Spline)
+# ToolTip: Conecta objetos seleccionados con spline flexible y respeta grupos de conexiones.
+# Icon: Conectar/crear_conector_flexible.svg
+"""
+Crear conector flexible para la herramienta Conectores.
+
+Reglas:
+- Seleccione 2 o mas objetos con geometria.
+- Con 2 objetos crea 1 spline.
+- Con N objetos crea N-1 splines en cadena (orden de seleccion).
+- Cada spline se agrega al grupo de conexiones correcto usando conexiones_grouping.
+"""
+
+import os
+import sys
+import math
+import importlib
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+
+
+THIS_DIR = os.path.dirname(__file__) if "__file__" in globals() else ""
+if THIS_DIR and THIS_DIR not in sys.path:
+    sys.path.insert(0, THIS_DIR)
+
+import conexiones_grouping as _cg
+
+_cg = importlib.reload(_cg)
+ensure_conexiones_group = _cg.ensure_conexiones_group
+is_group = _cg.is_group
+
+
+def _safe_text(value):
+    try:
+        return str(value or "")
+    except Exception:
+        return ""
+
+
+def _log(msg):
+    App.Console.PrintMessage(f"[CONECTOR_FLEX][INFO] {msg}\n")
+
+
+def _warn(msg):
+    App.Console.PrintWarning(f"[CONECTOR_FLEX][WARN] {msg}\n")
+
+
+def _err(msg):
+    App.Console.PrintError(f"[CONECTOR_FLEX][ERROR] {msg}\n")
+
+
+def _ensure_property(obj, ptype, pname, pgroup, pdesc):
+    try:
+        if pname not in getattr(obj, "PropertiesList", []):
+            obj.addProperty(ptype, pname, pgroup, pdesc)
+    except Exception:
+        pass
+
+
+def _selected_objects():
+    out = []
+    seen = set()
+    try:
+        sel_ex = Gui.Selection.getSelectionEx() or []
+    except Exception:
+        sel_ex = []
+
+    for sx in sel_ex:
+        obj = getattr(sx, "Object", None)
+        if obj is None:
+            continue
+        if is_group(obj):
+            continue
+        key = _safe_text(getattr(obj, "Name", "")) or str(id(obj))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(obj)
+
+    if out:
+        return out
+
+    try:
+        basic = Gui.Selection.getSelection() or []
+    except Exception:
+        basic = []
+    for obj in basic:
+        if obj is None or is_group(obj):
+            continue
+        key = _safe_text(getattr(obj, "Name", "")) or str(id(obj))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(obj)
+    return out
+
+
+def _object_anchor(obj):
+    try:
+        sh = getattr(obj, "Shape", None)
+        if sh is not None and not sh.isNull():
+            return sh.BoundBox.Center
+    except Exception:
+        pass
+    try:
+        return App.Vector(obj.Placement.Base)
+    except Exception:
+        return App.Vector(0.0, 0.0, 0.0)
+
+
+def _normalize_xy(vec):
+    v = App.Vector(float(vec.x), float(vec.y), 0.0)
+    l = v.Length
+    if l <= 1e-6:
+        return App.Vector(1.0, 0.0, 0.0)
+    return App.Vector(v.x / l, v.y / l, 0.0)
+
+
+def _spline_points(p0, p1):
+    dx = float(p1.x - p0.x)
+    dy = float(p1.y - p0.y)
+    dz = float(p1.z - p0.z)
+    dist_xy = math.hypot(dx, dy)
+    dist_3d = math.sqrt(dx * dx + dy * dy + dz * dz)
+
+    if dist_3d <= 1e-6:
+        return [App.Vector(p0), App.Vector(p1)]
+
+    dir_xy = _normalize_xy(App.Vector(dx, dy, 0.0))
+
+    reach = max(120.0, min(700.0, dist_xy * 0.24))
+    lift = max(60.0, min(450.0, max(dist_xy * 0.12, abs(dz) * 0.40)))
+
+    c1 = App.Vector(float(p0.x), float(p0.y), float(p0.z))
+    c1 = c1.add(App.Vector(dir_xy.x * reach, dir_xy.y * reach, 0.0))
+    c1.z = float(c1.z + lift * 0.6)
+
+    mid = App.Vector(
+        0.5 * (float(p0.x) + float(p1.x)),
+        0.5 * (float(p0.y) + float(p1.y)),
+        0.5 * (float(p0.z) + float(p1.z)) + lift,
+    )
+
+    c2 = App.Vector(float(p1.x), float(p1.y), float(p1.z))
+    c2 = c2.add(App.Vector(-dir_xy.x * reach, -dir_xy.y * reach, 0.0))
+    c2.z = float(c2.z + lift * 0.6)
+
+    return [App.Vector(p0), c1, mid, c2, App.Vector(p1)]
+
+
+def _dedupe_points(points, tol=1e-6):
+    if not points:
+        return []
+    out = [points[0]]
+    for p in points[1:]:
+        q = out[-1]
+        if App.Vector(float(p.x - q.x), float(p.y - q.y), float(p.z - q.z)).Length <= tol:
+            continue
+        out.append(p)
+    return out
+
+
+def _make_spline_shape(p0, p1):
+    pts = _dedupe_points(_spline_points(p0, p1))
+    if len(pts) < 2:
+        raise RuntimeError("No hay puntos suficientes para spline.")
+    if len(pts) == 2:
+        return Part.makeLine(pts[0], pts[1])
+    try:
+        spline = Part.BSplineCurve()
+        spline.interpolate(pts)
+        return spline.toShape()
+    except Exception:
+        return Part.makePolygon(pts)
+
+
+def _style_connection(obj):
+    try:
+        if hasattr(obj, "ViewObject"):
+            vo = obj.ViewObject
+            vo.LineColor = (0.12, 0.64, 0.95)
+            vo.LineWidth = 2.0
+            if hasattr(vo, "PointColor"):
+                vo.PointColor = (0.12, 0.64, 0.95)
+    except Exception:
+        pass
+
+
+def _connection_label(a, b):
+    la = _safe_text(getattr(a, "Label", "")) or _safe_text(getattr(a, "Name", "A"))
+    lb = _safe_text(getattr(b, "Label", "")) or _safe_text(getattr(b, "Name", "B"))
+    return f"Conector Flexible: {la} -> {lb}"
+
+
+def _create_connection(doc, a, b):
+    p0 = _object_anchor(a)
+    p1 = _object_anchor(b)
+    shape = _make_spline_shape(p0, p1)
+
+    obj = doc.addObject("Part::Feature", "Conector_Flexible")
+    obj.Shape = shape
+    obj.Label = _connection_label(a, b)
+
+    _ensure_property(obj, "App::PropertyString", "TipoConexion", "ElectricCR", "Tipo de conexion")
+    _ensure_property(obj, "App::PropertyString", "ConduitType", "ElectricCR", "Tipo de tuberia")
+    _ensure_property(obj, "App::PropertyString", "EstadoConexion", "Red", "Estado de conexion")
+    _ensure_property(obj, "App::PropertyString", "ObjetoOrigen", "ElectricCR", "Objeto origen")
+    _ensure_property(obj, "App::PropertyString", "ObjetoDestino", "ElectricCR", "Objeto destino")
+    _ensure_property(obj, "App::PropertyFloat", "LongitudMM", "ElectricCR", "Longitud aproximada")
+
+    try:
+        obj.TipoConexion = "EMT_Flexible"
+    except Exception:
+        pass
+    try:
+        obj.ConduitType = "EMT"
+    except Exception:
+        pass
+    try:
+        obj.EstadoConexion = "Conectado"
+    except Exception:
+        pass
+    try:
+        obj.ObjetoOrigen = _safe_text(getattr(a, "Name", ""))
+    except Exception:
+        pass
+    try:
+        obj.ObjetoDestino = _safe_text(getattr(b, "Name", ""))
+    except Exception:
+        pass
+    try:
+        obj.LongitudMM = float(getattr(shape, "Length", 0.0))
+    except Exception:
+        pass
+
+    _style_connection(obj)
+    return obj
+
+
+def main():
+    doc = App.ActiveDocument
+    if doc is None:
+        _err("No hay documento activo.")
+        return
+
+    objs = _selected_objects()
+    if len(objs) < 2:
+        _warn("Seleccione al menos dos objetos para conectar.")
+        return
+
+    if len(objs) == 2:
+        pairs = [(objs[0], objs[1])]
+    else:
+        pairs = [(objs[i], objs[i + 1]) for i in range(len(objs) - 1)]
+        _log(f"Modo cadena: se crearan {len(pairs)} conexiones por orden de seleccion.")
+
+    created = 0
+    skipped = 0
+
+    try:
+        doc.openTransaction("ElectricCR: crear conector flexible")
+        for a, b in pairs:
+            try:
+                conn = _create_connection(doc, a, b)
+            except Exception as ex:
+                _warn(f"No se pudo crear conexion entre '{a.Label}' y '{b.Label}': {ex}")
+                skipped += 1
+                continue
+
+            g_con = ensure_conexiones_group(doc, objects=[a, b])
+            try:
+                g_con.addObject(conn)
+            except Exception:
+                pass
+
+            created += 1
+            _log(
+                f"Conector creado: {_safe_text(getattr(conn, 'Label', conn.Name))} "
+                f"| grupo={_safe_text(getattr(g_con, 'Label', getattr(g_con, 'Name', 'Conexiones')))}"
+            )
+
+        doc.recompute()
+        doc.commitTransaction()
+    except Exception as ex:
+        try:
+            doc.abortTransaction()
+        except Exception:
+            pass
+        _err(f"Fallo general: {ex}")
+        return
+
+    _log(f"Listo. Seleccion={len(objs)} | creados={created} | omitidos={skipped}.")
+
+
+if __name__ == "__main__":
+    main()
+

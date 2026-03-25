@@ -1,0 +1,105 @@
+# -*- coding: utf-8 -*-
+# MenuText: Insertar Cajas Octogonales...
+# Icon: Cajas/Insertar_Cajas_Octogonales.svg
+"""
+Inserta una caja EMT octogonal como App::Link usando:
+ElectricCR.electriccr.features.caja_emt_octogonal
+"""
+
+from pathlib import Path
+import importlib
+import sys
+
+import FreeCAD as App
+
+
+def _log(msg):
+    App.Console.PrintMessage(f"[CAJA_EMT][INFO] {msg}\n")
+
+
+def _err(msg):
+    App.Console.PrintError(f"[CAJA_EMT][ERROR] {msg}\n")
+
+
+def _ensure_electriccr_on_path():
+    for mod_name in ("ElectricCR", "electriccr"):
+        try:
+            importlib.import_module(mod_name)
+            return True
+        except ImportError:
+            pass
+
+    try:
+        here = Path(__file__).resolve()
+    except Exception:
+        here = None
+
+    cands = []
+    if here is not None:
+        for parent in [here.parent, *here.parents]:
+            pkg = parent / "ElectricCR"
+            if pkg.is_dir():
+                cands.extend([str(pkg.parent), str(pkg)])
+
+    try:
+        base = Path(App.getUserAppDataDir())
+    except Exception:
+        base = Path.home() / "AppData" / "Roaming" / "FreeCAD"
+
+    for folder_name in ("Macro", "Macros"):
+        pkg = base / folder_name / "ElectricCR"
+        if pkg.is_dir():
+            cands.extend([str(pkg.parent), str(pkg)])
+
+    for path in cands:
+        if path and path not in sys.path:
+            sys.path.insert(0, path)
+
+    importlib.invalidate_caches()
+    for mod_name in ("ElectricCR", "electriccr"):
+        try:
+            importlib.import_module(mod_name)
+            return True
+        except ImportError:
+            pass
+    return False
+
+
+def _import_insert_function():
+    if not _ensure_electriccr_on_path():
+        return None
+    candidates = (
+        "ElectricCR.electriccr.features.caja_emt_octogonal",
+        "electriccr.features.caja_emt_octogonal",
+    )
+    for mod_name in candidates:
+        try:
+            mod = importlib.import_module(mod_name)
+            return getattr(mod, "insertar_caja_emt_octogonal_link", None)
+        except Exception:
+            pass
+    return None
+
+
+def main():
+    fn_insert = _import_insert_function()
+    if fn_insert is None:
+        _err("No se pudo importar insertar_caja_emt_octogonal_link.")
+        return
+
+    doc = App.ActiveDocument or App.newDocument("Electrico")
+    try:
+        obj = fn_insert(doc=doc, name_prefix="Caja EMT Octogonal")
+    except Exception as ex:
+        _err(f"Fallo al insertar caja EMT octogonal: {ex}")
+        return
+
+    if obj is None:
+        _err("La funcion de insercion retorno None.")
+        return
+
+    _log(f"Insertada: {obj.Name} ({obj.Label})")
+
+
+if __name__ == "__main__":
+    main()

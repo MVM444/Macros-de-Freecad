@@ -1,0 +1,568 @@
+# Macro: Multirenombrar_ElectricCR
+# Descripcion: Renombra en lote Labels de objetos del arbol.
+# Instrucciones clave: Seleccione objetos o grupos; configure reglas; use Vista previa.
+# Fecha/Hora: 2026-02-19 15:27
+# Version: 1.0.0
+# MenuText: Multirenombrar
+# Icon: Multirenombrar_ElectricCR.svg
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import re
+
+
+def _qt_modules():
+    try:
+        from PySide2 import QtWidgets, QtCore
+        return QtWidgets, QtCore
+    except Exception:
+        try:
+            from PySide import QtGui as QtWidgets
+            from PySide import QtCore
+            return QtWidgets, QtCore
+        except Exception:
+            return None, None
+
+
+def _msg(text):
+    App.Console.PrintMessage(str(text) + "\n")
+
+
+def _warn(text):
+    App.Console.PrintWarning(str(text) + "\n")
+
+
+def _err(text):
+    App.Console.PrintError(str(text) + "\n")
+
+
+def _is_body(obj):
+    if obj is None:
+        return False
+    try:
+        return obj.isDerivedFrom("PartDesign::Body")
+    except Exception:
+        return getattr(obj, "TypeId", "") == "PartDesign::Body"
+
+
+def _has_body_parent(obj):
+    if obj is None:
+        return False
+    try:
+        in_list = getattr(obj, "InListRecursive", None)
+        if in_list:
+            for p in in_list:
+                if _is_body(p):
+                    return True
+    except Exception:
+        pass
+    try:
+        in_list = getattr(obj, "InList", []) or []
+        for p in in_list:
+            if _is_body(p):
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _is_container(obj):
+    if obj is None:
+        return False
+    if _is_body(obj):
+        return False
+    try:
+        if obj.isDerivedFrom("App::DocumentObjectGroup"):
+            return True
+    except Exception:
+        pass
+    try:
+        if obj.isDerivedFrom("App::Part"):
+            return True
+    except Exception:
+        pass
+    return hasattr(obj, "Group")
+
+
+def _get_root_objects(doc):
+    if hasattr(doc, "RootObjects"):
+        try:
+            return list(doc.RootObjects)
+        except Exception:
+            pass
+    if hasattr(doc, "getRootObjects"):
+        try:
+            return list(doc.getRootObjects())
+        except Exception:
+            pass
+    root = []
+    for obj in list(doc.Objects):
+        parent = None
+        if hasattr(obj, "getParentGroup"):
+            try:
+                parent = obj.getParentGroup()
+            except Exception:
+                parent = None
+        if parent:
+            continue
+        try:
+            in_list = getattr(obj, "InList", []) or []
+            if any(_is_container(p) for p in in_list):
+                continue
+        except Exception:
+            pass
+        root.append(obj)
+    return root
+
+
+def _unique_add(obj, out_list, seen_names, skipped, reason=""):
+    if obj is None:
+        return
+    try:
+        name = obj.Name
+    except Exception:
+        name = None
+    if not name:
+        return
+    if _is_body(obj):
+        skipped.append((obj, "body"))
+        return
+    if _has_body_parent(obj):
+        skipped.append((obj, "in_body"))
+        return
+    if name in seen_names:
+        return
+    seen_names.add(name)
+    out_list.append(obj)
+
+
+def _collect_from_container(container, recursive, out_list, seen_names, skipped):
+    try:
+        children = list(getattr(container, "Group", []) or [])
+    except Exception:
+        children = []
+    for child in children:
+        _unique_add(child, out_list, seen_names, skipped)
+        if recursive and _is_container(child):
+            _collect_from_container(child, recursive, out_list, seen_names, skipped)
+
+
+def _collect_targets(doc, mode, recursive):
+    targets = []
+    skipped = []
+    seen = set()
+
+    def add_list(objs):
+        for obj in objs:
+            _unique_add(obj, targets, seen, skipped)
+            if recursive and _is_container(obj):
+                _collect_from_container(obj, recursive, targets, seen, skipped)
+
+    if mode in ("Root", "Ambos"):
+        root = _get_root_objects(doc)
+        add_list(root)
+
+    if mode in ("Seleccion", "Ambos"):
+        try:
+            sel = Gui.Selection.getSelection()
+        except Exception:
+            sel = []
+        add_list(sel)
+
+    return targets, skipped
+
+
+def _format_skip(skipped, limit=20):
+    if not skipped:
+        return ""
+    parts = []
+    for obj, reason in skipped[:limit]:
+        try:
+            name = obj.Name
+        except Exception:
+            name = "<obj>"
+        parts.append(f"{name}({reason})")
+    if len(skipped) > limit:
+        parts.append(f"... (+{len(skipped) - limit})")
+    return ", ".join(parts)
+
+
+def _apply_case(text, mode):
+    if mode == "lower":
+        return text.lower()
+    if mode == "upper":
+        return text.upper()
+    if mode == "title":
+        return text.title()
+    return text
+
+
+def _safe_int(value, default=0):
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+class _RenameDialog:
+    def __init__(self, doc, parent=None):
+        QtWidgets, QtCore = _qt_modules()
+        if QtWidgets is None:
+            raise RuntimeError("Qt no disponible")
+        self.QtWidgets = QtWidgets
+        self.QtCore = QtCore
+        self.doc = doc
+        self.items = []
+
+        self.dialog = QtWidgets.QDialog(parent)
+        self.dialog.setWindowTitle("Multirenombrar - ElectricCR")
+        self.dialog.resize(800, 560)
+
+        main = QtWidgets.QVBoxLayout(self.dialog)
+
+        # Top options
+        opt = QtWidgets.QGridLayout()
+        main.addLayout(opt)
+
+        opt.addWidget(QtWidgets.QLabel("Modo"), 0, 0)
+        self.mode_combo = QtWidgets.QComboBox()
+        self.mode_combo.addItems(["Seleccion", "Root", "Ambos"])
+        opt.addWidget(self.mode_combo, 0, 1)
+
+        self.recursive_cb = QtWidgets.QCheckBox("Recursivo subgrupos")
+        opt.addWidget(self.recursive_cb, 0, 2)
+
+        opt.addWidget(QtWidgets.QLabel("Case"), 1, 0)
+        self.case_combo = QtWidgets.QComboBox()
+        self.case_combo.addItems(["No change", "lower", "upper", "title"])
+        opt.addWidget(self.case_combo, 1, 1)
+
+        # Search and replace
+        main.addWidget(QtWidgets.QLabel("Search and replace"))
+        sr = QtWidgets.QGridLayout()
+        main.addLayout(sr)
+        sr.addWidget(QtWidgets.QLabel("Search for"), 0, 0)
+        self.search_edit = QtWidgets.QLineEdit()
+        sr.addWidget(self.search_edit, 0, 1)
+        sr.addWidget(QtWidgets.QLabel("Replace with"), 1, 0)
+        self.replace_edit = QtWidgets.QLineEdit()
+        sr.addWidget(self.replace_edit, 1, 1)
+
+        self.regex_cb = QtWidgets.QCheckBox("Regex")
+        self.case_sensitive_cb = QtWidgets.QCheckBox("Case sensitive")
+        self.replace_all_cb = QtWidgets.QCheckBox("Replace all")
+        self.replace_all_cb.setChecked(True)
+        sr.addWidget(self.regex_cb, 0, 2)
+        sr.addWidget(self.case_sensitive_cb, 1, 2)
+        sr.addWidget(self.replace_all_cb, 2, 2)
+
+        # Prefix / suffix
+        ps = QtWidgets.QGridLayout()
+        main.addLayout(ps)
+        ps.addWidget(QtWidgets.QLabel("Prefix"), 0, 0)
+        self.prefix_edit = QtWidgets.QLineEdit()
+        ps.addWidget(self.prefix_edit, 0, 1)
+        ps.addWidget(QtWidgets.QLabel("Suffix"), 1, 0)
+        self.suffix_edit = QtWidgets.QLineEdit()
+        ps.addWidget(self.suffix_edit, 1, 1)
+
+        # Counter
+        main.addWidget(QtWidgets.QLabel("Counter"))
+        cnt = QtWidgets.QGridLayout()
+        main.addLayout(cnt)
+        self.counter_cb = QtWidgets.QCheckBox("Enable counter")
+        cnt.addWidget(self.counter_cb, 0, 0)
+        cnt.addWidget(QtWidgets.QLabel("Start"), 0, 1)
+        self.counter_start = QtWidgets.QSpinBox()
+        self.counter_start.setRange(-999999, 999999)
+        self.counter_start.setValue(1)
+        cnt.addWidget(self.counter_start, 0, 2)
+        cnt.addWidget(QtWidgets.QLabel("Step"), 0, 3)
+        self.counter_step = QtWidgets.QSpinBox()
+        self.counter_step.setRange(1, 999999)
+        self.counter_step.setValue(1)
+        cnt.addWidget(self.counter_step, 0, 4)
+        cnt.addWidget(QtWidgets.QLabel("Digits"), 0, 5)
+        self.counter_digits = QtWidgets.QSpinBox()
+        self.counter_digits.setRange(0, 9)
+        self.counter_digits.setValue(2)
+        cnt.addWidget(self.counter_digits, 0, 6)
+        cnt.addWidget(QtWidgets.QLabel("Position"), 1, 1)
+        self.counter_pos = QtWidgets.QComboBox()
+        self.counter_pos.addItems(["Sufijo", "Prefijo", "Reemplazar"])
+        cnt.addWidget(self.counter_pos, 1, 2)
+        cnt.addWidget(QtWidgets.QLabel("Separator"), 1, 3)
+        self.counter_sep = QtWidgets.QLineEdit()
+        self.counter_sep.setText("_")
+        cnt.addWidget(self.counter_sep, 1, 4)
+
+        # Preview controls
+        pv = QtWidgets.QHBoxLayout()
+        main.addLayout(pv)
+        self.preview_btn = QtWidgets.QPushButton("Vista previa")
+        self.auto_preview_cb = QtWidgets.QCheckBox("Auto preview")
+        self.auto_preview_cb.setChecked(True)
+        pv.addWidget(self.preview_btn)
+        pv.addWidget(self.auto_preview_cb)
+        pv.addStretch(1)
+
+        # Table
+        self.table = QtWidgets.QTableWidget()
+        self.table.setColumnCount(3)
+        self.table.setHorizontalHeaderLabels(["Old label", "New label", "Name"])
+        self.table.verticalHeader().setVisible(False)
+        self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+        self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self.table.setAlternatingRowColors(True)
+        try:
+            header = self.table.horizontalHeader()
+            header.setStretchLastSection(True)
+            header.setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
+            header.setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
+        except Exception:
+            pass
+        main.addWidget(self.table, 1)
+
+        self.info_label = QtWidgets.QLabel("")
+        main.addWidget(self.info_label)
+
+        # Buttons
+        btns = QtWidgets.QHBoxLayout()
+        main.addLayout(btns)
+        btns.addStretch(1)
+        self.apply_btn = QtWidgets.QPushButton("Aplicar")
+        self.cancel_btn = QtWidgets.QPushButton("Cancelar")
+        btns.addWidget(self.apply_btn)
+        btns.addWidget(self.cancel_btn)
+
+        # Signals
+        self.preview_btn.clicked.connect(self._update_preview)
+        self.apply_btn.clicked.connect(self._apply)
+        self.cancel_btn.clicked.connect(self.dialog.reject)
+
+        for w in [
+            self.mode_combo, self.recursive_cb, self.case_combo,
+            self.search_edit, self.replace_edit, self.regex_cb,
+            self.case_sensitive_cb, self.replace_all_cb,
+            self.prefix_edit, self.suffix_edit,
+            self.counter_cb, self.counter_start, self.counter_step,
+            self.counter_digits, self.counter_pos, self.counter_sep
+        ]:
+            try:
+                if hasattr(w, "textChanged"):
+                    w.textChanged.connect(self._auto_preview)
+                if hasattr(w, "stateChanged"):
+                    w.stateChanged.connect(self._auto_preview)
+                if hasattr(w, "currentIndexChanged"):
+                    w.currentIndexChanged.connect(self._auto_preview)
+                if hasattr(w, "valueChanged"):
+                    w.valueChanged.connect(self._auto_preview)
+            except Exception:
+                pass
+
+        self._update_preview()
+
+    def exec_(self):
+        return self.dialog.exec_()
+
+    def _auto_preview(self, *args):
+        if self.auto_preview_cb.isChecked():
+            self._update_preview()
+
+    def _build_new_label(self, old_label, index):
+        text = old_label or ""
+
+        # Search and replace
+        search = self.search_edit.text()
+        replace = self.replace_edit.text()
+        if search:
+            regex = self.regex_cb.isChecked()
+            case_sensitive = self.case_sensitive_cb.isChecked()
+            replace_all = self.replace_all_cb.isChecked()
+            count = 0 if replace_all else 1
+            if regex:
+                flags = 0 if case_sensitive else re.IGNORECASE
+                try:
+                    text = re.sub(search, replace, text, count=count, flags=flags)
+                except Exception:
+                    pass
+            else:
+                if case_sensitive:
+                    if replace_all:
+                        text = text.replace(search, replace)
+                    else:
+                        text = text.replace(search, replace, 1)
+                else:
+                    flags = re.IGNORECASE
+                    try:
+                        text = re.sub(re.escape(search), replace, text, count=count, flags=flags)
+                    except Exception:
+                        pass
+
+        # Case
+        case_mode = self.case_combo.currentText()
+        text = _apply_case(text, case_mode)
+
+        # Prefix / suffix
+        prefix = self.prefix_edit.text()
+        suffix = self.suffix_edit.text()
+        text = f"{prefix}{text}{suffix}"
+
+        # Counter
+        if self.counter_cb.isChecked():
+            start = _safe_int(self.counter_start.value(), 1)
+            step = _safe_int(self.counter_step.value(), 1)
+            digits = _safe_int(self.counter_digits.value(), 0)
+            num = start + (index * step)
+            num_str = str(num)
+            if digits > 0:
+                num_str = num_str.zfill(digits)
+            pos = self.counter_pos.currentText()
+            sep = self.counter_sep.text()
+            if pos == "Prefijo":
+                if text:
+                    text = f"{num_str}{sep}{text}"
+                else:
+                    text = num_str
+            elif pos == "Reemplazar":
+                text = num_str
+            else:  # Sufijo
+                if text:
+                    text = f"{text}{sep}{num_str}"
+                else:
+                    text = num_str
+
+        return text
+
+    def _update_preview(self):
+        if not self.doc:
+            self.info_label.setText("No hay documento activo")
+            return
+        mode = self.mode_combo.currentText()
+        recursive = self.recursive_cb.isChecked()
+        targets, skipped = _collect_targets(self.doc, mode, recursive)
+        if not targets:
+            self.table.setRowCount(0)
+            self.info_label.setText("No hay objetivos para renombrar")
+            return
+
+        self.items = []
+        self.table.setRowCount(len(targets))
+        for idx, obj in enumerate(targets):
+            try:
+                old_label = obj.Label
+            except Exception:
+                old_label = ""
+            try:
+                name = obj.Name
+            except Exception:
+                name = ""
+            new_label = self._build_new_label(old_label, idx)
+            self.items.append({
+                "obj": obj,
+                "old": old_label,
+                "new": new_label,
+                "name": name,
+            })
+
+            self.table.setItem(idx, 0, self.QtWidgets.QTableWidgetItem(old_label))
+            self.table.setItem(idx, 1, self.QtWidgets.QTableWidgetItem(new_label))
+            self.table.setItem(idx, 2, self.QtWidgets.QTableWidgetItem(name))
+
+        if skipped:
+            self.info_label.setText(f"Omitidos: {len(skipped)} | { _format_skip(skipped) }")
+        else:
+            self.info_label.setText("")
+
+    def _log(self, items, skipped, mode, recursive):
+        _msg("---")
+        _msg(f"Modo: {mode} | recursivo={recursive}")
+        _msg(f"Total: {len(items)}")
+        _msg(f"Omitidos: {len(skipped)}")
+        if skipped:
+            _msg(f"Omitidos lista: {_format_skip(skipped)}")
+        # Print first N changes
+        limit = 20
+        for i, it in enumerate(items[:limit]):
+            _msg(f"{i+1}. {it['name']} | '{it['old']}' -> '{it['new']}'")
+        if len(items) > limit:
+            _msg(f"... (+{len(items) - limit})")
+
+    def _apply(self):
+        self._update_preview()
+        if not self.items:
+            _warn("No hay elementos para renombrar")
+            return
+
+        mode = self.mode_combo.currentText()
+        recursive = self.recursive_cb.isChecked()
+        # Recollect to log skipped info
+        targets, skipped = _collect_targets(self.doc, mode, recursive)
+        self._log(self.items, skipped, mode, recursive)
+
+        trans_open = False
+        try:
+            self.doc.openTransaction("ElectricCR: multirenombrar")
+            trans_open = True
+        except Exception:
+            trans_open = False
+
+        try:
+            changed = 0
+            for it in self.items:
+                obj = it.get("obj")
+                new_label = it.get("new", "")
+                if not obj:
+                    continue
+                try:
+                    old_label = obj.Label
+                except Exception:
+                    old_label = ""
+                if new_label and new_label != old_label:
+                    try:
+                        obj.Label = new_label
+                        changed += 1
+                    except Exception:
+                        pass
+
+            try:
+                self.doc.recompute()
+            except Exception:
+                pass
+
+            if trans_open:
+                try:
+                    self.doc.commitTransaction()
+                except Exception:
+                    pass
+            _msg(f"Renombrados: {changed}")
+            self.dialog.accept()
+        except Exception as e:
+            if trans_open:
+                try:
+                    self.doc.abortTransaction()
+                except Exception:
+                    pass
+            _err(f"Error aplicando renombrado: {e}")
+
+
+def run():
+    doc = App.ActiveDocument
+    if doc is None:
+        _err("No hay documento activo")
+        return
+    QtWidgets, _QtCore = _qt_modules()
+    if QtWidgets is None:
+        _err("Qt no disponible")
+        return
+    try:
+        parent = Gui.getMainWindow()
+    except Exception:
+        parent = None
+    dlg = _RenameDialog(doc, parent)
+    dlg.exec_()
+
+
+if __name__ == "__main__":
+    run()

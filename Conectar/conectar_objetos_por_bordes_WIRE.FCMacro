@@ -1,14 +1,24 @@
+# Icon: conectar_objetos_por_bordes_WIRE.svg
+
 import FreeCAD
 import FreeCADGui
 import Part
 import Draft
-
+import os
+import sys
+_THIS_DIR = os.path.dirname(__file__) if '__file__' in globals() else ''
+if _THIS_DIR and _THIS_DIR not in sys.path:
+    sys.path.insert(0, _THIS_DIR)
+import importlib
+import conexiones_grouping as _conexiones_grouping_mod
+_conexiones_grouping_mod = importlib.reload(_conexiones_grouping_mod)
+ensure_conexiones_group = _conexiones_grouping_mod.ensure_conexiones_group
 def conectar_objetos_por_bordes():
     doc = FreeCAD.ActiveDocument
     selected_objects = FreeCADGui.Selection.getSelectionEx()
 
     if len(selected_objects) < 2:
-        FreeCAD.Console.PrintError("Debe seleccionar al menos dos objetos y los puntos correspondientes (vértices o bordes).\n")
+        FreeCAD.Console.PrintError("Debe seleccionar al menos dos objetos y los puntos correspondientes (vÃƒÂ©rtices o bordes).\n")
         return
 
     # Identificar el grupo padre de los objetos seleccionados
@@ -18,28 +28,21 @@ def conectar_objetos_por_bordes():
             grupo_padre = obj
             break
 
-    if not grupo_padre:
-        FreeCAD.Console.PrintError("Los objetos seleccionados no están en el mismo grupo.\n")
-        return
+    if grupo_padre:
+        FreeCAD.Console.PrintMessage(f"Grupo padre encontrado: {grupo_padre.Name}\n")
+    else:
+        FreeCAD.Console.PrintWarning("Sin grupo comun; se usara Conexiones_Huerfanas.\n")
 
-    FreeCAD.Console.PrintMessage(f"Grupo padre encontrado: {grupo_padre.Name}\n")
-
-    # Verificar si ya existe un subgrupo de conexiones
-    conexiones_grupo = None
-    for obj in grupo_padre.Group:
-        if obj.TypeId == 'App::DocumentObjectGroup' and obj.Name.startswith("Conexiones"):
-            conexiones_grupo = obj
-            break
-
-    # Crear un nuevo grupo de conexiones si no existe
-    if not conexiones_grupo:
-        conexiones_grupo = doc.addObject("App::DocumentObjectGroup", "Conexiones")
-        grupo_padre.addObject(conexiones_grupo)
+    conexiones_grupo = ensure_conexiones_group(
+        doc,
+        parent_group=grupo_padre,
+        objects=[sel.Object for sel in selected_objects if getattr(sel, "Object", None)],
+    )
 
     # Diccionario para rastrear conexiones
     conexiones_realizadas = set()
 
-    # Función para obtener el punto medio del borde seleccionado
+    # FunciÃƒÂ³n para obtener el punto medio del borde seleccionado
     def obtener_punto_y_direccion_borde(selection_detail):
         if selection_detail.HasSubObjects:
             for sub_obj in selection_detail.SubObjects:
@@ -47,7 +50,7 @@ def conectar_objetos_por_bordes():
                     punto_medio = sub_obj.CenterOfMass if hasattr(sub_obj, 'CenterOfMass') else sub_obj.Curve.value(0.5)
                     tangente = sub_obj.tangentAt(0.5)
 
-                    # Normalizar y obtener dirección perpendicular
+                    # Normalizar y obtener direcciÃƒÂ³n perpendicular
                     if abs(tangente.x) > abs(tangente.y):
                         direccion_perpendicular = FreeCAD.Vector(0, 1, 0) * 20
                     else:
@@ -66,7 +69,7 @@ def conectar_objetos_por_bordes():
         FreeCAD.Console.PrintError("No hay suficientes puntos seleccionados para conectar.\n")
         return
 
-    # Función para dibujar conexiones ortogonales
+    # FunciÃƒÂ³n para dibujar conexiones ortogonales
     def dibujar_conexiones(puntos):
         for i in range(len(puntos) - 1):
             objeto1, punto1, direccion1 = puntos[i]
@@ -92,7 +95,7 @@ def conectar_objetos_por_bordes():
 
             puntos_conexion.append(punto2)
 
-            # Crear y almacenar la línea en el grupo de conexiones usando Draft.make_wire()
+            # Crear y almacenar la lÃƒÂ­nea en el grupo de conexiones usando Draft.make_wire()
             linea_obj = Draft.make_wire(puntos_conexion, closed=False)
             linea_obj.Label = f'Conexion_{objeto1.Name}_{objeto2.Name}'
             conexiones_grupo.addObject(linea_obj)
@@ -105,5 +108,8 @@ def conectar_objetos_por_bordes():
     # Actualizar el documento
     doc.recompute()
 
-# Ejecutar la función
+# Ejecutar la funciÃƒÂ³n
 conectar_objetos_por_bordes()
+
+
+

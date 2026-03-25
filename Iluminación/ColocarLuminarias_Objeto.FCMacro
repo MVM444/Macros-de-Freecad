@@ -1,0 +1,397 @@
+# -*- coding: utf-8 -*-
+# MenuText: Colocar Luminarias Objeto
+# ToolTip: Colocar luminarias por rejilla (objeto o visual igual a Link por modo)
+# Icon: ColocarLuminarias.svg
+"""
+ColocarLuminarias_Objeto.FCMacro
+---------------------------------------------
+Flujo solicitado:
+1) El usuario selecciona uno o varios rectángulos (o grupos con rectángulos).
+2) Diálogo: seleccionar el "tipo" a insertar (desde el registro) + prefijo opcional.
+3) Se inserta un objeto paramétrico (FeaturePython) por celda (Rows x Columns)
+   en cada rectángulo, usando ElectricCR.electriccr.features.objeto_toma_uno.crear_toma_uno.
+
+- El objeto se coloca con Placement.Base en el piso (Z=0) y con la rotación del rectángulo.
+- La altura visible del 3D depende de AlturaRel dentro del objeto (no se toca aquí).
+- Requiere que cada rectángulo tenga propiedades: Length, Height, Columns, Rows.
+
+Autor: Marco / ElectricCR · 2025-09-25
+"""
+
+from pathlib import Path
+import json
+
+import FreeCAD as App
+import FreeCADGui as Gui
+
+try:
+    from PySide2 import QtCore, QtWidgets
+except Exception:
+    from PySide import QtCore
+    from PySide import QtGui as QtWidgets
+
+# ---------------------------------------------------------------------------
+# Config: mientras depuras, fuerza este registro (único origen)
+# ---------------------------------------------------------------------------
+REG_PATH = Path(r"C:\Users\marco\OneDrive - Caja Costarricense de Seguro Social\Documentos\FreeCAD\Macros\Macros-de-Freecad\Resources\registry\registry_electric.json")
+
+# ---------------------------------------------------------------------------
+# Logs
+# ---------------------------------------------------------------------------
+def _ts():
+    from datetime import datetime
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+def log_i(msg): App.Console.PrintMessage(f"[{_ts()}][LUMRECT][INFO] {msg}\n")
+def log_w(msg): App.Console.PrintWarning(f"[{_ts()}][LUMRECT][WARN] {msg}\n")
+def log_e(msg): App.Console.PrintError(f"[{_ts()}][LUMRECT][ERROR] {msg}\n")
+
+# ---------------------------------------------------------------------------
+# Registro
+# ---------------------------------------------------------------------------
+def load_registry() -> dict:
+    try:
+        data = json.loads(REG_PATH.read_text(encoding="utf-8-sig"))
+        if isinstance(data, dict) and "types" in data:
+            log_i(f"Registro cargado: {REG_PATH}")
+            return data
+        log_w(f"El registro no contiene 'types': {REG_PATH}")
+    except Exception as ex:
+        log_e(f"No se pudo leer el registro: {ex}")
+    return {"schema": "1.0.0", "types": {}}
+
+def type_keys_sorted_for_ui(reg: dict) -> list:
+    """Ordena priorizando luminarias (si el nombre contiene 'lumin')."""
+    keys = list((reg.get("types") or {}).keys())
+    keys.sort(key=lambda k: (0 if "lumin" in k.lower() else 1, k.lower()))
+    return keys
+
+# ---------------------------------------------------------------------------
+# Resolver ElectricCR.crear_toma_uno
+# ---------------------------------------------------------------------------
+def ensure_electriccr_on_path() -> bool:
+    import importlib, sys
+    # Intento directo
+    for name in ("ElectricCR", "electriccr"):
+        try:
+            importlib.import_module(name)
+            return True
+        except ImportError:
+            pass
+    # Búsqueda local y en %APPDATA%
+    try:
+        here = Path(__file__).resolve()
+        cands = []
+        for parent in [here.parent, *here.parents]:
+            cand = parent / "ElectricCR"
+            if cand.is_dir():
+                cands += [str(cand.parent), str(cand)]
+        try:
+            base = Path(App.getUserAppDataDir())
+        except Exception:
+            base = Path.home() / "AppData" / "Roaming" / "FreeCAD"
+        for nm in ("Macro", "Macros"):
+            cand = base / nm / "ElectricCR"
+            if cand.is_dir():
+                cands += [str(cand.parent), str(cand)]
+        for p in cands:
+            if p and p not in sys.path:
+                sys.path.insert(0, p)
+        importlib.invalidate_caches()
+        for name in ("ElectricCR", "electriccr"):
+            try:
+                importlib.import_module(name)
+                return True
+            except ImportError:
+                pass
+    except Exception:
+        pass
+    log_w("No se pudo localizar el paquete ElectricCR en sys.path.")
+    return False
+
+def get_crear_toma_uno():
+    if not ensure_electriccr_on_path():
+        return None
+    try:
+        from ElectricCR.electriccr.features.objeto_toma_uno import crear_toma_uno
+        return crear_toma_uno
+    except Exception:
+        try:
+            from electriccr.features.objeto_toma_uno import crear_toma_uno
+            return crear_toma_uno
+        except Exception as ex:
+            log_e(f"No se pudo importar crear_toma_uno: {ex}")
+            return None
+
+# ---------------------------------------------------------------------------
+# UI
+# ---------------------------------------------------------------------------
+class PickTypeDialog(QtWidgets.QDialog):
+    def __init__(self, reg: dict, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Insertar dispositivo en rectángulos")
+        self.setMinimumWidth(420)
+        self.reg = reg
+
+        self.cmbTipo = QtWidgets.QComboBox()
+        self.cmbTipo.addItems(type_keys_sorted_for_ui(self.reg))
+        self.cmbTipo.currentIndexChanged.connect(self._on_tipo_changed)
+        self.lePrefix = QtWidgets.QLineEdit("Luminaria_")
+        self.spAltura = QtWidgets.QDoubleSpinBox()
+        self.spAltura.setRange(0.0, 10000.0)
+        self.spAltura.setDecimals(1)
+        self.spAltura.setSuffix(" mm")
+        self.spAltura.setValue(300.0)
+        self.cmbModo = QtWidgets.QComboBox()
+        self.cmbModo.addItems(["Ambos", "Solo2D", "Solo3D"])
+
+        form = QtWidgets.QFormLayout()
+        form.addRow("Tipo (registro):", self.cmbTipo)
+        form.addRow("Prefijo de nombre:", self.lePrefix)
+        form.addRow("Altura (mm):", self.spAltura)
+        form.addRow("Modo visual:", self.cmbModo)
+
+        btn_ok = QtWidgets.QPushButton("Insertar")
+        btn_cancel = QtWidgets.QPushButton("Cancelar")
+        btn_ok.clicked.connect(self.accept)
+        btn_cancel.clicked.connect(self.reject)
+
+        row = QtWidgets.QHBoxLayout()
+        row.addStretch(1); row.addWidget(btn_cancel); row.addWidget(btn_ok)
+
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.addLayout(form); lay.addStretch(1); lay.addLayout(row)
+
+        self._apply_defaults()
+
+    def _apply_defaults(self):
+        info = (self.reg.get("types") or {}).get(self.selected_key(), {}) or {}
+        defaults = info.get("defaults", {}) or {}
+        altura = defaults.get("altura")
+        if altura is not None:
+            try:
+                self.spAltura.setValue(float(altura))
+            except Exception:
+                pass
+        modo_raw = str(defaults.get("modo", "Both") or "Both")
+        modo_map = {
+            "Both": "Ambos",
+            "Ambos": "Ambos",
+            "Solo2D": "Solo2D",
+            "Solo 2D": "Solo2D",
+            "Solo3D": "Solo3D",
+            "Solo 3D": "Solo3D",
+        }
+        modo_ui = modo_map.get(modo_raw, "Ambos")
+        idx = self.cmbModo.findText(modo_ui)
+        if idx >= 0:
+            self.cmbModo.setCurrentIndex(idx)
+
+    def _on_tipo_changed(self, _index):
+        self._apply_defaults()
+
+    def selected_key(self) -> str:
+        return self.cmbTipo.currentText().strip()
+
+    def selected_altura(self) -> float:
+        return float(self.spAltura.value())
+
+    def name_prefix(self) -> str:
+        return self.lePrefix.text().strip() or "Luminaria_"
+
+    def selected_mode(self) -> str:
+        return str(self.cmbModo.currentText() or "Ambos").strip() or "Ambos"
+
+# ---------------------------------------------------------------------------
+# Selección y verificación de rectángulos
+# ---------------------------------------------------------------------------
+def collect_rectangles_from_selection():
+    """Devuelve lista de objetos tipo Draft Rectangle con Columns/Rows."""
+    rects = []
+    sel = Gui.Selection.getSelection()
+    for o in sel:
+        # Si es grupo, recorrer sus miembros
+        if o.TypeId == "App::DocumentObjectGroup":
+            for g in (o.Group or []):
+                if getattr(getattr(g, "Proxy", None), "Type", "") == "Rectangle":
+                    rects.append(g)
+        else:
+            if getattr(getattr(o, "Proxy", None), "Type", "") == "Rectangle":
+                rects.append(o)
+    return rects
+
+def rect_dims_cols_rows(rect):
+    """Extrae (width, height, cols, rows) o None si faltan propiedades."""
+    try:
+        width = float(rect.Length.Value)
+        height = float(rect.Height.Value)
+    except Exception:
+        return None
+    if not hasattr(rect, "Columns") or not hasattr(rect, "Rows"):
+        return None
+    return width, height, int(rect.Columns), int(rect.Rows)
+
+def _sanitize_group_name(doc, base):
+    base = (base or 'Luminarias').strip()
+    sanitized = ''.join(ch if ch.isalnum() else '_' for ch in base) or 'Luminarias'
+    candidate = sanitized
+    idx = 1
+    while doc.getObject(candidate):
+        candidate = f"{sanitized}_{idx:02d}"
+        idx += 1
+    return candidate
+
+
+def ensure_luminaria_group(doc, prefix_label):
+    main = doc.getObject('electrico')
+    if main is None:
+        try:
+            main = doc.addObject('App::DocumentObjectGroup', 'electrico')
+            main.Label = 'electrico'
+            log_i('created group electrico')
+        except Exception:
+            main = doc.getObject('electrico')
+    if main is None:
+        return None
+    label = (prefix_label or 'Luminarias').strip() or 'Luminarias'
+    target = None
+    for child in getattr(main, 'Group', []) or []:
+        if getattr(child, 'Label', '') == label:
+            target = child
+            break
+    if target is None:
+        name = _sanitize_group_name(doc, label)
+        try:
+            target = doc.addObject('App::DocumentObjectGroup', name)
+            target.Label = label
+            if hasattr(main, 'addObject'):
+                main.addObject(target)
+            log_i(f"created subgroup {label}")
+        except Exception:
+            target = doc.getObject(name)
+    return target
+
+# ---------------------------------------------------------------------------
+# Inserción de un objeto en una celda
+# ---------------------------------------------------------------------------
+def insert_one_in_cell(doc, crear_toma_uno, key_reg: str, name_prefix: str,
+                       rect, rect_pos, rect_rot, x_local, y_local, idx_global: int, group=None, altura_rel=300.0, modo_visual="Ambos"):
+    """
+    Coloca un objeto paramétrico en la celda cuyo centro local es (x_local,y_local,0),
+    referenciado al rectángulo (posición + rotación del rectángulo).
+    """
+    obj = crear_toma_uno(
+        doc,
+        name_prefix=name_prefix,
+        key_registro=key_reg,
+        tipo_logico="Luminaria"   # lógico por compatibilidad; el registro manda recursos
+    )
+    if obj is None:
+        log_w("crear_toma_uno devolvió None; se omite celda.")
+        return None
+
+    try:
+        obj.AlturaRel = float(altura_rel)
+    except Exception:
+        pass
+    try:
+        obj.ModoVisual = modo_visual
+    except Exception:
+        pass
+
+    # Base en piso Z=0, rotación heredada del rectángulo
+    base = rect_pos + rect_rot.multVec(App.Vector(float(x_local), float(y_local), 0.0))
+    obj.Placement = App.Placement(base, rect_rot)
+
+    # Etiqueta clara: Rect_Label + prefijo + consecutivo
+    try:
+        obj.Label = f"{rect.Label}_{name_prefix}{idx_global:02d}"
+    except Exception:
+        pass
+
+    if group and hasattr(group, 'addObject'):
+        try:
+            group.addObject(obj)
+        except Exception:
+            pass
+
+    # Orientación pared: Vertical (no aplica pitch Y)
+    try:
+        obj.OrientacionPared = "Vertical"
+    except Exception:
+        pass
+
+    return obj
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+def run():
+    doc = App.ActiveDocument or App.newDocument("Electrico")
+
+    # 1) Recolectar rectángulos
+    rects = collect_rectangles_from_selection()
+    if not rects:
+        log_e("Debe seleccionar al menos un rectángulo (o grupo con rectángulos).")
+        return
+
+    # 2) Diálogo para elegir tipo
+    reg = load_registry()
+    if not (reg.get("types") or {}):
+        log_e("El registro no tiene tipos definidos.")
+        return
+
+    dlg = PickTypeDialog(reg, Gui.getMainWindow())
+    if dlg.exec_() != QtWidgets.QDialog.Accepted:
+        return
+    key = dlg.selected_key()
+    name_prefix = dlg.name_prefix()
+    info_tipo = (reg.get('types') or {}).get(key, {}) or {}
+    altura_rel = float(dlg.selected_altura())
+    modo_visual = dlg.selected_mode()
+
+    crear_toma_uno = get_crear_toma_uno()
+    if not crear_toma_uno:
+        return
+
+    # 3) Insertar por celdas
+    created = 0
+    group_label = (name_prefix.rstrip('_') or name_prefix or 'Luminarias').strip()
+    group = ensure_luminaria_group(doc, group_label)
+    for rect in rects:
+        # Dimensiones y rejilla
+        dims = rect_dims_cols_rows(rect)
+        if not dims:
+            log_e(f"El rectángulo '{rect.Label}' no tiene Length/Height/Columns/Rows válidos.")
+            continue
+        width, height, cols, rows = dims
+        if cols < 1 or rows < 1:
+            log_w(f"{rect.Label}: Columns/Rows inválidos (cols={cols}, rows={rows}). Se omite.")
+            continue
+
+        dist_x = width / float(cols)
+        dist_y = height / float(rows)
+
+        rect_pl = rect.Placement
+        rect_pos = rect_pl.Base
+        rect_rot = rect_pl.Rotation
+
+        log_i(f"Procesando {rect.Label}: {cols}x{rows} | W={width:.1f} H={height:.1f}")
+
+        for r in range(rows):
+            for c in range(cols):
+                x = (c + 0.5) * dist_x
+                y = (r + 0.5) * dist_y
+                if insert_one_in_cell(doc, crear_toma_uno, key, name_prefix, rect, rect_pos, rect_rot, x, y, created + 1, group, altura_rel, modo_visual):
+                    created += 1
+
+    try:
+        doc.recompute()
+    except Exception:
+        pass
+
+    log_i(f"Inserción finalizada. Creados {created} objeto(s) de tipo '{key}'.")
+    log_i(f"Parametros usados: Altura={altura_rel} mm | Modo={modo_visual}")
+
+if __name__ == "__main__":
+    run()

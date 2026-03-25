@@ -1,0 +1,357 @@
+# -*- coding: utf-8 -*-
+"""
+InsertarTomacorrientesEnPoligonos_objeto_toma.FCMacro
+Inserta objetos electriccr.features.objeto_toma_uno sobre cada poligono selec
+cionado.
+"""
+
+import importlib
+import importlib.util
+import importlib.machinery
+import math
+import os
+import sys
+from pathlib import Path
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+from FreeCAD import Vector
+from PySide2 import QtWidgets
+
+DISTANCIA_ENTRE_TOMAS = 1800.0  # mm
+OFFSET_DESDE_BORDE = 0.0       # mm    60mm lo voy a borrar para hacer una prueba
+ALTURA_RELATIVA_3D = 300.0      # mm
+USAR_MODELO_3D = True
+USAR_LINK_DESDE_INICIO = True
+INSTANCES_GROUP_LABEL = "Tomacorrientes"
+REGISTRO_KEY = "Tomacorriente_120V"
+TIPO_LOGICO = "Toma"
+
+_GUI = True
+try:
+    import FreeCADGui as _
+except Exception:
+    _GUI = False
+
+
+def _log(msg):
+    App.Console.PrintMessage(f"[POLI][INFO] {msg}\n")
+
+def _warn(msg):
+    App.Console.PrintWarning(f"[POLI][WARN] {msg}\n")
+
+def _err(msg):
+    App.Console.PrintError(f"[POLI][ERROR] {msg}\n")
+
+
+def _unit(vector):
+    v = Vector(vector)
+    length = v.Length
+    if length <= 1e-6:
+        return None
+    scale = 1.0 / length
+    return Vector(v.x * scale, v.y * scale, v.z * scale)
+
+
+def _expand_group(obj):
+    if hasattr(obj, "Group"):
+        out = []
+        for sub in getattr(obj, "Group", []) or []:
+            out.extend(_expand_group(sub))
+        return out
+    return [obj]
+
+def _ensure_instances_group(doc):
+    group = doc.getObject(INSTANCES_GROUP_LABEL)
+    if group:
+        return group
+    parent = doc.getObject("electrico")
+    if parent is None:
+        try:
+            parent = doc.addObject("App::DocumentObjectGroup", "electrico")
+            _log("created group electrico")
+        except Exception:
+            parent = None
+    try:
+        group = doc.getObject(INSTANCES_GROUP_LABEL)
+        if group:
+            return group
+        group = doc.addObject("App::DocumentObjectGroup", INSTANCES_GROUP_LABEL)
+        if parent and hasattr(parent, "addObject"):
+            parent.addObject(group)
+        return group
+    except Exception:
+        return None
+
+
+
+def _ask_orientation():
+    if not _GUI:
+        return True
+    box = QtWidgets.QMessageBox()
+    box.setWindowTitle("Orientacion")
+    box.setText("Selecciona la orientacion para los tomacorrientes.")
+    inside_btn = box.addButton("Hacia adentro", QtWidgets.QMessageBox.AcceptRole)
+    outside_btn = box.addButton("Hacia afuera", QtWidgets.QMessageBox.RejectRole)
+    box.setDefaultButton(inside_btn)
+    box.exec_()
+    return box.clickedButton() is inside_btn
+
+
+MIRAR_HACIA_ADENTRO = _ask_orientation()
+_log(f"Intervalo {DISTANCIA_ENTRE_TOMAS} mm | Orientacion {'Hacia adentro' if MIRAR_HACIA_ADENTRO else 'Hacia afuera'}")
+
+_TOMA_MOD = None
+
+
+def _this_dir():
+    try:
+        return Path(__file__).resolve().parent
+    except Exception:
+        return None
+
+
+def _candidate_pkg_roots():
+    seen = set()
+    base = _this_dir()
+    if base is not None:
+        macros_dir = base.parent
+        for candidate in (macros_dir / "ElectricCR", macros_dir.parent / "ElectricCR"):
+            if candidate and candidate not in seen:
+                seen.add(candidate)
+                yield candidate
+    try:
+        user_mod = Path(App.getUserAppDataDir()) / "Mod" / "ElectricCR"
+        if user_mod not in seen:
+            seen.add(user_mod)
+            yield user_mod
+    except Exception:
+        pass
+
+
+def _ensure_paths():
+    for root in _candidate_pkg_roots():
+        try:
+            if root.is_dir() and str(root) not in sys.path:
+                sys.path.insert(0, str(root))
+                _log(f"Anadido a sys.path: {root}")
+        except Exception:
+            continue
+
+
+def _fallback_loader():
+    for root in _candidate_pkg_roots():
+        try:
+            cand = root / "electriccr" / "features" / "objeto_toma_uno.py"
+        except Exception:
+            continue
+        if cand.is_file():
+            loader = importlib.machinery.SourceFileLoader("objeto_toma_uno_boot", str(cand))
+            spec = importlib.util.spec_from_loader(loader.name, loader)
+            if spec is None:
+                continue
+            module = importlib.util.module_from_spec(spec)
+            loader.exec_module(module)
+            _log(f"Loader directo desde {cand}")
+            return module
+    return None
+
+
+def _load_toma_module():
+    global _TOMA_MOD
+    if _TOMA_MOD is not None:
+        return _TOMA_MOD
+    _ensure_paths()
+    try:
+        module = importlib.import_module("electriccr.features.objeto_toma_uno")
+        importlib.reload(module)
+        _TOMA_MOD = module
+        _log("Modulo electriccr.features.objeto_toma_uno importado")
+        return module
+    except Exception as ex:
+        _warn(f"Fallo importando paquete: {ex}")
+        module = _fallback_loader()
+        if module is None:
+            _err("No se pudo cargar objeto_toma_uno")
+            raise
+        _TOMA_MOD = module
+        return module
+
+
+def _bounding_wire(obj):
+    if not hasattr(obj, "Shape"):
+        return None
+    points = []
+    for wire in getattr(obj.Shape, "Wires", []) or []:
+        points.extend(vertex.Point for vertex in wire.Vertexes)
+    if not points:
+        return None
+    xs = [p.x for p in points]
+    ys = [p.y for p in points]
+    z = points[0].z
+    p1 = Vector(min(xs), min(ys), z)
+    p2 = Vector(max(xs), min(ys), z)
+    p3 = Vector(max(xs), max(ys), z)
+    p4 = Vector(min(xs), max(ys), z)
+    return Part.makePolygon([p1, p2, p3, p4, p1])
+
+
+def _iter_selected_objects():
+    for obj in Gui.Selection.getSelection():
+        for expanded in _expand_group(obj):
+            yield expanded
+
+
+def _create_toma_instance(doc, module, group, name_prefix, placement):
+    modo = "Ambos" if USAR_MODELO_3D else "Solo2D"
+    altura = float(ALTURA_RELATIVA_3D if USAR_MODELO_3D else 0.0)
+    if USAR_LINK_DESDE_INICIO and hasattr(module, "crear_toma_link"):
+        try:
+            obj = module.crear_toma_link(
+                doc=doc,
+                name_prefix=name_prefix,
+                key_registro=REGISTRO_KEY,
+                tipo_logico=TIPO_LOGICO,
+                placement=placement,
+                modo_visual=modo,
+                altura_rel=altura,
+                orientacion_pared="Vertical",
+                recompute=False,
+                target_group=group,
+            )
+            return obj
+        except TypeError:
+            # Compatibilidad con versiones antiguas del modulo.
+            obj = module.crear_toma_link(
+                doc=doc,
+                name_prefix=name_prefix,
+                key_registro=REGISTRO_KEY,
+                tipo_logico=TIPO_LOGICO,
+                placement=placement,
+                modo_visual=modo,
+                altura_rel=altura,
+                orientacion_pared="Vertical",
+            )
+            return obj
+        except Exception as ex:
+            _warn(f"Fallo crear_toma_link, se usa modo clasico: {ex}")
+
+    try:
+        obj = module.crear_toma_uno(
+            doc=doc,
+            name_prefix=name_prefix,
+            key_registro=REGISTRO_KEY,
+            tipo_logico=TIPO_LOGICO,
+            recompute=False,
+        )
+    except TypeError:
+        obj = module.crear_toma_uno(
+            doc=doc,
+            name_prefix=name_prefix,
+            key_registro=REGISTRO_KEY,
+            tipo_logico=TIPO_LOGICO,
+        )
+    if group and hasattr(group, "addObject"):
+        try:
+            if obj not in (group.Group or []):
+                group.addObject(obj)
+        except Exception:
+            pass
+    try:
+        obj.ModoVisual = modo
+        obj.AlturaRel = altura
+        obj.OrientacionPared = "Vertical"
+        obj.Placement = placement
+        obj.Giro = 0.0
+        obj.touch()
+    except Exception:
+        pass
+    return obj
+
+
+def _insert_single(doc, module, group, position, tangent, index):
+    direction = _unit(tangent)
+    if direction is None:
+        return index
+    normal_vec = Vector(-direction.y, direction.x, 0.0)
+    if not MIRAR_HACIA_ADENTRO:
+        normal_vec = Vector(-normal_vec.x, -normal_vec.y, -normal_vec.z)
+    normal = _unit(normal_vec)
+    if normal is None:
+        return index
+    angle = math.degrees(math.atan2(normal.y, normal.x)) - 90.0
+    offset = float(OFFSET_DESDE_BORDE)
+    target = Vector(
+        position.x + normal.x * offset,
+        position.y + normal.y * offset,
+        position.z + normal.z * offset,
+    )
+    placement = App.Placement(target, App.Rotation(Vector(0, 0, 1), angle))
+    name_prefix = f"Toma_{index:03d}"
+    obj = _create_toma_instance(doc, module, group, name_prefix, placement)
+    _log(f"Colocada {obj.Label} en {target}")
+    return index + 1
+
+
+def _insert_on_wire(doc, module, group, wire, start_index):
+    index = start_index
+    for edge in wire.Edges:
+        length = edge.Length
+        if length <= 1e-3:
+            continue
+        count = max(1, int(length // DISTANCIA_ENTRE_TOMAS))
+        pattern = (count - 1) * DISTANCIA_ENTRE_TOMAS
+        start_offset = -pattern / 2.0
+        first_param = edge.FirstParameter
+        param_span = edge.LastParameter - first_param
+        for i in range(count):
+            offset = start_offset + i * DISTANCIA_ENTRE_TOMAS
+            u = 0.5 + (offset / length)
+            if u < 0.0:
+                u = 0.0
+            elif u > 1.0:
+                u = 1.0
+            param = first_param + u * param_span
+            point = edge.valueAt(param)
+            try:
+                tangent = edge.tangentAt(param)
+            except Exception:
+                tangent = edge.tangentAt(first_param)
+            index = _insert_single(doc, module, group, point, tangent, index)
+    return index
+
+
+def procesar():
+    doc = App.ActiveDocument
+    if doc is None:
+        _err("No hay documento activo")
+        return
+    module = _load_toma_module()
+    objetos = list(_iter_selected_objects())
+    if not objetos:
+        _err("Seleccione al menos un objeto")
+        return
+    group = _ensure_instances_group(doc)
+    index = 1
+    for obj in objetos:
+        wires = [w for w in getattr(obj.Shape, "Wires", []) if getattr(w, "isClosed", lambda: False)()]
+        if not wires:
+            continue
+        if len(wires) == 1:
+            index = _insert_on_wire(doc, module, group, wires[0], index)
+        else:
+            wire = _bounding_wire(obj)
+            if wire is not None:
+                index = _insert_on_wire(doc, module, group, wire, index)
+    doc.recompute()
+    _log("Proceso finalizado")
+
+
+def main():
+    _log("Iniciando macro InsertarTomacorrientesEnPoligonos objeto_toma...")
+    procesar()
+
+
+if __name__ == "__main__":
+    main()
