@@ -279,6 +279,8 @@ class HVACCondenserProxy:
         _initialize_condenser_defaults(obj)
 
     def onChanged(self, obj, prop):  # noqa: N802
+        if not hasattr(self, "_busy"):
+            self._busy = False
         if self._busy:
             return
         if prop in {"CapacityBTU", "ConnectedUnits", "AutoCollect"}:
@@ -289,6 +291,8 @@ class HVACCondenserProxy:
                 self._busy = False
 
     def execute(self, obj):
+        if not hasattr(self, "_busy"):
+            self._busy = False
         if self._busy:
             return
         self._busy = True

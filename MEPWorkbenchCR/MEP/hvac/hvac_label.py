@@ -92,7 +92,38 @@ def _set_label_text(label_obj, lines):
     label_obj.Label = " | ".join(lines)
 
 
-def _make_draft_text(lines, point):
+def _make_annotation_text(doc, lines, point):
+    if doc is None:
+        return None
+    label_obj = doc.addObject("App::AnnotationLabel", "HVAC_Label")
+    if label_obj is None:
+        return None
+
+    try:
+        if hasattr(label_obj, "PropertiesList") and "LabelText" in label_obj.PropertiesList:
+            label_obj.LabelText = list(lines)
+    except Exception:
+        pass
+    try:
+        if hasattr(label_obj, "PropertiesList") and "Text" in label_obj.PropertiesList:
+            label_obj.Text = list(lines)
+    except Exception:
+        pass
+    try:
+        if hasattr(label_obj, "PropertiesList") and "BasePosition" in label_obj.PropertiesList:
+            label_obj.BasePosition = App.Vector(point)
+        elif hasattr(label_obj, "PropertiesList") and "Position" in label_obj.PropertiesList:
+            label_obj.Position = App.Vector(point)
+        elif hasattr(label_obj, "Placement"):
+            placement = label_obj.Placement
+            placement.Base = App.Vector(point)
+            label_obj.Placement = placement
+    except Exception:
+        pass
+    return label_obj
+
+
+def _make_draft_text(doc, lines, point):
     import Draft
 
     call_attempts = []
@@ -100,18 +131,22 @@ def _make_draft_text(lines, point):
         call_attempts.extend(
             [
                 lambda: Draft.make_text(lines, point=point),
-                lambda: Draft.make_text(lines, point),
-                lambda: Draft.make_text(lines),
                 lambda: Draft.make_text("\n".join(lines), point=point),
+                lambda: Draft.make_text(lines, point),
+                lambda: Draft.make_text("\n".join(lines), point),
+                lambda: Draft.make_text(lines),
+                lambda: Draft.make_text("\n".join(lines)),
             ]
         )
     if hasattr(Draft, "makeText"):
         call_attempts.extend(
             [
                 lambda: Draft.makeText(lines, point=point),
-                lambda: Draft.makeText(lines, point),
                 lambda: Draft.makeText("\n".join(lines), point=point),
+                lambda: Draft.makeText(lines, point),
                 lambda: Draft.makeText("\n".join(lines), point),
+                lambda: Draft.makeText(lines),
+                lambda: Draft.makeText("\n".join(lines)),
             ]
         )
 
@@ -125,7 +160,12 @@ def _make_draft_text(lines, point):
             last_error = exc
             continue
 
-    raise RuntimeError("No se pudo crear texto Draft: {0}".format(last_error))
+    fallback = _make_annotation_text(doc, lines, point)
+    if fallback is not None:
+        log("Fallback etiqueta App::AnnotationLabel por incompatibilidad Draft: {0}".format(last_error))
+        return fallback
+
+    raise RuntimeError("No se pudo crear texto HVAC: {0}".format(last_error))
 
 
 def _label_position(space_obj):
@@ -169,7 +209,7 @@ def create_or_update_label(space_obj, doc=None):
     lines = _build_label_lines(doc, space_obj)
     label_obj = _find_label_for_space(doc, space_obj)
     if label_obj is None:
-        label_obj = _make_draft_text(lines, _label_position(space_obj))
+        label_obj = _make_draft_text(doc, lines, _label_position(space_obj))
         ensure_label_properties(label_obj)
         label_obj.Space = space_obj
         label_obj.Label = "HVAC_Label_{0}".format(space_obj.Name)

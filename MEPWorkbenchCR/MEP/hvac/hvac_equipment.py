@@ -442,6 +442,8 @@ class HVACEquipmentProxy:
         _initialize_equipment_defaults(obj)
 
     def onChanged(self, obj, prop):  # noqa: N802
+        if not hasattr(self, "_busy"):
+            self._busy = False
         if self._busy:
             return
         if prop in {
@@ -475,6 +477,8 @@ class HVACEquipmentProxy:
                 self._busy = False
 
     def execute(self, obj):
+        if not hasattr(self, "_busy"):
+            self._busy = False
         if self._busy:
             return
         self._busy = True

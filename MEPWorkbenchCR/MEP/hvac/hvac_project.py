@@ -140,6 +140,8 @@ def add_object_to_hvac_group(doc, obj):
         return None
     if obj == group:
         return group
+    if _is_group(obj):
+        return group
 
     try:
         children = list(getattr(group, "Group", []) or [])
@@ -164,9 +166,13 @@ def organize_hvac_objects(doc=None):
     for obj in list(getattr(doc, "Objects", []) or []):
         if obj == group:
             continue
+        if _is_group(obj):
+            continue
         include = False
         if hasattr(obj, "PropertiesList") and "MEPType" in obj.PropertiesList:
             mep_type = str(getattr(obj, "MEPType", "") or "")
+            if mep_type == ROOT_GROUP_MEP_TYPE:
+                continue
             if mep_type.startswith("HVAC"):
                 include = True
         if not include:
@@ -366,6 +372,8 @@ class HVACProjectProxy:
         ensure_project_properties(obj)
 
     def onChanged(self, obj, prop):  # noqa: N802
+        if not hasattr(self, "_busy"):
+            self._busy = False
         if self._busy:
             return
         if prop in {"Location", "Altitude", "OutdoorTemp", "Humidity", "IndoorTemp", "ClimateOffset"}:
@@ -376,6 +384,8 @@ class HVACProjectProxy:
                 self._busy = False
 
     def execute(self, obj):
+        if not hasattr(self, "_busy"):
+            self._busy = False
         if self._busy:
             return
         self._busy = True

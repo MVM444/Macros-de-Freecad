@@ -513,6 +513,8 @@ class HVACSpaceProxy:
         ensure_space_properties(obj)
 
     def onChanged(self, obj, prop):  # noqa: N802
+        if not hasattr(self, "_busy"):
+            self._busy = False
         if self._busy:
             return
         if prop in {"Area", "Height", "Occupancy", "EquipmentLoad", "Mode", "Project", "BaseSpace"}:
@@ -523,6 +525,8 @@ class HVACSpaceProxy:
                 self._busy = False
 
     def execute(self, obj):
+        if not hasattr(self, "_busy"):
+            self._busy = False
         if self._busy:
             return
         self._busy = True
