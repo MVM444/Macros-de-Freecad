@@ -1,6 +1,8 @@
 """HVAC evaporator equipment object."""
 
 import os
+import re
+import unicodedata
 
 import FreeCAD as App
 import Part
@@ -28,6 +30,15 @@ EVAPORATOR_LIBRARY = {
 DEFAULT_MODEL = "Pared_12000"
 DEFAULT_SYMBOL_SIZE = 450.0
 MASTER_PREFIX = "HVAC_EvapMaster_"
+GROUP_MODEL_PREFIX = "Grupo::"
+GROUP_MODEL_LABEL_ALIASES = {
+    "modelos",
+    "models",
+    "model",
+    "biblioteca",
+    "hvac modelos",
+    "hvac models",
+}
 
 
 def log(message):
@@ -42,6 +53,113 @@ def _to_float(value, default=0.0):
         return float(value)
     except Exception:
         return float(default)
+
+
+def _normalize_text(value):
+    text = str(value or "").strip().lower()
+    if not text:
+        return ""
+    return "".join(char for char in unicodedata.normalize("NFKD", text) if not unicodedata.combining(char))
+
+
+def _is_group(obj):
+    type_id = str(getattr(obj, "TypeId", "") or "")
+    if type_id.startswith("App::DocumentObjectGroup"):
+        return True
+    return hasattr(obj, "Group") and hasattr(obj, "addObject")
+
+
+def _shape_from_obj(obj):
+    if obj is None or not hasattr(obj, "Shape"):
+        return None
+    try:
+        shape = obj.Shape
+        if shape is None or shape.isNull():
+            return None
+        bbox = shape.BoundBox
+        if float(bbox.XLength) <= 0.1 or float(bbox.YLength) <= 0.1 or float(bbox.ZLength) <= 0.1:
+            return None
+        return shape
+    except Exception:
+        return None
+
+
+def _find_model_group(doc):
+    if doc is None:
+        return None
+
+    selected = list(selection.get_selected_objects(resolve_links=True) or [])
+    for obj in selected:
+        if not _is_group(obj):
+            continue
+        label_norm = _normalize_text(getattr(obj, "Label", ""))
+        name_norm = _normalize_text(getattr(obj, "Name", ""))
+        if label_norm in GROUP_MODEL_LABEL_ALIASES or name_norm in GROUP_MODEL_LABEL_ALIASES:
+            return obj
+
+    for obj in list(getattr(doc, "Objects", []) or []):
+        if not _is_group(obj):
+            continue
+        label_norm = _normalize_text(getattr(obj, "Label", ""))
+        name_norm = _normalize_text(getattr(obj, "Name", ""))
+        if label_norm in GROUP_MODEL_LABEL_ALIASES or name_norm in GROUP_MODEL_LABEL_ALIASES:
+            return obj
+    return None
+
+
+def _group_model_map(doc):
+    result = {}
+    group = _find_model_group(doc)
+    if group is None:
+        return result
+
+    for child in list(getattr(group, "Group", []) or []):
+        candidate = selection.unwrap_link(child)
+        if _shape_from_obj(candidate) is None:
+            continue
+        label = str(getattr(candidate, "Label", "") or getattr(candidate, "Name", "") or "").strip()
+        if not label:
+            continue
+        key_base = GROUP_MODEL_PREFIX + label
+        key = key_base
+        idx = 2
+        while key in result:
+            key = "{0} ({1})".format(key_base, idx)
+            idx += 1
+        result[key] = candidate
+    return result
+
+
+def _is_group_model_name(model_name):
+    return str(model_name or "").startswith(GROUP_MODEL_PREFIX)
+
+
+def _model_capacity_guess(model_name):
+    tokens = re.findall(r"\d{4,6}", str(model_name or ""))
+    if not tokens:
+        return 0.0
+    try:
+        return float(tokens[0])
+    except Exception:
+        return 0.0
+
+
+def _group_model_object(doc, model_name):
+    return _group_model_map(doc).get(str(model_name or ""))
+
+
+def _group_model_shape(doc, model_name):
+    source_obj = _group_model_object(doc, model_name)
+    source_shape = _shape_from_obj(source_obj)
+    if source_shape is None:
+        return None
+    try:
+        shape_copy = source_shape.copy()
+        bbox = shape_copy.BoundBox
+        shape_copy.translate(App.Vector(-float(bbox.Center.x), -float(bbox.Center.y), -float(bbox.ZMin)))
+        return shape_copy
+    except Exception:
+        return None
 
 
 def ensure_equipment_properties(obj):
@@ -61,9 +179,11 @@ def ensure_equipment_properties(obj):
     if str(getattr(obj, "MEPType", "")) != MEP_TYPE:
         obj.MEPType = MEP_TYPE
 
+    model_added = False
     if "Model" not in obj.PropertiesList:
         obj.addProperty("App::PropertyEnumeration", "Model", "HVAC Equipment", "Concrete evaporator model")
         obj.Model = list(EVAPORATOR_LIBRARY.keys())
+        model_added = True
         added_model = True
     if "Type" not in obj.PropertiesList:
         obj.addProperty("App::PropertyEnumeration", "Type", "HVAC Equipment", "Equipment type")
@@ -115,8 +235,21 @@ def ensure_equipment_properties(obj):
     if "Ports" not in obj.PropertiesList:
         obj.addProperty("App::PropertyLinkList", "Ports", "HVAC Equipment", "Equipment port objects")
 
-    if added_model:
-        obj.Model = DEFAULT_MODEL
+    model_options = available_models(getattr(obj, "Document", None))
+    if "Model" in obj.PropertiesList:
+        current_model = str(getattr(obj, "Model", DEFAULT_MODEL) or DEFAULT_MODEL)
+        try:
+            obj.Model = model_options
+        except Exception:
+            pass
+        if model_added:
+            current_model = DEFAULT_MODEL
+        if current_model not in model_options:
+            current_model = DEFAULT_MODEL
+        try:
+            obj.Model = current_model
+        except Exception:
+            pass
     if added_type:
         obj.Type = EVAPORATOR_LIBRARY[DEFAULT_MODEL]["Type"]
     if added_capacity:
@@ -137,8 +270,11 @@ def ensure_equipment_properties(obj):
         obj.UsePorts = False
 
 
-def available_models():
-    return list(EVAPORATOR_LIBRARY.keys())
+def available_models(doc=None):
+    models = list(EVAPORATOR_LIBRARY.keys())
+    if doc is not None:
+        models.extend(list(_group_model_map(doc).keys()))
+    return models
 
 
 def _model_spec(model_name):
@@ -149,11 +285,21 @@ def set_equipment_model(equipment_obj, model_name, force=False):
     if equipment_obj is None:
         return
     ensure_equipment_properties(equipment_obj)
+    doc = getattr(equipment_obj, "Document", None)
+    model_options = available_models(doc)
     model = str(model_name or DEFAULT_MODEL)
-    if model not in EVAPORATOR_LIBRARY:
+    if model not in model_options:
         model = DEFAULT_MODEL
     if "Model" in equipment_obj.PropertiesList:
         equipment_obj.Model = model
+
+    if _is_group_model_name(model):
+        if force or str(getattr(equipment_obj, "Type", "")) not in {"Wall", "Cassette", "Duct"}:
+            equipment_obj.Type = "Wall"
+        if force or _to_float(getattr(equipment_obj, "CapacityBTU", 0.0), 0.0) <= 0.0:
+            guessed_capacity = _model_capacity_guess(model)
+            equipment_obj.CapacityBTU = guessed_capacity if guessed_capacity > 0 else 12000.0
+        return
 
     spec = _model_spec(model)
     if force or str(getattr(equipment_obj, "Type", "")) not in {"Wall", "Cassette", "Duct"}:
@@ -163,17 +309,30 @@ def set_equipment_model(equipment_obj, model_name, force=False):
 
 
 def _initialize_equipment_defaults(obj):
+    doc = getattr(obj, "Document", None)
+    model_options = available_models(doc)
     model = str(getattr(obj, "Model", DEFAULT_MODEL) or DEFAULT_MODEL)
-    if model not in EVAPORATOR_LIBRARY:
+    if model not in model_options:
         model = DEFAULT_MODEL
     if "Model" in obj.PropertiesList:
+        try:
+            obj.Model = model_options
+        except Exception:
+            pass
         obj.Model = model
 
-    spec = _model_spec(model)
-    if str(obj.Type) not in {"Wall", "Cassette", "Duct"}:
-        obj.Type = spec["Type"]
-    if _to_float(obj.CapacityBTU, 0) <= 0:
-        obj.CapacityBTU = spec["CapacityBTU"]
+    if model in EVAPORATOR_LIBRARY:
+        spec = _model_spec(model)
+        if str(obj.Type) not in {"Wall", "Cassette", "Duct"}:
+            obj.Type = spec["Type"]
+        if _to_float(obj.CapacityBTU, 0) <= 0:
+            obj.CapacityBTU = spec["CapacityBTU"]
+    else:
+        if str(obj.Type) not in {"Wall", "Cassette", "Duct"}:
+            obj.Type = "Wall"
+        if _to_float(obj.CapacityBTU, 0) <= 0:
+            guessed_capacity = _model_capacity_guess(model)
+            obj.CapacityBTU = guessed_capacity if guessed_capacity > 0 else 12000.0
     if _to_float(obj.Height, 0) <= 0:
         obj.Height = 2.3
     if _to_float(getattr(obj, "Symbol2DSize", 0.0), 0.0) <= 0:
@@ -189,9 +348,19 @@ def _initialize_equipment_defaults(obj):
 
 
 def _equipment_size(equipment_obj):
+    doc = getattr(equipment_obj, "Document", None)
     model = str(getattr(equipment_obj, "Model", DEFAULT_MODEL) or DEFAULT_MODEL)
     if model in EVAPORATOR_LIBRARY:
         return tuple(EVAPORATOR_LIBRARY[model]["Size"])
+    if _is_group_model_name(model):
+        group_shape = _group_model_shape(doc, model)
+        if group_shape is not None:
+            bbox = group_shape.BoundBox
+            return (
+                max(100.0, float(bbox.XLength)),
+                max(100.0, float(bbox.YLength)),
+                max(100.0, float(bbox.ZLength)),
+            )
 
     eq_type = str(getattr(equipment_obj, "Type", "Wall"))
     if eq_type == "Cassette":
@@ -221,7 +390,7 @@ def _ensure_master_equipment(doc, model_name):
         return None
     model = str(model_name or DEFAULT_MODEL)
     if model not in EVAPORATOR_LIBRARY:
-        model = DEFAULT_MODEL
+        return None
     internal_name = _master_internal_name(model)
     master = doc.getObject(internal_name)
     if master is None:
@@ -269,8 +438,14 @@ def _ensure_master_equipment(doc, model_name):
 
 
 def _build_equipment_shape(equipment_obj):
+    doc = getattr(equipment_obj, "Document", None)
+    model = str(getattr(equipment_obj, "Model", DEFAULT_MODEL) or DEFAULT_MODEL)
+    if _is_group_model_name(model):
+        group_shape = _group_model_shape(doc, model)
+        if group_shape is not None:
+            return group_shape
     sx, sy, sz = _equipment_size(equipment_obj)
-    return Part.makeBox(sx, sy, sz)
+    return Part.makeBox(float(sx), float(sy), float(sz))
 
 
 def find_equipments(doc=None):
@@ -555,11 +730,14 @@ def _sync_equipment_geometry(equipment_obj):
         update_equipment_ports(equipment_obj)
 
 
-def _pick_model_for_insert():
+def _pick_model_for_insert(doc=None):
     if not App.GuiUp:
         return DEFAULT_MODEL
 
-    model_names = available_models()
+    model_names = available_models(doc)
+    group_models = [name for name in model_names if _is_group_model_name(name)]
+    if group_models:
+        log("Modelos detectados desde grupo: {0}".format(len(group_models)))
     current_index = 0
     try:
         current_index = max(0, model_names.index(DEFAULT_MODEL))
@@ -578,7 +756,7 @@ def _pick_model_for_insert():
         selected, ok = QtWidgets.QInputDialog.getItem(
             None,
             "Insertar Evaporadora HVAC",
-            "Modelo de evaporadora:",
+            "Modelo de evaporadora (incluye Grupo Modelos):",
             model_names,
             current_index,
             False,
@@ -619,7 +797,7 @@ def insert_evaporator_from_selection(doc=None, model_name=None):
     ensure_equipment_properties(obj)
     _initialize_equipment_defaults(obj)
 
-    selected_model = str(model_name or _pick_model_for_insert())
+    selected_model = str(model_name or _pick_model_for_insert(doc=doc))
     set_equipment_model(obj, selected_model, force=True)
     obj.Label = "EVAP_{0}".format(str(getattr(obj, "Model", selected_model)))
     log(
