@@ -19,6 +19,25 @@ def log(message):
     print(text)
 
 
+def _vector_changed(current, target, tol=0.01):
+    try:
+        cur = App.Vector(current)
+        tgt = App.Vector(target)
+    except Exception:
+        return True
+    return (
+        abs(float(cur.x) - float(tgt.x)) > tol
+        or abs(float(cur.y) - float(tgt.y)) > tol
+        or abs(float(cur.z) - float(tgt.z)) > tol
+    )
+
+
+def _list_changed(existing, updated):
+    old_names = [str(getattr(obj, "Name", "")) for obj in list(existing or []) if obj is not None]
+    new_names = [str(getattr(obj, "Name", "")) for obj in list(updated or []) if obj is not None]
+    return old_names != new_names
+
+
 def ensure_port_properties(obj):
     added_type = False
     added_position = False
@@ -153,13 +172,19 @@ def ensure_equipment_ports(equipment_obj):
             local_ports[port_type][0],
             local_ports[port_type][1],
         )
-        port.Type = port_type
-        port.Position = position
-        port.Direction = direction
-        port.EquipmentName = str(getattr(equipment_obj, "Name", ""))
+        if str(getattr(port, "Type", "")) != port_type:
+            port.Type = port_type
+        if _vector_changed(getattr(port, "Position", App.Vector(0, 0, 0)), position):
+            port.Position = position
+        if _vector_changed(getattr(port, "Direction", App.Vector(0, -1, 0)), direction):
+            port.Direction = direction
+        equipment_name = str(getattr(equipment_obj, "Name", ""))
+        if str(getattr(port, "EquipmentName", "")) != equipment_name:
+            port.EquipmentName = equipment_name
         updated_ports.append(port)
 
-    equipment_obj.Ports = updated_ports
+    if _list_changed(getattr(equipment_obj, "Ports", []), updated_ports):
+        equipment_obj.Ports = updated_ports
     return updated_ports
 
 

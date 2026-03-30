@@ -272,6 +272,32 @@ def _height_to_mm(equipment_obj):
     return _to_float(getattr(equipment_obj, "Height", 0.0), 0.0) * 1000.0
 
 
+def _vector_changed(a, b, tol=0.01):
+    try:
+        va = App.Vector(a)
+        vb = App.Vector(b)
+    except Exception:
+        return True
+    return (
+        abs(float(va.x) - float(vb.x)) > tol
+        or abs(float(va.y) - float(vb.y)) > tol
+        or abs(float(va.z) - float(vb.z)) > tol
+    )
+
+
+def _shape_size_changed(shape_obj, expected_size_mm, tol=0.1):
+    try:
+        if shape_obj is None or not hasattr(shape_obj, "BoundBox"):
+            return True
+        bbox = shape_obj.BoundBox
+        return (
+            abs(float(bbox.XLength) - float(expected_size_mm)) > tol
+            or abs(float(bbox.YLength) - float(expected_size_mm)) > tol
+        )
+    except Exception:
+        return True
+
+
 def _apply_equipment_elevation(equipment_obj):
     if equipment_obj is None:
         return
@@ -305,7 +331,8 @@ def _ensure_symbol2d(equipment_obj):
     if not bool(getattr(equipment_obj, "ShowSymbol2D", True)):
         symbol_obj = getattr(equipment_obj, "Symbol2D", None)
         if symbol_obj is not None and hasattr(symbol_obj, "ViewObject"):
-            symbol_obj.ViewObject.Visibility = False
+            if bool(getattr(symbol_obj.ViewObject, "Visibility", True)):
+                symbol_obj.ViewObject.Visibility = False
         return
 
     doc = equipment_obj.Document
@@ -320,14 +347,28 @@ def _ensure_symbol2d(equipment_obj):
         hvac_project.add_object_to_hvac_group(doc, symbol_obj)
 
     size_mm = _to_float(getattr(equipment_obj, "Symbol2DSize", DEFAULT_SYMBOL_SIZE), DEFAULT_SYMBOL_SIZE)
-    symbol_obj.Shape = _build_symbol_shape(size_mm)
+    if _shape_size_changed(getattr(symbol_obj, "Shape", None), size_mm):
+        symbol_obj.Shape = _build_symbol_shape(size_mm)
 
     eq_placement = getattr(equipment_obj, "Placement", App.Placement())
     symbol_placement = App.Placement(eq_placement)
-    symbol_placement.Base = App.Vector(eq_placement.Base.x, eq_placement.Base.y, _to_float(getattr(equipment_obj, "BaseLevel", 0.0), 0.0))
-    symbol_obj.Placement = symbol_placement
+    symbol_placement.Base = App.Vector(
+        eq_placement.Base.x,
+        eq_placement.Base.y,
+        _to_float(getattr(equipment_obj, "BaseLevel", 0.0), 0.0),
+    )
+    current_placement = getattr(symbol_obj, "Placement", App.Placement())
+    placement_changed = _vector_changed(current_placement.Base, symbol_placement.Base)
+    try:
+        rot_changed = float(current_placement.Rotation.Angle - symbol_placement.Rotation.Angle)
+        placement_changed = placement_changed or abs(rot_changed) > 0.0001
+    except Exception:
+        pass
+    if placement_changed:
+        symbol_obj.Placement = symbol_placement
     if hasattr(symbol_obj, "ViewObject"):
-        symbol_obj.ViewObject.Visibility = True
+        if not bool(getattr(symbol_obj.ViewObject, "Visibility", False)):
+            symbol_obj.ViewObject.Visibility = True
 
 
 def _sync_equipment_geometry(equipment_obj):

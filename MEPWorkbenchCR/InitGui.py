@@ -65,6 +65,7 @@ ICON_ASSIGN = _icon("hvac_assign.svg", "hvac_condenser.svg")
 ICON_ROUTE = _icon("hvac_route.svg")
 ICON_LABELS = _icon("hvac_labels.svg")
 ICON_RELOAD = _icon("hvac_reload.svg")
+MODULE_SOURCE = os.path.abspath(__file__).replace(os.sep, "/")
 
 
 def _log(message):
@@ -356,6 +357,7 @@ class MEPWorkbenchCR(FreeCADGui.Workbench):
 
     def Activated(self):  # noqa: N802
         _log(tr("wb.log.activated"))
+        _log("InitGui source: {0}".format(MODULE_SOURCE))
         doc = FreeCAD.ActiveDocument
         if doc is not None:
             try:
