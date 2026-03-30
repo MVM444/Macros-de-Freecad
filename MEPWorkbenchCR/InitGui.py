@@ -110,6 +110,7 @@ def _reload_workbench():
     importlib.invalidate_caches()
     module = importlib.import_module("MEPWorkbenchCR.InitGui")
     importlib.reload(module)
+    _log("Reload source: {0}".format(getattr(module, "__file__", "")))
     FreeCADGui.activateWorkbench(WORKBENCH_ID)
 
 
@@ -358,7 +359,12 @@ class MEPWorkbenchCR(FreeCADGui.Workbench):
         doc = FreeCAD.ActiveDocument
         if doc is not None:
             try:
+                hvac_project.ensure_hvac_root_group(doc)
+                if hasattr(hvac_project, "ensure_hvac_label_group"):
+                    hvac_project.ensure_hvac_label_group(doc)
+                hvac_project.organize_hvac_objects(doc)
                 hvac_ports.sanitize_all_ports(doc)
+                doc.recompute()
             except Exception:
                 pass
 
