@@ -736,8 +736,18 @@ def _pick_model_for_insert(doc=None):
 
     model_names = available_models(doc)
     group_models = [name for name in model_names if _is_group_model_name(name)]
+    log("Modelos disponibles para insercion: total={0}, grupo={1}".format(len(model_names), len(group_models)))
     if group_models:
         log("Modelos detectados desde grupo: {0}".format(len(group_models)))
+        preview = ", ".join(group_models[:5])
+        if preview:
+            log("Preview modelos grupo: {0}".format(preview))
+    else:
+        group = _find_model_group(doc)
+        if group is None:
+            log("No se detecto grupo de modelos (label esperado: Modelos/Models/Biblioteca)")
+        else:
+            log("Grupo de modelos detectado sin shapes validos: {0}".format(getattr(group, "Label", group.Name)))
     current_index = 0
     try:
         current_index = max(0, model_names.index(DEFAULT_MODEL))
