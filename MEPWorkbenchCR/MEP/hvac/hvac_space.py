@@ -310,6 +310,72 @@ def cleanup_nested_spaces(doc=None):
     return removed
 
 
+def cleanup_duplicate_spaces(doc=None):
+    if doc is None:
+        doc = App.ActiveDocument
+    if doc is None:
+        return 0
+
+    spaces = list(find_spaces(doc))
+    if len(spaces) < 2:
+        return 0
+
+    keep_by_base = {}
+    duplicate_spaces = []
+    replacement_map = {}
+
+    for space_obj in spaces:
+        linked_base = _canonical_base_obj(getattr(space_obj, "BaseSpace", None))
+        base_name = str(getattr(linked_base, "Name", "") or "")
+        if not base_name:
+            continue
+
+        keeper = keep_by_base.get(base_name)
+        if keeper is None:
+            keep_by_base[base_name] = space_obj
+            continue
+
+        duplicate_spaces.append(space_obj)
+        replacement_map[space_obj] = keeper
+
+    if not duplicate_spaces:
+        return 0
+
+    # Keep equipment assignments stable when duplicates are cleaned.
+    try:
+        from . import hvac_equipment
+
+        for equipment_obj in hvac_equipment.find_equipments(doc):
+            linked_space = getattr(equipment_obj, "Space", None)
+            replacement = replacement_map.get(linked_space)
+            if replacement is not None:
+                try:
+                    equipment_obj.Space = replacement
+                except Exception:
+                    continue
+    except Exception:
+        pass
+
+    try:
+        from . import hvac_label
+
+        hvac_label.remove_labels_for_spaces(duplicate_spaces, doc=doc)
+    except Exception:
+        pass
+
+    removed = 0
+    for space_obj in duplicate_spaces:
+        try:
+            doc.removeObject(space_obj.Name)
+            removed += 1
+        except Exception:
+            continue
+
+    if removed > 0:
+        log("Recintos HVAC duplicados eliminados: {0}".format(removed))
+    return removed
+
+
 def _find_project_for_space(space_obj, explicit_project=None):
     if explicit_project is not None:
         return explicit_project
@@ -462,8 +528,17 @@ def _deduplicate_objects(objects):
 
 
 def _space_for_base(doc, base_obj):
+    target_base = _canonical_base_obj(base_obj)
+    if target_base is None:
+        return None
+    target_name = str(getattr(target_base, "Name", "") or "")
+    if not target_name:
+        return None
+
     for space in find_spaces(doc):
-        if getattr(space, "BaseSpace", None) == base_obj:
+        linked_base = _canonical_base_obj(getattr(space, "BaseSpace", None))
+        linked_name = str(getattr(linked_base, "Name", "") or "")
+        if linked_name and linked_name == target_name:
             return space
     return None
 
@@ -514,6 +589,7 @@ def create_spaces_from_selection(doc=None):
         return []
 
     cleanup_nested_spaces(doc)
+    cleanup_duplicate_spaces(doc)
 
     selected = list(selection.get_selected_objects(resolve_links=True) or [])
     candidates = []
