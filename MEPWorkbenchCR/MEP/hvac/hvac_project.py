@@ -238,6 +238,26 @@ def ensure_hvac_label_group(doc=None):
             _ensure_label_group_marker(child)
             return child
 
+    # Reuse existing label group found at document root (legacy state), then attach to HVAC root.
+    for obj in list(getattr(doc, "Objects", []) or []):
+        if not _is_group(obj):
+            continue
+        marker = _mep_type(obj)
+        obj_name = _normalize_text(getattr(obj, "Name", ""))
+        obj_label = _normalize_text(getattr(obj, "Label", ""))
+        if marker == LABEL_GROUP_MEP_TYPE or obj_name == _normalize_text(LABEL_GROUP_NAME) or obj_label == _normalize_text(
+            LABEL_GROUP_LABEL
+        ):
+            _ensure_label_group_marker(obj)
+            _set_group_tree_visibility(obj, show_in_tree=True)
+            try:
+                root_children = list(getattr(root, "Group", []) or [])
+                if obj not in root_children:
+                    root.addObject(obj)
+            except Exception:
+                pass
+            return obj
+
     group = doc.addObject("App::DocumentObjectGroup", LABEL_GROUP_NAME)
     _ensure_label_group_marker(group)
     _set_group_tree_visibility(group, show_in_tree=True)
@@ -271,6 +291,26 @@ def ensure_hvac_internal_group(doc=None):
             _ensure_internal_group_marker(child)
             _set_group_tree_visibility(child, show_in_tree=False)
             return child
+
+    # Reuse existing internal group found at document root (legacy state), then attach to HVAC root.
+    for obj in list(getattr(doc, "Objects", []) or []):
+        if not _is_group(obj):
+            continue
+        marker = _mep_type(obj)
+        obj_name = _normalize_text(getattr(obj, "Name", ""))
+        obj_label = _normalize_text(getattr(obj, "Label", ""))
+        if marker == INTERNAL_GROUP_MEP_TYPE or obj_name == _normalize_text(INTERNAL_GROUP_NAME) or obj_label == _normalize_text(
+            INTERNAL_GROUP_LABEL
+        ):
+            _ensure_internal_group_marker(obj)
+            _set_group_tree_visibility(obj, show_in_tree=False)
+            try:
+                root_children = list(getattr(root, "Group", []) or [])
+                if obj not in root_children:
+                    root.addObject(obj)
+            except Exception:
+                pass
+            return obj
 
     group = doc.addObject("App::DocumentObjectGroup", INTERNAL_GROUP_NAME)
     _ensure_internal_group_marker(group)
