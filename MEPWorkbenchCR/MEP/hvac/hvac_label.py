@@ -86,11 +86,34 @@ def _build_label_lines(doc, space_obj):
 def _set_label_text(label_obj, lines):
     if hasattr(label_obj, "PropertiesList") and "Text" in label_obj.PropertiesList:
         label_obj.Text = lines
-        return
-    if hasattr(label_obj, "PropertiesList") and "LabelText" in label_obj.PropertiesList:
+    elif hasattr(label_obj, "PropertiesList") and "LabelText" in label_obj.PropertiesList:
         label_obj.LabelText = lines
-        return
-    label_obj.Label = " | ".join(lines)
+    elif hasattr(label_obj, "PropertiesList") and "Strings" in label_obj.PropertiesList:
+        label_obj.Strings = lines
+    elif hasattr(label_obj, "PropertiesList") and "String" in label_obj.PropertiesList:
+        label_obj.String = "\n".join(lines)
+    label_obj.Label = "HVAC_Label_" + str(lines[0] if lines else getattr(label_obj, "Name", ""))
+
+
+def _world_point_from_base(base_obj, point_local):
+    point = App.Vector(point_local)
+    placement = None
+    try:
+        if hasattr(base_obj, "getGlobalPlacement"):
+            placement = base_obj.getGlobalPlacement()
+    except Exception:
+        placement = None
+    if placement is None and hasattr(base_obj, "Placement"):
+        try:
+            placement = base_obj.Placement
+        except Exception:
+            placement = None
+    if placement is None:
+        return point
+    try:
+        return placement.multVec(point)
+    except Exception:
+        return point
 
 
 def _set_label_style(label_obj):
@@ -238,11 +261,13 @@ def _label_position(space_obj):
                 if largest is not None:
                     com = largest.CenterOfMass
                     z_plane = _to_float(getattr(largest.BoundBox, "ZMin", com.z), com.z)
-                    return App.Vector(com.x, com.y, z_plane)
+                    local_point = App.Vector(com.x, com.y, z_plane)
+                    return _world_point_from_base(base, local_point)
 
             com = shape.CenterOfMass
             bbox = shape.BoundBox
-            return App.Vector(com.x, com.y, bbox.ZMin)
+            local_point = App.Vector(com.x, com.y, bbox.ZMin)
+            return _world_point_from_base(base, local_point)
         except Exception:
             pass
     if hasattr(space_obj, "Placement"):
