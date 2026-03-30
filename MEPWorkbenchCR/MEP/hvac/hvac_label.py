@@ -200,12 +200,14 @@ def _label_position(space_obj):
     if base is not None and hasattr(base, "Shape"):
         try:
             bbox = base.Shape.BoundBox
-            return App.Vector(bbox.Center.x, bbox.Center.y, bbox.ZMax + 800.0)
+            # Keep label on the drawing work plane (same Z as source geometry).
+            return App.Vector(bbox.Center.x, bbox.Center.y, bbox.ZMin)
         except Exception:
             pass
     if hasattr(space_obj, "Placement"):
-        return App.Vector(space_obj.Placement.Base).add(App.Vector(0, 0, 800))
-    return App.Vector(0, 0, 800)
+        base_point = App.Vector(space_obj.Placement.Base)
+        return App.Vector(base_point.x, base_point.y, base_point.z)
+    return App.Vector(0, 0, 0)
 
 
 def find_labels(doc=None):
