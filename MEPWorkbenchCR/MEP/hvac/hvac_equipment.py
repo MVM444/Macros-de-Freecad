@@ -313,6 +313,19 @@ def _space_from_position(doc, point):
     return None
 
 
+def _space_center_point(space_obj):
+    if space_obj is None:
+        return None
+    base = getattr(space_obj, "BaseSpace", None)
+    if base is None or not hasattr(base, "Shape"):
+        return None
+    try:
+        bbox = base.Shape.BoundBox
+        return App.Vector(float(bbox.Center.x), float(bbox.Center.y), float(bbox.ZMin))
+    except Exception:
+        return None
+
+
 def detect_space_for_equipment(equipment_obj):
     if equipment_obj is None:
         return None
@@ -516,6 +529,11 @@ def _ensure_symbol2d(equipment_obj):
     if hasattr(symbol_obj, "ViewObject"):
         if not bool(getattr(symbol_obj.ViewObject, "Visibility", False)):
             symbol_obj.ViewObject.Visibility = True
+        try:
+            if hasattr(symbol_obj.ViewObject, "Selectable"):
+                symbol_obj.ViewObject.Selectable = False
+        except Exception:
+            pass
 
 
 def _sync_equipment_geometry(equipment_obj):
@@ -594,20 +612,9 @@ def insert_evaporator_from_selection(doc=None, model_name=None):
         log("No hay documento activo")
         return None
 
-    obj = None
-    try:
-        obj = doc.addObject("App::Link", "HVAC_Evaporator")
-        try:
-            obj.LinkTransform = True
-        except Exception:
-            pass
-    except Exception:
-        obj = None
-
-    if obj is None:
-        obj = doc.addObject("Part::FeaturePython", "HVAC_Evaporator")
-        HVACEquipmentProxy(obj)
-        HVACEquipmentViewProvider(obj.ViewObject)
+    obj = doc.addObject("Part::FeaturePython", "HVAC_Evaporator")
+    HVACEquipmentProxy(obj)
+    HVACEquipmentViewProvider(obj.ViewObject)
 
     ensure_equipment_properties(obj)
     _initialize_equipment_defaults(obj)
@@ -622,16 +629,22 @@ def insert_evaporator_from_selection(doc=None, model_name=None):
         )
     )
 
+    space = _space_from_selection(doc)
     points = selection.get_selected_points()
+    point = None
     if points:
         point = App.Vector(points[0])
+        log("Evaporadora ubicada en punto seleccionado")
+    elif space is not None:
+        point = _space_center_point(space)
+        if point is not None:
+            log("Evaporadora ubicada en centro del recinto seleccionado")
+    if point is not None:
         obj.BaseLevel = float(point.z)
         placement = getattr(obj, "Placement", App.Placement())
         placement.Base = App.Vector(point.x, point.y, point.z)
         obj.Placement = placement
-        log("Evaporadora ubicada en punto seleccionado")
 
-    space = _space_from_selection(doc)
     if space is not None:
         obj.Space = space
         log("Evaporadora asociada a recinto: {0}".format(space.Name))
