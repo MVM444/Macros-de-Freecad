@@ -160,7 +160,27 @@ def _pick_center_value(options):
         return "Center"
 
     normalized = [(opt, str(opt).strip().lower()) for opt in options]
-    exact_targets = {"center", "centre", "middle", "medio", "centrado"}
+    middle_center_tokens = (
+        "middlecenter",
+        "middle center",
+        "mid center",
+        "midcenter",
+        "middle-centre",
+        "middle centre",
+        "medio centro",
+        "centro medio",
+    )
+    for original, key in normalized:
+        compact = key.replace("_", " ").replace("-", " ")
+        compact = " ".join(compact.split())
+        if "center" in compact or "centre" in compact or "centro" in compact:
+            if "middle" in compact or "mid" in compact or "medio" in compact:
+                return original
+        joined = compact.replace(" ", "")
+        if joined in middle_center_tokens:
+            return original
+
+    exact_targets = {"center", "centre", "centro", "middle", "medio", "centrado"}
     for original, key in normalized:
         if key in exact_targets:
             return original
@@ -285,28 +305,9 @@ def _label_position(space_obj):
     if base is not None and hasattr(base, "Shape"):
         try:
             shape = base.Shape
-            # Use geometric centroid from the largest face for better centering on irregular polygons.
-            faces = list(getattr(shape, "Faces", []) or [])
-            if faces:
-                largest = None
-                max_area = -1.0
-                for face in faces:
-                    try:
-                        area = _to_float(getattr(face, "Area", 0.0), 0.0)
-                    except Exception:
-                        area = 0.0
-                    if area > max_area:
-                        max_area = area
-                        largest = face
-                if largest is not None:
-                    com = largest.CenterOfMass
-                    z_plane = _to_float(getattr(largest.BoundBox, "ZMin", com.z), com.z)
-                    local_point = App.Vector(com.x, com.y, z_plane)
-                    return _world_point_from_base(base, local_point)
-
-            com = shape.CenterOfMass
             bbox = shape.BoundBox
-            local_point = App.Vector(com.x, com.y, bbox.ZMin)
+            # Keep the same "center of polygon box" behavior used in ElectricCR label workflow.
+            local_point = App.Vector(bbox.Center.x, bbox.Center.y, bbox.ZMin)
             return _world_point_from_base(base, local_point)
         except Exception:
             pass
@@ -389,6 +390,11 @@ def create_or_update_label(space_obj, doc=None):
         placement = label_obj.Placement
         placement.Base = _label_position(space_obj)
         label_obj.Placement = placement
+    if hasattr(label_obj, "ViewObject"):
+        try:
+            label_obj.ViewObject.Visibility = True
+        except Exception:
+            pass
     hvac_project.add_object_to_hvac_group(doc, label_obj)
 
     return label_obj
