@@ -14,6 +14,9 @@ MEP_TYPE = "HVACProject"
 ROOT_GROUP_MEP_TYPE = "HVACRootGroup"
 ROOT_GROUP_NAME = "HVAC_Air_Ventilation"
 ROOT_GROUP_LABEL = "HVAC Air and Ventilation"
+LABEL_GROUP_MEP_TYPE = "HVACLabelGroup"
+LABEL_GROUP_NAME = "HVAC_Labels"
+LABEL_GROUP_LABEL = "HVAC Labels"
 LOG_PREFIX = "[MEP-HVAC][Project] "
 ICON_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "resources", "icons", "hvac.svg")
@@ -74,6 +77,17 @@ def _is_group(obj):
     return hasattr(obj, "Group") and hasattr(obj, "addObject")
 
 
+def _mep_type(obj):
+    if obj is None:
+        return ""
+    try:
+        if hasattr(obj, "PropertiesList") and "MEPType" in obj.PropertiesList:
+            return str(getattr(obj, "MEPType", "") or "")
+    except Exception:
+        return ""
+    return ""
+
+
 def _ensure_root_group_marker(group_obj):
     if group_obj is None or not hasattr(group_obj, "PropertiesList"):
         return
@@ -88,6 +102,22 @@ def _ensure_root_group_marker(group_obj):
         group_obj.MEPType = ROOT_GROUP_MEP_TYPE
     if getattr(group_obj, "Label", "") != ROOT_GROUP_LABEL:
         group_obj.Label = ROOT_GROUP_LABEL
+
+
+def _ensure_label_group_marker(group_obj):
+    if group_obj is None or not hasattr(group_obj, "PropertiesList"):
+        return
+    if "MEPType" not in group_obj.PropertiesList:
+        group_obj.addProperty(
+            "App::PropertyString",
+            "MEPType",
+            "MEP",
+            "Internal marker for HVAC labels group",
+        )
+    if str(getattr(group_obj, "MEPType", "")) != LABEL_GROUP_MEP_TYPE:
+        group_obj.MEPType = LABEL_GROUP_MEP_TYPE
+    if getattr(group_obj, "Label", "") != LABEL_GROUP_LABEL:
+        group_obj.Label = LABEL_GROUP_LABEL
 
 
 def find_root_groups(doc):
@@ -114,6 +144,37 @@ def find_root_groups(doc):
     return groups
 
 
+def ensure_hvac_label_group(doc=None):
+    if doc is None:
+        doc = App.ActiveDocument
+    if doc is None:
+        return None
+    root = ensure_hvac_root_group(doc)
+    if root is None:
+        return None
+
+    for child in list(getattr(root, "Group", []) or []):
+        if not _is_group(child):
+            continue
+        marker = _mep_type(child)
+        if marker == LABEL_GROUP_MEP_TYPE:
+            _ensure_label_group_marker(child)
+            return child
+        child_name = _normalize_text(getattr(child, "Name", ""))
+        child_label = _normalize_text(getattr(child, "Label", ""))
+        if child_name == _normalize_text(LABEL_GROUP_NAME) or child_label == _normalize_text(LABEL_GROUP_LABEL):
+            _ensure_label_group_marker(child)
+            return child
+
+    group = doc.addObject("App::DocumentObjectGroup", LABEL_GROUP_NAME)
+    _ensure_label_group_marker(group)
+    try:
+        root.addObject(group)
+    except Exception:
+        pass
+    return group
+
+
 def ensure_hvac_root_group(doc=None):
     if doc is None:
         doc = App.ActiveDocument
@@ -135,21 +196,34 @@ def ensure_hvac_root_group(doc=None):
 def add_object_to_hvac_group(doc, obj):
     if doc is None or obj is None:
         return None
-    group = ensure_hvac_root_group(doc)
-    if group is None:
+    root_group = ensure_hvac_root_group(doc)
+    if root_group is None:
         return None
-    if obj == group:
-        return group
+    if obj == root_group:
+        return root_group
     if _is_group(obj):
-        return group
+        return root_group
+
+    target_group = root_group
+    if _mep_type(obj) == "HVACLabel":
+        label_group = ensure_hvac_label_group(doc)
+        if label_group is not None:
+            target_group = label_group
 
     try:
-        children = list(getattr(group, "Group", []) or [])
+        children = list(getattr(target_group, "Group", []) or [])
         if obj not in children:
-            group.addObject(obj)
+            target_group.addObject(obj)
     except Exception:
         pass
-    return group
+    if target_group != root_group:
+        try:
+            root_children = list(getattr(root_group, "Group", []) or [])
+            if obj in root_children:
+                root_group.removeObject(obj)
+        except Exception:
+            pass
+    return target_group
 
 
 def organize_hvac_objects(doc=None):
@@ -159,6 +233,7 @@ def organize_hvac_objects(doc=None):
         return 0
 
     group = ensure_hvac_root_group(doc)
+    label_group = ensure_hvac_label_group(doc)
     if group is None:
         return 0
 
@@ -183,12 +258,19 @@ def organize_hvac_objects(doc=None):
         if not include:
             continue
 
-        before = list(getattr(group, "Group", []) or [])
-        if obj in before:
-            continue
+        target_group = group
+        if _mep_type(obj) == "HVACLabel" and label_group is not None:
+            target_group = label_group
+
+        before = list(getattr(target_group, "Group", []) or [])
         try:
-            group.addObject(obj)
-            moved += 1
+            if obj not in before:
+                target_group.addObject(obj)
+                moved += 1
+            if target_group != group:
+                root_before = list(getattr(group, "Group", []) or [])
+                if obj in root_before:
+                    group.removeObject(obj)
         except Exception:
             continue
 
