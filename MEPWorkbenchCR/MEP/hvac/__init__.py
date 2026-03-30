@@ -34,6 +34,7 @@ def recalculate_document(doc=None):
     hvac_project.ensure_hvac_root_group(doc)
     hvac_project.recalculate_project(project)
     hvac_ports.sanitize_all_ports(doc)
+    hvac_space.cleanup_nested_spaces(doc)
 
     for space in hvac_space.find_spaces(doc):
         if "Project" in space.PropertiesList and getattr(space, "Project", None) is None:

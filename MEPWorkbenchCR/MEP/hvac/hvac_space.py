@@ -266,6 +266,50 @@ def find_spaces(doc=None):
     return spaces
 
 
+def find_nested_spaces(doc=None):
+    if doc is None:
+        doc = App.ActiveDocument
+    if doc is None:
+        return []
+    nested = []
+    for obj in list(getattr(doc, "Objects", []) or []):
+        if _mep_type(obj) != MEP_TYPE:
+            continue
+        base = getattr(obj, "BaseSpace", None)
+        if _mep_type(base) == MEP_TYPE:
+            nested.append(obj)
+    return nested
+
+
+def cleanup_nested_spaces(doc=None):
+    if doc is None:
+        doc = App.ActiveDocument
+    if doc is None:
+        return 0
+
+    nested = find_nested_spaces(doc)
+    if not nested:
+        return 0
+
+    try:
+        from . import hvac_label
+
+        hvac_label.remove_labels_for_spaces(nested, doc=doc)
+    except Exception:
+        pass
+
+    removed = 0
+    for obj in nested:
+        try:
+            doc.removeObject(obj.Name)
+            removed += 1
+        except Exception:
+            continue
+    if removed > 0:
+        log("Recintos HVAC anidados eliminados: {0}".format(removed))
+    return removed
+
+
 def _find_project_for_space(space_obj, explicit_project=None):
     if explicit_project is not None:
         return explicit_project
@@ -468,6 +512,8 @@ def create_spaces_from_selection(doc=None):
     if doc is None:
         log("No hay documento activo")
         return []
+
+    cleanup_nested_spaces(doc)
 
     selected = list(selection.get_selected_objects(resolve_links=True) or [])
     candidates = []

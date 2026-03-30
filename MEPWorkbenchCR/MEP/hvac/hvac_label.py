@@ -231,6 +231,36 @@ def _find_label_for_space(doc, space_obj):
     return None
 
 
+def remove_labels_for_spaces(space_objects, doc=None):
+    if doc is None:
+        doc = App.ActiveDocument
+    if doc is None:
+        return 0
+    targets = set()
+    for space in list(space_objects or []):
+        if space is None:
+            continue
+        targets.add(str(getattr(space, "Name", "") or ""))
+
+    removed = 0
+    if not targets:
+        return removed
+
+    for label in list(find_labels(doc)):
+        linked_space = getattr(label, "Space", None)
+        linked_name = str(getattr(linked_space, "Name", "") or "")
+        if linked_name not in targets:
+            continue
+        try:
+            doc.removeObject(label.Name)
+            removed += 1
+        except Exception:
+            continue
+    if removed > 0:
+        log("Etiquetas HVAC eliminadas por limpieza: {0}".format(removed))
+    return removed
+
+
 def create_or_update_label(space_obj, doc=None):
     if doc is None:
         doc = App.ActiveDocument
