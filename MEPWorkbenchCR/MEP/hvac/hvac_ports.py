@@ -132,6 +132,8 @@ def create_port(doc, equipment_obj, port_type):
     port.Label = "{0}_{1}".format(equipment_obj.Label, port_type)
     if hasattr(port, "ViewObject"):
         port.ViewObject.Visibility = False
+        if hasattr(port.ViewObject, "ShowInTree"):
+            port.ViewObject.ShowInTree = False
     return port
 
 
@@ -275,6 +277,41 @@ def sanitize_all_ports(doc=None):
         return
     for port in find_ports(doc):
         ensure_port_properties(port)
+
+
+def prune_unused_ports(doc=None):
+    if doc is None:
+        doc = App.ActiveDocument
+    if doc is None:
+        return 0
+
+    linked_names = set()
+    try:
+        from . import hvac_route
+
+        for route in list(hvac_route.find_routes(doc) or []):
+            for port in [getattr(route, "StartPort", None), getattr(route, "EndPort", None)]:
+                if port is not None:
+                    linked_names.add(str(getattr(port, "Name", "") or ""))
+    except Exception:
+        pass
+
+    removed = 0
+    for port in list(find_ports(doc)):
+        port_name = str(getattr(port, "Name", "") or "")
+        if port_name in linked_names:
+            continue
+        equipment = get_port_equipment(port)
+        if equipment is not None and bool(getattr(equipment, "UsePorts", False)):
+            continue
+        try:
+            doc.removeObject(port.Name)
+            removed += 1
+        except Exception:
+            continue
+    if removed > 0:
+        log("Puertos tecnicos eliminados por modo compacto: {0}".format(removed))
+    return removed
 
 
 class HVACPortProxy:

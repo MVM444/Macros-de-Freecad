@@ -17,6 +17,9 @@ ROOT_GROUP_LABEL = "HVAC Air and Ventilation"
 LABEL_GROUP_MEP_TYPE = "HVACLabelGroup"
 LABEL_GROUP_NAME = "HVAC_Labels"
 LABEL_GROUP_LABEL = "HVAC Labels"
+INTERNAL_GROUP_MEP_TYPE = "HVACInternalGroup"
+INTERNAL_GROUP_NAME = "HVAC_Internal"
+INTERNAL_GROUP_LABEL = "HVAC Internal"
 LOG_PREFIX = "[MEP-HVAC][Project] "
 ICON_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "resources", "icons", "hvac.svg")
@@ -120,6 +123,75 @@ def _ensure_label_group_marker(group_obj):
         group_obj.Label = LABEL_GROUP_LABEL
 
 
+def _ensure_internal_group_marker(group_obj):
+    if group_obj is None or not hasattr(group_obj, "PropertiesList"):
+        return
+    if "MEPType" not in group_obj.PropertiesList:
+        group_obj.addProperty(
+            "App::PropertyString",
+            "MEPType",
+            "MEP",
+            "Internal marker for HVAC internal objects group",
+        )
+    if str(getattr(group_obj, "MEPType", "")) != INTERNAL_GROUP_MEP_TYPE:
+        group_obj.MEPType = INTERNAL_GROUP_MEP_TYPE
+    if getattr(group_obj, "Label", "") != INTERNAL_GROUP_LABEL:
+        group_obj.Label = INTERNAL_GROUP_LABEL
+
+
+def _set_group_tree_visibility(group_obj, show_in_tree=True):
+    if group_obj is None:
+        return
+    vobj = getattr(group_obj, "ViewObject", None)
+    if vobj is None:
+        return
+    try:
+        if hasattr(vobj, "ShowInTree"):
+            vobj.ShowInTree = bool(show_in_tree)
+    except Exception:
+        pass
+
+
+def _set_aux_object_tree_hidden(obj):
+    if obj is None:
+        return
+    vobj = getattr(obj, "ViewObject", None)
+    if vobj is None:
+        return
+    try:
+        if hasattr(vobj, "ShowInTree"):
+            vobj.ShowInTree = False
+    except Exception:
+        pass
+
+
+def _is_label_like(obj):
+    if obj is None:
+        return False
+    if _mep_type(obj) == "HVACLabel":
+        return True
+    name = str(getattr(obj, "Name", "") or "")
+    label = str(getattr(obj, "Label", "") or "")
+    if name.startswith("HVAC_Label") or label.startswith("HVAC_Label"):
+        return True
+    if "Space" in getattr(obj, "PropertiesList", []) and "Text" in str(getattr(obj, "TypeId", "") or ""):
+        return True
+    return False
+
+
+def _is_internal_like(obj):
+    if obj is None:
+        return False
+    mep = _mep_type(obj)
+    if mep in {"HVACPort"}:
+        return True
+    name = str(getattr(obj, "Name", "") or "")
+    label = str(getattr(obj, "Label", "") or "")
+    if name.startswith("SYM2D_") or label.startswith("SYM2D_"):
+        return True
+    return False
+
+
 def find_root_groups(doc):
     if doc is None:
         return []
@@ -168,6 +240,41 @@ def ensure_hvac_label_group(doc=None):
 
     group = doc.addObject("App::DocumentObjectGroup", LABEL_GROUP_NAME)
     _ensure_label_group_marker(group)
+    _set_group_tree_visibility(group, show_in_tree=True)
+    try:
+        root.addObject(group)
+    except Exception:
+        pass
+    return group
+
+
+def ensure_hvac_internal_group(doc=None):
+    if doc is None:
+        doc = App.ActiveDocument
+    if doc is None:
+        return None
+    root = ensure_hvac_root_group(doc)
+    if root is None:
+        return None
+
+    for child in list(getattr(root, "Group", []) or []):
+        if not _is_group(child):
+            continue
+        marker = _mep_type(child)
+        if marker == INTERNAL_GROUP_MEP_TYPE:
+            _ensure_internal_group_marker(child)
+            _set_group_tree_visibility(child, show_in_tree=False)
+            return child
+        child_name = _normalize_text(getattr(child, "Name", ""))
+        child_label = _normalize_text(getattr(child, "Label", ""))
+        if child_name == _normalize_text(INTERNAL_GROUP_NAME) or child_label == _normalize_text(INTERNAL_GROUP_LABEL):
+            _ensure_internal_group_marker(child)
+            _set_group_tree_visibility(child, show_in_tree=False)
+            return child
+
+    group = doc.addObject("App::DocumentObjectGroup", INTERNAL_GROUP_NAME)
+    _ensure_internal_group_marker(group)
+    _set_group_tree_visibility(group, show_in_tree=False)
     try:
         root.addObject(group)
     except Exception:
@@ -205,10 +312,14 @@ def add_object_to_hvac_group(doc, obj):
         return root_group
 
     target_group = root_group
-    if _mep_type(obj) == "HVACLabel":
+    if _is_label_like(obj):
         label_group = ensure_hvac_label_group(doc)
         if label_group is not None:
             target_group = label_group
+    elif _is_internal_like(obj):
+        internal_group = ensure_hvac_internal_group(doc)
+        if internal_group is not None:
+            target_group = internal_group
 
     try:
         children = list(getattr(target_group, "Group", []) or [])
@@ -223,6 +334,8 @@ def add_object_to_hvac_group(doc, obj):
                 root_group.removeObject(obj)
         except Exception:
             pass
+    if target_group is not root_group:
+        _set_aux_object_tree_hidden(obj)
     return target_group
 
 
@@ -234,6 +347,7 @@ def organize_hvac_objects(doc=None):
 
     group = ensure_hvac_root_group(doc)
     label_group = ensure_hvac_label_group(doc)
+    internal_group = ensure_hvac_internal_group(doc)
     if group is None:
         return 0
 
@@ -259,8 +373,10 @@ def organize_hvac_objects(doc=None):
             continue
 
         target_group = group
-        if _mep_type(obj) == "HVACLabel" and label_group is not None:
+        if _is_label_like(obj) and label_group is not None:
             target_group = label_group
+        elif _is_internal_like(obj) and internal_group is not None:
+            target_group = internal_group
 
         before = list(getattr(target_group, "Group", []) or [])
         try:
@@ -271,6 +387,7 @@ def organize_hvac_objects(doc=None):
                 root_before = list(getattr(group, "Group", []) or [])
                 if obj in root_before:
                     group.removeObject(obj)
+                _set_aux_object_tree_hidden(obj)
         except Exception:
             continue
 

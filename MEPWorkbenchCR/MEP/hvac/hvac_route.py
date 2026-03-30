@@ -183,6 +183,9 @@ def _selected_equipments():
 
 
 def _equipment_port_by_type(equipment_obj, port_type):
+    if "UsePorts" in getattr(equipment_obj, "PropertiesList", []):
+        if not bool(getattr(equipment_obj, "UsePorts", False)):
+            equipment_obj.UsePorts = True
     hvac_ports.ensure_equipment_ports(equipment_obj)
     for port in list(getattr(equipment_obj, "Ports", []) or []):
         if str(getattr(port, "Type", "")) == port_type:

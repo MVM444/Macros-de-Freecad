@@ -34,6 +34,7 @@ def recalculate_document(doc=None):
     hvac_project.ensure_hvac_root_group(doc)
     hvac_project.recalculate_project(project)
     hvac_ports.sanitize_all_ports(doc)
+    hvac_ports.prune_unused_ports(doc)
     hvac_space.cleanup_nested_spaces(doc)
 
     for space in hvac_space.find_spaces(doc):
@@ -43,7 +44,8 @@ def recalculate_document(doc=None):
 
     for equipment in hvac_equipment.find_equipments(doc):
         hvac_equipment.update_equipment_coverage(equipment)
-        hvac_equipment.update_equipment_ports(equipment)
+        if bool(getattr(equipment, "UsePorts", False)):
+            hvac_equipment.update_equipment_ports(equipment)
 
     for condenser in hvac_condensing.find_condensers(doc):
         hvac_condensing.recalculate_condenser(condenser)

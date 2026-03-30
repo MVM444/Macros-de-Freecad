@@ -51,6 +51,7 @@ def ensure_equipment_properties(obj):
     added_symbol_size = False
     added_show_symbol = False
     added_auto_detect = False
+    added_use_ports = False
     added_coverage = False
 
     if "MEPType" not in obj.PropertiesList:
@@ -101,6 +102,14 @@ def ensure_equipment_properties(obj):
             "Auto assign nearest/selected HVAC space",
         )
         added_auto_detect = True
+    if "UsePorts" not in obj.PropertiesList:
+        obj.addProperty(
+            "App::PropertyBool",
+            "UsePorts",
+            "HVAC Equipment",
+            "Generate technical ports for routes/system flow",
+        )
+        added_use_ports = True
     if "Ports" not in obj.PropertiesList:
         obj.addProperty("App::PropertyLinkList", "Ports", "HVAC Equipment", "Equipment port objects")
 
@@ -122,6 +131,8 @@ def ensure_equipment_properties(obj):
         obj.CoveragePct = 0.0
     if added_auto_detect:
         obj.AutoDetectSpace = True
+    if added_use_ports:
+        obj.UsePorts = False
 
 
 def available_models():
@@ -169,6 +180,8 @@ def _initialize_equipment_defaults(obj):
         obj.ShowSymbol2D = True
     if not isinstance(getattr(obj, "AutoDetectSpace", True), bool):
         obj.AutoDetectSpace = True
+    if not isinstance(getattr(obj, "UsePorts", False), bool):
+        obj.UsePorts = False
     if _to_float(obj.CoveragePct, 0) < 0:
         obj.CoveragePct = 0.0
 
@@ -265,6 +278,10 @@ def update_equipment_coverage(equipment_obj):
 
 
 def update_equipment_ports(equipment_obj):
+    if equipment_obj is None:
+        return []
+    if not bool(getattr(equipment_obj, "UsePorts", False)):
+        return list(getattr(equipment_obj, "Ports", []) or [])
     hvac_ports.update_equipment_ports(equipment_obj)
 
 
@@ -391,6 +408,8 @@ def _ensure_symbol2d(equipment_obj):
         symbol_obj.Label = "SYM2D_{0}".format(str(getattr(equipment_obj, "Label", equipment_obj.Name)))
         equipment_obj.Symbol2D = symbol_obj
         hvac_project.add_object_to_hvac_group(doc, symbol_obj)
+        if hasattr(symbol_obj, "ViewObject") and hasattr(symbol_obj.ViewObject, "ShowInTree"):
+            symbol_obj.ViewObject.ShowInTree = False
 
     size_mm = _to_float(getattr(equipment_obj, "Symbol2DSize", DEFAULT_SYMBOL_SIZE), DEFAULT_SYMBOL_SIZE)
     if _shape_size_changed(getattr(symbol_obj, "Shape", None), size_mm):
@@ -423,7 +442,8 @@ def _sync_equipment_geometry(equipment_obj):
     _apply_equipment_elevation(equipment_obj)
     equipment_obj.Shape = _build_equipment_shape(equipment_obj)
     _ensure_symbol2d(equipment_obj)
-    update_equipment_ports(equipment_obj)
+    if bool(getattr(equipment_obj, "UsePorts", False)):
+        update_equipment_ports(equipment_obj)
 
 
 def _pick_model_for_insert():
@@ -544,6 +564,7 @@ class HVACEquipmentProxy:
             "Symbol2DSize",
             "ShowSymbol2D",
             "AutoDetectSpace",
+            "UsePorts",
         }:
             self._busy = True
             try:
@@ -556,7 +577,16 @@ class HVACEquipmentProxy:
                         obj.BaseLevel = inferred_base_level
                 if prop in {"Placement", "AutoDetectSpace"}:
                     _auto_assign_space(obj)
-                if prop in {"Model", "Type", "Placement", "Height", "BaseLevel", "Symbol2DSize", "ShowSymbol2D"}:
+                if prop in {
+                    "Model",
+                    "Type",
+                    "Placement",
+                    "Height",
+                    "BaseLevel",
+                    "Symbol2DSize",
+                    "ShowSymbol2D",
+                    "UsePorts",
+                }:
                     _sync_equipment_geometry(obj)
                 if prop in {"Model", "CapacityBTU", "Space", "Placement", "AutoDetectSpace", "Height", "BaseLevel"}:
                     update_equipment_coverage(obj)
