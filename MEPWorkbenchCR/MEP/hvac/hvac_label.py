@@ -92,6 +92,42 @@ def _set_label_text(label_obj, lines):
     label_obj.Label = " | ".join(lines)
 
 
+def _make_draft_text(lines, point):
+    import Draft
+
+    call_attempts = []
+    if hasattr(Draft, "make_text"):
+        call_attempts.extend(
+            [
+                lambda: Draft.make_text(lines, point=point),
+                lambda: Draft.make_text(lines, point),
+                lambda: Draft.make_text(lines),
+                lambda: Draft.make_text("\n".join(lines), point=point),
+            ]
+        )
+    if hasattr(Draft, "makeText"):
+        call_attempts.extend(
+            [
+                lambda: Draft.makeText(lines, point=point),
+                lambda: Draft.makeText(lines, point),
+                lambda: Draft.makeText("\n".join(lines), point=point),
+                lambda: Draft.makeText("\n".join(lines), point),
+            ]
+        )
+
+    last_error = None
+    for call in call_attempts:
+        try:
+            obj = call()
+            if obj is not None:
+                return obj
+        except Exception as exc:
+            last_error = exc
+            continue
+
+    raise RuntimeError("No se pudo crear texto Draft: {0}".format(last_error))
+
+
 def _label_position(space_obj):
     base = getattr(space_obj, "BaseSpace", None)
     if base is not None and hasattr(base, "Shape"):
@@ -133,15 +169,7 @@ def create_or_update_label(space_obj, doc=None):
     lines = _build_label_lines(doc, space_obj)
     label_obj = _find_label_for_space(doc, space_obj)
     if label_obj is None:
-        import Draft
-
-        if hasattr(Draft, "make_text"):
-            try:
-                label_obj = Draft.make_text(lines, point=_label_position(space_obj))
-            except TypeError:
-                label_obj = Draft.make_text(strings=lines, point=_label_position(space_obj))
-        else:
-            label_obj = Draft.makeText(lines, point=_label_position(space_obj))
+        label_obj = _make_draft_text(lines, _label_position(space_obj))
         ensure_label_properties(label_obj)
         label_obj.Space = space_obj
         label_obj.Label = "HVAC_Label_{0}".format(space_obj.Name)

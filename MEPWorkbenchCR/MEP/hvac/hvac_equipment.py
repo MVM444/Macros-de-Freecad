@@ -25,6 +25,7 @@ EVAPORATOR_LIBRARY = {
     "Ducto_60000": {"Type": "Duct", "CapacityBTU": 60000.0, "Size": (1600.0, 450.0, 380.0)},
 }
 DEFAULT_MODEL = "Pared_12000"
+DEFAULT_SYMBOL_SIZE = 450.0
 
 
 def log(message):
@@ -46,6 +47,9 @@ def ensure_equipment_properties(obj):
     added_type = False
     added_capacity = False
     added_height = False
+    added_base_level = False
+    added_symbol_size = False
+    added_show_symbol = False
     added_auto_detect = False
     added_coverage = False
 
@@ -70,6 +74,17 @@ def ensure_equipment_properties(obj):
     if "Height" not in obj.PropertiesList:
         obj.addProperty("App::PropertyFloat", "Height", "HVAC Equipment", "Mounting height (m)")
         added_height = True
+    if "BaseLevel" not in obj.PropertiesList:
+        obj.addProperty("App::PropertyFloat", "BaseLevel", "HVAC Equipment", "Base elevation reference (mm)")
+        added_base_level = True
+    if "Symbol2DSize" not in obj.PropertiesList:
+        obj.addProperty("App::PropertyFloat", "Symbol2DSize", "HVAC Equipment", "2D symbol size (mm)")
+        added_symbol_size = True
+    if "ShowSymbol2D" not in obj.PropertiesList:
+        obj.addProperty("App::PropertyBool", "ShowSymbol2D", "HVAC Equipment", "Show 2D symbol in plan")
+        added_show_symbol = True
+    if "Symbol2D" not in obj.PropertiesList:
+        obj.addProperty("App::PropertyLink", "Symbol2D", "HVAC Equipment", "Linked 2D symbol object")
     if "CoveragePct" not in obj.PropertiesList:
         obj.addProperty(
             "App::PropertyFloat",
@@ -97,6 +112,12 @@ def ensure_equipment_properties(obj):
         obj.CapacityBTU = EVAPORATOR_LIBRARY[DEFAULT_MODEL]["CapacityBTU"]
     if added_height:
         obj.Height = 2.3
+    if added_base_level:
+        obj.BaseLevel = 0.0
+    if added_symbol_size:
+        obj.Symbol2DSize = DEFAULT_SYMBOL_SIZE
+    if added_show_symbol:
+        obj.ShowSymbol2D = True
     if added_coverage:
         obj.CoveragePct = 0.0
     if added_auto_detect:
@@ -142,6 +163,10 @@ def _initialize_equipment_defaults(obj):
         obj.CapacityBTU = spec["CapacityBTU"]
     if _to_float(obj.Height, 0) <= 0:
         obj.Height = 2.3
+    if _to_float(getattr(obj, "Symbol2DSize", 0.0), 0.0) <= 0:
+        obj.Symbol2DSize = DEFAULT_SYMBOL_SIZE
+    if not isinstance(getattr(obj, "ShowSymbol2D", True), bool):
+        obj.ShowSymbol2D = True
     if not isinstance(getattr(obj, "AutoDetectSpace", True), bool):
         obj.AutoDetectSpace = True
     if _to_float(obj.CoveragePct, 0) < 0:
@@ -243,6 +268,77 @@ def update_equipment_ports(equipment_obj):
     hvac_ports.update_equipment_ports(equipment_obj)
 
 
+def _height_to_mm(equipment_obj):
+    return _to_float(getattr(equipment_obj, "Height", 0.0), 0.0) * 1000.0
+
+
+def _apply_equipment_elevation(equipment_obj):
+    if equipment_obj is None:
+        return
+    placement = getattr(equipment_obj, "Placement", App.Placement())
+    base = App.Vector(placement.Base)
+    base_level = _to_float(getattr(equipment_obj, "BaseLevel", 0.0), 0.0)
+    target_z = base_level + _height_to_mm(equipment_obj)
+    if abs(base.z - target_z) > 0.01:
+        base.z = target_z
+        placement.Base = base
+        equipment_obj.Placement = placement
+
+
+def _build_symbol_shape(size_mm):
+    radius = max(50.0, float(size_mm) * 0.5)
+    p1 = App.Vector(-radius, -radius, 0.0)
+    p2 = App.Vector(radius, radius, 0.0)
+    p3 = App.Vector(-radius, radius, 0.0)
+    p4 = App.Vector(radius, -radius, 0.0)
+    line_1 = Part.makeLine(p1, p2)
+    line_2 = Part.makeLine(p3, p4)
+    circle = Part.makeCircle(radius * 0.9, App.Vector(0.0, 0.0, 0.0), App.Vector(0, 0, 1))
+    return Part.Compound([line_1, line_2, circle])
+
+
+def _ensure_symbol2d(equipment_obj):
+    if equipment_obj is None:
+        return
+    if "Symbol2D" not in getattr(equipment_obj, "PropertiesList", []):
+        return
+    if not bool(getattr(equipment_obj, "ShowSymbol2D", True)):
+        symbol_obj = getattr(equipment_obj, "Symbol2D", None)
+        if symbol_obj is not None and hasattr(symbol_obj, "ViewObject"):
+            symbol_obj.ViewObject.Visibility = False
+        return
+
+    doc = equipment_obj.Document
+    if doc is None:
+        return
+
+    symbol_obj = getattr(equipment_obj, "Symbol2D", None)
+    if symbol_obj is None:
+        symbol_obj = doc.addObject("Part::Feature", "HVAC_Evaporator2D")
+        symbol_obj.Label = "SYM2D_{0}".format(str(getattr(equipment_obj, "Label", equipment_obj.Name)))
+        equipment_obj.Symbol2D = symbol_obj
+        hvac_project.add_object_to_hvac_group(doc, symbol_obj)
+
+    size_mm = _to_float(getattr(equipment_obj, "Symbol2DSize", DEFAULT_SYMBOL_SIZE), DEFAULT_SYMBOL_SIZE)
+    symbol_obj.Shape = _build_symbol_shape(size_mm)
+
+    eq_placement = getattr(equipment_obj, "Placement", App.Placement())
+    symbol_placement = App.Placement(eq_placement)
+    symbol_placement.Base = App.Vector(eq_placement.Base.x, eq_placement.Base.y, _to_float(getattr(equipment_obj, "BaseLevel", 0.0), 0.0))
+    symbol_obj.Placement = symbol_placement
+    if hasattr(symbol_obj, "ViewObject"):
+        symbol_obj.ViewObject.Visibility = True
+
+
+def _sync_equipment_geometry(equipment_obj):
+    if equipment_obj is None:
+        return
+    _apply_equipment_elevation(equipment_obj)
+    equipment_obj.Shape = _build_equipment_shape(equipment_obj)
+    _ensure_symbol2d(equipment_obj)
+    update_equipment_ports(equipment_obj)
+
+
 def _pick_model_for_insert():
     if not App.GuiUp:
         return DEFAULT_MODEL
@@ -318,8 +414,10 @@ def insert_evaporator_from_selection(doc=None, model_name=None):
 
     points = selection.get_selected_points()
     if points:
+        point = App.Vector(points[0])
+        obj.BaseLevel = float(point.z)
         placement = getattr(obj, "Placement", App.Placement())
-        placement.Base = points[0]
+        placement.Base = App.Vector(point.x, point.y, point.z)
         obj.Placement = placement
         log("Evaporadora ubicada en punto seleccionado")
 
@@ -330,8 +428,7 @@ def insert_evaporator_from_selection(doc=None, model_name=None):
     else:
         _auto_assign_space(obj, warn_if_not_found=True)
 
-    obj.Shape = _build_equipment_shape(obj)
-    update_equipment_ports(obj)
+    _sync_equipment_geometry(obj)
     update_equipment_coverage(obj)
     hvac_project.add_object_to_hvac_group(doc, obj)
     return obj
@@ -347,16 +444,32 @@ class HVACEquipmentProxy:
     def onChanged(self, obj, prop):  # noqa: N802
         if self._busy:
             return
-        if prop in {"Model", "Type", "CapacityBTU", "Space", "Height", "Placement", "AutoDetectSpace"}:
+        if prop in {
+            "Model",
+            "Type",
+            "CapacityBTU",
+            "Space",
+            "Height",
+            "BaseLevel",
+            "Placement",
+            "Symbol2DSize",
+            "ShowSymbol2D",
+            "AutoDetectSpace",
+        }:
             self._busy = True
             try:
                 if prop == "Model":
                     set_equipment_model(obj, getattr(obj, "Model", DEFAULT_MODEL), force=True)
+                if prop == "Placement":
+                    placement = getattr(obj, "Placement", App.Placement())
+                    inferred_base_level = float(placement.Base.z) - _height_to_mm(obj)
+                    if abs(_to_float(getattr(obj, "BaseLevel", 0.0), 0.0) - inferred_base_level) > 0.01:
+                        obj.BaseLevel = inferred_base_level
                 if prop in {"Placement", "AutoDetectSpace"}:
                     _auto_assign_space(obj)
-                if prop in {"Model", "Type", "Placement", "Height"}:
-                    update_equipment_ports(obj)
-                if prop in {"Model", "CapacityBTU", "Space", "Placement", "AutoDetectSpace"}:
+                if prop in {"Model", "Type", "Placement", "Height", "BaseLevel", "Symbol2DSize", "ShowSymbol2D"}:
+                    _sync_equipment_geometry(obj)
+                if prop in {"Model", "CapacityBTU", "Space", "Placement", "AutoDetectSpace", "Height", "BaseLevel"}:
                     update_equipment_coverage(obj)
             finally:
                 self._busy = False
@@ -368,9 +481,8 @@ class HVACEquipmentProxy:
         try:
             ensure_equipment_properties(obj)
             _initialize_equipment_defaults(obj)
-            obj.Shape = _build_equipment_shape(obj)
+            _sync_equipment_geometry(obj)
             _auto_assign_space(obj)
-            update_equipment_ports(obj)
             update_equipment_coverage(obj)
         finally:
             self._busy = False

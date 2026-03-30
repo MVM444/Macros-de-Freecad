@@ -256,13 +256,15 @@ def insert_condenser_from_selection(doc=None):
     _initialize_condenser_defaults(obj)
     obj.Shape = _build_condenser_shape()
 
-    connected = _selected_equipments(doc)
-    if connected:
-        obj.ConnectedUnits = connected
-        selected_capacity = sum(_to_float(unit.CapacityBTU, 0.0) for unit in connected)
-        if selected_capacity > 0:
-            obj.CapacityBTU = selected_capacity
-        log("Condenser conectada a {0} evaporadoras seleccionadas".format(len(connected)))
+    points = selection.get_selected_points()
+    if points:
+        point = App.Vector(points[0])
+        placement = getattr(obj, "Placement", App.Placement())
+        placement.Base = point
+        obj.Placement = placement
+        log("Condenser ubicada en punto seleccionado")
+    else:
+        log("Condenser creada sin conexiones automaticas. Ubique y asigne manualmente.")
 
     recalculate_condenser(obj)
     hvac_project.add_object_to_hvac_group(doc, obj)
