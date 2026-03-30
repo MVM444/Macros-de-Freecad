@@ -9,21 +9,29 @@ MEPWorkbenchCR es un Workbench de FreeCAD enfocado inicialmente en HVAC para ofi
 
 ## Alcance actual
 
-- Implementacion inicial centrada en HVAC.
-- Recintos HVAC generados desde poligonos y grupos de Areas/Recintos.
-- Calculo de cargas termicas por recinto (modo rapido y modo preciso).
-- Gestion de evaporadoras y condensadoras como objetos tecnicos del sistema.
-- Rutas HVAC por tipo de servicio (refrigerante, electrica, condensados).
-- Puntos de conexion obligatorios para asegurar consistencia de red.
-- Etiquetado tecnico por recinto con carga y cobertura.
+- MVP centrado en flujo de recintos, inspirado en Iluminacion de ElectricCR.
+- Recintos HVAC generados/actualizados desde poligonos o grupo Areas.
+- Calculo de carga por recinto con actualizacion automatica de etiquetas.
+- Insercion de evaporadoras concretas con asignacion rapida a recinto.
+- Cobertura por recinto visible en etiqueta (capacidad instalada / carga).
+- Condensadoras, rutas y puertos mantenidos como segunda capa operativa.
 
 ## Enfoque HVAC
 
 - El recinto es la unidad base de calculo.
-- El equipo responde al calculo del recinto, no al reves.
-- La condensadora valida cobertura total del conjunto de evaporadoras.
-- Las rutas representan conexiones funcionales entre puertos.
+- La etiqueta del recinto es el resultado principal para lectura tecnica.
+- La evaporadora se coloca visualmente y responde al calculo del recinto.
 - El factor climatico se expresa principalmente en BTU/h por m2 y secundariamente en W/m2.
+- Condensadora y rutas no son paso inicial del MVP, sino fase posterior.
+
+## Flujo MVP recomendado
+
+1. Seleccionar poligonos o grupo `Areas`.
+2. Crear/actualizar recintos HVAC.
+3. Calcular HVAC.
+4. Ver etiquetas actualizadas de inmediato.
+5. Insertar evaporadora concreta.
+6. Revisar cobertura por recinto.
 
 ## Filosofia del Workbench
 

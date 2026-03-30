@@ -46,7 +46,7 @@ def recalculate_document(doc=None):
         hvac_condensing.recalculate_condenser(condenser)
 
     hvac_route.update_all_routes(doc)
-    hvac_label.update_all_labels(doc)
+    hvac_label.update_all_labels(doc, ensure_visible=True)
     doc.recompute()
     log("Recalculo HVAC finalizado")
 

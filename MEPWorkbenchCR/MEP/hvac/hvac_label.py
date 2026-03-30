@@ -45,11 +45,17 @@ def ensure_label_properties(obj):
 
 
 def _space_name(space_obj):
+    def _clean_name(raw):
+        text = str(raw or "").strip()
+        if text.upper().startswith("HVAC_"):
+            text = text[5:]
+        return text
+
     base = getattr(space_obj, "BaseSpace", None)
     if base is not None and getattr(base, "Label", ""):
-        return str(base.Label).upper()
+        return _clean_name(base.Label).upper()
     if getattr(space_obj, "Label", ""):
-        return str(space_obj.Label).upper()
+        return _clean_name(space_obj.Label).upper()
     return str(space_obj.Name).upper()
 
 
@@ -152,13 +158,15 @@ def create_or_update_label(space_obj, doc=None):
     return label_obj
 
 
-def update_all_labels(doc=None):
+def update_all_labels(doc=None, ensure_visible=False):
     if doc is None:
         doc = App.ActiveDocument
     if doc is None:
         return
     for space_obj in hvac_space.find_spaces(doc):
-        create_or_update_label(space_obj, doc)
+        label_obj = create_or_update_label(space_obj, doc)
+        if ensure_visible and label_obj is not None and hasattr(label_obj, "ViewObject"):
+            label_obj.ViewObject.Visibility = True
 
 
 def toggle_labels(doc=None):

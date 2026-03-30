@@ -9,6 +9,7 @@
 
 - Esta version cubre solo HVAC.
 - El calculo base pertenece al recinto (`HVACSpace`).
+- El MVP de experiencia se centra en recinto + etiqueta + evaporadora + cobertura.
 - La evaporadora responde a la carga del recinto.
 - La condensadora valida el sistema por suma de evaporadoras.
 - Las rutas conectan puertos compatibles, no geometria suelta.
@@ -118,7 +119,8 @@ Reglas:
 
 ### HVACEquipment (evaporadora)
 
-- Propiedades clave: `Type`, `CapacityBTU`, `Space`, `Height`, `CoveragePct`, `AutoDetectSpace`.
+- Propiedades clave: `Model`, `Type`, `CapacityBTU`, `Space`, `Height`, `CoveragePct`, `AutoDetectSpace`.
+- Biblioteca minima MVP: `Pared_9000`, `Pared_12000`, `Pared_18000`, `Cassette_24000`, `Cassette_36000`, `Ducto_36000`, `Ducto_60000`.
 - Detecta recinto por:
   1. Seleccion actual.
   2. Posicion dentro del `BaseSpace`.
@@ -161,16 +163,17 @@ Reglas:
 
 ## 8) Reglas de UI y experiencia
 
-- Comandos minimos activos en toolbar:
-  - Crear Proyecto HVAC
-  - Crear Recinto HVAC
+- Toolbar principal (MVP):
+  - Crear o Actualizar Recintos HVAC
   - Calcular HVAC
-  - Validar HVAC
-  - Insertar Evaporadora
+  - Mostrar/Ocultar Etiquetas
+  - Insertar Evaporadora Concreta
+- Toolbar secundaria (Sistema):
+  - Crear Proyecto HVAC
   - Insertar Condensadora
   - Asignar a Condensadora
   - Crear Ruta HVAC
-  - Mostrar/Ocultar Etiquetas
+  - Validar HVAC
   - Reload Workbench
 - Cada comando debe tener icono propio.
 - El sistema debe soportar idioma `es` y `en` (base i18n inicial).

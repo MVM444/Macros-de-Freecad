@@ -1,24 +1,26 @@
 # Archivo: FLUJO_DE_TRABAJO.md
 **Proposito:** Definir el flujo operativo recomendado para usar MEPWorkbenchCR en FreeCAD.  
-**Fecha y hora de version:** 2026-03-30 08:15 (editable)  
-**Nota:** Proyecto en etapa inicial, orientado a FreeCAD.
+**Fecha y hora de version:** 2026-03-30 19:40 (editable)  
+**Nota:** MVP centrado en recintos, etiquetas y evaporadoras.
 
 # Flujo de Trabajo HVAC
 
-## Flujo base dentro de FreeCAD
+## Flujo principal dentro de FreeCAD (MVP)
 
-1. Dibujar o seleccionar poligonos de recintos (regular o irregular) en el modelo.
-2. Crear/actualizar recintos HVAC desde poligono(s) o desde grupo `Areas/Áreas/Recintos`.
-3. Definir altura y propiedades del recinto.
-4. Crear o editar el proyecto HVAC.
-5. Definir variables climaticas del proyecto.
-6. Ejecutar calculo de carga del recinto.
-7. Insertar evaporadora dentro del recinto.
-8. Insertar condensadora en ubicacion tecnica adecuada.
-9. Asignar evaporadoras a la condensadora (comando `Asignar a Condensadora`).
-10. Crear rutas HVAC entre puertos.
-11. Mostrar etiqueta HVAC del recinto.
-12. Ejecutar `Validar HVAC` para revisar cobertura y consistencia del sistema.
+1. Seleccionar poligonos de recintos o grupo `Areas/Areas/Recintos`.
+2. Ejecutar `Crear o Actualizar Recintos HVAC`.
+3. Ejecutar `Calcular HVAC`.
+4. Ver etiquetas actualizadas automaticamente sobre cada recinto.
+5. Insertar evaporadora concreta en el recinto.
+6. Revisar cobertura en etiqueta (`EQ: capacidad (porcentaje)`).
+
+## Flujo secundario de sistema (fase posterior)
+
+7. Crear/ajustar Proyecto HVAC.
+8. Insertar Condensadora.
+9. Asignar Evaporadoras a Condensadora.
+10. Crear Ruta HVAC.
+11. Ejecutar Validar HVAC.
 
 ## Detalle por etapa
 
@@ -35,30 +37,25 @@
 - Confirmar que la humedad por defecto conservadora sea la esperada para el escenario.
 - Verificar que el factor climatico resultante sea tecnicamente coherente.
 
-### Etapa 3: Calculo
+### Etapa 3: Calculo y resultado
 
-- Ejecutar calculo rapido para dimensionamiento preliminar.
-- Ejecutar calculo preciso cuando se requiera ajuste fino.
+- Calcular HVAC debe actualizar carga, cobertura y etiquetas en un solo paso.
+- Ejecutar modo rapido para dimensionamiento preliminar.
+- Ejecutar modo preciso cuando se requiera ajuste fino.
 - Registrar carga final por recinto para seleccion de equipos.
 
-### Etapa 4: Equipos
+### Etapa 4: Evaporadora
 
-- Insertar evaporadora en posicion realista de instalacion.
-- Asignar capacidad de evaporadora y validar cobertura.
-- Insertar condensadora en zona tecnica independiente del recinto.
-- Asociar evaporadoras a condensadora con `Asignar a Condensadora` y revisar balance total.
+- Insertar evaporadora concreta (ejemplo: `Pared_12000`, `Cassette_24000`).
+- Si hay recinto seleccionado, asignar evaporadora al recinto seleccionado.
+- Si no hay seleccion, detectar recinto por posicion; si falla, asignar manualmente.
+- Revisar cobertura directamente en etiqueta del recinto.
 
-### Etapa 5: Rutas y conexiones
+### Etapa 5: Sistema (segunda capa)
 
+- Insertar condensadora y asociar evaporadoras cuando aplique.
 - Crear rutas por tipo de servicio: refrigerante, electrica y condensados.
-- Asegurar conexion entre puertos validos.
-- Verificar longitud y nivel de ruta segun criterio del proyecto.
-
-### Etapa 6: Etiquetado y revision
-
-- Activar etiqueta HVAC sobre el recinto.
-- Revisar nombre de recinto, carga BTU/h, equipo y porcentaje de cobertura.
-- Corregir capacidad, rutas o clima si la cobertura no cumple objetivo.
+- Asegurar conexion entre puertos validos y validar sistema completo.
 
 ## Observaciones de uso practico
 

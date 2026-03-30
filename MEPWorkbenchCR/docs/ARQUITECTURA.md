@@ -9,6 +9,12 @@
 
 MEPWorkbenchCR se estructura como un Workbench modular de FreeCAD. El alcance inicial es HVAC, pero la arquitectura se disena para habilitar expansion MEP sin reescritura estructural.
 
+## Filosofia MVP (actual)
+
+- Inspiracion de flujo: Iluminacion de ElectricCR.
+- Centro del MVP: Recinto HVAC + Etiqueta HVAC + Evaporadora + Cobertura.
+- Segunda capa operativa: Proyecto HVAC, Condensadora, Rutas, Puertos, Validacion.
+
 ## Capas principales
 
 - Capa de Workbench: registro de comandos, barras de herramientas y menu.
@@ -20,21 +26,20 @@ MEPWorkbenchCR se estructura como un Workbench modular de FreeCAD. El alcance in
 ## Modulos principales HVAC
 
 - Proyecto HVAC: concentra variables climaticas y define factor de referencia.
-- Recinto HVAC: unidad base de calculo de carga termica.
-- Evaporadora: equipo interior 3D asociado a recintos.
+- Recinto HVAC: unidad base y punto de entrada principal del usuario.
+- Etiqueta HVAC: salida protagonista sobre el recinto (carga y cobertura).
+- Evaporadora: equipo interior concreto asociado visualmente al recinto.
 - Condensadora: equipo 3D independiente que consolida evaporadoras.
 - Ruta HVAC: conexion tecnica entre puertos segun tipo de servicio.
 - Puerto HVAC: punto obligatorio de conexion y validacion de compatibilidad.
-- Etiqueta HVAC: salida visible por recinto con carga y cobertura.
 
 ## Relacion entre componentes
 
-- Proyecto HVAC -> influye en factor climatico.
 - Recinto HVAC -> calcula carga requerida.
-- Evaporadora -> aporta capacidad y cobertura sobre recinto.
-- Condensadora -> valida el balance total de capacidades conectadas.
-- Ruta HVAC -> representa conexion funcional entre puertos compatibles.
-- Etiqueta HVAC -> resume estado del recinto y cobertura del sistema.
+- Evaporadora -> aporta capacidad instalada del recinto.
+- Etiqueta HVAC -> refleja carga y cobertura del recinto en tiempo real.
+- Proyecto HVAC -> influye en factor climatico (soporte transversal).
+- Condensadora/Ruta/Puertos -> fase posterior de sistema completo.
 
 ## Rol del Loader
 

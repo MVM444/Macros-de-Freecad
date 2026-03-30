@@ -14,6 +14,16 @@ LOG_PREFIX = "[MEP-HVAC][Equipment] "
 ICON_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "resources", "icons", "hvac.svg")
 ).replace(os.sep, "/")
+EVAPORATOR_LIBRARY = {
+    "Pared_9000": {"Type": "Wall", "CapacityBTU": 9000.0, "Size": (760.0, 230.0, 220.0)},
+    "Pared_12000": {"Type": "Wall", "CapacityBTU": 12000.0, "Size": (900.0, 260.0, 220.0)},
+    "Pared_18000": {"Type": "Wall", "CapacityBTU": 18000.0, "Size": (1040.0, 280.0, 240.0)},
+    "Cassette_24000": {"Type": "Cassette", "CapacityBTU": 24000.0, "Size": (600.0, 600.0, 320.0)},
+    "Cassette_36000": {"Type": "Cassette", "CapacityBTU": 36000.0, "Size": (840.0, 840.0, 350.0)},
+    "Ducto_36000": {"Type": "Duct", "CapacityBTU": 36000.0, "Size": (1200.0, 360.0, 320.0)},
+    "Ducto_60000": {"Type": "Duct", "CapacityBTU": 60000.0, "Size": (1600.0, 450.0, 380.0)},
+}
+DEFAULT_MODEL = "Pared_12000"
 
 
 def log(message):
@@ -31,6 +41,7 @@ def _to_float(value, default=0.0):
 
 
 def ensure_equipment_properties(obj):
+    added_model = False
     added_type = False
     added_capacity = False
     added_height = False
@@ -42,6 +53,10 @@ def ensure_equipment_properties(obj):
     if str(getattr(obj, "MEPType", "")) != MEP_TYPE:
         obj.MEPType = MEP_TYPE
 
+    if "Model" not in obj.PropertiesList:
+        obj.addProperty("App::PropertyEnumeration", "Model", "HVAC Equipment", "Concrete evaporator model")
+        obj.Model = list(EVAPORATOR_LIBRARY.keys())
+        added_model = True
     if "Type" not in obj.PropertiesList:
         obj.addProperty("App::PropertyEnumeration", "Type", "HVAC Equipment", "Equipment type")
         obj.Type = ["Wall", "Cassette", "Duct"]
@@ -73,10 +88,12 @@ def ensure_equipment_properties(obj):
     if "Ports" not in obj.PropertiesList:
         obj.addProperty("App::PropertyLinkList", "Ports", "HVAC Equipment", "Equipment port objects")
 
+    if added_model:
+        obj.Model = DEFAULT_MODEL
     if added_type:
-        obj.Type = "Wall"
+        obj.Type = EVAPORATOR_LIBRARY[DEFAULT_MODEL]["Type"]
     if added_capacity:
-        obj.CapacityBTU = 12000.0
+        obj.CapacityBTU = EVAPORATOR_LIBRARY[DEFAULT_MODEL]["CapacityBTU"]
     if added_height:
         obj.Height = 2.3
     if added_coverage:
@@ -85,11 +102,43 @@ def ensure_equipment_properties(obj):
         obj.AutoDetectSpace = True
 
 
+def available_models():
+    return list(EVAPORATOR_LIBRARY.keys())
+
+
+def _model_spec(model_name):
+    return EVAPORATOR_LIBRARY.get(str(model_name), EVAPORATOR_LIBRARY[DEFAULT_MODEL])
+
+
+def set_equipment_model(equipment_obj, model_name, force=False):
+    if equipment_obj is None:
+        return
+    ensure_equipment_properties(equipment_obj)
+    model = str(model_name or DEFAULT_MODEL)
+    if model not in EVAPORATOR_LIBRARY:
+        model = DEFAULT_MODEL
+    if "Model" in equipment_obj.PropertiesList:
+        equipment_obj.Model = model
+
+    spec = _model_spec(model)
+    if force or str(getattr(equipment_obj, "Type", "")) not in {"Wall", "Cassette", "Duct"}:
+        equipment_obj.Type = spec["Type"]
+    if force or _to_float(getattr(equipment_obj, "CapacityBTU", 0.0), 0.0) <= 0.0:
+        equipment_obj.CapacityBTU = float(spec["CapacityBTU"])
+
+
 def _initialize_equipment_defaults(obj):
+    model = str(getattr(obj, "Model", DEFAULT_MODEL) or DEFAULT_MODEL)
+    if model not in EVAPORATOR_LIBRARY:
+        model = DEFAULT_MODEL
+    if "Model" in obj.PropertiesList:
+        obj.Model = model
+
+    spec = _model_spec(model)
     if str(obj.Type) not in {"Wall", "Cassette", "Duct"}:
-        obj.Type = "Wall"
+        obj.Type = spec["Type"]
     if _to_float(obj.CapacityBTU, 0) <= 0:
-        obj.CapacityBTU = 12000.0
+        obj.CapacityBTU = spec["CapacityBTU"]
     if _to_float(obj.Height, 0) <= 0:
         obj.Height = 2.3
     if not isinstance(getattr(obj, "AutoDetectSpace", True), bool):
@@ -98,7 +147,12 @@ def _initialize_equipment_defaults(obj):
         obj.CoveragePct = 0.0
 
 
-def _equipment_size(eq_type):
+def _equipment_size(equipment_obj):
+    model = str(getattr(equipment_obj, "Model", DEFAULT_MODEL) or DEFAULT_MODEL)
+    if model in EVAPORATOR_LIBRARY:
+        return tuple(EVAPORATOR_LIBRARY[model]["Size"])
+
+    eq_type = str(getattr(equipment_obj, "Type", "Wall"))
     if eq_type == "Cassette":
         return (600.0, 600.0, 320.0)
     if eq_type == "Duct":
@@ -107,8 +161,7 @@ def _equipment_size(eq_type):
 
 
 def _build_equipment_shape(equipment_obj):
-    eq_type = str(getattr(equipment_obj, "Type", "Wall"))
-    sx, sy, sz = _equipment_size(eq_type)
+    sx, sy, sz = _equipment_size(equipment_obj)
     return Part.makeBox(sx, sy, sz)
 
 
@@ -189,16 +242,57 @@ def update_equipment_ports(equipment_obj):
     hvac_ports.update_equipment_ports(equipment_obj)
 
 
-def _auto_assign_space(equipment_obj):
+def _pick_model_for_insert():
+    if not App.GuiUp:
+        return DEFAULT_MODEL
+
+    model_names = available_models()
+    current_index = 0
+    try:
+        current_index = max(0, model_names.index(DEFAULT_MODEL))
+    except Exception:
+        current_index = 0
+
+    try:
+        from PySide2 import QtWidgets
+    except Exception:
+        try:
+            from PySide import QtGui as QtWidgets  # FreeCAD legacy fallback
+        except Exception:
+            return DEFAULT_MODEL
+
+    try:
+        selected, ok = QtWidgets.QInputDialog.getItem(
+            None,
+            "Insertar Evaporadora HVAC",
+            "Modelo de evaporadora:",
+            model_names,
+            current_index,
+            False,
+        )
+        if ok and selected:
+            return str(selected)
+    except Exception as exc:
+        log("Selector de modelo no disponible, se usa default: {0}".format(exc))
+    return DEFAULT_MODEL
+
+
+def _auto_assign_space(equipment_obj, warn_if_not_found=False):
     if not bool(getattr(equipment_obj, "AutoDetectSpace", True)):
-        return
+        return False
     space = detect_space_for_equipment(equipment_obj)
     if space is not None and space != getattr(equipment_obj, "Space", None):
         equipment_obj.Space = space
         log("Recinto detectado para {0}: {1}".format(equipment_obj.Name, space.Name))
+        return True
+    if space is not None:
+        return True
+    if warn_if_not_found:
+        log("Evaporadora sin recinto detectado. Asignela manualmente si es necesario.")
+    return False
 
 
-def insert_evaporator_from_selection(doc=None):
+def insert_evaporator_from_selection(doc=None, model_name=None):
     if doc is None:
         doc = App.ActiveDocument
     if doc is None:
@@ -210,6 +304,16 @@ def insert_evaporator_from_selection(doc=None):
     HVACEquipmentViewProvider(obj.ViewObject)
     ensure_equipment_properties(obj)
     _initialize_equipment_defaults(obj)
+
+    selected_model = str(model_name or _pick_model_for_insert())
+    set_equipment_model(obj, selected_model, force=True)
+    obj.Label = "EVAP_{0}".format(str(getattr(obj, "Model", selected_model)))
+    log(
+        "Evaporadora concreta seleccionada: {0} ({1} BTU/h)".format(
+            obj.Model,
+            int(_to_float(obj.CapacityBTU, 0.0)),
+        )
+    )
 
     points = selection.get_selected_points()
     if points:
@@ -223,7 +327,7 @@ def insert_evaporator_from_selection(doc=None):
         obj.Space = space
         log("Evaporadora asociada a recinto: {0}".format(space.Name))
     else:
-        _auto_assign_space(obj)
+        _auto_assign_space(obj, warn_if_not_found=True)
 
     obj.Shape = _build_equipment_shape(obj)
     update_equipment_ports(obj)
@@ -241,14 +345,16 @@ class HVACEquipmentProxy:
     def onChanged(self, obj, prop):  # noqa: N802
         if self._busy:
             return
-        if prop in {"Type", "CapacityBTU", "Space", "Height", "Placement", "AutoDetectSpace"}:
+        if prop in {"Model", "Type", "CapacityBTU", "Space", "Height", "Placement", "AutoDetectSpace"}:
             self._busy = True
             try:
+                if prop == "Model":
+                    set_equipment_model(obj, getattr(obj, "Model", DEFAULT_MODEL), force=True)
                 if prop in {"Placement", "AutoDetectSpace"}:
                     _auto_assign_space(obj)
-                if prop in {"Type", "Placement", "Height"}:
+                if prop in {"Model", "Type", "Placement", "Height"}:
                     update_equipment_ports(obj)
-                if prop in {"CapacityBTU", "Space", "Placement", "AutoDetectSpace"}:
+                if prop in {"Model", "CapacityBTU", "Space", "Placement", "AutoDetectSpace"}:
                     update_equipment_coverage(obj)
             finally:
                 self._busy = False

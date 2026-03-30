@@ -297,13 +297,33 @@ def _build_command_instances():
         CmdCreateHVACProject(),
         CmdCreateHVACSpace(),
         CmdCalculateHVAC(),
-        CmdValidateHVAC(),
         CmdInsertEvaporator(),
+        CmdToggleHVACLabels(),
         CmdInsertCondenser(),
         CmdAssignCondenserUnits(),
         CmdCreateHVACRoute(),
-        CmdToggleHVACLabels(),
+        CmdValidateHVAC(),
         CmdReloadWorkbench(),
+    ]
+
+
+def _main_command_names():
+    return [
+        CmdCreateHVACSpace.CommandName,
+        CmdCalculateHVAC.CommandName,
+        CmdToggleHVACLabels.CommandName,
+        CmdInsertEvaporator.CommandName,
+    ]
+
+
+def _system_command_names():
+    return [
+        CmdCreateHVACProject.CommandName,
+        CmdInsertCondenser.CommandName,
+        CmdAssignCondenserUnits.CommandName,
+        CmdCreateHVACRoute.CommandName,
+        CmdValidateHVAC.CommandName,
+        CmdReloadWorkbench.CommandName,
     ]
 
 
@@ -317,12 +337,17 @@ class MEPWorkbenchCR(FreeCADGui.Workbench):
     def Initialize(self):  # noqa: N802
         _log(tr("wb.log.initializing"))
         commands = _build_command_instances()
-        command_names = []
         for command in commands:
             FreeCADGui.addCommand(command.CommandName, command)
-            command_names.append(command.CommandName)
-        self.appendToolbar(tr("wb.toolbar"), command_names)
-        self.appendMenu(tr("wb.menu"), command_names)
+
+        main_commands = _main_command_names()
+        system_commands = _system_command_names()
+
+        self.appendToolbar(tr("wb.toolbar.main"), main_commands)
+        self.appendToolbar(tr("wb.toolbar.system"), system_commands)
+
+        self.appendMenu([tr("wb.menu"), tr("wb.menu.main")], main_commands)
+        self.appendMenu([tr("wb.menu"), tr("wb.menu.system")], system_commands)
 
     def Activated(self):  # noqa: N802
         _log(tr("wb.log.activated"))

@@ -7,16 +7,17 @@
 
 ## Fase 1: MVP HVAC
 
-- Recintos como base del calculo.
-- Proyecto climatico con factor rapido configurable.
-- Evaporadoras y condensadoras como objetos 3D.
-- Cobertura por recinto y cobertura de sistema.
-- Rutas por tipo de servicio.
-- Puertos de conexion obligatorios.
-- Etiquetas HVAC sobre recintos.
+- Recintos como base del calculo y del flujo UX.
+- Comando principal para crear/actualizar recintos desde poligonos y grupo Areas.
+- Etiquetas HVAC como salida protagonista del recinto.
+- Evaporadoras concretas para insercion visual rapida.
+- Cobertura por recinto visible en etiqueta.
+- Calculo HVAC con actualizacion automatica de etiquetas.
+- Proyecto/condensadora/rutas como segunda capa operativa.
 
 ## Fase 2: Rutas mejoradas
 
+- Consolidar toolbar secundaria de sistema (proyecto, condensadora, rutas, validacion).
 - Reglas de trazado mas robustas por tipo de ruta.
 - Validaciones avanzadas de continuidad y compatibilidad.
 - Mejora de control de niveles y coordinacion espacial.
@@ -54,4 +55,3 @@
 - Flujo de trabajo estable en FreeCAD.
 - Riesgos recurrentes mitigados y registrados.
 - Compatibilidad mantenida con FreeCAD 1.0.2 y preparada para 1.1.
-
