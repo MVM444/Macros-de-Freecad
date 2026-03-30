@@ -13,6 +13,7 @@ LOG_PREFIX = "[MEP-HVAC][Label] "
 ICON_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "resources", "icons", "hvac.svg")
 ).replace(os.sep, "/")
+DEFAULT_LABEL_SIZE = 350.0
 
 
 def log(message):
@@ -90,6 +91,36 @@ def _set_label_text(label_obj, lines):
         label_obj.LabelText = lines
         return
     label_obj.Label = " | ".join(lines)
+
+
+def _set_label_style(label_obj):
+    if label_obj is None:
+        return
+
+    for prop_name in ("FontSize", "Size", "TextSize"):
+        try:
+            if hasattr(label_obj, "PropertiesList") and prop_name in label_obj.PropertiesList:
+                value = _to_float(getattr(label_obj, prop_name, 0.0), 0.0)
+                if value <= 0.0 or value < DEFAULT_LABEL_SIZE * 0.6:
+                    setattr(label_obj, prop_name, DEFAULT_LABEL_SIZE)
+        except Exception:
+            continue
+
+    vobj = getattr(label_obj, "ViewObject", None)
+    if vobj is not None:
+        for view_prop in ("FontSize", "TextSize", "PointSize"):
+            try:
+                if hasattr(vobj, view_prop):
+                    current = _to_float(getattr(vobj, view_prop, 0.0), 0.0)
+                    if current <= 0.0 or current < DEFAULT_LABEL_SIZE * 0.6:
+                        setattr(vobj, view_prop, DEFAULT_LABEL_SIZE)
+            except Exception:
+                continue
+        try:
+            if hasattr(vobj, "ShowInTree"):
+                vobj.ShowInTree = False
+        except Exception:
+            pass
 
 
 def _make_annotation_text(doc, lines, point):
@@ -218,6 +249,7 @@ def create_or_update_label(space_obj, doc=None):
         ensure_label_properties(label_obj)
 
     _set_label_text(label_obj, lines)
+    _set_label_style(label_obj)
 
     if hasattr(label_obj, "Placement"):
         placement = label_obj.Placement

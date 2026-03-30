@@ -31,6 +31,36 @@ def _to_float(value, default=0.0):
         return float(default)
 
 
+def _mep_type(obj):
+    if obj is None:
+        return ""
+    try:
+        if hasattr(obj, "PropertiesList") and "MEPType" in obj.PropertiesList:
+            return str(getattr(obj, "MEPType", "") or "")
+    except Exception:
+        return ""
+    return ""
+
+
+def _is_hvac_object(obj):
+    return _mep_type(obj).startswith("HVAC")
+
+
+def _canonical_base_obj(base_obj):
+    current = selection.unwrap_link(base_obj)
+    visited = set()
+    while current is not None and _is_hvac_object(current):
+        key = str(getattr(current, "Name", "") or id(current))
+        if key in visited:
+            return None
+        visited.add(key)
+        linked = getattr(current, "BaseSpace", None)
+        if linked is None:
+            return None
+        current = selection.unwrap_link(linked)
+    return current
+
+
 def _normalize_text(value):
     text = str(value or "").strip().lower()
     if not text:
@@ -188,6 +218,7 @@ def _shape_planar_area_m2(shape):
 
 
 def detect_area_from_base(base_obj):
+    base_obj = _canonical_base_obj(base_obj)
     if base_obj is None:
         return None
 
@@ -227,6 +258,10 @@ def find_spaces(doc=None):
     for obj in doc.Objects:
         if hasattr(obj, "PropertiesList") and "MEPType" in obj.PropertiesList:
             if str(obj.MEPType) == MEP_TYPE:
+                base = getattr(obj, "BaseSpace", None)
+                if _mep_type(base) == MEP_TYPE:
+                    # Invalid nested space; ignore to avoid duplicated processing.
+                    continue
                 spaces.append(obj)
     return spaces
 
@@ -325,6 +360,8 @@ def _area_object_candidates_from_group(group_obj):
             if _is_group(child):
                 continue
             unwrapped = selection.unwrap_link(child)
+            if _is_hvac_object(unwrapped):
+                continue
             if detect_area_from_base(unwrapped) is not None:
                 candidates.append(unwrapped)
     return candidates
@@ -388,6 +425,10 @@ def _space_for_base(doc, base_obj):
 
 
 def _create_or_update_space(doc, base_obj, project_obj=None):
+    base_obj = _canonical_base_obj(base_obj)
+    if base_obj is None:
+        return None, False
+
     existing = _space_for_base(doc, base_obj)
     created = False
     if existing is None:
@@ -403,6 +444,8 @@ def _create_or_update_space(doc, base_obj, project_obj=None):
     if base_obj is not None:
         obj.BaseSpace = base_obj
         base_label = str(getattr(base_obj, "Label", "") or getattr(base_obj, "Name", ""))
+        if base_label.upper().startswith("HVAC_"):
+            base_label = base_label[5:]
         if base_label:
             obj.Label = "HVAC_" + base_label
         detected_area = detect_area_from_base(base_obj)
@@ -430,6 +473,11 @@ def create_spaces_from_selection(doc=None):
     candidates = []
 
     for obj in selected:
+        if _is_hvac_object(obj):
+            linked_base = _canonical_base_obj(obj)
+            if linked_base is not None and detect_area_from_base(linked_base) is not None:
+                candidates.append(linked_base)
+            continue
         if _is_group(obj):
             candidates.extend(_area_object_candidates_from_group(obj))
             continue
@@ -447,7 +495,15 @@ def create_spaces_from_selection(doc=None):
                 )
             )
 
-    candidates = _deduplicate_objects(candidates)
+    normalized = []
+    for obj in candidates:
+        base = _canonical_base_obj(obj)
+        if base is None:
+            continue
+        if detect_area_from_base(base) is None:
+            continue
+        normalized.append(base)
+    candidates = _deduplicate_objects(normalized)
     if not candidates:
         log("Seleccione un poligono/recinto o un grupo Areas con geometria valida")
         return []
@@ -460,6 +516,8 @@ def create_spaces_from_selection(doc=None):
     updated_count = 0
     for base_obj in candidates:
         space_obj, created = _create_or_update_space(doc, base_obj, project_obj=project_obj)
+        if space_obj is None:
+            continue
         spaces.append(space_obj)
         if created:
             created_count += 1
@@ -480,8 +538,13 @@ def has_area_selection():
     selected = list(selection.get_selected_objects(resolve_links=True) or [])
     for obj in selected:
         if _is_group(obj):
-            return True
-        if detect_area_from_base(obj) is not None:
+            if _area_object_candidates_from_group(obj):
+                return True
+            continue
+        candidate = obj
+        if _is_hvac_object(candidate):
+            candidate = _canonical_base_obj(candidate)
+        if detect_area_from_base(candidate) is not None:
             return True
     return False
 
