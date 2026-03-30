@@ -116,6 +116,23 @@ def _world_point_from_base(base_obj, point_local):
         return point
 
 
+def _point_is_already_global(base_obj, bbox, point):
+    """Heuristic: detect when Draft shape points already include object placement."""
+
+    if base_obj is None or not hasattr(base_obj, "Placement"):
+        return True
+    try:
+        base_pos = App.Vector(base_obj.Placement.Base)
+        test = App.Vector(point)
+        dx = abs(float(test.x) - float(base_pos.x))
+        dy = abs(float(test.y) - float(base_pos.y))
+        limit_x = max(100.0, float(getattr(bbox, "XLength", 0.0)) * 1.6)
+        limit_y = max(100.0, float(getattr(bbox, "YLength", 0.0)) * 1.6)
+        return dx <= limit_x and dy <= limit_y
+    except Exception:
+        return True
+
+
 def _set_label_style(label_obj):
     if label_obj is None:
         return
@@ -305,10 +322,33 @@ def _label_position(space_obj):
     if base is not None and hasattr(base, "Shape"):
         try:
             shape = base.Shape
+            # Use geometric centroid from the largest face for better centering on irregular polygons.
+            faces = list(getattr(shape, "Faces", []) or [])
+            if faces:
+                largest = None
+                max_area = -1.0
+                for face in faces:
+                    try:
+                        area = _to_float(getattr(face, "Area", 0.0), 0.0)
+                    except Exception:
+                        area = 0.0
+                    if area > max_area:
+                        max_area = area
+                        largest = face
+                if largest is not None:
+                    com = largest.CenterOfMass
+                    z_plane = _to_float(getattr(largest.BoundBox, "ZMin", com.z), com.z)
+                    point = App.Vector(com.x, com.y, z_plane)
+                    if _point_is_already_global(base, shape.BoundBox, point):
+                        return point
+                    return _world_point_from_base(base, point)
+
+            com = shape.CenterOfMass
             bbox = shape.BoundBox
-            # Keep the same behavior used in ElectricCR labels:
-            # use shape bounding-box center directly as insertion point.
-            return App.Vector(float(bbox.Center.x), float(bbox.Center.y), float(bbox.ZMin))
+            point = App.Vector(com.x, com.y, bbox.ZMin)
+            if _point_is_already_global(base, bbox, point):
+                return point
+            return _world_point_from_base(base, point)
         except Exception:
             pass
     if hasattr(space_obj, "Placement"):
