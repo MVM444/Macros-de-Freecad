@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<package format="1">
+  <name>MEPWorkbenchCR</name>
+  <description>MEP Workbench for FreeCAD focused on HVAC MVP.</description>
+  <version>0.1.0</version>
+  <date>2026-03-30</date>
+  <maintainer email="">MEPWorkbenchCR Contributors</maintainer>
+  <license>MIT</license>
+  <url type="repository">https://example.com/MEPWorkbenchCR</url>
+  <content>
+    <workbench>
+      <name>MEPWorkbenchCR</name>
+      <description>HVAC tools: project, spaces, equipment, routes and labels.</description>
+      <icon>resources/icons/hvac.svg</icon>
+    </workbench>
+  </content>
+</package>
