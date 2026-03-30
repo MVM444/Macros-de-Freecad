@@ -11,6 +11,9 @@ except Exception:
     from MEP.i18n import tr
 
 MEP_TYPE = "HVACProject"
+ROOT_GROUP_MEP_TYPE = "HVACRootGroup"
+ROOT_GROUP_NAME = "HVAC_Air_Ventilation"
+ROOT_GROUP_LABEL = "HVAC Air and Ventilation"
 LOG_PREFIX = "[MEP-HVAC][Project] "
 ICON_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "resources", "icons", "hvac.svg")
@@ -62,6 +65,130 @@ def _location_microclimate_bonus(location):
     if any(token in text for token in ("costa", "playa", "litoral", "coastal")):
         return 90.0
     return 0.0
+
+
+def _is_group(obj):
+    type_id = str(getattr(obj, "TypeId", "") or "")
+    if type_id.startswith("App::DocumentObjectGroup"):
+        return True
+    return hasattr(obj, "Group") and hasattr(obj, "addObject")
+
+
+def _ensure_root_group_marker(group_obj):
+    if group_obj is None or not hasattr(group_obj, "PropertiesList"):
+        return
+    if "MEPType" not in group_obj.PropertiesList:
+        group_obj.addProperty(
+            "App::PropertyString",
+            "MEPType",
+            "MEP",
+            "Internal marker for HVAC root group",
+        )
+    if str(getattr(group_obj, "MEPType", "")) != ROOT_GROUP_MEP_TYPE:
+        group_obj.MEPType = ROOT_GROUP_MEP_TYPE
+    if getattr(group_obj, "Label", "") != ROOT_GROUP_LABEL:
+        group_obj.Label = ROOT_GROUP_LABEL
+
+
+def find_root_groups(doc):
+    if doc is None:
+        return []
+    groups = []
+    for obj in list(getattr(doc, "Objects", []) or []):
+        if not _is_group(obj):
+            continue
+        mep_type = ""
+        if hasattr(obj, "PropertiesList") and "MEPType" in obj.PropertiesList:
+            mep_type = str(getattr(obj, "MEPType", ""))
+        if mep_type == ROOT_GROUP_MEP_TYPE:
+            groups.append(obj)
+            continue
+
+        name_norm = _normalize_text(getattr(obj, "Name", ""))
+        label_norm = _normalize_text(getattr(obj, "Label", ""))
+        if name_norm == _normalize_text(ROOT_GROUP_NAME) or label_norm in {
+            _normalize_text(ROOT_GROUP_LABEL),
+            "hvac ventilation",
+        }:
+            groups.append(obj)
+    return groups
+
+
+def ensure_hvac_root_group(doc=None):
+    if doc is None:
+        doc = App.ActiveDocument
+    if doc is None:
+        return None
+
+    groups = find_root_groups(doc)
+    if groups:
+        group = groups[0]
+        _ensure_root_group_marker(group)
+        return group
+
+    group = doc.addObject("App::DocumentObjectGroup", ROOT_GROUP_NAME)
+    _ensure_root_group_marker(group)
+    log("HVAC root group created: {0}".format(group.Name))
+    return group
+
+
+def add_object_to_hvac_group(doc, obj):
+    if doc is None or obj is None:
+        return None
+    group = ensure_hvac_root_group(doc)
+    if group is None:
+        return None
+    if obj == group:
+        return group
+
+    try:
+        children = list(getattr(group, "Group", []) or [])
+        if obj not in children:
+            group.addObject(obj)
+    except Exception:
+        pass
+    return group
+
+
+def organize_hvac_objects(doc=None):
+    if doc is None:
+        doc = App.ActiveDocument
+    if doc is None:
+        return 0
+
+    group = ensure_hvac_root_group(doc)
+    if group is None:
+        return 0
+
+    moved = 0
+    for obj in list(getattr(doc, "Objects", []) or []):
+        if obj == group:
+            continue
+        include = False
+        if hasattr(obj, "PropertiesList") and "MEPType" in obj.PropertiesList:
+            mep_type = str(getattr(obj, "MEPType", "") or "")
+            if mep_type.startswith("HVAC"):
+                include = True
+        if not include:
+            name = str(getattr(obj, "Name", "") or "")
+            label = str(getattr(obj, "Label", "") or "")
+            if name.startswith("HVAC_") or label.startswith("HVAC "):
+                include = True
+        if not include:
+            continue
+
+        before = list(getattr(group, "Group", []) or [])
+        if obj in before:
+            continue
+        try:
+            group.addObject(obj)
+            moved += 1
+        except Exception:
+            continue
+
+    if moved > 0:
+        log("HVAC objects organized into root group: {0}".format(moved))
+    return moved
 
 
 def ensure_project_properties(obj):
@@ -211,8 +338,11 @@ def get_or_create_project(doc=None):
         log(tr("project.log.no_active_doc"))
         return None
 
+    ensure_hvac_root_group(doc)
+
     projects = find_projects(doc)
     if projects:
+        add_object_to_hvac_group(doc, projects[0])
         log(tr("project.log.use_existing", name=projects[0].Name))
         return projects[0]
 
@@ -221,6 +351,8 @@ def get_or_create_project(doc=None):
     HVACProjectViewProvider(obj.ViewObject)
     ensure_project_properties(obj)
     recalculate_project(obj)
+    add_object_to_hvac_group(doc, obj)
+    organize_hvac_objects(doc)
     log(tr("project.log.created", name=obj.Name))
     return obj
 

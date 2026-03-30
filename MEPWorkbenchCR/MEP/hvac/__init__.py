@@ -8,6 +8,7 @@ from . import hvac_label
 from . import hvac_ports
 from . import hvac_project
 from . import hvac_route
+from . import hvac_sheet
 from . import hvac_space
 from . import hvac_validate
 
@@ -30,6 +31,7 @@ def recalculate_document(doc=None):
 
     log("Recalculando documento HVAC completo")
     project = hvac_project.get_or_create_project(doc)
+    hvac_project.ensure_hvac_root_group(doc)
     hvac_project.recalculate_project(project)
     hvac_ports.sanitize_all_ports(doc)
 
@@ -47,6 +49,8 @@ def recalculate_document(doc=None):
 
     hvac_route.update_all_routes(doc)
     hvac_label.update_all_labels(doc, ensure_visible=True)
+    hvac_sheet.update_quickcalc_sheet(doc)
+    hvac_project.organize_hvac_objects(doc)
     doc.recompute()
     log("Recalculo HVAC finalizado")
 

@@ -7,20 +7,21 @@
 
 ## Flujo principal dentro de FreeCAD (MVP)
 
-1. Seleccionar poligonos de recintos o grupo `Areas/Areas/Recintos`.
-2. Ejecutar `Crear o Actualizar Recintos HVAC`.
-3. Ejecutar `Calcular HVAC`.
-4. Ver etiquetas actualizadas automaticamente sobre cada recinto.
-5. Insertar evaporadora concreta en el recinto.
-6. Revisar cobertura en etiqueta (`EQ: capacidad (porcentaje)`).
+1. Ejecutar `Crear Proyecto HVAC` (crea grupo raiz `HVAC Air and Ventilation`).
+2. Seleccionar poligonos de recintos o grupo `Areas/Areas/Recintos`.
+3. Ejecutar `Crear o Actualizar Recintos HVAC`.
+4. Ejecutar `Calcular HVAC` (modo rapido para la seleccion).
+5. Ver etiquetas actualizadas automaticamente sobre cada recinto.
+6. Revisar hoja `HVAC Quick Calculation` dentro del grupo del proyecto.
+7. Insertar evaporadora concreta en el recinto.
+8. Revisar cobertura en etiqueta (`EQ: capacidad (porcentaje)`).
 
 ## Flujo secundario de sistema (fase posterior)
 
-7. Crear/ajustar Proyecto HVAC.
-8. Insertar Condensadora.
-9. Asignar Evaporadoras a Condensadora.
-10. Crear Ruta HVAC.
-11. Ejecutar Validar HVAC.
+9. Insertar Condensadora.
+10. Asignar Evaporadoras a Condensadora.
+11. Crear Ruta HVAC.
+12. Ejecutar Validar HVAC.
 
 ## Detalle por etapa
 
@@ -40,8 +41,9 @@
 ### Etapa 3: Calculo y resultado
 
 - Calcular HVAC debe actualizar carga, cobertura y etiquetas en un solo paso.
-- Ejecutar modo rapido para dimensionamiento preliminar.
+- Si se parte de seleccion de `Areas`, aplicar modo rapido para dimensionamiento preliminar.
 - Ejecutar modo preciso cuando se requiera ajuste fino.
+- Generar/actualizar hoja `HVAC Quick Calculation` dentro del grupo del proyecto.
 - Registrar carga final por recinto para seleccion de equipos.
 
 ### Etapa 4: Evaporadora

@@ -413,6 +413,7 @@ def _create_or_update_space(doc, base_obj, project_obj=None):
         obj.Project = project_obj
 
     calculate_space_load(obj, project=project_obj)
+    hvac_project.add_object_to_hvac_group(doc, obj)
     return obj, created
 
 
@@ -472,6 +473,27 @@ def create_spaces_from_selection(doc=None):
             len(spaces), created_count, updated_count
         )
     )
+    return spaces
+
+
+def has_area_selection():
+    selected = list(selection.get_selected_objects(resolve_links=True) or [])
+    for obj in selected:
+        if _is_group(obj):
+            return True
+        if detect_area_from_base(obj) is not None:
+            return True
+    return False
+
+
+def prepare_spaces_from_selection_quick(doc=None):
+    spaces = create_spaces_from_selection(doc=doc)
+    for space_obj in spaces:
+        if "Mode" in getattr(space_obj, "PropertiesList", []):
+            try:
+                space_obj.Mode = "Rapido"
+            except Exception:
+                pass
     return spaces
 
 

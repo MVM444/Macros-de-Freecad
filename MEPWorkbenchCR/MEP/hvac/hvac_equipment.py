@@ -7,6 +7,7 @@ import Part
 
 from ..utils import selection
 from . import hvac_ports
+from . import hvac_project
 from . import hvac_space
 
 MEP_TYPE = "HVACEquipment"
@@ -332,6 +333,7 @@ def insert_evaporator_from_selection(doc=None, model_name=None):
     obj.Shape = _build_equipment_shape(obj)
     update_equipment_ports(obj)
     update_equipment_coverage(obj)
+    hvac_project.add_object_to_hvac_group(doc, obj)
     return obj
 
 

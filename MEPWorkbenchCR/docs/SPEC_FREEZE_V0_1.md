@@ -14,6 +14,7 @@
 - La condensadora valida el sistema por suma de evaporadoras.
 - Las rutas conectan puertos compatibles, no geometria suelta.
 - La etiqueta depende del recinto y muestra carga y cobertura.
+- `Crear Proyecto HVAC` crea grupo raiz en ingles: `HVAC Air and Ventilation`.
 
 ## 2) Variables climaticas oficiales
 
@@ -153,6 +154,12 @@ Reglas:
   1. Nombre recinto
   2. Carga BTU/h
   3. `EQ: capacidad (porcentaje)`
+
+### HVACQuickCalc Sheet
+
+- Hoja de calculo: `HVAC Quick Calculation`.
+- Debe actualizarse al ejecutar `Calcular HVAC`.
+- Debe quedar dentro del grupo raiz del proyecto HVAC.
 
 ## 7) Reglas de estabilidad (anti-regresion)
 

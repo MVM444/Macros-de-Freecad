@@ -29,6 +29,7 @@ MEPWorkbenchCR se estructura como un Workbench modular de FreeCAD. El alcance in
 - Recinto HVAC: unidad base y punto de entrada principal del usuario.
 - Etiqueta HVAC: salida protagonista sobre el recinto (carga y cobertura).
 - Evaporadora: equipo interior concreto asociado visualmente al recinto.
+- HVAC Quick Calculation: hoja resumen de resultados por recinto.
 - Condensadora: equipo 3D independiente que consolida evaporadoras.
 - Ruta HVAC: conexion tecnica entre puertos segun tipo de servicio.
 - Puerto HVAC: punto obligatorio de conexion y validacion de compatibilidad.
@@ -38,6 +39,7 @@ MEPWorkbenchCR se estructura como un Workbench modular de FreeCAD. El alcance in
 - Recinto HVAC -> calcula carga requerida.
 - Evaporadora -> aporta capacidad instalada del recinto.
 - Etiqueta HVAC -> refleja carga y cobertura del recinto en tiempo real.
+- Hoja HVAC Quick Calculation -> consolida calculo rapido de todas las areas.
 - Proyecto HVAC -> influye en factor climatico (soporte transversal).
 - Condensadora/Ruta/Puertos -> fase posterior de sistema completo.
 

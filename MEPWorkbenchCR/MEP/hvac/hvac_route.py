@@ -8,6 +8,7 @@ import FreeCAD as App
 from ..utils import selection
 from . import hvac_equipment
 from . import hvac_ports
+from . import hvac_project
 
 MEP_TYPE = "HVACRoute"
 LOG_PREFIX = "[MEP-HVAC][Route] "
@@ -197,6 +198,7 @@ def _create_wire(doc, points):
 
     wire = Draft.makeWire(points, closed=False, face=False, support=None)
     ensure_route_properties(wire)
+    hvac_project.add_object_to_hvac_group(doc, wire)
     return wire
 
 

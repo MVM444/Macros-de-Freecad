@@ -170,6 +170,10 @@ class CmdCalculateHVAC(_BaseCommand):
     def Activated(self):  # noqa: N802
         _log(tr("cmd.calculate.run"))
         try:
+            if hvac_space.has_area_selection():
+                spaces = hvac_space.prepare_spaces_from_selection_quick(FreeCAD.ActiveDocument)
+                if spaces:
+                    _log(tr("cmd.calculate.quick_spaces", count=len(spaces)))
             recalculate_document(FreeCAD.ActiveDocument)
         except Exception as exc:
             _log(tr("cmd.calculate.error", error=exc))

@@ -28,10 +28,16 @@ MEPWorkbenchCR es un Workbench de FreeCAD enfocado inicialmente en HVAC para ofi
 
 1. Seleccionar poligonos o grupo `Areas`.
 2. Crear/actualizar recintos HVAC.
-3. Calcular HVAC.
-4. Ver etiquetas actualizadas de inmediato.
-5. Insertar evaporadora concreta.
-6. Revisar cobertura por recinto.
+3. Calcular HVAC en modo rapido (si viene de seleccion de Areas).
+4. Ver etiquetas actualizadas de inmediato sobre recintos.
+5. Revisar hoja `HVAC Quick Calculation` creada dentro del grupo del proyecto.
+6. Insertar evaporadora concreta.
+7. Revisar cobertura por recinto.
+
+## Estructura de proyecto al iniciar
+
+- `Crear Proyecto HVAC` crea un grupo raiz en ingles: `HVAC Air and Ventilation`.
+- Todos los objetos HVAC relevantes (proyecto, recintos, etiquetas, equipos, rutas y hoja de calculo) se organizan dentro de ese grupo.
 
 ## Filosofia del Workbench
 

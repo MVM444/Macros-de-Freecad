@@ -7,6 +7,7 @@ import Part
 
 from ..utils import selection
 from . import hvac_equipment
+from . import hvac_project
 
 MEP_TYPE = "HVACCondenser"
 LOG_PREFIX = "[MEP-HVAC][Condenser] "
@@ -264,6 +265,7 @@ def insert_condenser_from_selection(doc=None):
         log("Condenser conectada a {0} evaporadoras seleccionadas".format(len(connected)))
 
     recalculate_condenser(obj)
+    hvac_project.add_object_to_hvac_group(doc, obj)
     return obj
 
 

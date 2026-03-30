@@ -5,6 +5,7 @@ import os
 import FreeCAD as App
 
 from . import hvac_equipment
+from . import hvac_project
 from . import hvac_space
 
 MEP_TYPE = "HVACLabel"
@@ -154,6 +155,7 @@ def create_or_update_label(space_obj, doc=None):
         placement = label_obj.Placement
         placement.Base = _label_position(space_obj)
         label_obj.Placement = placement
+    hvac_project.add_object_to_hvac_group(doc, label_obj)
 
     return label_obj
 
