@@ -374,26 +374,10 @@ class CmdReloadWorkbench(_BaseCommand):
     def Activated(self):  # noqa: N802
         _log(tr("cmd.reload.run"))
         try:
+            _log_reload_debug("manual_reload")
             _reload_workbench()
         except Exception as exc:
             _log(tr("cmd.reload.error", error=exc))
-
-
-class CmdDebugReloadState(_BaseCommand):
-    CommandName = "MEP_HVAC_DebugReloadState"
-    MenuText = tr("cmd.debug_reload.menu")
-    ToolTip = tr("cmd.debug_reload.tooltip")
-    IconPath = ICON_RELOAD
-
-    def IsActive(self):  # noqa: N802
-        return True
-
-    def Activated(self):  # noqa: N802
-        _log(tr("cmd.debug_reload.run"))
-        try:
-            _log_reload_debug("manual_debug")
-        except Exception as exc:
-            _log(tr("cmd.debug_reload.error", error=exc))
 
 
 def _build_command_instances():
@@ -407,7 +391,6 @@ def _build_command_instances():
         CmdAssignCondenserUnits(),
         CmdCreateHVACRoute(),
         CmdValidateHVAC(),
-        CmdDebugReloadState(),
         CmdReloadWorkbench(),
     ]
 
@@ -428,7 +411,6 @@ def _system_command_names():
         CmdAssignCondenserUnits.CommandName,
         CmdCreateHVACRoute.CommandName,
         CmdValidateHVAC.CommandName,
-        CmdDebugReloadState.CommandName,
         CmdReloadWorkbench.CommandName,
     ]
 
