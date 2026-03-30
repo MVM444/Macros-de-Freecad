@@ -60,6 +60,10 @@ _STRINGS = {
         "cmd.reload.tooltip": "Reload MEPWorkbenchCR without restarting FreeCAD",
         "cmd.reload.run": "Command: Reload Workbench",
         "cmd.reload.error": "Error in Reload Workbench: {error}",
+        "cmd.debug_reload.menu": "Debug Reload State",
+        "cmd.debug_reload.tooltip": "Print live reload diagnostics (source path, signature, git head)",
+        "cmd.debug_reload.run": "Command: Debug Reload State",
+        "cmd.debug_reload.error": "Error in Debug Reload State: {error}",
         # Project module
         "project.log.no_active_doc": "No active document",
         "project.log.use_existing": "Using existing HVAC project: {name}",
@@ -131,6 +135,10 @@ _STRINGS = {
         "cmd.reload.tooltip": "Recargar MEPWorkbenchCR sin reiniciar FreeCAD",
         "cmd.reload.run": "Comando Recargar Workbench",
         "cmd.reload.error": "Error en Recargar Workbench: {error}",
+        "cmd.debug_reload.menu": "Debug Estado Recarga",
+        "cmd.debug_reload.tooltip": "Imprimir diagnostico de recarga en vivo (ruta, firma, commit git)",
+        "cmd.debug_reload.run": "Comando Debug Estado Recarga",
+        "cmd.debug_reload.error": "Error en Debug Estado Recarga: {error}",
         # Project module
         "project.log.no_active_doc": "No hay documento activo",
         "project.log.use_existing": "Usando proyecto HVAC existente: {name}",

@@ -103,6 +103,17 @@ def _set_label_style(label_obj):
                 setattr(label_obj, prop_name, DEFAULT_LABEL_SIZE)
         except Exception:
             continue
+    for prop_name in ("Justification", "TextAlign", "HorizontalAlignment"):
+        try:
+            if hasattr(label_obj, "PropertiesList") and prop_name in label_obj.PropertiesList:
+                for candidate in ("Center", "Middle-Center", "Top-Center", "Center-Top"):
+                    try:
+                        setattr(label_obj, prop_name, candidate)
+                        break
+                    except Exception:
+                        continue
+        except Exception:
+            continue
 
     vobj = getattr(label_obj, "ViewObject", None)
     if vobj is not None:
@@ -110,6 +121,17 @@ def _set_label_style(label_obj):
             try:
                 if hasattr(vobj, view_prop):
                     setattr(vobj, view_prop, DEFAULT_LABEL_SIZE)
+            except Exception:
+                continue
+        for view_prop in ("Justification", "TextAlign", "HorizontalAlignment"):
+            try:
+                if hasattr(vobj, view_prop):
+                    for candidate in ("Center", "Middle-Center", "Top-Center", "Center-Top"):
+                        try:
+                            setattr(vobj, view_prop, candidate)
+                            break
+                        except Exception:
+                            continue
             except Exception:
                 continue
         try:
@@ -199,9 +221,28 @@ def _label_position(space_obj):
     base = getattr(space_obj, "BaseSpace", None)
     if base is not None and hasattr(base, "Shape"):
         try:
-            bbox = base.Shape.BoundBox
-            # Keep label on the drawing work plane (same Z as source geometry).
-            return App.Vector(bbox.Center.x, bbox.Center.y, bbox.ZMin)
+            shape = base.Shape
+            # Use geometric centroid from the largest face for better centering on irregular polygons.
+            faces = list(getattr(shape, "Faces", []) or [])
+            if faces:
+                largest = None
+                max_area = -1.0
+                for face in faces:
+                    try:
+                        area = _to_float(getattr(face, "Area", 0.0), 0.0)
+                    except Exception:
+                        area = 0.0
+                    if area > max_area:
+                        max_area = area
+                        largest = face
+                if largest is not None:
+                    com = largest.CenterOfMass
+                    z_plane = _to_float(getattr(largest.BoundBox, "ZMin", com.z), com.z)
+                    return App.Vector(com.x, com.y, z_plane)
+
+            com = shape.CenterOfMass
+            bbox = shape.BoundBox
+            return App.Vector(com.x, com.y, bbox.ZMin)
         except Exception:
             pass
     if hasattr(space_obj, "Placement"):

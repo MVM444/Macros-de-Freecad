@@ -11,6 +11,7 @@ from . import hvac_project
 from . import hvac_space
 
 MEP_TYPE = "HVACEquipment"
+MASTER_MEP_TYPE = "HVACEvaporatorMaster"
 LOG_PREFIX = "[MEP-HVAC][Equipment] "
 ICON_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "resources", "icons", "hvac.svg")
@@ -26,6 +27,7 @@ EVAPORATOR_LIBRARY = {
 }
 DEFAULT_MODEL = "Pared_12000"
 DEFAULT_SYMBOL_SIZE = 450.0
+MASTER_PREFIX = "HVAC_EvapMaster_"
 
 
 def log(message):
@@ -199,6 +201,73 @@ def _equipment_size(equipment_obj):
     return (900.0, 260.0, 220.0)
 
 
+def _is_link_equipment(equipment_obj):
+    return str(getattr(equipment_obj, "TypeId", "") or "") == "App::Link"
+
+
+def _sanitize_model_token(model_name):
+    raw = str(model_name or DEFAULT_MODEL)
+    token = "".join(char if (char.isalnum() or char == "_") else "_" for char in raw)
+    token = "_".join([part for part in token.split("_") if part])
+    return token or DEFAULT_MODEL
+
+
+def _master_internal_name(model_name):
+    return "{0}{1}".format(MASTER_PREFIX, _sanitize_model_token(model_name))
+
+
+def _ensure_master_equipment(doc, model_name):
+    if doc is None:
+        return None
+    model = str(model_name or DEFAULT_MODEL)
+    if model not in EVAPORATOR_LIBRARY:
+        model = DEFAULT_MODEL
+    internal_name = _master_internal_name(model)
+    master = doc.getObject(internal_name)
+    if master is None:
+        master = doc.addObject("Part::Feature", internal_name)
+        master.Label = "MASTER_EVAP_{0}".format(model)
+    if hasattr(master, "PropertiesList"):
+        if "MEPType" not in master.PropertiesList:
+            master.addProperty("App::PropertyString", "MEPType", "MEP", "Internal MEP marker")
+        if str(getattr(master, "MEPType", "")) != MASTER_MEP_TYPE:
+            master.MEPType = MASTER_MEP_TYPE
+        if "Model" not in master.PropertiesList:
+            master.addProperty("App::PropertyString", "Model", "HVAC Equipment", "Concrete evaporator model")
+        if str(getattr(master, "Model", "")) != model:
+            master.Model = model
+
+    sx, sy, sz = EVAPORATOR_LIBRARY[model]["Size"]
+    shape_expected = Part.makeBox(float(sx), float(sy), float(sz))
+    try:
+        if getattr(master, "Shape", None) is None or master.Shape.isNull():
+            master.Shape = shape_expected
+        else:
+            bbox = master.Shape.BoundBox
+            if abs(float(bbox.XLength) - float(sx)) > 0.1 or abs(float(bbox.YLength) - float(sy)) > 0.1 or abs(
+                float(bbox.ZLength) - float(sz)
+            ) > 0.1:
+                master.Shape = shape_expected
+    except Exception:
+        try:
+            master.Shape = shape_expected
+        except Exception:
+            pass
+
+    if hasattr(master, "ViewObject"):
+        try:
+            master.ViewObject.Visibility = False
+        except Exception:
+            pass
+        try:
+            if hasattr(master.ViewObject, "ShowInTree"):
+                master.ViewObject.ShowInTree = False
+        except Exception:
+            pass
+    hvac_project.add_object_to_hvac_group(doc, master)
+    return master
+
+
 def _build_equipment_shape(equipment_obj):
     sx, sy, sz = _equipment_size(equipment_obj)
     return Part.makeBox(sx, sy, sz)
@@ -331,11 +400,24 @@ def _equipment_shape_changed(equipment_obj, tol=0.1):
         return True
 
 
+def _master_link_changed(equipment_obj):
+    if not _is_link_equipment(equipment_obj):
+        return False
+    expected_master = _ensure_master_equipment(equipment_obj.Document, getattr(equipment_obj, "Model", DEFAULT_MODEL))
+    if expected_master is None:
+        return False
+    return getattr(equipment_obj, "LinkedObject", None) != expected_master
+
+
 def _geometry_needs_sync(equipment_obj):
     if equipment_obj is None:
         return False
-    if _equipment_shape_changed(equipment_obj):
-        return True
+    if _is_link_equipment(equipment_obj):
+        if _master_link_changed(equipment_obj):
+            return True
+    else:
+        if _equipment_shape_changed(equipment_obj):
+            return True
 
     placement = getattr(equipment_obj, "Placement", App.Placement())
     target_z = _to_float(getattr(equipment_obj, "BaseLevel", 0.0), 0.0) + _height_to_mm(equipment_obj)
@@ -440,7 +522,16 @@ def _sync_equipment_geometry(equipment_obj):
     if equipment_obj is None:
         return
     _apply_equipment_elevation(equipment_obj)
-    equipment_obj.Shape = _build_equipment_shape(equipment_obj)
+    if _is_link_equipment(equipment_obj):
+        expected_master = _ensure_master_equipment(equipment_obj.Document, getattr(equipment_obj, "Model", DEFAULT_MODEL))
+        if expected_master is not None and getattr(equipment_obj, "LinkedObject", None) != expected_master:
+            equipment_obj.LinkedObject = expected_master
+        try:
+            equipment_obj.LinkTransform = True
+        except Exception:
+            pass
+    else:
+        equipment_obj.Shape = _build_equipment_shape(equipment_obj)
     _ensure_symbol2d(equipment_obj)
     if bool(getattr(equipment_obj, "UsePorts", False)):
         update_equipment_ports(equipment_obj)
@@ -503,9 +594,21 @@ def insert_evaporator_from_selection(doc=None, model_name=None):
         log("No hay documento activo")
         return None
 
-    obj = doc.addObject("Part::FeaturePython", "HVAC_Evaporator")
-    HVACEquipmentProxy(obj)
-    HVACEquipmentViewProvider(obj.ViewObject)
+    obj = None
+    try:
+        obj = doc.addObject("App::Link", "HVAC_Evaporator")
+        try:
+            obj.LinkTransform = True
+        except Exception:
+            pass
+    except Exception:
+        obj = None
+
+    if obj is None:
+        obj = doc.addObject("Part::FeaturePython", "HVAC_Evaporator")
+        HVACEquipmentProxy(obj)
+        HVACEquipmentViewProvider(obj.ViewObject)
+
     ensure_equipment_properties(obj)
     _initialize_equipment_defaults(obj)
 
@@ -539,6 +642,17 @@ def insert_evaporator_from_selection(doc=None, model_name=None):
     update_equipment_coverage(obj)
     hvac_project.add_object_to_hvac_group(doc, obj)
     return obj
+
+
+def refresh_equipment(equipment_obj):
+    if equipment_obj is None:
+        return
+    ensure_equipment_properties(equipment_obj)
+    _initialize_equipment_defaults(equipment_obj)
+    if _geometry_needs_sync(equipment_obj):
+        _sync_equipment_geometry(equipment_obj)
+    _auto_assign_space(equipment_obj)
+    update_equipment_coverage(equipment_obj)
 
 
 class HVACEquipmentProxy:

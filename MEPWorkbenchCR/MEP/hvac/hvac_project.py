@@ -183,11 +183,11 @@ def _is_internal_like(obj):
     if obj is None:
         return False
     mep = _mep_type(obj)
-    if mep in {"HVACPort"}:
+    if mep in {"HVACPort", "HVACEvaporatorMaster"}:
         return True
     name = str(getattr(obj, "Name", "") or "")
     label = str(getattr(obj, "Label", "") or "")
-    if name.startswith("SYM2D_") or label.startswith("SYM2D_"):
+    if name.startswith("SYM2D_") or label.startswith("SYM2D_") or name.startswith("HVAC_EvapMaster_"):
         return True
     return False
 

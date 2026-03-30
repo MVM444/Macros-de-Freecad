@@ -43,9 +43,7 @@ def recalculate_document(doc=None):
         hvac_space.calculate_space_load(space, project=project)
 
     for equipment in hvac_equipment.find_equipments(doc):
-        hvac_equipment.update_equipment_coverage(equipment)
-        if bool(getattr(equipment, "UsePorts", False)):
-            hvac_equipment.update_equipment_ports(equipment)
+        hvac_equipment.refresh_equipment(equipment)
 
     for condenser in hvac_condensing.find_condensers(doc):
         hvac_condensing.recalculate_condenser(condenser)

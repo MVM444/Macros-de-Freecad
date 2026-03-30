@@ -35,6 +35,7 @@ except Exception:
 LOG_PREFIX = "[MEP-HVAC] "
 WORKBENCH_ID = "MEPWorkbenchCR"
 ICONS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "resources", "icons"))
+RELOAD_DEBUG_REV = "2026-03-30-r2"
 
 
 def _icon(icon_name, fallback_name="hvac.svg"):
@@ -73,6 +74,81 @@ def _log(message):
     print(text)
 
 
+def _file_signature(path):
+    try:
+        stat = os.stat(path)
+        return "mtime={0};size={1}".format(int(stat.st_mtime), int(stat.st_size))
+    except Exception:
+        return "mtime=?;size=?"
+
+
+def _resolve_git_dir(start_path):
+    current = os.path.abspath(os.path.dirname(start_path))
+    while True:
+        dot_git = os.path.join(current, ".git")
+        if os.path.isdir(dot_git):
+            return dot_git
+        if os.path.isfile(dot_git):
+            try:
+                with open(dot_git, "r", encoding="utf-8") as handle:
+                    text = handle.read().strip()
+                if text.lower().startswith("gitdir:"):
+                    raw = text.split(":", 1)[1].strip()
+                    git_dir = raw if os.path.isabs(raw) else os.path.abspath(os.path.join(current, raw))
+                    if os.path.isdir(git_dir):
+                        return git_dir
+            except Exception:
+                pass
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+    return ""
+
+
+def _read_git_head_short(start_path):
+    git_dir = _resolve_git_dir(start_path)
+    if not git_dir:
+        return "n/a"
+    head_path = os.path.join(git_dir, "HEAD")
+    try:
+        with open(head_path, "r", encoding="utf-8") as handle:
+            head_text = handle.read().strip()
+    except Exception:
+        return "n/a"
+    sha = ""
+    if head_text.startswith("ref:"):
+        ref_rel = head_text.split(":", 1)[1].strip()
+        ref_path = os.path.join(git_dir, ref_rel.replace("/", os.sep))
+        try:
+            with open(ref_path, "r", encoding="utf-8") as handle:
+                sha = handle.read().strip()
+        except Exception:
+            sha = ""
+    else:
+        sha = head_text
+    if not sha:
+        return "n/a"
+    return sha[:12]
+
+
+def _log_reload_debug(context):
+    source = os.path.abspath(__file__).replace(os.sep, "/")
+    signature = _file_signature(__file__)
+    git_head = _read_git_head_short(__file__)
+    module_id = str(id(sys.modules.get(__name__)))
+    _log(
+        "ReloadDebug[{0}] rev={1} head={2} sig={3} module_id={4} source={5}".format(
+            context,
+            RELOAD_DEBUG_REV,
+            git_head,
+            signature,
+            module_id,
+            source,
+        )
+    )
+
+
 def _ensure_package_parent_in_path():
     package_dir = os.path.abspath(os.path.dirname(__file__))
     parent_dir = os.path.abspath(os.path.dirname(package_dir))
@@ -92,6 +168,7 @@ def _purge_reload_modules():
 
 
 def _reload_workbench():
+    _log_reload_debug("before_reload")
     _ensure_package_parent_in_path()
     try:
         listed = dict(getattr(FreeCADGui, "listWorkbenches", lambda: {})() or {})
@@ -111,6 +188,8 @@ def _reload_workbench():
     importlib.invalidate_caches()
     module = importlib.import_module("MEPWorkbenchCR.InitGui")
     importlib.reload(module)
+    if hasattr(module, "_log_reload_debug"):
+        module._log_reload_debug("after_reload")
     _log("Reload source: {0}".format(getattr(module, "__file__", "")))
     FreeCADGui.activateWorkbench(WORKBENCH_ID)
 
@@ -300,6 +379,23 @@ class CmdReloadWorkbench(_BaseCommand):
             _log(tr("cmd.reload.error", error=exc))
 
 
+class CmdDebugReloadState(_BaseCommand):
+    CommandName = "MEP_HVAC_DebugReloadState"
+    MenuText = tr("cmd.debug_reload.menu")
+    ToolTip = tr("cmd.debug_reload.tooltip")
+    IconPath = ICON_RELOAD
+
+    def IsActive(self):  # noqa: N802
+        return True
+
+    def Activated(self):  # noqa: N802
+        _log(tr("cmd.debug_reload.run"))
+        try:
+            _log_reload_debug("manual_debug")
+        except Exception as exc:
+            _log(tr("cmd.debug_reload.error", error=exc))
+
+
 def _build_command_instances():
     return [
         CmdCreateHVACProject(),
@@ -311,6 +407,7 @@ def _build_command_instances():
         CmdAssignCondenserUnits(),
         CmdCreateHVACRoute(),
         CmdValidateHVAC(),
+        CmdDebugReloadState(),
         CmdReloadWorkbench(),
     ]
 
@@ -331,6 +428,7 @@ def _system_command_names():
         CmdAssignCondenserUnits.CommandName,
         CmdCreateHVACRoute.CommandName,
         CmdValidateHVAC.CommandName,
+        CmdDebugReloadState.CommandName,
         CmdReloadWorkbench.CommandName,
     ]
 
@@ -359,6 +457,7 @@ class MEPWorkbenchCR(FreeCADGui.Workbench):
 
     def Activated(self):  # noqa: N802
         _log(tr("wb.log.activated"))
+        _log_reload_debug("workbench_activated")
         _log("InitGui source: {0}".format(MODULE_SOURCE))
         doc = FreeCAD.ActiveDocument
         if doc is not None:
