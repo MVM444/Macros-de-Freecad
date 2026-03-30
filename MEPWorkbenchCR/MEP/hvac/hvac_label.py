@@ -126,17 +126,7 @@ def _set_label_style(label_obj):
                 setattr(label_obj, prop_name, DEFAULT_LABEL_SIZE)
         except Exception:
             continue
-    for prop_name in ("Justification", "TextAlign", "HorizontalAlignment"):
-        try:
-            if hasattr(label_obj, "PropertiesList") and prop_name in label_obj.PropertiesList:
-                for candidate in ("Center", "Middle-Center", "Top-Center", "Center-Top"):
-                    try:
-                        setattr(label_obj, prop_name, candidate)
-                        break
-                    except Exception:
-                        continue
-        except Exception:
-            continue
+    _set_center_justification(label_obj)
 
     vobj = getattr(label_obj, "ViewObject", None)
     if vobj is not None:
@@ -146,22 +136,72 @@ def _set_label_style(label_obj):
                     setattr(vobj, view_prop, DEFAULT_LABEL_SIZE)
             except Exception:
                 continue
-        for view_prop in ("Justification", "TextAlign", "HorizontalAlignment"):
-            try:
-                if hasattr(vobj, view_prop):
-                    for candidate in ("Center", "Middle-Center", "Top-Center", "Center-Top"):
-                        try:
-                            setattr(vobj, view_prop, candidate)
-                            break
-                        except Exception:
-                            continue
-            except Exception:
-                continue
+        _set_center_justification(vobj)
         try:
             if hasattr(vobj, "ShowInTree"):
                 vobj.ShowInTree = False
         except Exception:
             pass
+
+
+def _enum_values(obj, prop_name):
+    try:
+        getter = getattr(obj, "getEnumerationsOfProperty", None)
+        if getter is None:
+            return []
+        values = getter(prop_name)
+        return [str(value) for value in list(values or [])]
+    except Exception:
+        return []
+
+
+def _pick_center_value(options):
+    if not options:
+        return "Center"
+
+    normalized = [(opt, str(opt).strip().lower()) for opt in options]
+    exact_targets = {"center", "centre", "middle", "medio", "centrado"}
+    for original, key in normalized:
+        if key in exact_targets:
+            return original
+
+    contains_targets = ("center", "centre", "middle", "medio", "centr")
+    for original, key in normalized:
+        if any(token in key for token in contains_targets):
+            return original
+
+    for original, key in normalized:
+        if "left" not in key and "right" not in key and "izq" not in key and "der" not in key:
+            return original
+    return options[0]
+
+
+def _set_center_justification(target_obj):
+    if target_obj is None:
+        return
+
+    candidates = ("Justification", "TextAlign", "HorizontalAlignment")
+    for prop_name in candidates:
+        has_prop = False
+        try:
+            if hasattr(target_obj, "PropertiesList") and prop_name in target_obj.PropertiesList:
+                has_prop = True
+            elif hasattr(target_obj, prop_name):
+                has_prop = True
+        except Exception:
+            has_prop = False
+        if not has_prop:
+            continue
+
+        options = _enum_values(target_obj, prop_name)
+        preferred = _pick_center_value(options)
+        try:
+            setattr(target_obj, prop_name, preferred)
+        except Exception:
+            try:
+                setattr(target_obj, prop_name, "Center")
+            except Exception:
+                continue
 
 
 def _make_annotation_text(doc, lines, point):
