@@ -157,7 +157,9 @@ class CmdCreateHVACSpace(_BaseCommand):
     def Activated(self):  # noqa: N802
         _log(tr("cmd.create_space.run"))
         try:
-            hvac_space.create_space_from_selection(FreeCAD.ActiveDocument)
+            spaces = hvac_space.create_spaces_from_selection(FreeCAD.ActiveDocument)
+            if spaces:
+                hvac_label.update_all_labels(FreeCAD.ActiveDocument, ensure_visible=True)
             FreeCAD.ActiveDocument.recompute()
         except Exception as exc:
             _log(tr("cmd.create_space.error", error=exc))
