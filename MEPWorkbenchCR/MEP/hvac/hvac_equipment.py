@@ -298,6 +298,52 @@ def _shape_size_changed(shape_obj, expected_size_mm, tol=0.1):
         return True
 
 
+def _equipment_shape_changed(equipment_obj, tol=0.1):
+    try:
+        expected = _equipment_size(equipment_obj)
+        shape_obj = getattr(equipment_obj, "Shape", None)
+        if shape_obj is None or shape_obj.isNull():
+            return True
+        bbox = shape_obj.BoundBox
+        return (
+            abs(float(bbox.XLength) - float(expected[0])) > tol
+            or abs(float(bbox.YLength) - float(expected[1])) > tol
+            or abs(float(bbox.ZLength) - float(expected[2])) > tol
+        )
+    except Exception:
+        return True
+
+
+def _geometry_needs_sync(equipment_obj):
+    if equipment_obj is None:
+        return False
+    if _equipment_shape_changed(equipment_obj):
+        return True
+
+    placement = getattr(equipment_obj, "Placement", App.Placement())
+    target_z = _to_float(getattr(equipment_obj, "BaseLevel", 0.0), 0.0) + _height_to_mm(equipment_obj)
+    if abs(float(placement.Base.z) - float(target_z)) > 0.01:
+        return True
+
+    show_symbol = bool(getattr(equipment_obj, "ShowSymbol2D", True))
+    symbol_obj = getattr(equipment_obj, "Symbol2D", None)
+    if show_symbol:
+        if symbol_obj is None or getattr(symbol_obj, "Document", None) is None:
+            return True
+        size_mm = _to_float(getattr(equipment_obj, "Symbol2DSize", DEFAULT_SYMBOL_SIZE), DEFAULT_SYMBOL_SIZE)
+        if _shape_size_changed(getattr(symbol_obj, "Shape", None), size_mm):
+            return True
+        expected_base = App.Vector(
+            placement.Base.x,
+            placement.Base.y,
+            _to_float(getattr(equipment_obj, "BaseLevel", 0.0), 0.0),
+        )
+        current_placement = getattr(symbol_obj, "Placement", App.Placement())
+        if _vector_changed(current_placement.Base, expected_base):
+            return True
+    return False
+
+
 def _apply_equipment_elevation(equipment_obj):
     if equipment_obj is None:
         return
@@ -526,7 +572,8 @@ class HVACEquipmentProxy:
         try:
             ensure_equipment_properties(obj)
             _initialize_equipment_defaults(obj)
-            _sync_equipment_geometry(obj)
+            if _geometry_needs_sync(obj):
+                _sync_equipment_geometry(obj)
             _auto_assign_space(obj)
             update_equipment_coverage(obj)
         finally:
