@@ -14,6 +14,7 @@ ICON_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "resources", "icons", "hvac.svg")
 ).replace(os.sep, "/")
 DEFAULT_LABEL_SIZE = 200.0
+DEBUG_LABEL_POSITION = True
 
 
 def log(message):
@@ -116,13 +117,61 @@ def _world_point_from_base(base_obj, point_local):
         return point
 
 
+def _base_reference_point(base_obj):
+    if base_obj is None:
+        return App.Vector(0.0, 0.0, 0.0)
+    try:
+        if hasattr(base_obj, "getGlobalPlacement"):
+            gp = base_obj.getGlobalPlacement()
+            if gp is not None:
+                return App.Vector(gp.Base)
+    except Exception:
+        pass
+    try:
+        if hasattr(base_obj, "Placement"):
+            return App.Vector(base_obj.Placement.Base)
+    except Exception:
+        pass
+    return App.Vector(0.0, 0.0, 0.0)
+
+
+def _fmt_vec(vec):
+    try:
+        v = App.Vector(vec)
+        return "({0:.1f},{1:.1f},{2:.1f})".format(float(v.x), float(v.y), float(v.z))
+    except Exception:
+        return "(?, ?, ?)"
+
+
+def _log_position_debug(space_obj, base_obj, bbox, raw_point, transformed_point, final_point, mode):
+    if not DEBUG_LABEL_POSITION:
+        return
+    try:
+        ref = _base_reference_point(base_obj)
+        msg = (
+            "PosDebug space={0} base={1} mode={2} ref={3} bbox_center={4} raw={5} transformed={6} final={7}"
+        ).format(
+            str(getattr(space_obj, "Name", "?")),
+            str(getattr(base_obj, "Name", "?")),
+            str(mode),
+            _fmt_vec(ref),
+            _fmt_vec(getattr(bbox, "Center", App.Vector(0.0, 0.0, 0.0))),
+            _fmt_vec(raw_point),
+            _fmt_vec(transformed_point),
+            _fmt_vec(final_point),
+        )
+        log(msg)
+    except Exception:
+        pass
+
+
 def _point_is_already_global(base_obj, bbox, point):
     """Heuristic: detect when Draft shape points already include object placement."""
 
-    if base_obj is None or not hasattr(base_obj, "Placement"):
+    if base_obj is None:
         return True
     try:
-        base_pos = App.Vector(base_obj.Placement.Base)
+        base_pos = _base_reference_point(base_obj)
         test = App.Vector(point)
         dx = abs(float(test.x) - float(base_pos.x))
         dy = abs(float(test.y) - float(base_pos.y))
@@ -339,16 +388,22 @@ def _label_position(space_obj):
                     com = largest.CenterOfMass
                     z_plane = _to_float(getattr(largest.BoundBox, "ZMin", com.z), com.z)
                     point = App.Vector(com.x, com.y, z_plane)
+                    transformed = _world_point_from_base(base, point)
                     if _point_is_already_global(base, shape.BoundBox, point):
+                        _log_position_debug(space_obj, base, shape.BoundBox, point, transformed, point, "raw")
                         return point
-                    return _world_point_from_base(base, point)
+                    _log_position_debug(space_obj, base, shape.BoundBox, point, transformed, transformed, "transformed")
+                    return transformed
 
             com = shape.CenterOfMass
             bbox = shape.BoundBox
             point = App.Vector(com.x, com.y, bbox.ZMin)
+            transformed = _world_point_from_base(base, point)
             if _point_is_already_global(base, bbox, point):
+                _log_position_debug(space_obj, base, bbox, point, transformed, point, "raw")
                 return point
-            return _world_point_from_base(base, point)
+            _log_position_debug(space_obj, base, bbox, point, transformed, transformed, "transformed")
+            return transformed
         except Exception:
             pass
     if hasattr(space_obj, "Placement"):
