@@ -306,9 +306,9 @@ def _label_position(space_obj):
         try:
             shape = base.Shape
             bbox = shape.BoundBox
-            # Keep the same "center of polygon box" behavior used in ElectricCR label workflow.
-            local_point = App.Vector(bbox.Center.x, bbox.Center.y, bbox.ZMin)
-            return _world_point_from_base(base, local_point)
+            # Keep the same behavior used in ElectricCR labels:
+            # use shape bounding-box center directly as insertion point.
+            return App.Vector(float(bbox.Center.x), float(bbox.Center.y), float(bbox.ZMin))
         except Exception:
             pass
     if hasattr(space_obj, "Placement"):
