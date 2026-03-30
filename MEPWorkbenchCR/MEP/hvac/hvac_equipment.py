@@ -30,6 +30,7 @@ EVAPORATOR_LIBRARY = {
 DEFAULT_MODEL = "Pared_12000"
 DEFAULT_SYMBOL_SIZE = 450.0
 MASTER_PREFIX = "HVAC_EvapMaster_"
+EQUIP_DEBUG_REV = "2026-03-30-eq-r1"
 GROUP_MODEL_PREFIX = "Grupo::"
 GROUP_MODEL_LABEL_ALIASES = {
     "modelos",
@@ -731,6 +732,13 @@ def _sync_equipment_geometry(equipment_obj):
 
 
 def _pick_model_for_insert(doc=None):
+    log(
+        "PickerDebug enter rev={0} gui={1} module={2}".format(
+            EQUIP_DEBUG_REV,
+            bool(getattr(App, "GuiUp", False)),
+            __file__,
+        )
+    )
     if not App.GuiUp:
         return DEFAULT_MODEL
 
@@ -799,6 +807,15 @@ def insert_evaporator_from_selection(doc=None, model_name=None):
     if doc is None:
         log("No hay documento activo")
         return None
+
+    log(
+        "InsertDebug rev={0} gui={1} module={2} model_arg={3}".format(
+            EQUIP_DEBUG_REV,
+            bool(getattr(App, "GuiUp", False)),
+            __file__,
+            str(model_name),
+        )
+    )
 
     obj = doc.addObject("Part::FeaturePython", "HVAC_Evaporator")
     HVACEquipmentProxy(obj)
