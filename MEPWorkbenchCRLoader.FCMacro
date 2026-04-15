@@ -1,0 +1,197 @@
+# -*- coding: utf-8 -*-
+# Icon: MEPWorkbenchCRLoader.svg
+
+import importlib
+import os
+import sys
+
+import FreeCAD as App
+import FreeCADGui as Gui
+
+PACKAGE_NAME = "MEPWorkbenchCR"
+WORKBENCH_ID = "MEPWorkbenchCR"
+ICON_NAME = "MEPWorkbenchCRLoader.svg"
+
+
+def _macro_path_entries():
+    try:
+        param = App.ParamGet("User parameter:BaseApp/Preferences/Macro").GetString("MacroPath", "")
+    except Exception:
+        param = ""
+
+    entries = []
+    if param:
+        sep = ";" if os.name == "nt" else ":"
+        for part in param.split(sep):
+            part = part.strip()
+            if part:
+                full = os.path.normpath(os.path.abspath(part))
+                if full not in entries:
+                    entries.append(full)
+
+    local = os.path.dirname(__file__)
+    if local not in entries:
+        entries.insert(0, local)
+
+    try:
+        user_dir = App.getUserAppDataDir()
+        if user_dir:
+            macro_dir = os.path.join(user_dir, "Macro")
+            macro_dir = os.path.normpath(os.path.abspath(macro_dir))
+            if os.path.isdir(macro_dir) and macro_dir not in entries:
+                entries.append(macro_dir)
+    except Exception:
+        pass
+
+    return entries
+
+
+def _candidate_roots():
+    roots = []
+    seen = set()
+    for base in _macro_path_entries():
+        for extra in ("", "Macros-de-Freecad", os.path.join("Macros-de-Freecad", "Resources")):
+            root = os.path.join(base, extra) if extra else base
+            root = os.path.normpath(root)
+            if root not in seen and os.path.isdir(root):
+                roots.append(root)
+                seen.add(root)
+    return roots
+
+
+def _resolve_icon_path(icon_name):
+    search_roots = []
+    here = os.path.dirname(__file__)
+    search_roots.extend(
+        [
+            here,
+            os.path.join(here, "iconos"),
+            os.path.join(here, PACKAGE_NAME, "resources", "icons"),
+            os.path.join(os.path.dirname(here), "iconos"),
+        ]
+    )
+
+    for root in _candidate_roots():
+        search_roots.extend(
+            [
+                root,
+                os.path.join(root, "iconos"),
+                os.path.join(root, "icons"),
+                os.path.join(root, "Resources"),
+                os.path.join(root, "Resources", "iconos"),
+                os.path.join(root, "Resources", "icons"),
+                os.path.join(root, PACKAGE_NAME, "resources", "icons"),
+            ]
+        )
+
+    seen = set()
+    for root in search_roots:
+        if not root:
+            continue
+        norm = os.path.normpath(os.path.abspath(root))
+        if norm in seen:
+            continue
+        seen.add(norm)
+        candidate = os.path.join(norm, icon_name)
+        if os.path.exists(candidate):
+            return candidate
+    return ""
+
+
+__Icon__ = _resolve_icon_path(ICON_NAME)
+__icon__ = __Icon__
+
+
+def _is_complete_package(pkg_dir):
+    try:
+        return (
+            os.path.isdir(pkg_dir)
+            and os.path.exists(os.path.join(pkg_dir, "InitGui.py"))
+            and os.path.isdir(os.path.join(pkg_dir, "MEP"))
+        )
+    except Exception:
+        return False
+
+
+def _find_package_root():
+    candidates = []
+    for root in _candidate_roots():
+        pkg = os.path.join(root, PACKAGE_NAME)
+        if _is_complete_package(pkg):
+            candidates.append(root)
+    if candidates:
+        return candidates[0]
+
+    # Fallback: accept any package folder with InitGui.py
+    for root in _candidate_roots():
+        pkg = os.path.join(root, PACKAGE_NAME)
+        if os.path.isdir(pkg) and os.path.exists(os.path.join(pkg, "InitGui.py")):
+            return root
+
+    for root in _candidate_roots():
+        for dirpath, _dirnames, filenames in os.walk(root):
+            if "InitGui.py" in filenames and os.path.basename(dirpath) == PACKAGE_NAME:
+                return os.path.dirname(dirpath)
+    return None
+
+
+def _ensure_sys_path(path):
+    if not path:
+        return
+    norm = os.path.normpath(path)
+    if norm not in sys.path:
+        sys.path.insert(0, norm)
+
+
+def _purge_modules():
+    for name in list(sys.modules.keys()):
+        if name == PACKAGE_NAME or name.startswith(PACKAGE_NAME + ".") or name == "MEP" or name.startswith("MEP."):
+            sys.modules.pop(name, None)
+
+
+def ensure_path_and_load():
+    try:
+        package_root = _find_package_root()
+        if not package_root:
+            App.Console.PrintError("MEPWorkbenchCR: no se encontro la carpeta del workbench.\n")
+            return
+
+        _ensure_sys_path(package_root)
+        _purge_modules()
+        importlib.invalidate_caches()
+
+        try:
+            listed = list(getattr(Gui, "listWorkbenches", lambda: {})() or {})
+            if WORKBENCH_ID in listed:
+                getattr(Gui, "removeWorkbench", lambda *_a, **_k: None)(WORKBENCH_ID)
+        except Exception:
+            pass
+
+        module = importlib.import_module(PACKAGE_NAME + ".InitGui")
+        importlib.reload(module)
+        App.Console.PrintMessage(
+            "MEPWorkbenchCR: Workbench recargado desde {0}\n".format(getattr(module, "__file__", ""))
+        )
+
+        if App.GuiUp:
+            try:
+                Gui.activateWorkbench("DraftWorkbench")
+                App.Console.PrintMessage("MEPWorkbenchCR: DraftWorkbench activado para registrar comandos Draft\n")
+            except Exception:
+                pass
+            try:
+                Gui.activateWorkbench("StartWorkbench")
+            except Exception:
+                pass
+            try:
+                Gui.activateWorkbench(WORKBENCH_ID)
+                App.Console.PrintMessage("MEPWorkbenchCR: Workbench activado\n")
+            except Exception as err:
+                App.Console.PrintError(
+                    "MEPWorkbenchCR: No se pudo activar el workbench: {0}\n".format(err)
+                )
+    except Exception as err:
+        App.Console.PrintError("MEPWorkbenchCR: Error cargando el workbench: {0}\n".format(err))
+
+
+ensure_path_and_load()

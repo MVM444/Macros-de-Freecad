@@ -1,0 +1,12 @@
+Catalog placeholders generated for MEPWorkbenchCR HVAC condenser library.
+Replace with OEM models when available.
+
+Horizontal:
+- Condenser_12000_Horizontal.step
+- Condenser_18000_Horizontal.step
+- Condenser_24000_Horizontal.step
+
+Vertical:
+- Condenser_36000_Vertical.step
+- Condenser_48000_Vertical.step
+- Condenser_60000_Vertical.step

@@ -1,0 +1,699 @@
+# -*- coding: utf-8 -*-
+# MenuText: Conectar Luminarias a Octogonal Existente
+# ToolTip: Conecta 1..N luminarias/objetos compatibles a una caja EMT octogonal existente con spline EMT flexible
+# Icon: Conectar/Conectar_Luminarias_a_Octogonal_Existente.svg
+# Transaction: self
+"""
+Uso:
+- Seleccione una caja EMT octogonal existente y una o varias luminarias (u otros objetos compatibles).
+- El orden de seleccion no importa.
+- Crea una spline EMT_Flexible por cada luminaria hacia la caja.
+
+Notas:
+- Si hay varias cajas octogonales en seleccion, usa la primera y avisa.
+- Filtra objetivos por matriz de conexion (Octogonal->Luminaria/Otro).
+- Reemplaza conexiones previas del mismo par (caja-luminaria) para evitar duplicados.
+"""
+
+import os
+import sys
+import math
+import json
+import importlib
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+
+
+THIS_DIR = os.path.dirname(__file__) if "__file__" in globals() else ""
+if THIS_DIR and THIS_DIR not in sys.path:
+    sys.path.insert(0, THIS_DIR)
+
+import conexiones_grouping as _cg
+
+_cg = importlib.reload(_cg)
+ensure_conexiones_group = _cg.ensure_conexiones_group
+is_group = _cg.is_group
+
+try:
+    import component_classifier as _cc
+
+    _cc = importlib.reload(_cc)
+except Exception:
+    _cc = None
+
+try:
+    import connection_matrix as _cm
+
+    _cm = importlib.reload(_cm)
+except Exception:
+    _cm = None
+
+
+TAG = "LUM_OCTO"
+REPLACE_EXISTING = True
+GENERATED_BY = "Conectar_Luminarias_a_Octogonal_Existente"
+MIN_DROP_MM = 120.0
+DIAGONAL_PORT_NAMES = {"northeast", "northwest", "southeast", "southwest", "ne", "nw", "se", "sw"}
+
+
+def _safe_text(value):
+    try:
+        return str(value or "")
+    except Exception:
+        return ""
+
+
+def _log(msg):
+    App.Console.PrintMessage(f"[{TAG}][INFO] {msg}\n")
+
+
+def _warn(msg):
+    App.Console.PrintWarning(f"[{TAG}][WARN] {msg}\n")
+
+
+def _err(msg):
+    App.Console.PrintError(f"[{TAG}][ERROR] {msg}\n")
+
+
+def _ensure_property(obj, ptype, pname, pgroup, pdesc):
+    try:
+        if pname not in getattr(obj, "PropertiesList", []):
+            obj.addProperty(ptype, pname, pgroup, pdesc)
+    except Exception:
+        pass
+
+
+def _selection_objects():
+    out = []
+    seen = set()
+    try:
+        sel_ex = Gui.Selection.getSelectionEx() or []
+    except Exception:
+        sel_ex = []
+
+    for sx in sel_ex:
+        obj = getattr(sx, "Object", None)
+        if obj is None or is_group(obj):
+            continue
+        key = _safe_text(getattr(obj, "Name", "")).strip() or str(id(obj))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(obj)
+
+    if out:
+        return out
+
+    try:
+        basic = Gui.Selection.getSelection() or []
+    except Exception:
+        basic = []
+
+    for obj in basic:
+        if obj is None or is_group(obj):
+            continue
+        key = _safe_text(getattr(obj, "Name", "")).strip() or str(id(obj))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(obj)
+    return out
+
+
+def _norm(s):
+    return _safe_text(s).strip().lower()
+
+
+def _endpoint_kind(obj):
+    if _cc is None or not hasattr(_cc, "get_endpoint_kind"):
+        return None
+    try:
+        return _safe_text(_cc.get_endpoint_kind(obj)).strip()
+    except Exception:
+        return None
+
+
+def _is_connectable_target(obj):
+    if obj is None:
+        return False
+    if _is_octogonal_candidate(obj):
+        return False
+
+    kind = _endpoint_kind(obj)
+    if kind in ("Luminaria", "Otro"):
+        return True
+    if kind in ("Octogonal", "Cuadrada"):
+        return False
+    return True
+
+
+def _is_octogonal_candidate(obj):
+    if _cc is not None and hasattr(_cc, "is_octogonal_endpoint"):
+        try:
+            return bool(_cc.is_octogonal_endpoint(obj))
+        except Exception:
+            pass
+    if obj is None:
+        return False
+
+    fields = [
+        getattr(obj, "Label", ""),
+        getattr(obj, "Name", ""),
+        getattr(obj, "Tipo", ""),
+        getattr(obj, "TipoLogico", ""),
+        getattr(obj, "Categoria", ""),
+    ]
+    txt = " ".join(_safe_text(x) for x in fields).lower()
+    if ("caja" in txt and "octogonal" in txt) or ("emt octogonal" in txt):
+        return True
+
+    # Las cajas EMT octogonales suelen exponer PuertosJSON.
+    raw_ports = _safe_text(getattr(obj, "PuertosJSON", "")).strip()
+    if raw_ports.startswith("[") and raw_ports.endswith("]"):
+        return True
+
+    # Revisar linked object (si la seleccion viene por App::Link).
+    try:
+        linked = getattr(obj, "LinkedObject", None)
+    except Exception:
+        linked = None
+    if linked is not None:
+        ltxt = f"{_safe_text(getattr(linked, 'Label', ''))} {_safe_text(getattr(linked, 'Name', ''))}".lower()
+        if ("caja" in ltxt and "octogonal" in ltxt) or ("emt octogonal" in ltxt):
+            return True
+    return False
+
+
+def _object_anchor(obj):
+    try:
+        sh = getattr(obj, "Shape", None)
+        if sh is not None and (not sh.isNull()):
+            bb = sh.BoundBox
+            return App.Vector(
+                0.5 * (float(bb.XMin) + float(bb.XMax)),
+                0.5 * (float(bb.YMin) + float(bb.YMax)),
+                0.5 * (float(bb.ZMin) + float(bb.ZMax)),
+            )
+    except Exception:
+        pass
+    try:
+        return App.Vector(obj.Placement.Base)
+    except Exception:
+        return App.Vector(0.0, 0.0, 0.0)
+
+
+def _connection_target_from_lum(lum_point, z_start):
+    p = App.Vector(float(lum_point.x), float(lum_point.y), float(lum_point.z))
+    z = float(p.z)
+    if z >= (float(z_start) - float(MIN_DROP_MM)):
+        z = float(z_start) - float(MIN_DROP_MM)
+    return App.Vector(float(p.x), float(p.y), float(z))
+
+
+def _connection_target_from_lum_obj(lum_obj, lum_point, z_start):
+    # Misma logica que Colocar_Cajas_Octogonales_Entre_Luminarias:
+    # entrar por cara superior si la caja esta arriba; si no, por inferior.
+    p = App.Vector(float(lum_point.x), float(lum_point.y), float(lum_point.z))
+    try:
+        shp = getattr(lum_obj, "Shape", None)
+        if shp is not None and (not shp.isNull()):
+            bb = shp.BoundBox
+            z_low = float(bb.ZMin) - 8.0
+            z_up = float(bb.ZMax) + 8.0
+            zc = float(z_start)
+            z_mid = 0.5 * (float(bb.ZMin) + float(bb.ZMax))
+            if zc >= z_mid:
+                return App.Vector(float(p.x), float(p.y), float(z_up))
+            return App.Vector(float(p.x), float(p.y), float(z_low))
+    except Exception:
+        pass
+    return _connection_target_from_lum(p, z_start)
+
+
+def _norm_xy(vec, fallback=App.Vector(1.0, 0.0, 0.0)):
+    vx = float(getattr(vec, "x", 0.0))
+    vy = float(getattr(vec, "y", 0.0))
+    d = math.hypot(vx, vy)
+    if d <= 1e-9:
+        fdx = float(getattr(fallback, "x", 1.0))
+        fdy = float(getattr(fallback, "y", 0.0))
+        fd = math.hypot(fdx, fdy)
+        if fd <= 1e-9:
+            return App.Vector(1.0, 0.0, 0.0)
+        return App.Vector(fdx / fd, fdy / fd, 0.0)
+    return App.Vector(vx / d, vy / d, 0.0)
+
+
+def _canon_port_name(name):
+    txt = _safe_text(name).strip().lower().replace("-", "").replace("_", "").replace(" ", "")
+    mapping = {
+        "north": "north",
+        "n": "north",
+        "south": "south",
+        "s": "south",
+        "east": "east",
+        "e": "east",
+        "west": "west",
+        "w": "west",
+        "northeast": "northeast",
+        "ne": "ne",
+        "northwest": "northwest",
+        "nw": "nw",
+        "southeast": "southeast",
+        "se": "se",
+        "southwest": "southwest",
+        "sw": "sw",
+    }
+    return mapping.get(txt, txt)
+
+
+def _nearest_diagonal_dir(vec, fallback=App.Vector(1.0, 1.0, 0.0)):
+    v = _norm_xy(vec, fallback=fallback)
+    sx = 1.0 if float(v.x) >= 0.0 else -1.0
+    sy = 1.0 if float(v.y) >= 0.0 else -1.0
+    if abs(float(v.x)) <= 1e-9:
+        sx = 1.0
+    if abs(float(v.y)) <= 1e-9:
+        sy = 1.0
+    return _norm_xy(App.Vector(float(sx), float(sy), 0.0))
+
+
+def _port_direction_xy(port, box_center, target_point):
+    d = _norm_xy(port.get("dir", App.Vector(0.0, 0.0, 0.0)))
+    if math.hypot(float(d.x), float(d.y)) > 1e-9:
+        return d
+    p = port.get("point", box_center)
+    radial = App.Vector(float(p.x - box_center.x), float(p.y - box_center.y), 0.0)
+    if math.hypot(float(radial.x), float(radial.y)) > 1e-9:
+        return _norm_xy(radial)
+    toward = App.Vector(float(target_point.x - box_center.x), float(target_point.y - box_center.y), 0.0)
+    return _norm_xy(toward, fallback=App.Vector(1.0, 1.0, 0.0))
+
+
+def _is_diagonal_port(port, box_center):
+    cname = _canon_port_name(port.get("name", ""))
+    if cname in DIAGONAL_PORT_NAMES:
+        return True
+    raw = _norm_xy(port.get("dir", App.Vector(0.0, 0.0, 0.0)))
+    if math.hypot(float(raw.x), float(raw.y)) > 1e-9:
+        dxy = raw
+    else:
+        p = port.get("point", box_center)
+        radial = App.Vector(float(p.x - box_center.x), float(p.y - box_center.y), 0.0)
+        if math.hypot(float(radial.x), float(radial.y)) <= 1e-9:
+            return False
+        dxy = _norm_xy(radial)
+    ax = abs(float(dxy.x))
+    ay = abs(float(dxy.y))
+    if ax <= 1e-9 and ay <= 1e-9:
+        return False
+    # Direcciones diagonales tienen magnitudes similares en XY.
+    return abs(ax - ay) <= 0.35
+
+
+def _box_ports_world(box):
+    raw = _safe_text(getattr(box, "PuertosJSON", "")).strip()
+    if not raw:
+        try:
+            linked = getattr(box, "LinkedObject", None)
+        except Exception:
+            linked = None
+        if linked is not None:
+            raw = _safe_text(getattr(linked, "PuertosJSON", "")).strip()
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return []
+    if not isinstance(data, list):
+        return []
+
+    out = []
+    pl = getattr(box, "Placement", None)
+    rot = pl.Rotation if pl is not None else App.Rotation()
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        pos = item.get("position")
+        direc = item.get("direction")
+        if not isinstance(pos, list) or len(pos) != 3:
+            continue
+        try:
+            lp = App.Vector(float(pos[0]), float(pos[1]), float(pos[2]))
+        except Exception:
+            continue
+        wp = pl.multVec(lp) if pl is not None else lp
+        if isinstance(direc, list) and len(direc) == 3:
+            try:
+                ld = App.Vector(float(direc[0]), float(direc[1]), float(direc[2]))
+                wd = rot.multVec(ld)
+            except Exception:
+                wd = App.Vector(0.0, 0.0, 0.0)
+        else:
+            wd = App.Vector(0.0, 0.0, 0.0)
+        out.append(
+            {
+                "name": _safe_text(item.get("name", "")),
+                "point": App.Vector(float(wp.x), float(wp.y), float(wp.z)),
+                "dir": App.Vector(float(wd.x), float(wd.y), float(wd.z)),
+            }
+        )
+    return out
+
+
+def _pick_box_entry_port(box, target_point):
+    ports = _box_ports_world(box)
+    if not ports:
+        p = _object_anchor(box)
+        v = App.Vector(float(target_point.x - p.x), float(target_point.y - p.y), 0.0)
+        dxy = _nearest_diagonal_dir(v)
+        return p, dxy
+
+    box_center = _object_anchor(box)
+    diag_ports = [p for p in ports if _is_diagonal_port(p, box_center)]
+    candidates = diag_ports if diag_ports else ports
+
+    def _score(item):
+        p = item["point"]
+        dxy_dir = _port_direction_xy(item, box_center, target_point)
+        d_raw = item.get("dir", App.Vector(0.0, 0.0, 0.0))
+        vx = float(target_point.x - p.x)
+        vy = float(target_point.y - p.y)
+        dxy = math.hypot(vx, vy)
+        dxy_safe = max(dxy, 1e-6)
+        sx = vx / dxy_safe
+        sy = vy / dxy_safe
+        ux, uy = _norm_xy(dxy_dir).x, _norm_xy(dxy_dir).y
+        align = (ux * sx) + (uy * sy)  # 1 = puerto orientado hacia luminaria
+        side_penalty = abs(float(getattr(d_raw, "z", 0.0)))  # preferir puertos laterales
+        return (side_penalty, -align, dxy, abs(float(p.z - target_point.z)))
+
+    best = sorted(candidates, key=_score)[0]
+    bp = best["point"]
+    base_dir = _port_direction_xy(best, box_center, target_point)
+    bd = _nearest_diagonal_dir(base_dir, fallback=App.Vector(float(target_point.x - bp.x), float(target_point.y - bp.y), 0.0))
+    return bp, bd
+
+
+def _dedupe_points(points, tol=1e-6):
+    if not points:
+        return []
+    out = [points[0]]
+    for p in points[1:]:
+        q = out[-1]
+        dx = float(p.x - q.x)
+        dy = float(p.y - q.y)
+        dz = float(p.z - q.z)
+        if (dx * dx + dy * dy + dz * dz) <= (tol * tol):
+            continue
+        out.append(p)
+    return out
+
+
+def _spline_points(p0, p1, start_dir_xy):
+    p0 = App.Vector(float(p0.x), float(p0.y), float(p0.z))
+    p7 = App.Vector(float(p1.x), float(p1.y), float(p1.z))
+    vec = App.Vector(float(p7.x - p0.x), float(p7.y - p0.y), float(p7.z - p0.z))
+    dxy = math.hypot(float(vec.x), float(vec.y))
+    dz = float(vec.z)
+
+    if dxy <= 1e-6 and abs(dz) <= 1e-6:
+        return [p0, p7]
+
+    dir_xy = _norm_xy(vec)
+    start_xy = _norm_xy(start_dir_xy, fallback=dir_xy)
+    perp = App.Vector(float(-dir_xy.y), float(dir_xy.x), 0.0)
+
+    # 1) Salida inicial desde caja (ahora preferentemente diagonal).
+    start_out = min(max(dxy * 0.22, 90.0), 260.0)
+    p1 = App.Vector(
+        float(p0.x + (start_xy.x * start_out)),
+        float(p0.y + (start_xy.y * start_out)),
+        float(p0.z),
+    )
+
+    # 2) Curvatura intermedia mas marcada para evitar apariencia recta.
+    amp = min(max(dxy * 0.10, 35.0), 170.0)
+    p2 = App.Vector(
+        float(p0.x + (vec.x * 0.30) + (perp.x * amp)),
+        float(p0.y + (vec.y * 0.30) + (perp.y * amp)),
+        float(p0.z + (dz * 0.34)),
+    )
+    p3 = App.Vector(
+        float(p0.x + (vec.x * 0.58) + (perp.x * amp * 0.15)),
+        float(p0.y + (vec.y * 0.58) + (perp.y * amp * 0.15)),
+        float(p0.z + (dz * 0.68)),
+    )
+
+    # 3) Llegada perpendicular a luminaria: ultimo tramo vertical.
+    vertical_sign = 1.0 if float(p0.z) >= float(p7.z) else -1.0
+    vertical_mm = max(80.0, min(240.0, max(abs(dz) * 0.70, 90.0)))
+    z_pre = float(p7.z + (vertical_sign * vertical_mm))
+    near_mm = min(max(dxy * 0.24, 28.0), 180.0)
+    cand_a = App.Vector(float(p7.x - (perp.x * near_mm)), float(p7.y - (perp.y * near_mm)), z_pre)
+    cand_b = App.Vector(float(p7.x + (perp.x * near_mm)), float(p7.y + (perp.y * near_mm)), z_pre)
+    try:
+        d_a = float(cand_a.distanceToPoint(p3))
+        d_b = float(cand_b.distanceToPoint(p3))
+        p4 = cand_a if d_a <= d_b else cand_b
+    except Exception:
+        p4 = cand_a
+
+    p5 = App.Vector(float(p7.x), float(p7.y), z_pre)
+
+    if dxy <= 25.0:
+        # Caso casi vertical: mantener spline con oscilacion suave.
+        swing = min(max(abs(dz) * 0.02, 4.0), 12.0)
+        p1 = App.Vector(float(p0.x + start_xy.x * swing), float(p0.y + start_xy.y * swing), float(p0.z))
+        p2 = App.Vector(float(p0.x + perp.x * swing), float(p0.y + perp.y * swing), float(p0.z + dz * 0.35))
+        p3 = App.Vector(float(p0.x - perp.x * swing), float(p0.y - perp.y * swing), float(p0.z + dz * 0.65))
+        p4 = App.Vector(float(p7.x), float(p7.y), float(p7.z + (vertical_sign * max(60.0, abs(dz) * 0.50))))
+        p5 = App.Vector(float(p7.x), float(p7.y), float(p4.z))
+
+    return [p0, p1, p2, p3, p4, p5, p7]
+
+
+def _make_spline_shape(points):
+    pts = _dedupe_points(points)
+    if len(pts) < 2:
+        return None
+    if len(pts) == 2:
+        return Part.makeLine(pts[0], pts[1])
+    try:
+        c = Part.BSplineCurve()
+        c.interpolate(pts)
+        return c.toShape()
+    except Exception:
+        return Part.makePolygon(pts)
+
+
+def _style_connection(obj):
+    vo = getattr(obj, "ViewObject", None)
+    if vo is None:
+        return
+    color = (1.0, 0.45, 0.05)  # mismo color de Colocar_Cajas_Octogonales_Entre_Luminarias
+    try:
+        vo.DisplayMode = "Wireframe"
+    except Exception:
+        pass
+    try:
+        vo.LineColor = color
+    except Exception:
+        pass
+    try:
+        vo.PointColor = color
+    except Exception:
+        pass
+    try:
+        vo.ShapeColor = color
+    except Exception:
+        pass
+    try:
+        vo.LineWidth = 2.0
+    except Exception:
+        pass
+
+
+def _pair_label(box_obj, lum_obj):
+    lb = _safe_text(getattr(box_obj, "Label", "")) or _safe_text(getattr(box_obj, "Name", "Caja"))
+    ll = _safe_text(getattr(lum_obj, "Label", "")) or _safe_text(getattr(lum_obj, "Name", "Luminaria"))
+    return f"EMT_Flexible: {lb} -> {ll}"
+
+
+def _delete_existing_pair_connections(doc, box_obj, lum_obj):
+    bn = _safe_text(getattr(box_obj, "Name", "")).strip()
+    ln = _safe_text(getattr(lum_obj, "Name", "")).strip()
+    if not bn or not ln:
+        return 0
+    removed = 0
+    for obj in list(getattr(doc, "Objects", []) or []):
+        if obj is None:
+            continue
+        oname = _safe_text(getattr(obj, "Name", "")).strip()
+        if oname in {bn, ln}:
+            continue
+        oo = _safe_text(getattr(obj, "ObjetoOrigen", "")).strip()
+        od = _safe_text(getattr(obj, "ObjetoDestino", "")).strip()
+        if {oo, od} != {bn, ln}:
+            continue
+        try:
+            doc.removeObject(oname)
+            removed += 1
+        except Exception:
+            pass
+    return removed
+
+
+def _create_connection(doc, box_obj, lum_obj):
+    p_lum_hint = _object_anchor(lum_obj)
+    p_box, dir_xy = _pick_box_entry_port(box_obj, p_lum_hint)
+    p_lum = _connection_target_from_lum_obj(lum_obj, p_lum_hint, p_box.z)
+    shp = _make_spline_shape(_spline_points(p_box, p_lum, dir_xy))
+    if shp is None:
+        return None
+
+    obj = doc.addObject("Part::Feature", "EMT_Conexion")
+    obj.Shape = shp
+    try:
+        obj.Label = _pair_label(box_obj, lum_obj)
+    except Exception:
+        pass
+
+    _ensure_property(obj, "App::PropertyString", "TipoConexion", "ElectricCR", "Tipo de conexion")
+    _ensure_property(obj, "App::PropertyString", "ConduitType", "ElectricCR", "Tipo de tuberia")
+    _ensure_property(obj, "App::PropertyString", "EstadoConexion", "Red", "Estado de conexion")
+    _ensure_property(obj, "App::PropertyString", "ObjetoOrigen", "Vinculo", "Objeto origen (Name)")
+    _ensure_property(obj, "App::PropertyString", "ObjetoDestino", "Vinculo", "Objeto destino (Name)")
+    _ensure_property(obj, "App::PropertyString", "GeneradoPor", "ElectricCR", "Macro generadora")
+    _ensure_property(obj, "App::PropertyFloat", "LongitudMM", "ElectricCR", "Longitud aproximada")
+
+    try:
+        obj.TipoConexion = "EMT_Flexible"
+    except Exception:
+        pass
+    try:
+        obj.ConduitType = "EMT"
+    except Exception:
+        pass
+    try:
+        obj.EstadoConexion = "Conectado"
+    except Exception:
+        pass
+    try:
+        obj.ObjetoOrigen = _safe_text(getattr(box_obj, "Name", ""))
+    except Exception:
+        pass
+    try:
+        obj.ObjetoDestino = _safe_text(getattr(lum_obj, "Name", ""))
+    except Exception:
+        pass
+    try:
+        obj.GeneradoPor = GENERATED_BY
+    except Exception:
+        pass
+    try:
+        obj.LongitudMM = float(getattr(shp, "Length", 0.0) or 0.0)
+    except Exception:
+        pass
+
+    _style_connection(obj)
+    return obj
+
+
+def _resolve_box_and_luminarias(selected):
+    octos = [o for o in selected if _is_octogonal_candidate(o)]
+    if not octos:
+        return None, []
+    if len(octos) > 1:
+        _warn("Se detectaron varias cajas octogonales; se usara la primera seleccionada.")
+    box = octos[0]
+    octo_names = {o.Name for o in octos}
+    candidates = [o for o in selected if getattr(o, "Name", None) not in octo_names]
+    connectables = []
+    skipped = []
+    box_kind = _endpoint_kind(box) or "Octogonal"
+    for obj in candidates:
+        if not _is_connectable_target(obj):
+            skipped.append(obj)
+            continue
+        if _cm is not None:
+            try:
+                obj_kind = _endpoint_kind(obj) or "Otro"
+                if not _cm.is_supported_connection(box_kind, obj_kind):
+                    skipped.append(obj)
+                    continue
+            except Exception:
+                pass
+        connectables.append(obj)
+
+    if skipped:
+        _warn(f"Se omitieron {len(skipped)} objeto(s) no compatibles con Octogonal->Luminaria/Otro.")
+    return box, connectables
+
+
+def main():
+    doc = App.ActiveDocument
+    if doc is None:
+        _err("No hay documento activo.")
+        return
+
+    selected = _selection_objects()
+    if len(selected) < 2:
+        _warn("Seleccione una caja octogonal y una o varias luminarias.")
+        return
+
+    box, lums = _resolve_box_and_luminarias(selected)
+    if box is None:
+        _err("No se detecto caja EMT octogonal en la seleccion.")
+        return
+    if not lums:
+        _warn("No hay objetos compatibles para conectar (luminarias/u otros endpoints).")
+        return
+
+    _log(
+        f"Caja='{_safe_text(getattr(box, 'Label', box.Name))}' | objetivos={len(lums)} | "
+        f"reemplazar_previas={'SI' if REPLACE_EXISTING else 'NO'}"
+    )
+
+    doc.openTransaction("ElectricCR: conectar luminarias a octogonal existente")
+    try:
+        g_con = ensure_conexiones_group(doc, objects=[box] + lums)
+        created = 0
+        replaced = 0
+        skipped = 0
+
+        for lum in lums:
+            if REPLACE_EXISTING:
+                replaced += _delete_existing_pair_connections(doc, box, lum)
+
+            conn = _create_connection(doc, box, lum)
+            if conn is None:
+                skipped += 1
+                continue
+            try:
+                if conn not in (getattr(g_con, "Group", []) or []):
+                    g_con.addObject(conn)
+            except Exception:
+                pass
+            created += 1
+
+        doc.recompute()
+        doc.commitTransaction()
+
+        _log(
+            f"Finalizado. creadas={created} | reemplazadas={replaced} | omitidas={skipped} | "
+            f"grupo='{_safe_text(getattr(g_con, 'Label', getattr(g_con, 'Name', 'Conexiones')))}'"
+        )
+    except Exception as ex:
+        try:
+            doc.abortTransaction()
+        except Exception:
+            pass
+        _err(f"Fallo general: {ex}")
+
+
+if __name__ == "__main__":
+    main()

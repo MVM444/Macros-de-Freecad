@@ -1,0 +1,57 @@
+# -*- coding: utf-8 -*-
+# Icon: MEPWorkbenchCRLoader.svg
+
+import FreeCAD as App
+
+MEP_TYPES = {
+    "HVACProject",
+    "HVACSpace",
+    "HVACEquipment",
+    "HVACCondenser",
+    "HVACRoute",
+    "HVACPort",
+    "HVACLabel",
+}
+
+
+def _is_hvac_object(obj):
+    if obj is None or not hasattr(obj, "PropertiesList"):
+        return False
+    if "MEPType" in obj.PropertiesList:
+        try:
+            return str(obj.MEPType) in MEP_TYPES
+        except Exception:
+            return False
+    name = str(getattr(obj, "Name", ""))
+    label = str(getattr(obj, "Label", ""))
+    return name.startswith("HVAC_") or label.startswith("HVAC_")
+
+
+def clean_hvac_objects(doc):
+    targets = [obj for obj in list(doc.Objects) if _is_hvac_object(obj)]
+    if not targets:
+        print("[MEP-HVAC] No se encontraron objetos HVAC para limpiar")
+        return
+
+    # Delete dependents first.
+    targets.sort(key=lambda o: str(getattr(o, "Name", "")).count("_"), reverse=True)
+    removed = 0
+    for obj in targets:
+        try:
+            doc.removeObject(obj.Name)
+            removed += 1
+        except Exception:
+            pass
+
+    try:
+        doc.recompute()
+    except Exception:
+        pass
+    print("[MEP-HVAC] Limpieza completada. Objetos eliminados: {0}".format(removed))
+
+
+if App.ActiveDocument is None:
+    print("[MEP-HVAC] No hay documento activo")
+else:
+    clean_hvac_objects(App.ActiveDocument)
+

@@ -839,6 +839,39 @@ def _object_anchor_world(obj):
         return App.Vector(0.0, 0.0, 0.0)
 
 
+def _closest_point_on_bbox(bb, ref_point):
+    if bb is None or ref_point is None:
+        return None
+    try:
+        x = min(max(float(ref_point.x), float(bb.XMin)), float(bb.XMax))
+        y = min(max(float(ref_point.y), float(bb.YMin)), float(bb.YMax))
+        z = min(max(float(ref_point.z), float(bb.ZMin)), float(bb.ZMax))
+        return App.Vector(x, y, z)
+    except Exception:
+        return None
+
+
+def _object_connection_point_world(obj, toward_point=None):
+    # Use the nearest external point on the object bbox to avoid starting
+    # the conduit inside the 3D body.
+    try:
+        shape = getattr(obj, "Shape", None)
+        if shape is not None and (not shape.isNull()):
+            bb = shape.BoundBox
+            if toward_point is not None:
+                p = _closest_point_on_bbox(bb, toward_point)
+                if p is not None:
+                    return p
+            return App.Vector(
+                0.5 * (float(bb.XMin) + float(bb.XMax)),
+                0.5 * (float(bb.YMin) + float(bb.YMax)),
+                0.5 * (float(bb.ZMin) + float(bb.ZMax)),
+            )
+    except Exception:
+        pass
+    return _object_anchor_world(obj)
+
+
 def _object_rotation(obj):
     try:
         return obj.Placement.Rotation
@@ -1025,7 +1058,14 @@ def _make_flexible_shape(p0, p1):
     else:
         vx, vy = (dx / dxy), (dy / dxy)
     px, py = -vy, vx
-    amp = min(max(dxy * 0.18, 35.0), 120.0)
+
+    if dxy <= 20.0:
+        # Keep spline for near-vertical runs, but with tiny lateral swing so it
+        # does not overshoot past the component body.
+        amp = min(max(abs(dz) * 0.02, 3.0), 8.0)
+    else:
+        amp = min(max(dxy * 0.18, 35.0), 120.0)
+
     c1 = App.Vector(
         float(p0.x + dx * 0.33 + px * amp),
         float(p0.y + dy * 0.33 + py * amp),
@@ -1305,7 +1345,8 @@ def main():
 
             if g_conex is not None:
                 p_box = _pick_box_entry_port(box, p_src)
-                conn_obj = _create_connection(doc, src, box, p_src, p_box, conn_type)
+                p_src_conn = _object_connection_point_world(src, toward_point=p_box)
+                conn_obj = _create_connection(doc, src, box, p_src_conn, p_box, conn_type)
                 if conn_obj is not None:
                     _remove_from_all_groups(doc, conn_obj, keep_group=g_conex)
                     try:

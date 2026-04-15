@@ -27,6 +27,17 @@
 - Puertos como entidad obligatoria para conexion.
 - Etiquetas como capa de reporte visible del estado del recinto.
 
+## Convencion transversal de Areas y SubAreas
+
+- Esta convencion aplica a HVAC, Electrico, Incendio y futuras disciplinas del ecosistema.
+- Area base: puede ser cualquier geometria plana cerrada (no solo rectangulos).
+- Area base representa el perfil del recinto.
+- SubArea: puede ser cualquier geometria plana cerrada, con preferencia de uso por rectangulos para flujo operativo.
+- Un recinto puede contener multiples SubAreas por disciplina (Iluminacion, Incendio, HVAC).
+- Debe soportarse mas de una SubArea de la misma disciplina dentro del mismo recinto.
+- Regla de prioridad de calculo: `SubAreas > Areas`.
+- Fallback: si no hay SubAreas, usar Areas; si no hay Areas pero si hay SubAreas validas, usar SubAreas.
+
 ## Convenciones de comentarios futuros
 
 - Comentarios breves y tecnicos.
@@ -53,4 +64,3 @@
 - Mantener compatibilidad funcional con FreeCAD 1.0.2.
 - Preparar validaciones para comportamiento esperado en FreeCAD 1.1.
 - Evitar decisiones acopladas a una sola version del entorno.
-

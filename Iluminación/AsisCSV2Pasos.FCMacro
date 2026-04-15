@@ -42,6 +42,9 @@ ELECTRICO_LABEL = "electrico"
 ELECTRICO_NAME = "electrico"
 ILUMINACION_LABEL = "Iluminacion"
 ILUMINACION_NAME = "Iluminacion"
+COMPONENTES_LABEL = "Componentes"
+COMPONENTES_NAME = "componentes"
+LIB_LABEL = "_lib"
 IMPORT_GROUP_LABEL = "CSV_Sketch_Import"
 IMPORT_GROUP_NAME = "CSV_Sketch_Import"
 POINTS_GROUP_LABEL = "Puntos_CSV_por_Tipo"
@@ -212,6 +215,88 @@ def ensure_child_group(doc, parent, label, pref_name):
     g = create_group(doc, label, pref_name, parent)
     log("[INFO] Subgrupo creado: {}/{}".format(parent.Label, label))
     return g
+
+
+def find_root_group(doc, label=None, name=None):
+    if doc is None:
+        return None
+    if name:
+        by_name = doc.getObject(name)
+        if is_group(by_name):
+            return by_name
+    want_label = keynorm(label)
+    want_name = keynorm(name)
+    for obj in doc.Objects:
+        if not is_group(obj):
+            continue
+        if want_label and keynorm(getattr(obj, "Label", "")) == want_label:
+            return obj
+        if want_name and keynorm(getattr(obj, "Name", "")) == want_name:
+            return obj
+    return None
+
+
+def find_child_group_keyed(parent, tokens):
+    if parent is None:
+        return None
+    wants = set(keynorm(tok) for tok in (tokens or []) if tok)
+    if not wants:
+        return None
+
+    exact = []
+    loose = []
+    for child in getattr(parent, "Group", []) or []:
+        if not is_group(child):
+            continue
+        keys = {
+            keynorm(getattr(child, "Label", "")),
+            keynorm(getattr(child, "Name", "")),
+        }
+        if any(k in wants for k in keys if k):
+            exact.append(child)
+            continue
+        if any(k.startswith(w) for k in keys for w in wants if k and w):
+            loose.append(child)
+
+    if exact:
+        exact.sort(key=lambda g: (str(getattr(g, "Label", "") or ""), str(getattr(g, "Name", "") or "")))
+        return exact[0]
+    if len(loose) == 1:
+        return loose[0]
+    return None
+
+
+def iter_group_objects_recursive(group_obj):
+    if group_obj is None or not is_group(group_obj):
+        return
+    seen = set()
+    stack = [group_obj]
+    while stack:
+        cur = stack.pop()
+        cur_name = str(getattr(cur, "Name", "") or "")
+        if cur_name:
+            if cur_name in seen:
+                continue
+            seen.add(cur_name)
+        for child in getattr(cur, "Group", []) or []:
+            child_name = str(getattr(child, "Name", "") or "")
+            if is_group(child):
+                if child_name and child_name in seen:
+                    continue
+                stack.append(child)
+                continue
+            if child_name and child_name in seen:
+                continue
+            if child_name:
+                seen.add(child_name)
+            yield child
+
+
+def resolve_components_group(doc):
+    g_e = find_root_group(doc, ELECTRICO_LABEL, ELECTRICO_NAME)
+    if g_e is None:
+        return None
+    return find_child_group_keyed(g_e, (COMPONENTES_LABEL, COMPONENTES_NAME))
 
 
 def parse_number(v, field, row):
@@ -850,34 +935,71 @@ def canonical_link_base(obj):
     if obj is None:
         return None
 
-    best_any = obj
-    best_any_depth = 0
+    tid = str(getattr(obj, "TypeId", "") or "")
+
+    # If user selects an existing Link, preserve it as Link base.
+    if tid == "App::Link":
+        return obj
+
+    # Keep explicit valid bases as-is, except raw sub-shapes (Part::Feature).
+    if is_candidate_base(obj) and not tid.startswith("Part::Feature"):
+        return obj
+
+    best_any = None
+    best_any_depth = 10 ** 9
     best_part = None
-    best_part_depth = -1
+    best_part_depth = 10 ** 9
+    best_non_part = None
+    best_non_part_depth = 10 ** 9
 
     visited = set()
-    stack = [(obj, 0)]
-    while stack:
-        node, depth = stack.pop()
+    queue = []
+    for parent in getattr(obj, "InList", []) or []:
+        queue.append((parent, 1))
+
+    while queue:
+        node, depth = queue.pop(0)
         nname = str(getattr(node, "Name", "") or "")
         if nname and nname in visited:
             continue
         if nname:
             visited.add(nname)
 
-        if depth > 0 and is_candidate_base(node):
-            if depth > best_any_depth:
+        if is_candidate_base(node):
+            ntid = str(getattr(node, "TypeId", "") or "")
+            if depth < best_any_depth:
                 best_any = node
                 best_any_depth = depth
-            if str(getattr(node, "TypeId", "")).startswith("App::Part"):
-                if depth > best_part_depth:
+            if ntid.startswith("App::Part"):
+                if depth < best_part_depth:
                     best_part = node
                     best_part_depth = depth
+            else:
+                if depth < best_non_part_depth:
+                    best_non_part = node
+                    best_non_part_depth = depth
 
         for parent in getattr(node, "InList", []) or []:
-            stack.append((parent, depth + 1))
+            queue.append((parent, depth + 1))
 
-    return best_part if best_part is not None else best_any
+    # When user selected a sub-shape, prefer enclosing App::Part.
+    if tid.startswith("Part::Feature"):
+        if best_part is not None:
+            return best_part
+        if best_non_part is not None:
+            return best_non_part
+        if best_any is not None:
+            return best_any
+        return obj
+
+    # Generic preference: nearest non-part candidate first.
+    if best_non_part is not None:
+        return best_non_part
+    if best_part is not None:
+        return best_part
+    if best_any is not None:
+        return best_any
+    return obj
 
 
 def break_selected_links_to_copies():
@@ -1478,12 +1600,22 @@ def set_csv_kind_metadata(obj, kind_token):
     if obj is None:
         return
     txt = str(kind_token or "").strip()
+    logical_tipo = logical_tipo_from_kind(txt)
     try:
         if not hasattr(obj, "CsvKind"):
             obj.addProperty("App::PropertyString", "CsvKind", "CSV", "Tipo funcional del asistente CSV")
         obj.CsvKind = txt
     except Exception:
         pass
+    # Keep component classifier metadata coherent for links and future tools.
+    if logical_tipo and logical_tipo != "Dispositivo":
+        for pname in ("Tipo", "TipoLogico", "Categoria"):
+            try:
+                if not hasattr(obj, pname):
+                    obj.addProperty("App::PropertyString", pname, "ElectricCR", "Tipo canonico")
+                setattr(obj, pname, logical_tipo)
+            except Exception:
+                continue
 
 
 def ensure_electriccr_on_path():
@@ -1594,12 +1726,23 @@ def has_candidate_ancestor(obj, candidate_names):
 
 def list_base_candidates(doc):
     pre = []
-    for obj in doc.Objects:
-        if not is_candidate_base(obj):
-            continue
-        if not object_in_group_tree(obj, ELECTRICO_LABEL):
-            continue
-        pre.append(obj)
+    g_components = resolve_components_group(doc)
+    if g_components is not None:
+        for obj in iter_group_objects_recursive(g_components):
+            if not is_candidate_base(obj):
+                continue
+            if object_in_group_tree(obj, LIB_LABEL):
+                continue
+            pre.append(obj)
+    else:
+        for obj in doc.Objects:
+            if not is_candidate_base(obj):
+                continue
+            if not object_in_group_tree(obj, ELECTRICO_LABEL):
+                continue
+            if object_in_group_tree(obj, LIB_LABEL):
+                continue
+            pre.append(obj)
 
     candidate_names = set(getattr(it, "Name", "") for it in pre)
     out = []
@@ -1623,8 +1766,6 @@ def list_base_candidates(doc):
         if "proto" in txt:
             pts += 8
         if "master" in txt:
-            pts += 6
-        if object_in_group_tree(item, "_lib"):
             pts += 6
         if str(getattr(item, "TypeId", "")).startswith("Part::"):
             pts += 2
@@ -2292,6 +2433,16 @@ def run_step2(params):
                 try:
                     if hasattr(link, "LinkTransform"):
                         link.LinkTransform = True
+                except Exception:
+                    pass
+                try:
+                    if hasattr(link, "LinkClaimChild"):
+                        link.LinkClaimChild = False
+                except Exception:
+                    pass
+                try:
+                    if hasattr(link, "ShowElement"):
+                        link.ShowElement = False
                 except Exception:
                     pass
                 try:

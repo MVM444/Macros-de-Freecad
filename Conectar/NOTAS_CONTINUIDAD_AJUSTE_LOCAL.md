@@ -32,3 +32,4 @@ Pendientes para proxima sesion (si reaparece el problema):
 
 Notas recurrentes:
 - Problema recurrente de icono: verificar ruta de icono en header de macro (`# Icon:`) y resolucion del workbench al recargar comandos.
+- Metodo recurrente de debug geometrico: usar overlay temporal + log de coordenadas (`ORIG/PLAN/NEW`) + marca de version interna para confirmar que FreeCAD esta ejecutando la version correcta del macro. Dejarlo desactivado por defecto y activarlo solo para diagnostico.

@@ -8,8 +8,13 @@ Gestionar_Visibilidad_ElectricCR.FCMacro
 Control de visibilidad por categorias para proyectos grandes de ElectricCR.
 Permite ocultar/mostrar/aislar:
 - Elementos 2D
-- Rutas criticas y conexiones
+- Rutas criticas
+- Conexiones
+- Tomacorrientes
+- Circuitos de tomacorrientes
+- Circuitos de iluminacion
 - Luminarias
+- HVAC
 - Anotaciones
 - Biblioteca interna (_lib)
 
@@ -357,6 +362,54 @@ def _obj_text_blob(obj, parent_groups):
     return _norm(" ".join(parts))
 
 
+def _obj_circuit_blob(obj, parent_groups):
+    parts = [
+        _safe_text(getattr(obj, "Name", "")),
+        _safe_text(getattr(obj, "Label", "")),
+    ]
+    for pname in (
+        "CircuitoID",
+        "Circuito",
+        "CircuitoToma",
+        "CircuitoTomas",
+        "CircuitoIluminacion",
+        "Alimentador",
+        "Ramal",
+        "Tipo",
+        "Categoria",
+        "KeyRegistro",
+    ):
+        try:
+            if hasattr(obj, pname):
+                parts.append(_safe_text(getattr(obj, pname)))
+        except Exception:
+            pass
+    for pg in parent_groups:
+        parts.append(_safe_text(getattr(pg, "Name", "")))
+        parts.append(_safe_text(getattr(pg, "Label", "")))
+    return _norm(" ".join(parts))
+
+
+def _component_type(obj):
+    classifier = _load_classifier()
+    if classifier and classifier is not False:
+        try:
+            ctype = _safe_text(classifier.get_component_type(obj))
+            if ctype:
+                return _norm(ctype)
+        except Exception:
+            pass
+    for pname in ("Tipo", "Categoria", "TipoLogico"):
+        try:
+            if hasattr(obj, pname):
+                v = _norm(getattr(obj, pname))
+                if v:
+                    return v
+        except Exception:
+            pass
+    return ""
+
+
 def _extract_text_payload(obj):
     for pname in ("Text", "String", "LabelText"):
         try:
@@ -376,13 +429,40 @@ def _is_library_object(obj, text_blob):
     return own.startswith("_lib") or "_lib " in text_blob or " _lib_" in text_blob
 
 
-def _is_route_object(obj, text_blob):
+def _is_critical_route_object(obj, text_blob):
     if _has_any(
         text_blob,
         (
             "ruta critica",
             "ruta_critica",
+            "rutas criticas",
+            "rutas_criticas",
+            "critical route",
+        ),
+    ):
+        return True
+    if _is_group(obj):
+        name = _norm(getattr(obj, "Name", ""))
+        label = _norm(getattr(obj, "Label", ""))
+        return (
+            name.startswith("ruta_critica")
+            or label.startswith("ruta_critica")
+            or name.startswith("rutas_criticas")
+            or label.startswith("rutas_criticas")
+            or name.startswith("ruta critica")
+            or label.startswith("ruta critica")
+            or name.startswith("rutas criticas")
+            or label.startswith("rutas criticas")
+        )
+    return False
+
+
+def _is_connection_object(obj, text_blob):
+    if _has_any(
+        text_blob,
+        (
             "conexiones",
+            "conexion",
             "conexion_hacia",
             "conector",
         ),
@@ -391,8 +471,76 @@ def _is_route_object(obj, text_blob):
     if _is_group(obj):
         name = _norm(getattr(obj, "Name", ""))
         label = _norm(getattr(obj, "Label", ""))
-        return name.startswith("conexiones") or label.startswith("conexiones")
+        return (
+            name.startswith("conexiones")
+            or label.startswith("conexiones")
+            or name.startswith("conexion")
+            or label.startswith("conexion")
+        )
     return False
+
+
+def _is_route_object(obj, text_blob):
+    # Compatibilidad hacia atras: "route" ahora representa rutas criticas.
+    return _is_critical_route_object(obj, text_blob)
+
+
+def _is_receptacle_object(obj, text_blob):
+    ctype = _component_type(obj)
+    if ctype in ("toma", "tomacorriente", "enchufe"):
+        return True
+    return _has_any(
+        text_blob,
+        (
+            "tomacorriente",
+            "tomacorrientes",
+            "toma",
+            "enchufe",
+            "receptaculo",
+            "receptacle",
+            "outlet",
+        ),
+    )
+
+
+def _is_receptacle_circuit_object(obj, text_blob, parent_groups):
+    cblob = _obj_circuit_blob(obj, parent_groups)
+    circuit_tokens = ("circuito", "circuit", "ramal", "alimentador", "conexion", "conexiones", "conector")
+    toma_tokens = ("tomacorriente", "tomacorrientes", "toma", "enchufe", "receptaculo", "receptacle", "outlet")
+    return _has_any(cblob, circuit_tokens) and _has_any(cblob, toma_tokens)
+
+
+def _is_lighting_circuit_object(obj, text_blob, parent_groups):
+    cblob = _obj_circuit_blob(obj, parent_groups)
+    circuit_tokens = ("circuito", "circuit", "ramal", "alimentador", "conexion", "conexiones", "conector")
+    light_tokens = ("iluminacion", "luminaria", "lampara", "lighting", "light", "luz")
+    return _has_any(cblob, circuit_tokens) and _has_any(cblob, light_tokens)
+
+
+def _is_hvac_object(obj, text_blob):
+    typeid = _norm(getattr(obj, "TypeId", ""))
+    ctype = _component_type(obj)
+    if _has_any(typeid, ("hvac", "mep::hvac", "mep_hvac", "mepworkbenchcr.mep.hvac")):
+        return True
+    if _has_any(ctype, ("hvac", "climatizacion", "ventilacion")):
+        return True
+    return _has_any(
+        text_blob,
+        (
+            "hvac",
+            "climatizacion",
+            "ventilacion mecanica",
+            "aire acondicionado",
+            "ducto",
+            "duct",
+            "difusor",
+            "rejilla",
+            "retorno",
+            "fan coil",
+            "condensadora",
+            "evaporadora",
+        ),
+    )
 
 
 def _is_annotation_object(obj, text_blob):
@@ -549,12 +697,23 @@ def _looks_3d_object(obj, text_blob):
     return False
 
 
-def _matches_filters(obj, filters, text_blob):
+def _matches_filters(obj, filters, text_blob, parent_groups=None):
+    pgs = parent_groups if parent_groups is not None else _parent_groups(obj)
     if filters.get("f_2d") and _is_2d_object(obj, text_blob):
         return True
-    if filters.get("f_routes") and _is_route_object(obj, text_blob):
+    if filters.get("f_routes") and _is_critical_route_object(obj, text_blob):
+        return True
+    if filters.get("f_connections") and _is_connection_object(obj, text_blob):
+        return True
+    if filters.get("f_receptacles") and _is_receptacle_object(obj, text_blob):
+        return True
+    if filters.get("f_receptacle_circuits") and _is_receptacle_circuit_object(obj, text_blob, pgs):
+        return True
+    if filters.get("f_lighting_circuits") and _is_lighting_circuit_object(obj, text_blob, pgs):
         return True
     if filters.get("f_lights") and _is_luminaire_object(obj, text_blob):
+        return True
+    if filters.get("f_hvac") and _is_hvac_object(obj, text_blob):
         return True
     if filters.get("f_notes") and _is_annotation_object(obj, text_blob):
         return True
@@ -573,7 +732,7 @@ def _collect_targets(doc, filters, candidates=None):
             continue
         pgs = _parent_groups(obj)
         blob = _obj_text_blob(obj, pgs)
-        if _matches_filters(obj, filters, blob):
+        if _matches_filters(obj, filters, blob, parent_groups=pgs):
             targets.append(obj)
     return targets
 
@@ -581,8 +740,13 @@ def _collect_targets(doc, filters, candidates=None):
 def _count_targets_by_category(doc, candidates=None):
     counts = {
         "2D": 0,
-        "Rutas": 0,
+        "RutasCriticas": 0,
+        "Conexiones": 0,
+        "Tomacorrientes": 0,
+        "CircTomas": 0,
+        "CircIlum": 0,
         "Luminarias": 0,
+        "HVAC": 0,
         "Anotaciones": 0,
         "Coordenadas": 0,
         "Biblioteca": 0,
@@ -595,10 +759,20 @@ def _count_targets_by_category(doc, candidates=None):
         blob = _obj_text_blob(obj, pgs)
         if _is_2d_object(obj, blob):
             counts["2D"] += 1
-        if _is_route_object(obj, blob):
-            counts["Rutas"] += 1
+        if _is_critical_route_object(obj, blob):
+            counts["RutasCriticas"] += 1
+        if _is_connection_object(obj, blob):
+            counts["Conexiones"] += 1
+        if _is_receptacle_object(obj, blob):
+            counts["Tomacorrientes"] += 1
+        if _is_receptacle_circuit_object(obj, blob, pgs):
+            counts["CircTomas"] += 1
+        if _is_lighting_circuit_object(obj, blob, pgs):
+            counts["CircIlum"] += 1
         if _is_luminaire_object(obj, blob):
             counts["Luminarias"] += 1
+        if _is_hvac_object(obj, blob):
+            counts["HVAC"] += 1
         if _is_annotation_object(obj, blob):
             counts["Anotaciones"] += 1
         if _is_coordinate_annotation(obj, blob):
@@ -1003,7 +1177,12 @@ def _show_all(doc, keep_coords_hidden=True, candidates=None):
         coord_filters = {
             "f_2d": False,
             "f_routes": False,
+            "f_connections": False,
+            "f_receptacles": False,
+            "f_receptacle_circuits": False,
+            "f_lighting_circuits": False,
             "f_lights": False,
+            "f_hvac": False,
             "f_notes": False,
             "f_coords": True,
             "f_lib": False,
@@ -1055,8 +1234,8 @@ class VisibilityTaskPanel:
         root.addLayout(head)
 
         info = QtWidgets.QLabel(
-            "Seleccione filtros, elija la operacion y aplique.\n"
-            "Use ModoVisual=Solo3D para apagar 2D en dispositivos con esa propiedad."
+            "Seleccione filtros y use los botones de accion.\n"
+            "ModoVisual se aplica solo con su boton dedicado."
         )
         info.setWordWrap(True)
         root.addWidget(info)
@@ -1064,25 +1243,40 @@ class VisibilityTaskPanel:
         grp = QtWidgets.QGroupBox("Filtros de objetos")
         grid = QtWidgets.QGridLayout(grp)
         self.chk_2d = QtWidgets.QCheckBox("Elementos 2D (Shape2DView, *_2D, Solo2D)")
-        self.chk_routes = QtWidgets.QCheckBox("Rutas criticas / Conexiones")
+        self.chk_routes = QtWidgets.QCheckBox("Rutas criticas")
+        self.chk_connections = QtWidgets.QCheckBox("Conexiones")
+        self.chk_receptacles = QtWidgets.QCheckBox("Tomacorrientes")
+        self.chk_receptacle_circuits = QtWidgets.QCheckBox("Circuitos de tomacorrientes")
+        self.chk_lighting_circuits = QtWidgets.QCheckBox("Circuitos de iluminacion")
         self.chk_lights = QtWidgets.QCheckBox("Luminarias")
+        self.chk_hvac = QtWidgets.QCheckBox("HVAC")
         self.chk_notes = QtWidgets.QCheckBox("Anotaciones / etiquetas")
         self.chk_coords = QtWidgets.QCheckBox("Coordenadas auxiliares de luminarias")
         self.chk_lib = QtWidgets.QCheckBox("Biblioteca interna (_lib)")
 
         self.chk_2d.setChecked(True)
         self.chk_routes.setChecked(False)
+        self.chk_connections.setChecked(False)
+        self.chk_receptacles.setChecked(False)
+        self.chk_receptacle_circuits.setChecked(False)
+        self.chk_lighting_circuits.setChecked(False)
         self.chk_lights.setChecked(False)
+        self.chk_hvac.setChecked(False)
         self.chk_notes.setChecked(False)
         self.chk_coords.setChecked(False)
         self.chk_lib.setChecked(False)
 
         grid.addWidget(self.chk_2d, 0, 0, 1, 2)
         grid.addWidget(self.chk_routes, 1, 0, 1, 2)
-        grid.addWidget(self.chk_lights, 2, 0, 1, 2)
-        grid.addWidget(self.chk_notes, 3, 0, 1, 2)
-        grid.addWidget(self.chk_coords, 4, 0, 1, 2)
-        grid.addWidget(self.chk_lib, 5, 0, 1, 2)
+        grid.addWidget(self.chk_connections, 2, 0, 1, 2)
+        grid.addWidget(self.chk_receptacles, 3, 0, 1, 2)
+        grid.addWidget(self.chk_receptacle_circuits, 4, 0, 1, 2)
+        grid.addWidget(self.chk_lighting_circuits, 5, 0, 1, 2)
+        grid.addWidget(self.chk_lights, 6, 0, 1, 2)
+        grid.addWidget(self.chk_hvac, 7, 0, 1, 2)
+        grid.addWidget(self.chk_notes, 8, 0, 1, 2)
+        grid.addWidget(self.chk_coords, 9, 0, 1, 2)
+        grid.addWidget(self.chk_lib, 10, 0, 1, 2)
         root.addWidget(grp)
 
         form = QtWidgets.QFormLayout()
@@ -1096,12 +1290,6 @@ class VisibilityTaskPanel:
         self.ed_scope_groups.setPlaceholderText("ej: electrico, luminarias, conexiones")
         self.ed_scope_groups.setEnabled(False)
         form.addRow("Grupos/Dirs", self.ed_scope_groups)
-
-        self.cmb_action = QtWidgets.QComboBox()
-        self.cmb_action.addItem("Ocultar seleccion", "hide")
-        self.cmb_action.addItem("Mostrar seleccion", "show")
-        self.cmb_action.addItem("Solo seleccion (oculta el resto)", "isolate")
-        form.addRow("Operacion", self.cmb_action)
 
         self.cmb_mode = QtWidgets.QComboBox()
         self.cmb_mode.addItem("No cambiar", "__NO_CHANGE__")
@@ -1125,20 +1313,29 @@ class VisibilityTaskPanel:
         root.addWidget(self.lbl_status)
 
         btn_row = QtWidgets.QHBoxLayout()
-        self.btn_apply = QtWidgets.QPushButton("Aplicar")
+        self.btn_show = QtWidgets.QPushButton("Mostrar")
+        self.btn_hide = QtWidgets.QPushButton("Ocultar")
+        self.btn_isolate = QtWidgets.QPushButton("Ocultar resto")
         self.btn_preview = QtWidgets.QPushButton("Analizar")
+        self.btn_apply_mode = QtWidgets.QPushButton("Aplicar ModoVisual")
         self.btn_show_all = QtWidgets.QPushButton("Mostrar todo")
         self.btn_close = QtWidgets.QPushButton("Cerrar panel")
-        btn_row.addWidget(self.btn_apply)
+        btn_row.addWidget(self.btn_show)
+        btn_row.addWidget(self.btn_hide)
+        btn_row.addWidget(self.btn_isolate)
         btn_row.addWidget(self.btn_preview)
+        btn_row.addWidget(self.btn_apply_mode)
         btn_row.addWidget(self.btn_show_all)
         btn_row.addStretch(1)
         btn_row.addWidget(self.btn_close)
         root.addLayout(btn_row)
 
         self._set_button_icons()
-        self.btn_apply.clicked.connect(self._on_apply)
+        self.btn_show.clicked.connect(lambda _checked=False: self._on_apply_action("show"))
+        self.btn_hide.clicked.connect(lambda _checked=False: self._on_apply_action("hide"))
+        self.btn_isolate.clicked.connect(lambda _checked=False: self._on_apply_action("isolate"))
         self.btn_preview.clicked.connect(self._on_preview)
+        self.btn_apply_mode.clicked.connect(self._on_apply_mode)
         self.btn_show_all.clicked.connect(self._on_show_all)
         self.btn_close.clicked.connect(self._close_panel)
         self.cmb_scope.currentIndexChanged.connect(self._update_scope_ui)
@@ -1147,8 +1344,16 @@ class VisibilityTaskPanel:
     def _set_button_icons(self):
         style = self.form.style()
         try:
-            self.btn_apply.setIcon(style.standardIcon(QtWidgets.QStyle.SP_DialogApplyButton))
+            def _set_icon(btn, qstyle_name):
+                icon_id = getattr(QtWidgets.QStyle, qstyle_name, None)
+                if icon_id is not None:
+                    btn.setIcon(style.standardIcon(icon_id))
+
+            _set_icon(self.btn_show, "SP_DialogYesButton")
+            _set_icon(self.btn_hide, "SP_DialogNoButton")
+            _set_icon(self.btn_isolate, "SP_DialogDiscardButton")
             self.btn_preview.setIcon(style.standardIcon(QtWidgets.QStyle.SP_FileDialogDetailedView))
+            _set_icon(self.btn_apply_mode, "SP_DialogApplyButton")
             self.btn_show_all.setIcon(style.standardIcon(QtWidgets.QStyle.SP_BrowserReload))
             self.btn_close.setIcon(style.standardIcon(QtWidgets.QStyle.SP_DialogCloseButton))
         except Exception:
@@ -1158,7 +1363,12 @@ class VisibilityTaskPanel:
         return {
             "f_2d": self.chk_2d.isChecked(),
             "f_routes": self.chk_routes.isChecked(),
+            "f_connections": self.chk_connections.isChecked(),
+            "f_receptacles": self.chk_receptacles.isChecked(),
+            "f_receptacle_circuits": self.chk_receptacle_circuits.isChecked(),
+            "f_lighting_circuits": self.chk_lighting_circuits.isChecked(),
             "f_lights": self.chk_lights.isChecked(),
+            "f_hvac": self.chk_hvac.isChecked(),
             "f_notes": self.chk_notes.isChecked(),
             "f_coords": self.chk_coords.isChecked(),
             "f_lib": self.chk_lib.isChecked(),
@@ -1185,7 +1395,10 @@ class VisibilityTaskPanel:
             selected = 0
         txt = (
             "Conteos: "
-            f"2D={counts['2D']} | Rutas={counts['Rutas']} | Luminarias={counts['Luminarias']} | "
+            f"2D={counts['2D']} | RutasCriticas={counts['RutasCriticas']} | "
+            f"Conexiones={counts['Conexiones']} | Tomacorrientes={counts['Tomacorrientes']} | "
+            f"CircTomas={counts['CircTomas']} | CircIlum={counts['CircIlum']} | "
+            f"Luminarias={counts['Luminarias']} | HVAC={counts['HVAC']} | "
             f"Anotaciones={counts['Anotaciones']} | Coordenadas={counts['Coordenadas']} | "
             f"Biblioteca={counts['Biblioteca']} | Seleccion actual={selected} | "
             f"Ambito objetos={len(scope_set)}"
@@ -1194,14 +1407,11 @@ class VisibilityTaskPanel:
             txt += f" | Nota: {scope_msg}"
         self.lbl_preview.setText(txt)
 
-    def _on_apply(self):
+    def _on_apply_action(self, action):
         filters = self._filters()
-        mode_value = self.cmb_mode.currentData()
-        has_mode_request = bool(_canon_mode(mode_value))
-        if (not any(filters.values())) and (not has_mode_request):
-            self.lbl_status.setText("Seleccione al menos un filtro o un ModoVisual.")
+        if not any(filters.values()):
+            self.lbl_status.setText("Seleccione al menos un filtro.")
             return
-        action = self.cmb_action.currentData()
         scope_mode, scope_text = self._scope()
         scope_set, scope_msg = _scope_candidates(self.doc, scope_mode, scope_text)
         if not scope_set:
@@ -1210,21 +1420,56 @@ class VisibilityTaskPanel:
 
         targets = _collect_targets(self.doc, filters, candidates=scope_set)
         vis_changed = _apply_visibility(self.doc, targets, action)
+
+        if vis_changed:
+            try:
+                self.doc.recompute()
+            except Exception:
+                pass
+
+        action_label = {
+            "hide": "Ocultar",
+            "show": "Mostrar",
+            "isolate": "Ocultar resto",
+        }.get(action, action)
+        msg = (
+            f"Accion: {action_label} | "
+            f"Objetos filtrados: {len(targets)} | "
+            f"Visibilidad modificada: {vis_changed}"
+        )
+        if scope_msg:
+            msg += f" | Nota: {scope_msg}"
+        self.lbl_status.setText(msg)
+        _info(msg)
+        self._on_preview()
+
+    def _on_apply_mode(self):
+        mode_value = self.cmb_mode.currentData()
+        if not _canon_mode(mode_value):
+            self.lbl_status.setText("Seleccione un ModoVisual distinto de 'No cambiar'.")
+            return
+
+        scope_mode, scope_text = self._scope()
+        scope_set, scope_msg = _scope_candidates(self.doc, scope_mode, scope_text)
+        if not scope_set:
+            self.lbl_status.setText("Ambito vacio: no hay objetos para procesar.")
+            return
+
         mode_info = _apply_mode_override(self.doc, mode_value, candidates=scope_set)
         mode_changed = int(mode_info.get("mode_changed", 0))
         link_mode_fixed = int(mode_info.get("link_vis_changed", 0))
         retargeted = int(mode_info.get("retargeted_links", 0))
         fallback_mode_fixed = int(mode_info.get("fallback_vis_changed", 0))
 
-        if vis_changed or mode_changed or link_mode_fixed or retargeted or fallback_mode_fixed:
+        if mode_changed or link_mode_fixed or retargeted or fallback_mode_fixed:
             try:
                 self.doc.recompute()
             except Exception:
                 pass
 
         msg = (
-            f"Objetos filtrados: {len(targets)} | "
-            f"Visibilidad modificada: {vis_changed} | "
+            f"ModoVisual aplicado: {mode_value} | "
+            f"Objetos ambito: {len(scope_set)} | "
             f"ModoVisual modificado: {mode_changed} | "
             f"Sync links 2D/3D: {link_mode_fixed} | "
             f"Links retargeted: {retargeted} | "

@@ -4,7 +4,7 @@
 # Transaction: self
 #
 # Organiza luminarias segun rectangulos del grupo Areas:
-#   Electric/ILUMINACION/CIRCUITOS DE ILUMINACION/RECINTOS/<Recinto>/<Apagador>
+#   Electric/ILUMINACION/<Circuito o TP-01>/<Recinto>/<Apagador>
 #
 # Nota:
 # - Por defecto crea App::Link de indice (no mueve luminarias originales).
@@ -19,8 +19,9 @@ import FreeCAD as App
 import FreeCADGui as Gui
 
 try:
-    from PySide2 import QtWidgets
+    from PySide2 import QtCore, QtWidgets
 except Exception:
+    from PySide import QtCore
     from PySide import QtGui as QtWidgets
 
 
@@ -53,6 +54,7 @@ ROOT_LABEL_ALIASES = {"electric", "electrico"}
 ILUM_LABEL_ALIASES = {"iluminacion"}
 CIRCUITOS_ILUM_ALIASES = {"circuitos de iluminacion", "circuitos iluminacion", "circuitos"}
 RECINTOS_LABEL_ALIASES = {"recintos", "areas", "area", "espacios", "zonas"}
+LEGACY_RECINTOS_CONTAINER_ALIASES = {"recintos", "areas"}
 
 RECINTO_CHILD_LABELS = (
     "Luminarias",
@@ -70,6 +72,7 @@ INDEX_WITH_LINKS = True
 INDEX_TAG = "ORG_LUM_IDX"
 INDEX_PREFIX = "IdxLum"
 DEFAULT_RENAME_PREFIX = "Lum"
+USE_FLOATING_DIALOG_ON_WINDOWS = True
 
 AREA_GROUP_ALIASES = {
     "areas",
@@ -203,6 +206,21 @@ def _is_valid_id(value):
     return True
 
 
+def _canonical_recinto_label(value):
+    txt = _safe_text(value).strip()
+    if txt.startswith("'"):
+        txt = txt[1:].strip()
+    txt = re.sub(r"\s+", " ", txt).strip()
+    # Collapse auto-number suffixes often created by CAD/FreeCAD labels:
+    # Archivo001 -> Archivo, Suministros 003 -> Suministros
+    m = re.match(r"^(.*?)(?:[\s_\-]*)(\d{3,})$", txt)
+    if m:
+        base = _safe_text(m.group(1)).strip(" _-")
+        if base:
+            txt = base
+    return txt or FALLBACK_AREA
+
+
 def _is_group(obj):
     return getattr(obj, "TypeId", "") == "App::DocumentObjectGroup"
 
@@ -308,6 +326,22 @@ def _find_child_group_by_alias(parent, aliases):
     return None
 
 
+def _find_child_group_by_canonical_label(parent, wanted_label):
+    if parent is None:
+        return None
+    wanted = _normalize(_canonical_recinto_label(wanted_label))
+    if not wanted:
+        return None
+    for child in (getattr(parent, "Group", []) or []):
+        if not _is_group(child):
+            continue
+        c_label = _safe_text(getattr(child, "Label", "")).strip()
+        c_key = _normalize(_canonical_recinto_label(c_label))
+        if c_key == wanted:
+            return child
+    return None
+
+
 def _unique_doc_name(doc, base_name):
     name = _token_for_name(base_name, "obj")
     if doc.getObject(name) is None:
@@ -347,7 +381,51 @@ def _ensure_child_group(doc, parent, label, name_prefix):
     return grp
 
 
+def _resolve_recinto_group(doc, circuit_group, recinto_label):
+    label = _safe_text(recinto_label).strip() or FALLBACK_AREA
+
+    # Preferred layout: Circuito -> Recinto -> Apagador
+    direct = _find_child_group_by_alias(circuit_group, [label])
+    if direct is not None:
+        return direct
+    direct = _find_child_group_by_canonical_label(circuit_group, label)
+    if direct is not None:
+        try:
+            if _normalize(getattr(direct, "Label", "")) != _normalize(label):
+                direct.Label = label
+        except Exception:
+            pass
+        return direct
+
+    # Backward compatibility: previous layout had an intermediate RECINTOS/AREAS container.
+    legacy = _find_child_group_by_alias(circuit_group, LEGACY_RECINTOS_CONTAINER_ALIASES)
+    if legacy is not None:
+        legacy_child = _find_child_group_by_alias(legacy, [label])
+        if legacy_child is None:
+            legacy_child = _find_child_group_by_canonical_label(legacy, label)
+        if legacy_child is not None:
+            try:
+                if _normalize(getattr(legacy_child, "Label", "")) != _normalize(label):
+                    legacy_child.Label = label
+            except Exception:
+                pass
+            try:
+                circuit_group.addObject(legacy_child)
+                try:
+                    legacy.removeObject(legacy_child)
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            return legacy_child
+
+    return _ensure_child_group(doc, circuit_group, label, "Lum_Area")
+
+
 def _is_luminaria(obj):
+    type_id = _safe_text(getattr(obj, "TypeId", ""))
+    if type_id.startswith("Sketcher::"):
+        return False
     try:
         if _component_classifier_mod is not None:
             ctype = _component_classifier_mod.get_component_type(obj)
@@ -654,11 +732,29 @@ def _get_linked_object(obj):
     return None
 
 
-def _collect_source_luminarias(candidates):
+def _collect_link_source_ids(doc):
+    out = set()
+    if doc is None:
+        return out
+    for obj in (doc.Objects or []):
+        if not _is_link(obj):
+            continue
+        src = _get_linked_object(obj)
+        if src is None:
+            continue
+        sid = getattr(src, "Name", None) or id(src)
+        out.add(sid)
+    return out
+
+
+def _collect_source_luminarias(candidates, skip_source_ids=None):
     out = []
     seen = set()
+    skip_ids = set(skip_source_ids or [])
     unwrapped_generated = 0
     skipped_generated = 0
+    # If there are real links in source candidates, prefer those and skip raw objects.
+    has_real_links = any(_is_link(o) and (not _is_generated_index_link(o)) for o in (candidates or []))
     for obj in candidates:
         src = obj
         if _is_generated_index_link(obj):
@@ -671,9 +767,18 @@ def _collect_source_luminarias(candidates):
         if _is_generated_index_link(src):
             skipped_generated += 1
             continue
-        if not _is_luminaria(src):
+        type_id = _safe_text(getattr(src, "TypeId", ""))
+        if type_id.startswith("Sketcher::"):
+            continue
+        if has_real_links and (not _is_link(src)):
             continue
         sid = getattr(src, "Name", None) or id(src)
+        # If an object already acts as source for links, treat it as prototype/source.
+        # Keep the link instances in organization output, skip the raw source object.
+        if (sid in skip_ids) and (not _is_link(src)):
+            continue
+        if not _is_luminaria(src):
+            continue
         if sid in seen:
             continue
         seen.add(sid)
@@ -767,7 +872,9 @@ def _collect_candidate_objects_from_group(group_obj):
 
 def _group_luminaria_count(group_obj):
     candidates = _collect_candidate_objects_from_group(group_obj)
-    luminarias, _u, _s = _collect_source_luminarias(candidates)
+    doc = getattr(group_obj, "Document", None)
+    skip_sources = _collect_link_source_ids(doc)
+    luminarias, _u, _s = _collect_source_luminarias(candidates, skip_source_ids=skip_sources)
     return len(luminarias)
 
 
@@ -804,6 +911,28 @@ def _remove_obj_from_group_tree(root_group, obj):
                 removed += 1
         except Exception:
             continue
+    return removed
+
+
+def _prune_non_link_luminarias(root_group):
+    removed = 0
+    if root_group is None:
+        return removed
+    for grp in _iter_group_tree(root_group):
+        g_label = _normalize(getattr(grp, "Label", ""))
+        if not (("apagador" in g_label) or ("switch" in g_label) or ("interruptor" in g_label)):
+            continue
+        children = list(getattr(grp, "Group", []) or [])
+        for child in children:
+            if _is_group(child) or _is_link(child):
+                continue
+            if not _is_luminaria(child):
+                continue
+            try:
+                grp.removeObject(child)
+                removed += 1
+            except Exception:
+                continue
     return removed
 
 
@@ -870,7 +999,11 @@ def organizar_luminarias_por_circuito_y_apagador(
         candidates = [obj for obj in (doc.Objects or []) if not _is_group(obj)]
         scope_txt = "documento completo"
 
-    luminarias, unwrapped_generated, skipped_generated = _collect_source_luminarias(candidates)
+    skip_sources = _collect_link_source_ids(doc)
+    luminarias, unwrapped_generated, skipped_generated = _collect_source_luminarias(
+        candidates,
+        skip_source_ids=skip_sources,
+    )
     if not luminarias:
         if g_lum_src is not None:
             _warn("No se detectaron luminarias en el grupo seleccionado.")
@@ -883,6 +1016,8 @@ def organizar_luminarias_por_circuito_y_apagador(
         _log(f"Seleccion contiene links indice previos. Se resolvieron a fuente: {unwrapped_generated}")
     if skipped_generated:
         _warn(f"Links indice generados omitidos por no resolver fuente: {skipped_generated}")
+    if skip_sources:
+        _log(f"Fuentes base de links detectadas y omitidas del agrupado: {len(skip_sources)}")
 
     circuit_name, circuit_source = _resolve_circuit_label(doc, luminarias, manual_label=circuit_label)
 
@@ -922,9 +1057,13 @@ def organizar_luminarias_por_circuito_y_apagador(
         except Exception:
             pass
 
-    g_areas = _find_child_group_by_alias(g_circ, RECINTOS_LABEL_ALIASES)
-    if g_areas is None:
-        g_areas = _ensure_child_group(doc, g_circ, RECINTOS_LABEL, "RECINTOS")
+    legacy_recintos = _find_child_group_by_alias(g_circ, LEGACY_RECINTOS_CONTAINER_ALIASES)
+    if legacy_recintos is not None:
+        _log(
+            "Contenedor legacy de recintos detectado bajo circuito: "
+            f"'{getattr(legacy_recintos, 'Label', legacy_recintos.Name)}'. "
+            "Los recintos nuevos se crearan directo bajo el circuito."
+        )
 
     removed_links = 0
     indexed = 0
@@ -932,6 +1071,7 @@ def organizar_luminarias_por_circuito_y_apagador(
     skipped = 0
     renamed = 0
     detached_prev = 0
+    pruned_non_links = 0
     area_fallback = 0
     switch_fallback = 0
     buckets = {}
@@ -942,9 +1082,14 @@ def organizar_luminarias_por_circuito_y_apagador(
     try:
         if index_with_links:
             removed_links = _cleanup_generated_index_links(doc, g_lum)
+        if any(_is_link(o) for o in luminarias):
+            pruned_non_links = _prune_non_link_luminarias(g_circ)
+            if pruned_non_links:
+                _warn(f"Se retiraron {pruned_non_links} luminaria(s) no-link de grupos Apagador para evitar mezcla con Links.")
 
         for obj in luminarias:
-            area_name, area_source = _resolve_area(doc, obj, area_records)
+            area_name_raw, area_source = _resolve_area(doc, obj, area_records)
+            area_name = _canonical_recinto_label(area_name_raw)
             switch_name, switch_source = _resolve_switch(doc, obj, area_name)
 
             if _normalize(area_name) == _normalize(FALLBACK_AREA):
@@ -952,7 +1097,7 @@ def organizar_luminarias_por_circuito_y_apagador(
             if _normalize(switch_name) == _normalize(FALLBACK_SWITCH):
                 switch_fallback += 1
 
-            g_area = _ensure_child_group(doc, g_areas, area_name, "Lum_Area")
+            g_area = _resolve_recinto_group(doc, g_circ, area_name)
             g_switch = _ensure_child_group(doc, g_area, switch_name, "Lum_Apagador")
 
             target_obj = None
@@ -966,7 +1111,7 @@ def organizar_luminarias_por_circuito_y_apagador(
                         skipped += 1
                         target_obj = obj
                     else:
-                        detached_prev += _remove_obj_from_group_tree(g_areas, obj)
+                        detached_prev += _remove_obj_from_group_tree(g_circ, obj)
                         g_switch.addObject(obj)
                         moved += 1
                         target_obj = obj
@@ -1001,7 +1146,8 @@ def organizar_luminarias_por_circuito_y_apagador(
         "Proceso finalizado. "
         f"Luminarias detectadas={len(luminarias)} | modo={mode_txt} | indexadas={indexed} | movidas={moved} | "
         f"ya_organizadas={skipped} | renombradas={renamed} | desancladas_previas={detached_prev} | "
-        f"links_previos_eliminados={removed_links} | circuito='{circuit_name}' ({circuit_source}) | "
+        f"links_previos_eliminados={removed_links} | no_link_retiradas={pruned_non_links} | "
+        f"circuito='{circuit_name}' ({circuit_source}) | "
         f"sin_area={area_fallback} | sin_apagador={switch_fallback} | "
         f"alcance={scope_txt}"
     )
@@ -1015,7 +1161,8 @@ class OrganizarLuminariasForm(QtWidgets.QWidget):
         super(OrganizarLuminariasForm, self).__init__(parent)
         self._doc = doc
         self.setWindowTitle("Organizar luminarias por Areas")
-        self.setMinimumWidth(700)
+        # Keep task-panel friendly width; large minimum widths can trigger Qt/Windows paint glitches.
+        self.setMinimumWidth(340)
         self._build_ui()
         self.refresh_lists()
 
@@ -1102,6 +1249,8 @@ class OrganizarLuminariasForm(QtWidgets.QWidget):
             rename_prefix=prefix,
             use_selection_scope=use_sel,
         )
+        if mode == "links":
+            _warn("Modo indice con App::Link: se crean links indice (aparente duplicado). Use 'Reacomodar objetos' para no duplicar.")
 
 
 class OrganizarLuminariasTaskPanel:
@@ -1144,19 +1293,29 @@ def run():
         return
 
     panel = OrganizarLuminariasTaskPanel(doc)
-    try:
-        Gui.Control.closeDialog()
-    except Exception:
-        pass
-    try:
-        Gui.Control.showDialog(panel)
-        return
-    except Exception:
-        pass
+    force_floating = bool(USE_FLOATING_DIALOG_ON_WINDOWS and sys.platform.startswith("win"))
+    if not force_floating:
+        try:
+            Gui.Control.closeDialog()
+        except Exception:
+            pass
+        try:
+            Gui.Control.showDialog(panel)
+            return
+        except Exception:
+            pass
 
     dlg = QtWidgets.QDialog(Gui.getMainWindow())
     dlg.setWindowTitle("Organizar luminarias por Areas")
-    dlg.setMinimumWidth(760)
+    dlg.setMinimumWidth(540)
+    try:
+        dlg.setAttribute(QtCore.Qt.WA_TranslucentBackground, False)
+    except Exception:
+        pass
+    try:
+        dlg.setWindowFlag(QtCore.Qt.NoDropShadowWindowHint, True)
+    except Exception:
+        pass
     lay = QtWidgets.QVBoxLayout(dlg)
     lay.addWidget(panel.form)
     btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Close)

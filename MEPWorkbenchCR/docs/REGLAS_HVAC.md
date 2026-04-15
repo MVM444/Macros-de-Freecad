@@ -86,3 +86,16 @@
 - La etiqueta depende del recinto como entidad principal.
 - Debe actualizarse al cambiar carga, equipo o cobertura.
 - Debe ser legible en vista de trabajo y util para revision tecnica.
+
+## Reglas de Areas y SubAreas (proxima base)
+
+- El contorno del recinto puede ser de cualquier forma (poligono irregular, circulo, triangulo, etc).
+- Las subareas pueden ser de cualquier forma, con preferencia operativa por rectangulos.
+- El objeto `Area` representa el perfil geometrico del recinto.
+- Un mismo recinto puede tener multiples `SubAreas` por disciplina.
+- Debe soportarse que en un mismo recinto existan 2 o mas subareas de Iluminacion.
+- Debe soportarse que en un mismo recinto existan 2 o mas subareas de Incendio.
+- Debe soportarse que en un mismo recinto existan 2 o mas subareas de HVAC.
+- Si existen subareas validas, el calculo debe priorizar subareas.
+- Si no existen subareas, el calculo debe usar Areas.
+- Si no existen Areas pero si subareas validas, el calculo debe usar subareas.

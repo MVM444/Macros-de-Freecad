@@ -53,6 +53,10 @@ CUT_T_MAX = 0.98
 STAIR_MIDDLE_MAX = 550.0
 BACKTRACK_DOT_LIMIT = -0.965
 BACKTRACK_BASE_PENALTY = 1400.0
+DEBUG_OVERLAY_ENABLED = False
+DEBUG_OVERLAY_GROUP = "AjusteLocal_Debug"
+DEBUG_TRACE_VERSION = "2026-03-26-bb2"
+_DEBUG_RUNTIME_STATE = {}
 
 
 def log_info(msg):
@@ -65,6 +69,53 @@ def log_warn(msg):
 
 def log_error(msg):
     App.Console.PrintError(f"{TAG} {msg}\n")
+
+
+def _fmt_coord(v):
+    try:
+        return f"({float(v.x):.1f}, {float(v.y):.1f}, {float(v.z):.1f})"
+    except Exception:
+        return "(?, ?, ?)"
+
+
+def _set_debug_runtime_state(**kwargs):
+    global _DEBUG_RUNTIME_STATE
+    state = dict(_DEBUG_RUNTIME_STATE or {})
+    for key, value in kwargs.items():
+        state[key] = value
+    _DEBUG_RUNTIME_STATE = state
+
+
+def _get_debug_runtime_state():
+    try:
+        return dict(_DEBUG_RUNTIME_STATE or {})
+    except Exception:
+        return {}
+
+
+def _log_debug_coordinates(route_name, action, target, original_points, new_points, plan_points=None, endpoint_idx=None, board_idx=None):
+    if not DEBUG_OVERLAY_ENABLED:
+        return
+    safe_name = _safe_text(route_name).strip() or "Ruta"
+    safe_action = _safe_text(action).strip() or "?"
+    raw_pts = _dedup_points(original_points)
+    plan_pts = _dedup_points(plan_points if plan_points else original_points)
+    new_pts = _dedup_points(new_points)
+    log_info(f"DEBUG_VERSION {DEBUG_TRACE_VERSION}")
+    log_info(f"DEBUG_COORDS ruta={safe_name} | accion={safe_action}")
+    log_info(
+        f"DEBUG_COUNTS raw={len(raw_pts)} | plan={len(plan_pts)} | new={len(new_pts)} "
+        f"| endpoint_idx={endpoint_idx if endpoint_idx is not None else '?'} "
+        f"| board_idx={board_idx if board_idx is not None else '?'}"
+    )
+    if target is not None:
+        log_info(f"DEBUG_TARGET { _fmt_coord(target) }")
+    for idx, pt in enumerate(raw_pts, start=1):
+        log_info(f"DEBUG_ORIG[{idx:02d}]={_fmt_coord(pt)}")
+    for idx, pt in enumerate(plan_pts, start=1):
+        log_info(f"DEBUG_PLAN[{idx:02d}]={_fmt_coord(pt)}")
+    for idx, pt in enumerate(new_pts, start=1):
+        log_info(f"DEBUG_NEW[{idx:02d}]={_fmt_coord(pt)}")
 
 
 def _vec(x=0.0, y=0.0, z=0.0):
@@ -130,6 +181,41 @@ def _clone_points(points):
     return [_vec(p.x, p.y, p.z) for p in (points or [])]
 
 
+def _is_axis_aligned_segment(a, b, tol=POINT_TOL):
+    changed = 0
+    for ax in ("x", "y", "z"):
+        if abs(float(getattr(b, ax)) - float(getattr(a, ax))) > float(tol):
+            changed += 1
+    return changed <= 1
+
+
+def _is_orthogonal_polyline(points, tol=POINT_TOL):
+    pts = _dedup_points(points, tol=tol)
+    if len(pts) < 2:
+        return False
+    for i in range(len(pts) - 1):
+        if not _is_axis_aligned_segment(pts[i], pts[i + 1], tol=tol):
+            return False
+    return True
+
+
+def _orthogonal_intersection_on_axes(line_a_pt, axis_a, line_b_pt, axis_b, tol=POINT_TOL):
+    a = _safe_text(axis_a).strip().lower()
+    b = _safe_text(axis_b).strip().lower()
+    if a not in ("x", "y", "z") or b not in ("x", "y", "z") or a == b:
+        return None
+    rem = [ax for ax in ("x", "y", "z") if ax not in (a, b)]
+    if len(rem) != 1:
+        return None
+    r = rem[0]
+    if abs(float(getattr(line_a_pt, r)) - float(getattr(line_b_pt, r))) > float(tol):
+        return None
+    out = _vec(line_a_pt.x, line_a_pt.y, line_a_pt.z)
+    out = _set_axis_value(out, a, float(getattr(line_b_pt, a)))
+    out = _set_axis_value(out, r, float(getattr(line_a_pt, r)))
+    return out
+
+
 def _merge_head_with_tail(head_pts, tail_pts):
     head = _simplify_collinear(_dedup_points(head_pts), tol=POINT_TOL)
     tail = _clone_points(tail_pts)
@@ -179,6 +265,16 @@ def _join_turn_penalty(prev_pt, join_pt, next_pt):
     return float(120.0 + abs(d) * 220.0)
 
 
+def _is_turn(prev_pt, cur_pt, next_pt):
+    if prev_pt is None or cur_pt is None or next_pt is None:
+        return False
+    vin = _normalize(_vec(cur_pt.x - prev_pt.x, cur_pt.y - prev_pt.y, cur_pt.z - prev_pt.z))
+    vout = _normalize(_vec(next_pt.x - cur_pt.x, next_pt.y - cur_pt.y, next_pt.z - cur_pt.z))
+    if _is_zero_vec(vin) or _is_zero_vec(vout):
+        return False
+    return abs(float(_dot(vin, vout))) < 0.995
+
+
 def _zigzag_penalty(p0, p1, p2, p3):
     if p0 is None or p1 is None or p2 is None or p3 is None:
         return 0.0
@@ -200,6 +296,30 @@ def _zigzag_penalty(p0, p1, p2, p3):
     return 260.0
 
 
+def _tight_double_bend_penalty(points):
+    pts = _dedup_points(points)
+    if len(pts) < 4:
+        return 0.0
+    total = 0.0
+    soft_limit = max(120.0, 2.0 * float(BEND_RADIUS_TARGET))
+    hard_limit = max(60.0, 1.1 * float(BEND_RADIUS_TARGET))
+    for i in range(1, len(pts) - 2):
+        if not _is_turn(pts[i - 1], pts[i], pts[i + 1]):
+            continue
+        if not _is_turn(pts[i], pts[i + 1], pts[i + 2]):
+            continue
+        mid_len = float(pts[i].distanceToPoint(pts[i + 1]))
+        if mid_len <= POINT_TOL:
+            total += 2200.0
+            continue
+        if mid_len < hard_limit:
+            total += float(1200.0 + (hard_limit - mid_len) * 2.0)
+            continue
+        if mid_len < soft_limit:
+            total += float(420.0 + (soft_limit - mid_len) * 0.8)
+    return float(total)
+
+
 def _path_zigzag_penalty(points):
     pts = _dedup_points(points)
     if len(pts) < 4:
@@ -208,6 +328,22 @@ def _path_zigzag_penalty(points):
     for i in range(len(pts) - 3):
         total += _zigzag_penalty(pts[i], pts[i + 1], pts[i + 2], pts[i + 3])
     return float(total)
+
+
+def _fillet_capacity_penalty(points, target_radius=BEND_RADIUS_TARGET):
+    pts = _dedup_points(points)
+    bends = 0
+    for i in range(1, len(pts) - 1):
+        if _is_turn(pts[i - 1], pts[i], pts[i + 1]):
+            bends += 1
+    if bends <= 0:
+        return 0.0
+    cap = float(_max_fillet_radius(points))
+    tgt = max(0.0, float(target_radius))
+    if cap >= tgt:
+        return 0.0
+    shortfall = max(0.0, tgt - cap)
+    return float(180.0 + (shortfall * 4.0))
 
 
 def _path_backtrack_penalty(points, dot_limit=BACKTRACK_DOT_LIMIT):
@@ -336,6 +472,161 @@ def _collapse_staircase_patterns(points, max_middle=STAIR_MIDDLE_MAX, protected_
             changed = True
             break
     return _simplify_collinear(_dedup_points(pts), tol=POINT_TOL)
+
+
+def _changed_axes(a, b, tol=POINT_TOL):
+    out = []
+    for ax in ("x", "y", "z"):
+        if abs(float(getattr(b, ax)) - float(getattr(a, ax))) > float(tol):
+            out.append(ax)
+    return out
+
+
+def _corner_from_fillet_window(p1, axis_before, p2, axis_after, tol=POINT_TOL):
+    a = _safe_text(axis_before).strip().lower()
+    b = _safe_text(axis_after).strip().lower()
+    if a not in ("x", "y", "z") or b not in ("x", "y", "z") or a == b:
+        return None
+    rem = [ax for ax in ("x", "y", "z") if ax not in (a, b)]
+    if len(rem) != 1:
+        return None
+    r = rem[0]
+    if abs(float(getattr(p1, r)) - float(getattr(p2, r))) > (2.0 * float(tol)):
+        return None
+    corner = _vec(p1.x, p1.y, p1.z)
+    corner = _set_axis_value(corner, a, float(getattr(p2, a)))
+    return corner
+
+
+def _orthogonal_backbone(points, diag_max_len=450.0):
+    pts = _dedup_points(points)
+    if len(pts) < 4:
+        return pts
+
+    max_diag = max(120.0, float(diag_max_len))
+    changed = True
+    while changed:
+        changed = False
+        i = 0
+        while i <= (len(pts) - 4):
+            p0 = pts[i]
+            p1 = pts[i + 1]
+            p2 = pts[i + 2]
+            p3 = pts[i + 3]
+
+            axis_before = _segment_axis_name(p0, p1)
+            axis_after = _segment_axis_name(p2, p3)
+            diag_axes = _changed_axes(p1, p2)
+            if axis_before not in ("x", "y", "z") or axis_after not in ("x", "y", "z"):
+                i += 1
+                continue
+            if axis_before == axis_after or len(diag_axes) != 2:
+                i += 1
+                continue
+            if axis_before not in diag_axes or axis_after not in diag_axes:
+                i += 1
+                continue
+            if float(p1.distanceToPoint(p2)) > max_diag:
+                i += 1
+                continue
+
+            corner = _corner_from_fillet_window(p1, axis_before, p2, axis_after, tol=POINT_TOL)
+            if corner is None:
+                i += 1
+                continue
+            if _segment_axis_name(p0, corner) != axis_before:
+                i += 1
+                continue
+            if _segment_axis_name(corner, p3) != axis_after:
+                i += 1
+                continue
+
+            pts = pts[: i + 1] + [corner] + pts[i + 3 :]
+            pts = _simplify_collinear(_dedup_points(pts), tol=POINT_TOL)
+            changed = True
+            break
+    return _simplify_collinear(_dedup_points(pts), tol=POINT_TOL)
+
+
+def _cleanup_candidate_route(points, protected_head_segments=0, protected_tail_segments=0):
+    pts = _dedup_points(points)
+    if len(pts) < 3:
+        return pts
+
+    head = max(0, int(protected_head_segments))
+    tail = max(0, int(protected_tail_segments))
+    max_seg = max(0, len(pts) - 1)
+    head = min(head, max_seg)
+    tail = min(tail, max_seg)
+
+    def _cleanup_core(core_pts):
+        out = _simplify_collinear(_dedup_points(core_pts), tol=POINT_TOL)
+        out = _collapse_staircase_patterns(out, protected_head_segments=0, protected_tail_segments=0)
+        out = _collapse_backtracks(out)
+        return _simplify_collinear(_dedup_points(out), tol=POINT_TOL)
+
+    if head <= 0 and tail <= 0:
+        return _cleanup_core(pts)
+
+    if (head + tail) >= max_seg:
+        return pts
+
+    head_end = min(len(pts) - 1, head)
+    tail_start = max(0, (len(pts) - 1) - tail)
+    if tail_start <= head_end:
+        return pts
+
+    prefix = _clone_points(pts[: head_end + 1])
+    middle = _clone_points(pts[head_end : tail_start + 1])
+    suffix = _clone_points(pts[tail_start:])
+    middle = _cleanup_core(middle)
+    if len(middle) < 2:
+        middle = [_vec(prefix[-1].x, prefix[-1].y, prefix[-1].z), _vec(suffix[0].x, suffix[0].y, suffix[0].z)]
+    out = _merge_head_with_tail(prefix, middle)
+    out = _merge_head_with_tail(out, suffix)
+    return _dedup_points(out)
+
+
+def _single_segment_adjust_candidate(pts, endpoint_idx, target, protected_head_segments=0, protected_tail_segments=0):
+    n = len(pts)
+    if n < 3:
+        return None, ""
+    tgt = _vec(target.x, target.y, target.z)
+
+    if endpoint_idx == 0:
+        if n < 3:
+            return None, ""
+        axis_first = _segment_axis_name(pts[0], pts[1])
+        axis_second = _segment_axis_name(pts[1], pts[2])
+        moved = _orthogonal_intersection_on_axes(tgt, axis_first, pts[2], axis_second, tol=(2.0 * POINT_TOL))
+        if moved is None:
+            return None, ""
+        cand = [tgt, moved] + _clone_points(pts[2:])
+        cand = _cleanup_candidate_route(
+            cand,
+            protected_head_segments=protected_head_segments,
+            protected_tail_segments=protected_tail_segments,
+        )
+        if len(cand) < 2 or (not _is_orthogonal_polyline(cand)):
+            return None, ""
+        return cand, "extremo inicial ajustado acortando/alargando penultima recta"
+
+    if n < 3:
+        return None, ""
+    axis_penult = _segment_axis_name(pts[-3], pts[-2])
+    axis_last = _segment_axis_name(pts[-2], pts[-1])
+    moved = _orthogonal_intersection_on_axes(pts[-3], axis_penult, tgt, axis_last, tol=(2.0 * POINT_TOL))
+    if moved is None:
+        return None, ""
+    cand = _clone_points(pts[:-2]) + [moved, tgt]
+    cand = _cleanup_candidate_route(
+        cand,
+        protected_head_segments=protected_head_segments,
+        protected_tail_segments=protected_tail_segments,
+    )
+    if len(cand) < 2 or (not _is_orthogonal_polyline(cand)):
+        return None, ""
+    return cand, "extremo final ajustado acortando/alargando penultima recta"
 
 
 def _simplify_collinear(points, tol=POINT_TOL):
@@ -959,6 +1250,651 @@ def _orthogonal_leg_with_priority(a, b, priority_axes=None, first_axis=None, las
     return _dedup_points(out)
 
 
+def _orthogonal_leg_exact_axes(a, b, axis_seq):
+    start = _vec(a.x, a.y, a.z)
+    end = _vec(b.x, b.y, b.z)
+    if start.distanceToPoint(end) <= POINT_TOL:
+        return [start, end]
+    cur = start
+    out = [start]
+    used = set()
+    for raw_ax in list(axis_seq or []):
+        ax = _safe_text(raw_ax).strip().lower()
+        if ax not in ("x", "y", "z"):
+            continue
+        used.add(ax)
+        nxt = _set_axis_value(cur, ax, float(getattr(end, ax)))
+        if cur.distanceToPoint(nxt) > POINT_TOL:
+            out.append(nxt)
+            cur = nxt
+    rem = [ax for ax in ("x", "y", "z") if ax not in used and abs(float(getattr(end, ax)) - float(getattr(cur, ax))) > POINT_TOL]
+    if rem:
+        return None
+    if out[-1].distanceToPoint(end) > POINT_TOL:
+        out.append(end)
+    return _dedup_points(out)
+
+
+def _axis_sequence_for_segments(pts, start_idx, end_idx):
+    out = []
+    lo = max(0, int(start_idx))
+    hi = min(len(pts) - 1, int(end_idx))
+    for i in range(lo, hi):
+        ax = _segment_axis_name(pts[i], pts[i + 1])
+        if ax:
+            out.append(ax)
+    return out
+
+
+def _existing_endpoint_stub_length(pts, endpoint_idx):
+    if len(pts) < 2:
+        return 0.0
+    if int(endpoint_idx) == 0:
+        return float(pts[0].distanceToPoint(pts[1]))
+    return float(pts[-1].distanceToPoint(pts[-2]))
+
+
+def _vector_add(a, b):
+    return _vec(float(a.x) + float(b.x), float(a.y) + float(b.y), float(a.z) + float(b.z))
+
+
+def _only_axis_diff(a, b, axis, tol=POINT_TOL):
+    ax = _safe_text(axis).strip().lower()
+    if ax not in ("x", "y", "z"):
+        return False
+    for cur in ("x", "y", "z"):
+        dv = abs(float(getattr(a, cur)) - float(getattr(b, cur)))
+        if cur == ax:
+            continue
+        if dv > float(tol):
+            return False
+    return True
+
+
+def _translated_local_preserve_candidate(pts, endpoint_idx, target, perp_use=None, local_window=6):
+    n = len(pts)
+    if n < 3:
+        return None, ""
+
+    tgt = _vec(target.x, target.y, target.z)
+    if int(endpoint_idx) == 0:
+        old_dir = _normalize(pts[1] - pts[0]) if len(pts) >= 2 else None
+        if perp_use is not None and (not _is_zero_vec(perp_use)) and old_dir is not None and (not _is_zero_vec(old_dir)):
+            if float(_dot(old_dir, perp_use)) < 0.60:
+                return None, ""
+        delta = _vec(tgt.x - pts[0].x, tgt.y - pts[0].y, tgt.z - pts[0].z)
+        limit = min(n - 2, max(1, int(local_window)))
+        for split_idx in range(1, limit + 1):
+            shifted = [_vector_add(pts[i], delta) for i in range(0, split_idx + 1)]
+            next_pt = pts[split_idx + 1]
+            axis = _segment_axis_name(pts[split_idx], pts[split_idx + 1])
+            if not _only_axis_diff(shifted[-1], next_pt, axis, tol=(2.0 * POINT_TOL)):
+                continue
+            cand = shifted + _clone_points(pts[split_idx + 1 :])
+            cand = _simplify_collinear(_dedup_points(cand), tol=POINT_TOL)
+            if len(cand) < 2 or (not _is_orthogonal_polyline(cand)):
+                continue
+            return cand, f"extremo inicial conservando tramo local hasta vertice {split_idx + 1}"
+        return None, ""
+
+    old_dir = _normalize(pts[-2] - pts[-1]) if len(pts) >= 2 else None
+    if perp_use is not None and (not _is_zero_vec(perp_use)) and old_dir is not None and (not _is_zero_vec(old_dir)):
+        if float(_dot(old_dir, perp_use)) < 0.60:
+            return None, ""
+    delta = _vec(tgt.x - pts[-1].x, tgt.y - pts[-1].y, tgt.z - pts[-1].z)
+    start = max(1, n - max(2, int(local_window)) - 1)
+    for split_idx in range(n - 2, start - 1, -1):
+        shifted = [_vector_add(pts[i], delta) for i in range(split_idx, n)]
+        prev_pt = pts[split_idx - 1]
+        axis = _segment_axis_name(pts[split_idx - 1], pts[split_idx])
+        if not _only_axis_diff(prev_pt, shifted[0], axis, tol=(2.0 * POINT_TOL)):
+            continue
+        cand = _clone_points(pts[:split_idx]) + shifted
+        cand = _simplify_collinear(_dedup_points(cand), tol=POINT_TOL)
+        if len(cand) < 2 or (not _is_orthogonal_polyline(cand)):
+            continue
+        return cand, f"extremo final conservando tramo local desde vertice {split_idx + 1}"
+    return None, ""
+
+
+def _guide_replay_candidate(
+    pts,
+    endpoint_idx,
+    target,
+    perp_use=None,
+    local_window=8,
+    max_join_idx=None,
+    min_join_idx=None,
+    protected_head_segments=0,
+    protected_tail_segments=0,
+):
+    n = len(pts)
+    if n < 3:
+        return None, ""
+
+    tgt = _vec(target.x, target.y, target.z)
+    limit = min(n - 2, max(2, int(local_window)))
+    use_stub = perp_use is not None and (not _is_zero_vec(perp_use))
+
+    if int(endpoint_idx) == 0:
+        if max_join_idx is not None:
+            limit = min(limit, max(1, min(n - 2, int(max_join_idx))))
+        stub_len = _existing_endpoint_stub_length(pts, endpoint_idx) if use_stub else 0.0
+        if use_stub and stub_len <= POINT_TOL:
+            stub_len = _suggest_perp_stub_len(pts, endpoint_idx)
+        for join_idx in range(1 if (not use_stub) else 2, limit + 1):
+            base = [tgt]
+            replay_start = 0
+            if use_stub:
+                stub = tgt + _scaled(perp_use, stub_len)
+                if base[-1].distanceToPoint(stub) > POINT_TOL:
+                    base.append(stub)
+                replay_start = 1
+            ok = True
+            for seg_idx in range(replay_start, join_idx):
+                ax = _segment_axis_name(pts[seg_idx], pts[seg_idx + 1])
+                if ax not in ("x", "y", "z"):
+                    ok = False
+                    break
+                nxt = _set_axis_value(base[-1], ax, float(getattr(pts[seg_idx + 1], ax)))
+                if base[-1].distanceToPoint(nxt) > POINT_TOL:
+                    base.append(nxt)
+            if not ok or len(base) < 2:
+                continue
+            if base[-1].distanceToPoint(pts[join_idx]) > (2.0 * POINT_TOL):
+                continue
+            if perp_use is not None and (not _is_zero_vec(perp_use)) and len(base) >= 2:
+                first_dir = _normalize(base[1] - base[0])
+                if _is_zero_vec(first_dir) or float(_dot(first_dir, perp_use)) < 0.60:
+                    continue
+            base = _cleanup_candidate_route(
+                base,
+                protected_head_segments=protected_head_segments,
+                protected_tail_segments=0,
+            )
+            cand = _merge_head_with_tail(base, pts[join_idx + 1 :])
+            if len(cand) < 2 or (not _is_orthogonal_polyline(cand)):
+                continue
+            if _points_almost_equal(cand, pts, tol=0.5):
+                continue
+            return cand, f"extremo inicial siguiendo ruta guia hasta vertice {join_idx + 1}"
+        return None, ""
+
+    stub_len = _existing_endpoint_stub_length(pts, endpoint_idx) if use_stub else 0.0
+    if use_stub and stub_len <= POINT_TOL:
+        stub_len = _suggest_perp_stub_len(pts, endpoint_idx)
+    start = max(1, (n - 1 - limit) if (not use_stub) else (n - 2 - limit))
+    if min_join_idx is not None:
+        start = max(start, min(n - 2, max(1, int(min_join_idx))))
+    join_from = (n - 2) if (not use_stub) else (n - 3)
+    for join_idx in range(join_from, start - 1, -1):
+        suffix = [tgt]
+        replay_stop = join_idx
+        replay_from = n - 2
+        if use_stub:
+            stub = tgt + _scaled(perp_use, stub_len)
+            suffix = [stub, tgt]
+            replay_from = n - 3
+        ok = True
+        for seg_idx in range(replay_from, replay_stop - 1, -1):
+            ax = _segment_axis_name(pts[seg_idx], pts[seg_idx + 1])
+            if ax not in ("x", "y", "z"):
+                ok = False
+                break
+            nxt = _set_axis_value(suffix[0], ax, float(getattr(pts[seg_idx], ax)))
+            if nxt.distanceToPoint(suffix[0]) > POINT_TOL:
+                suffix.insert(0, nxt)
+        if not ok or len(suffix) < 2:
+            continue
+        if suffix[0].distanceToPoint(pts[join_idx]) > (2.0 * POINT_TOL):
+            continue
+        if perp_use is not None and (not _is_zero_vec(perp_use)) and len(suffix) >= 2:
+            last_dir = _normalize(suffix[-2] - suffix[-1])
+            if _is_zero_vec(last_dir) or float(_dot(last_dir, perp_use)) < 0.60:
+                continue
+        suffix = _cleanup_candidate_route(
+            suffix,
+            protected_head_segments=0,
+            protected_tail_segments=protected_tail_segments,
+        )
+        cand = _merge_prefix_with_connector(pts[:join_idx], suffix)
+        if len(cand) < 2 or (not _is_orthogonal_polyline(cand)):
+            continue
+        if _points_almost_equal(cand, pts, tol=0.5):
+            continue
+        return cand, f"extremo final siguiendo ruta guia desde vertice {join_idx + 1}"
+    return None, ""
+
+
+def _guide_segment_splice_candidate(
+    pts,
+    endpoint_idx,
+    target,
+    perp_use=None,
+    local_window=8,
+    max_seg_idx=None,
+    min_seg_idx=None,
+    protected_head_segments=0,
+    protected_tail_segments=0,
+):
+    n = len(pts)
+    if n < 3:
+        return None, ""
+
+    tgt = _vec(target.x, target.y, target.z)
+    limit = min(n - 2, max(1, int(local_window)))
+    use_stub = perp_use is not None and (not _is_zero_vec(perp_use))
+
+    if int(endpoint_idx) == 0:
+        if max_seg_idx is not None:
+            limit = min(limit, max(0, min(n - 2, int(max_seg_idx))))
+        stub_len = _existing_endpoint_stub_length(pts, endpoint_idx) if use_stub else 0.0
+        if use_stub and stub_len <= POINT_TOL:
+            stub_len = _suggest_perp_stub_len(pts, endpoint_idx)
+        seg_start = 0 if (not use_stub) else 1
+        for seg_idx in range(seg_start, limit + 1):
+            replay = [tgt]
+            replay_from = 0
+            if use_stub:
+                stub = tgt + _scaled(perp_use, stub_len)
+                if replay[-1].distanceToPoint(stub) > POINT_TOL:
+                    replay.append(stub)
+                replay_from = 1
+            ok = True
+            for prior_idx in range(replay_from, seg_idx):
+                ax = _segment_axis_name(pts[prior_idx], pts[prior_idx + 1])
+                if ax not in ("x", "y", "z"):
+                    ok = False
+                    break
+                nxt = _set_axis_value(replay[-1], ax, float(getattr(pts[prior_idx + 1], ax)))
+                if replay[-1].distanceToPoint(nxt) > POINT_TOL:
+                    replay.append(nxt)
+            if not ok:
+                continue
+
+            splice_axis = _segment_axis_name(pts[seg_idx], pts[seg_idx + 1])
+            if splice_axis not in ("x", "y", "z"):
+                continue
+            next_anchor = pts[seg_idx + 1]
+            if not _only_axis_diff(replay[-1], next_anchor, splice_axis, tol=(2.0 * POINT_TOL)):
+                continue
+
+            if perp_use is not None and (not _is_zero_vec(perp_use)) and len(replay) >= 2:
+                first_dir = _normalize(replay[1] - replay[0])
+                if _is_zero_vec(first_dir) or float(_dot(first_dir, perp_use)) < 0.60:
+                    continue
+
+            replay = _cleanup_candidate_route(
+                replay,
+                protected_head_segments=protected_head_segments,
+                protected_tail_segments=0,
+            )
+            cand = _merge_head_with_tail(replay, pts[seg_idx + 1 :])
+            if len(cand) < 2 or (not _is_orthogonal_polyline(cand)):
+                continue
+            if _points_almost_equal(cand, pts, tol=0.5):
+                continue
+            return cand, f"extremo inicial siguiendo guia y ajustando tramo {seg_idx + 1}"
+        return None, ""
+
+    stub_len = _existing_endpoint_stub_length(pts, endpoint_idx) if use_stub else 0.0
+    if use_stub and stub_len <= POINT_TOL:
+        stub_len = _suggest_perp_stub_len(pts, endpoint_idx)
+    start_seg = max(0, ((n - 2) if (not use_stub) else (n - 3)) - limit)
+    if min_seg_idx is not None:
+        start_seg = max(start_seg, min(n - 2, max(0, int(min_seg_idx))))
+    seg_from = (n - 2) if (not use_stub) else (n - 3)
+    for seg_idx in range(seg_from, start_seg - 1, -1):
+        suffix = [tgt]
+        replay_from = n - 2
+        replay_stop = seg_idx
+        if use_stub:
+            stub = tgt + _scaled(perp_use, stub_len)
+            suffix = [stub, tgt]
+            replay_from = n - 3
+        ok = True
+        for next_idx in range(replay_from, replay_stop, -1):
+            ax = _segment_axis_name(pts[next_idx], pts[next_idx + 1])
+            if ax not in ("x", "y", "z"):
+                ok = False
+                break
+            nxt = _set_axis_value(suffix[0], ax, float(getattr(pts[next_idx], ax)))
+            if nxt.distanceToPoint(suffix[0]) > POINT_TOL:
+                suffix.insert(0, nxt)
+        if not ok:
+            continue
+
+        splice_axis = _segment_axis_name(pts[seg_idx], pts[seg_idx + 1])
+        if splice_axis not in ("x", "y", "z"):
+            continue
+        prev_anchor = pts[seg_idx]
+        if not _only_axis_diff(prev_anchor, suffix[0], splice_axis, tol=(2.0 * POINT_TOL)):
+            continue
+
+        if perp_use is not None and (not _is_zero_vec(perp_use)) and len(suffix) >= 2:
+            last_dir = _normalize(suffix[-2] - suffix[-1])
+            if _is_zero_vec(last_dir) or float(_dot(last_dir, perp_use)) < 0.60:
+                continue
+
+        suffix = _cleanup_candidate_route(
+            suffix,
+            protected_head_segments=0,
+            protected_tail_segments=protected_tail_segments,
+        )
+        cand = _merge_prefix_with_connector(pts[: seg_idx + 1], suffix)
+        if len(cand) < 2 or (not _is_orthogonal_polyline(cand)):
+            continue
+        if _points_almost_equal(cand, pts, tol=0.5):
+            continue
+        return cand, f"extremo final siguiendo guia y ajustando tramo {seg_idx + 1}"
+    return None, ""
+
+
+def _local_anchor_index(pts, endpoint_idx, use_stub=False, max_segments=4):
+    n = len(pts)
+    if n < 3:
+        return 1 if int(endpoint_idx) == 0 else max(0, n - 2)
+
+    max_segments = max(2, int(max_segments))
+    if int(endpoint_idx) == 0:
+        start_idx = 2 if use_stub else 1
+        limit = min(n - 2, max_segments)
+        for idx in range(start_idx, limit + 1):
+            if idx < (n - 1) and _is_turn(pts[idx - 1], pts[idx], pts[idx + 1]):
+                return idx
+        return min(n - 2, max(start_idx, min(limit, start_idx + 1)))
+
+    end_idx = (n - 3) if use_stub else (n - 2)
+    limit = max(1, (n - 1) - max_segments)
+    for idx in range(end_idx, limit - 1, -1):
+        if idx >= 1 and idx < (n - 1) and _is_turn(pts[idx - 1], pts[idx], pts[idx + 1]):
+            return idx
+    return max(1, min(end_idx, max(limit, end_idx - 1)))
+
+
+def _anchored_subroute_candidate(
+    pts,
+    endpoint_idx,
+    target,
+    local_anchor_idx,
+    frozen_join_idx,
+    perp_use=None,
+    protected_head_segments=0,
+    protected_tail_segments=0,
+):
+    n = len(pts)
+    if n < 3:
+        return None, ""
+
+    tgt = _vec(target.x, target.y, target.z)
+    delta = _vec(tgt.x - pts[int(endpoint_idx)].x, tgt.y - pts[int(endpoint_idx)].y, tgt.z - pts[int(endpoint_idx)].z)
+    use_stub = perp_use is not None and (not _is_zero_vec(perp_use))
+
+    if int(endpoint_idx) == 0:
+        local_idx = max(1, min(n - 2, int(local_anchor_idx)))
+        join_idx = max(local_idx + 1, min(n - 2, int(frozen_join_idx)))
+        if join_idx <= local_idx:
+            return None, ""
+
+        shifted = [_vector_add(pts[i], delta) for i in range(0, local_idx + 1)]
+        if len(shifted) < 2:
+            return None, ""
+        if use_stub:
+            first_dir = _normalize(shifted[1] - shifted[0])
+            if _is_zero_vec(first_dir) or float(_dot(first_dir, perp_use)) < 0.60:
+                return None, ""
+
+        anchor_start = shifted[-1]
+        anchor_end = pts[join_idx]
+        axis_seq = _axis_sequence_for_segments(pts, local_idx, join_idx)
+        leg = _orthogonal_leg_exact_axes(anchor_start, anchor_end, axis_seq)
+        if leg is None:
+            first_axis = _segment_axis_name(shifted[-2], shifted[-1]) if len(shifted) >= 2 else None
+            last_axis = _segment_axis_name(pts[join_idx - 1], pts[join_idx]) if join_idx >= 1 else None
+            leg = _orthogonal_leg_with_priority(
+                anchor_start,
+                anchor_end,
+                priority_axes=axis_seq,
+                first_axis=first_axis,
+                last_axis=last_axis,
+            )
+        middle = leg[1:] if len(leg) >= 2 else [anchor_end]
+        cand = _merge_head_with_tail(shifted, middle)
+        cand = _merge_head_with_tail(cand, pts[join_idx + 1 :])
+        cand = _cleanup_candidate_route(
+            cand,
+            protected_head_segments=max(int(protected_head_segments), local_idx),
+            protected_tail_segments=max(int(protected_tail_segments), (n - 1) - join_idx),
+        )
+        if len(cand) < 2 or (not _is_orthogonal_polyline(cand)) or _points_almost_equal(cand, pts, tol=0.5):
+            return None, ""
+        return cand, f"extremo inicial ajustando subruta entre anclas {local_idx + 1}->{join_idx + 1}"
+
+    local_idx = max(1, min(n - 2, int(local_anchor_idx)))
+    join_idx = min(local_idx - 1, max(1, int(frozen_join_idx)))
+    if join_idx >= local_idx:
+        return None, ""
+
+    shifted = [_vector_add(pts[i], delta) for i in range(local_idx, n)]
+    if len(shifted) < 2:
+        return None, ""
+    if use_stub:
+        last_dir = _normalize(shifted[-2] - shifted[-1])
+        if _is_zero_vec(last_dir) or float(_dot(last_dir, perp_use)) < 0.60:
+            return None, ""
+
+    anchor_start = pts[join_idx]
+    anchor_end = shifted[0]
+    axis_seq = _axis_sequence_for_segments(pts, join_idx, local_idx)
+    leg = _orthogonal_leg_exact_axes(anchor_start, anchor_end, axis_seq)
+    if leg is None:
+        first_axis = _segment_axis_name(pts[join_idx], pts[join_idx + 1]) if join_idx < (n - 1) else None
+        last_axis = _segment_axis_name(shifted[0], shifted[1]) if len(shifted) >= 2 else None
+        leg = _orthogonal_leg_with_priority(
+            anchor_start,
+            anchor_end,
+            priority_axes=axis_seq,
+            first_axis=first_axis,
+            last_axis=last_axis,
+        )
+    middle = leg[1:] if len(leg) >= 2 else [anchor_end]
+    cand = _merge_head_with_tail(pts[: join_idx + 1], middle)
+    cand = _merge_head_with_tail(cand, shifted[1:])
+    cand = _cleanup_candidate_route(
+        cand,
+        protected_head_segments=max(int(protected_head_segments), join_idx),
+        protected_tail_segments=max(int(protected_tail_segments), (n - 1) - local_idx),
+    )
+    if len(cand) < 2 or (not _is_orthogonal_polyline(cand)) or _points_almost_equal(cand, pts, tol=0.5):
+        return None, ""
+    return cand, f"extremo final ajustando subruta entre anclas {join_idx + 1}->{local_idx + 1}"
+
+
+def _protected_rejoin_index(pts, endpoint_idx, min_turns=2, min_segments=3):
+    n = len(pts)
+    if n < 3:
+        return 1 if int(endpoint_idx) == 0 else max(0, n - 2)
+
+    need_turns = max(1, int(min_turns))
+    need_segments = max(1, int(min_segments))
+
+    if int(endpoint_idx) == 0:
+        turns = 0
+        for idx in range(n - 2, 0, -1):
+            if _is_turn(pts[idx - 1], pts[idx], pts[idx + 1]):
+                turns += 1
+            tail_segments = (n - 1) - idx
+            if turns >= need_turns and tail_segments >= need_segments:
+                return idx
+        return max(1, n - max(need_segments + 1, 4))
+
+    turns = 0
+    for idx in range(1, n - 1):
+        if _is_turn(pts[idx - 1], pts[idx], pts[idx + 1]):
+            turns += 1
+        head_segments = idx
+        if turns >= need_turns and head_segments >= need_segments:
+            return idx
+    return min(n - 2, max(1, need_segments))
+
+
+def _exact_frozen_rejoin_candidate(
+    pts,
+    endpoint_idx,
+    target,
+    frozen_join_idx,
+    perp_use=None,
+    protected_head_segments=0,
+    protected_tail_segments=0,
+):
+    n = len(pts)
+    if n < 3:
+        return None, ""
+
+    tgt = _vec(target.x, target.y, target.z)
+    use_stub = perp_use is not None and (not _is_zero_vec(perp_use))
+
+    if int(endpoint_idx) == 0:
+        join_idx = max(1, min(n - 2, int(frozen_join_idx)))
+        stub_len = _existing_endpoint_stub_length(pts, endpoint_idx) if use_stub else 0.0
+        if use_stub and stub_len <= POINT_TOL:
+            stub_len = _suggest_perp_stub_len(pts, endpoint_idx)
+
+        base = [tgt]
+        replay_from = 0
+        if use_stub:
+            stub = tgt + _scaled(perp_use, stub_len)
+            if base[-1].distanceToPoint(stub) > POINT_TOL:
+                base.append(stub)
+            replay_from = 1
+
+        ok = True
+        for seg_idx in range(replay_from, join_idx):
+            ax = _segment_axis_name(pts[seg_idx], pts[seg_idx + 1])
+            if ax not in ("x", "y", "z"):
+                ok = False
+                break
+            nxt = _set_axis_value(base[-1], ax, float(getattr(pts[seg_idx + 1], ax)))
+            if base[-1].distanceToPoint(nxt) > POINT_TOL:
+                base.append(nxt)
+        if ok and len(base) >= 2 and base[-1].distanceToPoint(pts[join_idx]) <= (2.0 * POINT_TOL):
+            if (not use_stub) or float(_dot(_normalize(base[1] - base[0]), perp_use)) >= 0.60:
+                base = _cleanup_candidate_route(
+                    base,
+                    protected_head_segments=protected_head_segments,
+                    protected_tail_segments=0,
+                )
+                cand = _merge_head_with_tail(base, pts[join_idx:])
+                if len(cand) >= 2 and _is_orthogonal_polyline(cand) and (not _points_almost_equal(cand, pts, tol=0.5)):
+                    return cand, f"extremo inicial reincorporando sufijo original en vertice {join_idx + 1}"
+
+        seg_idx = max(replay_from, join_idx - 1)
+        replay = [tgt]
+        replay_from = 0
+        if use_stub:
+            stub = tgt + _scaled(perp_use, stub_len)
+            if replay[-1].distanceToPoint(stub) > POINT_TOL:
+                replay.append(stub)
+            replay_from = 1
+        ok = True
+        for prior_idx in range(replay_from, seg_idx):
+            ax = _segment_axis_name(pts[prior_idx], pts[prior_idx + 1])
+            if ax not in ("x", "y", "z"):
+                ok = False
+                break
+            nxt = _set_axis_value(replay[-1], ax, float(getattr(pts[prior_idx + 1], ax)))
+            if replay[-1].distanceToPoint(nxt) > POINT_TOL:
+                replay.append(nxt)
+        if not ok:
+            return None, ""
+        splice_axis = _segment_axis_name(pts[join_idx - 1], pts[join_idx])
+        if splice_axis not in ("x", "y", "z"):
+            return None, ""
+        if use_stub and len(replay) >= 2:
+            first_dir = _normalize(replay[1] - replay[0])
+            if _is_zero_vec(first_dir) or float(_dot(first_dir, perp_use)) < 0.60:
+                return None, ""
+        if not _only_axis_diff(replay[-1], pts[join_idx], splice_axis, tol=(2.0 * POINT_TOL)):
+            return None, ""
+        replay = _cleanup_candidate_route(
+            replay,
+            protected_head_segments=protected_head_segments,
+            protected_tail_segments=0,
+        )
+        cand = _merge_head_with_tail(replay, pts[join_idx:])
+        if len(cand) < 2 or (not _is_orthogonal_polyline(cand)) or _points_almost_equal(cand, pts, tol=0.5):
+            return None, ""
+        return cand, f"extremo inicial reincorporando sufijo original desde vertice {join_idx + 1}"
+
+    join_idx = max(1, min(n - 2, int(frozen_join_idx)))
+    stub_len = _existing_endpoint_stub_length(pts, endpoint_idx) if use_stub else 0.0
+    if use_stub and stub_len <= POINT_TOL:
+        stub_len = _suggest_perp_stub_len(pts, endpoint_idx)
+
+    suffix = [tgt]
+    replay_from = n - 2
+    if use_stub:
+        stub = tgt + _scaled(perp_use, stub_len)
+        suffix = [stub, tgt]
+        replay_from = n - 3
+    ok = True
+    for seg_idx in range(replay_from, join_idx - 1, -1):
+        ax = _segment_axis_name(pts[seg_idx], pts[seg_idx + 1])
+        if ax not in ("x", "y", "z"):
+            ok = False
+            break
+        nxt = _set_axis_value(suffix[0], ax, float(getattr(pts[seg_idx], ax)))
+        if nxt.distanceToPoint(suffix[0]) > POINT_TOL:
+            suffix.insert(0, nxt)
+    if ok and len(suffix) >= 2 and suffix[0].distanceToPoint(pts[join_idx]) <= (2.0 * POINT_TOL):
+        if (not use_stub) or float(_dot(_normalize(suffix[-2] - suffix[-1]), perp_use)) >= 0.60:
+            suffix = _cleanup_candidate_route(
+                suffix,
+                protected_head_segments=0,
+                protected_tail_segments=protected_tail_segments,
+            )
+            cand = _merge_prefix_with_connector(pts[:join_idx], suffix)
+            if len(cand) >= 2 and _is_orthogonal_polyline(cand) and (not _points_almost_equal(cand, pts, tol=0.5)):
+                return cand, f"extremo final reincorporando prefijo original en vertice {join_idx + 1}"
+
+    seg_idx = min(n - 2, join_idx)
+    suffix = [tgt]
+    replay_from = n - 2
+    if use_stub:
+        stub = tgt + _scaled(perp_use, stub_len)
+        suffix = [stub, tgt]
+        replay_from = n - 3
+    ok = True
+    for next_idx in range(replay_from, seg_idx, -1):
+        ax = _segment_axis_name(pts[next_idx], pts[next_idx + 1])
+        if ax not in ("x", "y", "z"):
+            ok = False
+            break
+        nxt = _set_axis_value(suffix[0], ax, float(getattr(pts[next_idx], ax)))
+        if nxt.distanceToPoint(suffix[0]) > POINT_TOL:
+            suffix.insert(0, nxt)
+    if not ok:
+        return None, ""
+    splice_axis = _segment_axis_name(pts[join_idx], pts[join_idx + 1])
+    if splice_axis not in ("x", "y", "z"):
+        return None, ""
+    if use_stub and len(suffix) >= 2:
+        last_dir = _normalize(suffix[-2] - suffix[-1])
+        if _is_zero_vec(last_dir) or float(_dot(last_dir, perp_use)) < 0.60:
+            return None, ""
+    if not _only_axis_diff(pts[join_idx], suffix[0], splice_axis, tol=(2.0 * POINT_TOL)):
+        return None, ""
+    suffix = _cleanup_candidate_route(
+        suffix,
+        protected_head_segments=0,
+        protected_tail_segments=protected_tail_segments,
+    )
+    cand = _merge_prefix_with_connector(pts[: join_idx + 1], suffix)
+    if len(cand) < 2 or (not _is_orthogonal_polyline(cand)) or _points_almost_equal(cand, pts, tol=0.5):
+        return None, ""
+    return cand, f"extremo final reincorporando prefijo original desde vertice {join_idx + 1}"
+
+
 def _polyline_length(points):
     pts = _dedup_points(points)
     if len(pts) < 2:
@@ -1089,8 +2025,81 @@ def _route_from_endpoint_keep_rest(
 
     stub_len = _suggest_perp_stub_len(pts, endpoint_idx) if use_perp else 0.0
     stub_pt = (_vec(target.x, target.y, target.z) + _scaled(perp_use, stub_len)) if use_perp else None
+    old_stub_len = _existing_endpoint_stub_length(pts, endpoint_idx) if use_perp else 0.0
+    local_stub_len = old_stub_len if old_stub_len > POINT_TOL else stub_len
+    local_stub_pt = (_vec(target.x, target.y, target.z) + _scaled(perp_use, local_stub_len)) if use_perp else None
 
     if endpoint_idx == 0:
+        rigid_cand, rigid_action = _translated_local_preserve_candidate(
+            pts,
+            endpoint_idx,
+            target,
+            perp_use=perp_use if use_perp else None,
+            local_window=6,
+        )
+        if rigid_cand is not None:
+            rigid_cost = 0.0
+            rigid_cost += _tight_double_bend_penalty(rigid_cand)
+            rigid_cost += _fillet_capacity_penalty(rigid_cand)
+            rigid_cost += _path_backtrack_penalty(rigid_cand)
+            rigid_cost += _path_zigzag_penalty(rigid_cand)
+            rigid_cost -= 900.0
+            candidates.append((rigid_cost, rigid_cand, rigid_action))
+
+        # Prefer strict local preservation first: keep the original early axis pattern
+        # and rejoin in the first few vertices instead of rebuilding a larger path.
+        local_limit = min(n - 2, max(2, min(5, max_depth)))
+        for join_idx in range(2, local_limit + 1):
+            join_pt = pts[join_idx]
+            if use_perp and local_stub_pt is not None:
+                axis_seq = _axis_sequence_for_segments(pts, 1, join_idx)
+                leg = _orthogonal_leg_exact_axes(local_stub_pt, join_pt, axis_seq)
+                if leg is None:
+                    continue
+                base = [_vec(target.x, target.y, target.z), _vec(local_stub_pt.x, local_stub_pt.y, local_stub_pt.z)] + leg[1:]
+                protect_head = 1
+            else:
+                axis_seq = _axis_sequence_for_segments(pts, 0, join_idx)
+                leg = _orthogonal_leg_exact_axes(target, join_pt, axis_seq)
+                if leg is None:
+                    continue
+                base = list(leg)
+                protect_head = 0
+            base = _cleanup_candidate_route(base, protected_head_segments=protect_head, protected_tail_segments=0)
+            cand = _merge_head_with_tail(base, pts[join_idx + 1 :])
+            cand = _cleanup_candidate_route(cand, protected_head_segments=protect_head, protected_tail_segments=0)
+            if len(cand) < 2:
+                continue
+            old_len = _polyline_length(pts[: join_idx + 1])
+            new_len = _polyline_length(base)
+            bends = max(0, len(base) - 2)
+            cost = abs(new_len - old_len)
+            cost += (float(join_idx) * 6.0)
+            cost += (bends * 20.0)
+            cost += _tight_double_bend_penalty(cand)
+            cost += _fillet_capacity_penalty(cand)
+            cost += _path_backtrack_penalty(cand)
+            cost += _path_zigzag_penalty(cand)
+            cost -= 520.0
+            mode = "perpendicular" if use_perp else "ortogonal"
+            candidates.append((cost, cand, f"extremo inicial conservando ruta original ({mode}) hasta vertice {join_idx + 1}"))
+
+        one_seg_cand, one_seg_action = _single_segment_adjust_candidate(
+            pts,
+            endpoint_idx,
+            target,
+            protected_head_segments=(1 if use_perp else 0),
+            protected_tail_segments=0,
+        )
+        if one_seg_cand is not None:
+            old_local_len = float(pts[0].distanceToPoint(pts[1]))
+            new_local_len = float(one_seg_cand[0].distanceToPoint(one_seg_cand[1])) if len(one_seg_cand) >= 2 else old_local_len
+            one_seg_cost = abs(new_local_len - old_local_len)
+            one_seg_cost += _tight_double_bend_penalty(one_seg_cand)
+            one_seg_cost += _fillet_capacity_penalty(one_seg_cand)
+            one_seg_cost -= 420.0
+            candidates.append((one_seg_cost, one_seg_cand, one_seg_action))
+
         max_join_allowed = max(1, (n - 1) - lock_suffix_vertices)
         max_depth = min(max_depth, max_join_allowed)
         min_join = min(max_depth, _min_join_index_for_signature(pts, endpoint_idx=0, min_distinct_axes=min_signature_axes))
@@ -1109,9 +2118,9 @@ def _route_from_endpoint_keep_rest(
             else:
                 leg = _orthogonal_leg_with_priority(target, join_pt, priority_axes=pri_axes, first_axis=hint, last_axis=tail_axis)
                 base = list(leg)
-            base = _collapse_staircase_patterns(base, protected_head_segments=(1 if use_perp else 0), protected_tail_segments=0)
+            base = _cleanup_candidate_route(base, protected_head_segments=(1 if use_perp else 0), protected_tail_segments=0)
             cand = _merge_head_with_tail(base, pts[join_idx + 1 :])
-            cand = _collapse_backtracks(cand)
+            cand = _cleanup_candidate_route(cand, protected_head_segments=(1 if use_perp else 0), protected_tail_segments=0)
             if len(cand) < 2:
                 continue
             old_len = _polyline_length(pts[: join_idx + 1])
@@ -1125,6 +2134,8 @@ def _route_from_endpoint_keep_rest(
             turn_pen = _join_turn_penalty(prev_conn, join_pt, next_tail)
             zig_pen = _path_zigzag_penalty(base) + _zigzag_penalty(base[-3] if len(base) >= 3 else None, prev_conn, join_pt, next_tail)
             back_pen = _path_backtrack_penalty(cand)
+            tight_pen = _tight_double_bend_penalty(cand)
+            fillet_pen = _fillet_capacity_penalty(cand)
             elbow_bonus = -180.0 if bends <= 1 else 0.0
             vertex_pen = 35.0
             cost = (
@@ -1136,6 +2147,8 @@ def _route_from_endpoint_keep_rest(
                 + turn_pen
                 + zig_pen
                 + back_pen
+                + tight_pen
+                + fillet_pen
                 + vertex_pen
                 + elbow_bonus
             )
@@ -1164,9 +2177,9 @@ def _route_from_endpoint_keep_rest(
             else:
                 leg = _orthogonal_leg_with_priority(target, join_pt, priority_axes=pri_axes, first_axis=hint, last_axis=tail_axis)
                 base = list(leg)
-            base = _collapse_staircase_patterns(base, protected_head_segments=(1 if use_perp else 0), protected_tail_segments=0)
+            base = _cleanup_candidate_route(base, protected_head_segments=(1 if use_perp else 0), protected_tail_segments=0)
             cand = _merge_head_with_tail(base + [join_pt], pts[seg_idx + 1 :])
-            cand = _collapse_backtracks(cand)
+            cand = _cleanup_candidate_route(cand, protected_head_segments=(1 if use_perp else 0), protected_tail_segments=0)
             if len(cand) < 2:
                 continue
             old_len = _polyline_length(pts[: seg_idx + 1] + [join_pt])
@@ -1180,6 +2193,8 @@ def _route_from_endpoint_keep_rest(
             turn_pen = _join_turn_penalty(prev_conn, join_pt, next_tail)
             zig_pen = _path_zigzag_penalty(base) + _zigzag_penalty(base[-3] if len(base) >= 3 else None, prev_conn, join_pt, next_tail)
             back_pen = _path_backtrack_penalty(cand)
+            tight_pen = _tight_double_bend_penalty(cand)
+            fillet_pen = _fillet_capacity_penalty(cand)
             elbow_bonus = -180.0 if bends <= 1 else 0.0
             cut_bonus = float(CUT_CANDIDATE_BONUS)
             cost = (
@@ -1192,11 +2207,83 @@ def _route_from_endpoint_keep_rest(
                 + turn_pen
                 + zig_pen
                 + back_pen
+                + tight_pen
+                + fillet_pen
                 + elbow_bonus
             )
             mode = "perpendicular" if use_perp else "ortogonal"
             candidates.append((cost, cand, f"extremo inicial reruteado ({mode}) con corte en tramo {seg_idx + 1}"))
     else:
+        rigid_cand, rigid_action = _translated_local_preserve_candidate(
+            pts,
+            endpoint_idx,
+            target,
+            perp_use=perp_use if use_perp else None,
+            local_window=6,
+        )
+        if rigid_cand is not None:
+            rigid_cost = 0.0
+            rigid_cost += _tight_double_bend_penalty(rigid_cand)
+            rigid_cost += _fillet_capacity_penalty(rigid_cand)
+            rigid_cost += _path_backtrack_penalty(rigid_cand)
+            rigid_cost += _path_zigzag_penalty(rigid_cand)
+            rigid_cost -= 900.0
+            candidates.append((rigid_cost, rigid_cand, rigid_action))
+
+        local_min = max(lock_prefix_vertices, 1)
+        local_start = max(local_min, n - min(5, max_depth) - 1)
+        for join_idx in range(n - 3, local_start - 1, -1):
+            join_pt = pts[join_idx]
+            if use_perp and local_stub_pt is not None:
+                axis_seq = _axis_sequence_for_segments(pts, join_idx, n - 2)
+                leg = _orthogonal_leg_exact_axes(join_pt, local_stub_pt, axis_seq)
+                if leg is None:
+                    continue
+                base = leg + [_vec(target.x, target.y, target.z)]
+                protect_tail = 1
+            else:
+                axis_seq = _axis_sequence_for_segments(pts, join_idx, n - 1)
+                leg = _orthogonal_leg_exact_axes(join_pt, target, axis_seq)
+                if leg is None:
+                    continue
+                base = list(leg)
+                protect_tail = 0
+            base = _cleanup_candidate_route(base, protected_head_segments=0, protected_tail_segments=protect_tail)
+            cand = _merge_prefix_with_connector(pts[:join_idx], base)
+            cand = _cleanup_candidate_route(cand, protected_head_segments=0, protected_tail_segments=protect_tail)
+            if len(cand) < 2:
+                continue
+            old_len = _polyline_length(pts[join_idx:])
+            new_len = _polyline_length(base)
+            bends = max(0, len(base) - 2)
+            changed_vertices = float((n - 1) - join_idx)
+            cost = abs(new_len - old_len)
+            cost += (changed_vertices * 6.0)
+            cost += (bends * 20.0)
+            cost += _tight_double_bend_penalty(cand)
+            cost += _fillet_capacity_penalty(cand)
+            cost += _path_backtrack_penalty(cand)
+            cost += _path_zigzag_penalty(cand)
+            cost -= 520.0
+            mode = "perpendicular" if use_perp else "ortogonal"
+            candidates.append((cost, cand, f"extremo final conservando ruta original ({mode}) desde vertice {join_idx + 1}"))
+
+        one_seg_cand, one_seg_action = _single_segment_adjust_candidate(
+            pts,
+            endpoint_idx,
+            target,
+            protected_head_segments=0,
+            protected_tail_segments=(1 if use_perp else 0),
+        )
+        if one_seg_cand is not None:
+            old_local_len = float(pts[-1].distanceToPoint(pts[-2]))
+            new_local_len = float(one_seg_cand[-1].distanceToPoint(one_seg_cand[-2])) if len(one_seg_cand) >= 2 else old_local_len
+            one_seg_cost = abs(new_local_len - old_local_len)
+            one_seg_cost += _tight_double_bend_penalty(one_seg_cand)
+            one_seg_cost += _fillet_capacity_penalty(one_seg_cand)
+            one_seg_cost -= 420.0
+            candidates.append((one_seg_cost, one_seg_cand, one_seg_action))
+
         max_depth = min(max_depth, max(1, (n - 1) - lock_prefix_vertices))
         min_join = max(n - 2 - (max_depth - 1), _min_join_index_for_signature(pts, endpoint_idx=n - 1, min_distinct_axes=min_signature_axes))
         min_join = max(min_join, lock_prefix_vertices)
@@ -1215,9 +2302,9 @@ def _route_from_endpoint_keep_rest(
             else:
                 leg = _orthogonal_leg_with_priority(join_pt, target, priority_axes=pri_axes, first_axis=prev_tail_axis or hint)
                 base = list(leg)
-            base = _collapse_staircase_patterns(base, protected_head_segments=0, protected_tail_segments=(1 if use_perp else 0))
+            base = _cleanup_candidate_route(base, protected_head_segments=0, protected_tail_segments=(1 if use_perp else 0))
             cand = _merge_prefix_with_connector(pts[:join_idx], base)
-            cand = _collapse_backtracks(cand)
+            cand = _cleanup_candidate_route(cand, protected_head_segments=0, protected_tail_segments=(1 if use_perp else 0))
             if len(cand) < 2:
                 continue
             old_len = _polyline_length(pts[join_idx:])
@@ -1231,6 +2318,8 @@ def _route_from_endpoint_keep_rest(
             turn_pen = _join_turn_penalty(prev_tail, join_pt, next_conn)
             zig_pen = _path_zigzag_penalty(base) + _zigzag_penalty(prev_tail, join_pt, next_conn, base[2] if len(base) >= 3 else None)
             back_pen = _path_backtrack_penalty(cand)
+            tight_pen = _tight_double_bend_penalty(cand)
+            fillet_pen = _fillet_capacity_penalty(cand)
             elbow_bonus = -180.0 if bends <= 1 else 0.0
             vertex_pen = 35.0
             cost = (
@@ -1242,6 +2331,8 @@ def _route_from_endpoint_keep_rest(
                 + turn_pen
                 + zig_pen
                 + back_pen
+                + tight_pen
+                + fillet_pen
                 + vertex_pen
                 + elbow_bonus
             )
@@ -1270,9 +2361,9 @@ def _route_from_endpoint_keep_rest(
             else:
                 leg = _orthogonal_leg_with_priority(join_pt, target, priority_axes=pri_axes, first_axis=prev_tail_axis or hint)
                 base = list(leg)
-            base = _collapse_staircase_patterns(base, protected_head_segments=0, protected_tail_segments=(1 if use_perp else 0))
+            base = _cleanup_candidate_route(base, protected_head_segments=0, protected_tail_segments=(1 if use_perp else 0))
             cand = _merge_prefix_with_connector(pts[: seg_idx + 1], [join_pt] + base[1:])
-            cand = _collapse_backtracks(cand)
+            cand = _cleanup_candidate_route(cand, protected_head_segments=0, protected_tail_segments=(1 if use_perp else 0))
             if len(cand) < 2:
                 continue
             old_len = _polyline_length([join_pt] + pts[seg_idx + 1 :])
@@ -1286,6 +2377,8 @@ def _route_from_endpoint_keep_rest(
             turn_pen = _join_turn_penalty(prev_tail, join_pt, next_conn)
             zig_pen = _path_zigzag_penalty(base) + _zigzag_penalty(prev_tail, join_pt, next_conn, base[2] if len(base) >= 3 else None)
             back_pen = _path_backtrack_penalty(cand)
+            tight_pen = _tight_double_bend_penalty(cand)
+            fillet_pen = _fillet_capacity_penalty(cand)
             elbow_bonus = -180.0 if bends <= 1 else 0.0
             cut_bonus = float(CUT_CANDIDATE_BONUS)
             cost = (
@@ -1298,6 +2391,8 @@ def _route_from_endpoint_keep_rest(
                 + turn_pen
                 + zig_pen
                 + back_pen
+                + tight_pen
+                + fillet_pen
                 + elbow_bonus
             )
             mode = "perpendicular" if use_perp else "ortogonal"
@@ -1311,7 +2406,10 @@ def _route_from_endpoint_keep_rest(
 
 
 def _adjust_points_local(points, target, target_info=None, route_obj=None):
-    pts = [_vec(p.x, p.y, p.z) for p in (points or [])]
+    raw_pts = [_vec(p.x, p.y, p.z) for p in (points or [])]
+    pts = _orthogonal_backbone(raw_pts)
+    if len(pts) < 2:
+        pts = raw_pts
     if len(pts) < 2:
         raise RuntimeError("La ruta no tiene suficientes puntos.")
     if pts[0].distanceToPoint(pts[-1]) <= POINT_TOL and len(pts) > 2:
@@ -1330,14 +2428,21 @@ def _adjust_points_local(points, target, target_info=None, route_obj=None):
         target_obj = target_info.get("obj")
 
     board_idx = _board_endpoint_index_for_route(route_obj, pts)
+    _set_debug_runtime_state(raw_points=_clone_points(raw_pts), plan_points=_clone_points(pts), endpoint_idx=int(endpoint_idx), board_idx=board_idx)
     if board_idx is not None and target_obj is not None and _is_box_like(target_obj) and endpoint_idx == int(board_idx):
         endpoint_idx = (len(pts) - 1) if int(board_idx) == 0 else 0
+        _set_debug_runtime_state(endpoint_idx=int(endpoint_idx), board_idx=board_idx)
 
     endpoint_dir = None
     if endpoint_idx == 0 and len(pts) >= 2:
         endpoint_dir = _normalize(pts[1] - pts[0])
     elif endpoint_idx == (len(pts) - 1) and len(pts) >= 2:
         endpoint_dir = _normalize(pts[-2] - pts[-1])
+
+    use_perp = perp_dir is not None and not _is_zero_vec(perp_dir)
+    perp_use = _orient_perp_dir(perp_dir, endpoint_dir=endpoint_dir, outward_dir=outward_dir) if use_perp else None
+    if perp_use is not None and _is_zero_vec(perp_use):
+        perp_use = None
 
     is_oct_target = _is_octagonal_like(target_obj)
     if is_oct_target:
@@ -1359,6 +2464,161 @@ def _adjust_points_local(points, target, target_info=None, route_obj=None):
         lock_prefix = min(5, max(0, len(pts) - 2))
     elif board_idx == (len(pts) - 1):
         lock_suffix = min(5, max(0, len(pts) - 2))
+
+    if endpoint_idx == 0:
+        local_window_limit = max(1, (len(pts) - 2) - lock_suffix)
+    else:
+        local_window_limit = max(1, (len(pts) - 2) - lock_prefix)
+    max_local_window = max(1, len(pts) - 2)
+    guide_local_window = max_local_window
+    preserve_local_window = min(max_local_window, max(6, min(local_window_limit, 10)))
+    protected_head_segments = 1 if (endpoint_idx == 0 and perp_use is not None) else 0
+    protected_tail_segments = 1 if (endpoint_idx == (len(pts) - 1) and perp_use is not None) else 0
+    if board_idx == 0 and endpoint_idx != 0:
+        protected_head_segments = max(protected_head_segments, int(lock_prefix))
+    elif board_idx == (len(pts) - 1) and endpoint_idx == 0:
+        protected_tail_segments = max(protected_tail_segments, int(lock_suffix))
+
+    # Hard priority for the user's intended behavior:
+    # if a local-preservation solution exists, use it before any reroute.
+    if target is not None:
+        frozen_join_idx = _protected_rejoin_index(
+            pts,
+            endpoint_idx,
+            min_turns=(2 if board_idx is not None else 1),
+            min_segments=(3 if board_idx is not None else 2),
+        )
+        if board_idx == 0 and endpoint_idx != 0:
+            frozen_join_idx = max(int(frozen_join_idx), min(len(pts) - 2, max(1, lock_prefix)))
+        elif board_idx == (len(pts) - 1) and endpoint_idx == 0:
+            suffix_join_idx = max(1, min(len(pts) - 2, (len(pts) - 1) - max(1, lock_suffix)))
+            frozen_join_idx = min(int(frozen_join_idx), int(suffix_join_idx))
+        local_anchor_idx = _local_anchor_index(
+            pts,
+            endpoint_idx,
+            use_stub=(perp_use is not None),
+            max_segments=(4 if board_idx is not None else 3),
+        )
+        signature_anchor_idx = _min_join_index_for_signature(
+            pts,
+            endpoint_idx=endpoint_idx,
+            min_distinct_axes=(2 if endpoint_idx == 0 else 1),
+        )
+        if endpoint_idx == 0:
+            local_anchor_idx = max(int(local_anchor_idx), int(signature_anchor_idx))
+        else:
+            local_anchor_idx = min(int(local_anchor_idx), max(1, int(signature_anchor_idx)))
+        if endpoint_idx == 0:
+            local_anchor_idx = min(int(local_anchor_idx), max(1, int(frozen_join_idx) - 1))
+        else:
+            local_anchor_idx = max(int(local_anchor_idx), min(len(pts) - 2, int(frozen_join_idx) + 1))
+
+        guide_replay_max = None
+        guide_replay_min = None
+        guide_splice_max = None
+        guide_splice_min = None
+        if board_idx == (len(pts) - 1) and endpoint_idx == 0:
+            guide_replay_max = max(1, min(len(pts) - 2, int(frozen_join_idx)))
+            guide_splice_max = max(0, min(len(pts) - 2, int(frozen_join_idx)))
+        elif board_idx == 0 and endpoint_idx != 0:
+            guide_replay_min = max(1, min(len(pts) - 2, int(frozen_join_idx)))
+            guide_splice_min = max(0, min(len(pts) - 2, int(frozen_join_idx)))
+        frozen_cand, frozen_action = _exact_frozen_rejoin_candidate(
+            pts,
+            endpoint_idx,
+            target,
+            frozen_join_idx,
+            perp_use=perp_use,
+            protected_head_segments=protected_head_segments,
+            protected_tail_segments=protected_tail_segments,
+        )
+        if frozen_cand is not None:
+            return frozen_cand, frozen_action
+
+        guide_splice_cand, guide_splice_action = _guide_segment_splice_candidate(
+            pts,
+            endpoint_idx,
+            target,
+            perp_use=perp_use,
+            local_window=guide_local_window,
+            max_seg_idx=guide_splice_max,
+            min_seg_idx=guide_splice_min,
+            protected_head_segments=protected_head_segments,
+            protected_tail_segments=protected_tail_segments,
+        )
+        if guide_splice_cand is not None:
+            guide_splice_cand = _cleanup_candidate_route(
+                guide_splice_cand,
+                protected_head_segments=protected_head_segments,
+                protected_tail_segments=protected_tail_segments,
+            )
+            if len(guide_splice_cand) >= 2 and (not _points_almost_equal(pts, guide_splice_cand, tol=0.5)):
+                return guide_splice_cand, guide_splice_action
+
+        anchored_cand, anchored_action = _anchored_subroute_candidate(
+            pts,
+            endpoint_idx,
+            target,
+            local_anchor_idx,
+            frozen_join_idx,
+            perp_use=perp_use,
+            protected_head_segments=protected_head_segments,
+            protected_tail_segments=protected_tail_segments,
+        )
+        if anchored_cand is not None:
+            return anchored_cand, anchored_action
+
+        guide_cand, guide_action = _guide_replay_candidate(
+            pts,
+            endpoint_idx,
+            target,
+            perp_use=perp_use,
+            local_window=guide_local_window,
+            max_join_idx=guide_replay_max,
+            min_join_idx=guide_replay_min,
+            protected_head_segments=protected_head_segments,
+            protected_tail_segments=protected_tail_segments,
+        )
+        if guide_cand is not None:
+            guide_cand = _cleanup_candidate_route(
+                guide_cand,
+                protected_head_segments=protected_head_segments,
+                protected_tail_segments=protected_tail_segments,
+            )
+            if len(guide_cand) >= 2 and (not _points_almost_equal(pts, guide_cand, tol=0.5)):
+                return guide_cand, guide_action
+
+        rigid_cand, rigid_action = _translated_local_preserve_candidate(
+            pts,
+            endpoint_idx,
+            target,
+            perp_use=perp_use,
+            local_window=preserve_local_window,
+        )
+        if rigid_cand is not None:
+            rigid_cand = _cleanup_candidate_route(
+                rigid_cand,
+                protected_head_segments=protected_head_segments,
+                protected_tail_segments=protected_tail_segments,
+            )
+            if len(rigid_cand) >= 2 and (not _points_almost_equal(pts, rigid_cand, tol=0.5)):
+                return rigid_cand, rigid_action
+
+        one_seg_cand, one_seg_action = _single_segment_adjust_candidate(
+            pts,
+            endpoint_idx,
+            target,
+            protected_head_segments=(1 if (endpoint_idx == 0 and perp_use is not None) else 0),
+            protected_tail_segments=(1 if (endpoint_idx == (len(pts) - 1) and perp_use is not None) else 0),
+        )
+        if one_seg_cand is not None:
+            one_seg_cand = _cleanup_candidate_route(
+                one_seg_cand,
+                protected_head_segments=protected_head_segments,
+                protected_tail_segments=protected_tail_segments,
+            )
+            if len(one_seg_cand) >= 2 and (not _points_almost_equal(pts, one_seg_cand, tol=0.5)):
+                return one_seg_cand, one_seg_action
 
     # Primary behavior: reroute the selected side as a new path until the
     # opposite endpoint. Fallback to partial reroute if needed.
@@ -1395,9 +2655,11 @@ def _adjust_points_local(points, target, target_info=None, route_obj=None):
             full_reroute=False,
         )
 
-    out_pts = _simplify_collinear(_dedup_points(out_pts), tol=POINT_TOL)
-    out_pts = _collapse_backtracks(out_pts)
-    out_pts = _simplify_collinear(_dedup_points(out_pts), tol=POINT_TOL)
+    out_pts = _cleanup_candidate_route(
+        out_pts,
+        protected_head_segments=protected_head_segments,
+        protected_tail_segments=protected_tail_segments,
+    )
     if len(out_pts) < 2:
         raise RuntimeError("La edicion dejo menos de 2 puntos.")
     if _points_almost_equal(pts, out_pts, tol=0.5):
@@ -1581,6 +2843,190 @@ def _set_polyline_points(obj, points):
     raise RuntimeError(" | ".join(err))
 
 
+def _find_debug_group(doc):
+    if doc is None:
+        return None
+    try:
+        grp = doc.getObject(DEBUG_OVERLAY_GROUP)
+        if grp is not None:
+            return grp
+    except Exception:
+        pass
+    try:
+        for obj in (getattr(doc, "Objects", []) or []):
+            if _safe_text(getattr(obj, "Label", "")) == DEBUG_OVERLAY_GROUP:
+                return obj
+    except Exception:
+        pass
+    return None
+
+
+def _ensure_debug_group(doc):
+    grp = _find_debug_group(doc)
+    if grp is not None:
+        return grp
+    try:
+        grp = doc.addObject("App::DocumentObjectGroup", DEBUG_OVERLAY_GROUP)
+        grp.Label = DEBUG_OVERLAY_GROUP
+        return grp
+    except Exception:
+        return None
+
+
+def _remove_doc_object(doc, obj):
+    if doc is None or obj is None:
+        return
+    try:
+        children = list(getattr(obj, "Group", []) or [])
+    except Exception:
+        children = []
+    for child in children:
+        _remove_doc_object(doc, child)
+    try:
+        doc.removeObject(obj.Name)
+    except Exception:
+        pass
+
+
+def _clear_debug_overlay(doc):
+    grp = _find_debug_group(doc)
+    if grp is None:
+        return None
+    try:
+        children = list(getattr(grp, "Group", []) or [])
+    except Exception:
+        children = []
+    for child in reversed(children):
+        _remove_doc_object(doc, child)
+    return grp
+
+
+def _style_debug_object(obj, color=(1.0, 1.0, 1.0), line_width=3.0, point_size=6.0, transparency=0):
+    if obj is None:
+        return
+    vo = getattr(obj, "ViewObject", None)
+    if vo is None:
+        return
+    rgb = tuple(float(v) for v in (color or (1.0, 1.0, 1.0)))
+    for attr in ("LineColor", "PointColor", "ShapeColor"):
+        try:
+            setattr(vo, attr, rgb)
+        except Exception:
+            pass
+    try:
+        vo.LineWidth = float(line_width)
+    except Exception:
+        pass
+    try:
+        vo.PointSize = float(point_size)
+    except Exception:
+        pass
+    try:
+        vo.Transparency = int(transparency)
+    except Exception:
+        pass
+    try:
+        vo.DisplayMode = "Wireframe"
+    except Exception:
+        pass
+
+
+def _make_debug_polyline(doc, group, name, label, points, color, line_width=4.0):
+    pts = _dedup_points(points)
+    if doc is None or Part is None or len(pts) < 2:
+        return None
+    try:
+        obj = doc.addObject("Part::Feature", name)
+        obj.Label = label
+        obj.Shape = Part.makePolygon(pts)
+        if group is not None:
+            try:
+                group.addObject(obj)
+            except Exception:
+                pass
+        _style_debug_object(obj, color=color, line_width=line_width, point_size=max(6.0, line_width + 1.0))
+        return obj
+    except Exception:
+        return None
+
+
+def _make_debug_target_marker(doc, group, target, color=(1.0, 0.9, 0.2), size=60.0):
+    if doc is None or Part is None or target is None:
+        return None
+    half = max(10.0, float(size) * 0.5)
+    lines = []
+    try:
+        lines.append(Part.makeLine(_vec(target.x - half, target.y, target.z), _vec(target.x + half, target.y, target.z)))
+        lines.append(Part.makeLine(_vec(target.x, target.y - half, target.z), _vec(target.x, target.y + half, target.z)))
+        lines.append(Part.makeLine(_vec(target.x, target.y, target.z - half), _vec(target.x, target.y, target.z + half)))
+        shape = Part.makeCompound(lines)
+        obj = doc.addObject("Part::Feature", "AjusteLocal_Debug_Target")
+        obj.Label = "AjusteLocal Debug - Punto objetivo"
+        obj.Shape = shape
+        if group is not None:
+            try:
+                group.addObject(obj)
+            except Exception:
+                pass
+        _style_debug_object(obj, color=color, line_width=4.0, point_size=9.0)
+        return obj
+    except Exception:
+        return None
+
+
+def _update_debug_overlay(doc, route_name, original_points, new_points, target, plan_points=None):
+    if (not DEBUG_OVERLAY_ENABLED) or doc is None or Part is None:
+        return False
+    grp = _clear_debug_overlay(doc)
+    if grp is None:
+        grp = _ensure_debug_group(doc)
+    if grp is None:
+        return False
+
+    safe_route = _safe_text(route_name).strip() or "Ruta"
+    created = []
+    created.append(
+        _make_debug_polyline(
+            doc,
+            grp,
+            "AjusteLocal_Debug_Original",
+            f"AjusteLocal Debug - Original - {safe_route}",
+            original_points,
+            color=(1.0, 0.55, 0.15),
+            line_width=3.0,
+        )
+    )
+    if plan_points is not None:
+        created.append(
+            _make_debug_polyline(
+                doc,
+                grp,
+                "AjusteLocal_Debug_Plan",
+                f"AjusteLocal Debug - Guia calculo - {safe_route}",
+                plan_points,
+                color=(0.45, 1.0, 0.35),
+                line_width=2.0,
+            )
+        )
+    created.append(
+        _make_debug_polyline(
+            doc,
+            grp,
+            "AjusteLocal_Debug_Propuesta",
+            f"AjusteLocal Debug - Propuesta - {safe_route}",
+            new_points,
+            color=(0.15, 0.95, 0.95),
+            line_width=5.0,
+        )
+    )
+    created.append(_make_debug_target_marker(doc, grp, target))
+    try:
+        doc.recompute()
+    except Exception:
+        pass
+    return any(obj is not None for obj in created)
+
+
 def _score_target_candidate(sel_ex, route_obj):
     obj = getattr(sel_ex, "Object", None)
     if obj is None or obj is route_obj:
@@ -1683,6 +3129,8 @@ def main():
     doc.openTransaction("Ajuste manual de alimentador/ramal")
     try:
         new_pts, action = _adjust_points_local(route_pts, target, target_info=target_info, route_obj=route_obj)
+        dbg_state = _get_debug_runtime_state()
+        plan_pts = dbg_state.get("plan_points") or route_pts
         if _points_almost_equal(route_pts, new_pts, tol=0.5):
             doc.abortTransaction()
             log_info(f"Ruta ajustada: {route_name} | accion=sin cambios (ruta equivalente)")
@@ -1697,6 +3145,21 @@ def main():
         bend_eff, bend_cap, bend_applied = _apply_bend_radius(route_obj, new_pts, requested=requested_bend)
         doc.recompute()
         doc.commitTransaction()
+        debug_ready = False
+        if DEBUG_OVERLAY_ENABLED:
+            try:
+                debug_ready = _update_debug_overlay(doc, route_name, route_pts, new_pts, target, plan_points=plan_pts)
+            except Exception as debug_ex:
+                debug_ready = False
+                log_warn(f"No se pudo generar overlay debug: {debug_ex}")
+        else:
+            try:
+                _clear_debug_overlay(doc)
+            except Exception:
+                pass
+        debug_extra = ""
+        if DEBUG_OVERLAY_ENABLED:
+            debug_extra = f" | plan={len(_dedup_points(plan_pts))} | debug={'SI' if debug_ready else 'NO'}"
         has_perp = isinstance(target_info, dict) and (target_info.get("perp_dir") is not None) and (not _is_zero_vec(target_info.get("perp_dir")))
         log_info(
             f"Ruta ajustada: {route_name} | accion={action} | metodo={mode} "
@@ -1704,7 +3167,19 @@ def main():
             f"| radio_objetivo={requested_bend:.1f} | radio_aplicado={bend_eff:.1f} "
             f"| radio_max={bend_cap:.1f} | codos={'SI' if bend_applied else 'NO'} "
             f"| salida_perpendicular={'SI' if has_perp else 'NO'}"
+            f"{debug_extra}"
         )
+        if DEBUG_OVERLAY_ENABLED:
+            _log_debug_coordinates(
+                route_name,
+                action,
+                target,
+                route_pts,
+                new_pts,
+                plan_points=plan_pts,
+                endpoint_idx=dbg_state.get("endpoint_idx"),
+                board_idx=dbg_state.get("board_idx"),
+            )
     except Exception as ex:
         try:
             doc.abortTransaction()

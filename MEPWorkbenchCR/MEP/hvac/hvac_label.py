@@ -14,7 +14,8 @@ ICON_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "resources", "icons", "hvac.svg")
 ).replace(os.sep, "/")
 DEFAULT_LABEL_SIZE = 200.0
-DEBUG_LABEL_POSITION = True
+DEBUG_LABEL_POSITION = False
+LABEL_DEBUG_REV = "2026-04-01-label-r2"
 
 
 def log(message):
@@ -70,6 +71,19 @@ def _space_equipment_capacity(doc, space_obj):
     return round(capacity, 2)
 
 
+def _space_occupancy_line(space_obj):
+    default_activity = str(getattr(hvac_space, "DEFAULT_OCCUPANCY_ACTIVITY", "Oficina") or "Oficina")
+    activity_options = set(getattr(hvac_space, "OCCUPANCY_ACTIVITY_OPTIONS", []) or [])
+    try:
+        occupancy = max(0, int(getattr(space_obj, "Occupancy", 0) or 0))
+    except Exception:
+        occupancy = 0
+    activity = str(getattr(space_obj, "OccupancyActivity", default_activity) or default_activity)
+    if activity_options and activity not in activity_options:
+        activity = default_activity
+    return "OCUP: {0} ({1})".format(int(occupancy), activity)
+
+
 def _build_label_lines(doc, space_obj):
     space_name = _space_name(space_obj)
     load = _to_float(space_obj.CoolingLoadBTU, 0.0)
@@ -80,8 +94,9 @@ def _build_label_lines(doc, space_obj):
 
     line_1 = "{0}".format(space_name)
     line_2 = "{0:.0f} BTU/h".format(load)
-    line_3 = "EQ: {0:.0f} ({1:.0f}%)".format(capacity, coverage)
-    return [line_1, line_2, line_3]
+    line_3 = _space_occupancy_line(space_obj)
+    line_4 = "EQ: {0:.0f} ({1:.0f}%)".format(capacity, coverage)
+    return [line_1, line_2, line_3, line_4]
 
 
 def _set_label_text(label_obj, lines):
@@ -94,6 +109,66 @@ def _set_label_text(label_obj, lines):
     elif hasattr(label_obj, "PropertiesList") and "String" in label_obj.PropertiesList:
         label_obj.String = "\n".join(lines)
     label_obj.Label = "HVAC_Label_" + str(lines[0] if lines else getattr(label_obj, "Name", ""))
+
+
+def _space_room_label(space_obj):
+    # Backlink Space.RoomLabel is intentionally disabled to prevent
+    # Link cycles with Label.Space (DAG violation in FreeCAD).
+    if space_obj is None or "RoomLabel" not in getattr(space_obj, "PropertiesList", []):
+        return None
+    try:
+        candidate = getattr(space_obj, "RoomLabel", None)
+    except Exception:
+        candidate = None
+    if candidate is not None:
+        _set_space_room_label(space_obj, None)
+    return None
+
+
+def _set_space_room_label(space_obj, label_obj):
+    if space_obj is None or "RoomLabel" not in getattr(space_obj, "PropertiesList", []):
+        return
+    if label_obj is not None:
+        # Never set backlink to avoid graph cycles.
+        return
+    try:
+        if getattr(space_obj, "RoomLabel", None) is not None:
+            space_obj.RoomLabel = None
+    except Exception:
+        pass
+
+
+def _set_space_label_text(space_obj, lines):
+    if space_obj is None or "LabelText" not in getattr(space_obj, "PropertiesList", []):
+        return
+    try:
+        space_obj.LabelText = list(lines or [])
+    except Exception:
+        pass
+
+
+def _space_visibility(space_obj, default=True):
+    if space_obj is None:
+        return bool(default)
+    vobj = getattr(space_obj, "ViewObject", None)
+    if vobj is None:
+        return bool(default)
+    try:
+        return bool(getattr(vobj, "Visibility", bool(default)))
+    except Exception:
+        return bool(default)
+
+
+def _set_label_visibility(label_obj, visible):
+    if label_obj is None:
+        return
+    vobj = getattr(label_obj, "ViewObject", None)
+    if vobj is None:
+        return
+    try:
+        vobj.Visibility = bool(visible)
+    except Exception:
+        pass
 
 
 def _world_point_from_base(base_obj, point_local):
@@ -425,6 +500,8 @@ def find_labels(doc=None):
 
 
 def _find_label_for_space(doc, space_obj):
+    _space_room_label(space_obj)
+
     for label in find_labels(doc):
         if getattr(label, "Space", None) == space_obj:
             return label
@@ -445,6 +522,12 @@ def remove_labels_for_spaces(space_objects, doc=None):
     removed = 0
     if not targets:
         return removed
+
+    for space in list(space_objects or []):
+        if space is None:
+            continue
+        _set_space_room_label(space, None)
+        _set_space_label_text(space, [])
 
     for label in list(find_labels(doc)):
         linked_space = getattr(label, "Space", None)
@@ -468,6 +551,7 @@ def create_or_update_label(space_obj, doc=None):
         return None
 
     lines = _build_label_lines(doc, space_obj)
+    _set_space_label_text(space_obj, lines)
     label_obj = _find_label_for_space(doc, space_obj)
     if label_obj is None:
         label_obj = _make_draft_text(doc, lines, _label_position(space_obj))
@@ -477,22 +561,41 @@ def create_or_update_label(space_obj, doc=None):
         log("Etiqueta creada para recinto: {0}".format(space_obj.Name))
     else:
         ensure_label_properties(label_obj)
+        if getattr(label_obj, "Space", None) != space_obj:
+            label_obj.Space = space_obj
 
     _set_label_text(label_obj, lines)
     _set_label_style(label_obj)
+    _set_space_room_label(space_obj, None)
 
     if hasattr(label_obj, "Placement"):
         placement = label_obj.Placement
         placement.Base = _label_position(space_obj)
         label_obj.Placement = placement
-    if hasattr(label_obj, "ViewObject"):
-        try:
-            label_obj.ViewObject.Visibility = True
-        except Exception:
-            pass
+    _set_label_visibility(label_obj, _space_visibility(space_obj, default=True))
     hvac_project.add_object_to_hvac_group(doc, label_obj)
 
     return label_obj
+
+
+def clear_roomlabel_backlinks(doc=None):
+    if doc is None:
+        doc = App.ActiveDocument
+    if doc is None:
+        return 0
+    cleared = 0
+    for space_obj in list(hvac_space.find_spaces(doc) or []):
+        if "RoomLabel" not in getattr(space_obj, "PropertiesList", []):
+            continue
+        try:
+            if getattr(space_obj, "RoomLabel", None) is not None:
+                space_obj.RoomLabel = None
+                cleared += 1
+        except Exception:
+            continue
+    if cleared > 0:
+        log("Backlinks RoomLabel limpiados para evitar ciclos DAG: {0}".format(cleared))
+    return cleared
 
 
 def update_all_labels(doc=None, ensure_visible=False):
@@ -500,10 +603,40 @@ def update_all_labels(doc=None, ensure_visible=False):
         doc = App.ActiveDocument
     if doc is None:
         return
+    clear_roomlabel_backlinks(doc)
     for space_obj in hvac_space.find_spaces(doc):
         label_obj = create_or_update_label(space_obj, doc)
-        if ensure_visible and label_obj is not None and hasattr(label_obj, "ViewObject"):
-            label_obj.ViewObject.Visibility = True
+        if ensure_visible and label_obj is not None:
+            _set_label_visibility(label_obj, _space_visibility(space_obj, default=True))
+    sync_all_labels_visibility(doc)
+
+
+def sync_label_visibility_for_space(space_obj, visible=None, doc=None):
+    if space_obj is None:
+        return False
+    if doc is None:
+        doc = getattr(space_obj, "Document", None) or App.ActiveDocument
+    label_obj = _find_label_for_space(doc, space_obj) if doc is not None else None
+    if label_obj is None:
+        return False
+    target = _space_visibility(space_obj, default=True) if visible is None else bool(visible)
+    _set_label_visibility(label_obj, target)
+    return True
+
+
+def sync_all_labels_visibility(doc=None):
+    if doc is None:
+        doc = App.ActiveDocument
+    if doc is None:
+        return 0
+    synced = 0
+    for label_obj in list(find_labels(doc) or []):
+        space_obj = getattr(label_obj, "Space", None)
+        if space_obj is None:
+            continue
+        _set_label_visibility(label_obj, _space_visibility(space_obj, default=True))
+        synced += 1
+    return synced
 
 
 def toggle_labels(doc=None):

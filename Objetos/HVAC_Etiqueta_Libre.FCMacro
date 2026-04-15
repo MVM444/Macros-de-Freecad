@@ -1,0 +1,237 @@
+# -*- coding: utf-8 -*-
+"""
+HVAC_Etiqueta_Libre.FCMacro
+
+Macro independiente para crear una etiqueta HVAC manual en 3D.
+No se vincula con evaporadoras ni condensadoras.
+"""
+
+import FreeCAD as App
+import FreeCADGui as Gui
+
+try:
+    import Draft
+except Exception:
+    Draft = None
+
+try:
+    from PySide2 import QtWidgets
+except Exception:
+    from PySide import QtGui as QtWidgets
+
+
+GROUP_LABEL = "HVAC Etiquetas Libres"
+GROUP_NAME = "HVAC_Etiquetas_Libres"
+
+
+def _log(msg):
+    App.Console.PrintMessage("[MEP-HVAC][EtiquetaLibre] {0}\n".format(msg))
+
+
+def _warn(msg):
+    App.Console.PrintWarning("[MEP-HVAC][EtiquetaLibre] {0}\n".format(msg))
+
+
+def _active_doc():
+    doc = App.ActiveDocument
+    if doc is None:
+        raise RuntimeError("No hay documento activo.")
+    return doc
+
+
+def _vec_from_shape(shape):
+    if shape is None:
+        return None
+    try:
+        bb = shape.BoundBox
+        return App.Vector(
+            (bb.XMin + bb.XMax) * 0.5,
+            (bb.YMin + bb.YMax) * 0.5,
+            (bb.ZMin + bb.ZMax) * 0.5,
+        )
+    except Exception:
+        return None
+
+
+def _resolve_insert_point():
+    try:
+        selected_ex = list(Gui.Selection.getSelectionEx() or [])
+    except Exception:
+        selected_ex = []
+
+    for item in selected_ex:
+        for sub in list(getattr(item, "SubObjects", []) or []):
+            try:
+                if getattr(sub, "ShapeType", "") == "Vertex":
+                    return App.Vector(sub.Point)
+            except Exception:
+                pass
+            vec = _vec_from_shape(sub)
+            if vec is not None:
+                return vec
+
+        obj = getattr(item, "Object", None)
+        if obj is None:
+            continue
+        shape = getattr(obj, "Shape", None)
+        if shape is not None:
+            vec = _vec_from_shape(shape)
+            if vec is not None:
+                return vec
+        placement = getattr(obj, "Placement", None)
+        if placement is not None:
+            return App.Vector(placement.Base)
+
+    return App.Vector(0.0, 0.0, 0.0)
+
+
+def _ensure_group(doc):
+    group = doc.getObject(GROUP_NAME)
+    if group is not None:
+        return group
+
+    group = doc.addObject("App::DocumentObjectGroup", GROUP_NAME)
+    group.Label = GROUP_LABEL
+    return group
+
+
+def _exec_dialog(dialog):
+    if hasattr(dialog, "exec"):
+        return dialog.exec()
+    return dialog.exec_()
+
+
+class _EtiquetaDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None):
+        super(_EtiquetaDialog, self).__init__(parent)
+        self.setWindowTitle("Etiqueta HVAC Libre")
+        self.setMinimumWidth(360)
+
+        self._system = QtWidgets.QComboBox()
+        self._system.addItems(["Mini-split", "Multi-split", "VRF", "Otro"])
+
+        self._capacity = QtWidgets.QLineEdit("12000")
+        self._unit = QtWidgets.QComboBox()
+        self._unit.addItems(["Pared", "Cassette", "Piso Cielo", "Consola", "Otro"])
+
+        self._extra = QtWidgets.QLineEdit("")
+        self._z_offset = QtWidgets.QDoubleSpinBox()
+        self._z_offset.setDecimals(1)
+        self._z_offset.setRange(-100000.0, 100000.0)
+        self._z_offset.setValue(0.0)
+        self._z_offset.setSuffix(" mm")
+
+        self._text_height = QtWidgets.QDoubleSpinBox()
+        self._text_height.setDecimals(1)
+        self._text_height.setRange(10.0, 5000.0)
+        self._text_height.setValue(250.0)
+        self._text_height.setSuffix(" mm")
+
+        form = QtWidgets.QFormLayout()
+        form.addRow("Sistema:", self._system)
+        form.addRow("Capacidad (BTU/h):", self._capacity)
+        form.addRow("Tipo de unidad:", self._unit)
+        form.addRow("Texto extra:", self._extra)
+        form.addRow("Desfase Z:", self._z_offset)
+        form.addRow("Altura de texto:", self._text_height)
+
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addWidget(buttons)
+
+    def values(self):
+        return {
+            "system": str(self._system.currentText() or "").strip(),
+            "capacity": str(self._capacity.text() or "").strip(),
+            "unit": str(self._unit.currentText() or "").strip(),
+            "extra": str(self._extra.text() or "").strip(),
+            "z_offset": float(self._z_offset.value()),
+            "text_height": float(self._text_height.value()),
+        }
+
+
+def _build_text_lines(values):
+    lines = []
+
+    system = values.get("system", "").strip()
+    unit = values.get("unit", "").strip()
+    capacity = values.get("capacity", "").strip()
+    extra = values.get("extra", "").strip()
+
+    if system and unit:
+        lines.append("{0} - {1}".format(system, unit))
+    elif system:
+        lines.append(system)
+    elif unit:
+        lines.append(unit)
+
+    if capacity:
+        if "BTU" in capacity.upper():
+            lines.append(capacity)
+        else:
+            lines.append("{0} BTU/h".format(capacity))
+
+    if extra:
+        lines.append(extra)
+
+    if not lines:
+        lines = ["Etiqueta HVAC"]
+    return lines
+
+
+def _create_label():
+    doc = _active_doc()
+    if Draft is None or not hasattr(Draft, "make_text"):
+        raise RuntimeError("No se pudo cargar Draft.make_text.")
+
+    parent = Gui.getMainWindow() if hasattr(Gui, "getMainWindow") else None
+    dialog = _EtiquetaDialog(parent)
+    if _exec_dialog(dialog) != QtWidgets.QDialog.Accepted:
+        _log("Operacion cancelada por el usuario.")
+        return
+
+    values = dialog.values()
+    lines = _build_text_lines(values)
+
+    base = _resolve_insert_point()
+    insert_point = App.Vector(base.x, base.y, base.z + values["z_offset"])
+
+    text_obj = Draft.make_text(lines, point=insert_point)
+    if text_obj is None:
+        raise RuntimeError("No se pudo crear el objeto de texto.")
+
+    if "Height" in list(getattr(text_obj, "PropertiesList", []) or []):
+        try:
+            text_obj.Height = float(values["text_height"])
+        except Exception:
+            pass
+
+    try:
+        text_obj.Label = "HVAC_Label_Libre"
+    except Exception:
+        pass
+
+    group = _ensure_group(doc)
+    try:
+        group.addObject(text_obj)
+    except Exception:
+        pass
+
+    doc.recompute()
+    _log(
+        "Etiqueta creada en X={0:.1f}, Y={1:.1f}, Z={2:.1f}".format(
+            insert_point.x, insert_point.y, insert_point.z
+        )
+    )
+
+
+try:
+    _create_label()
+except Exception as err:
+    _warn("Error: {0}".format(err))

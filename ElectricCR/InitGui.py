@@ -37,6 +37,24 @@ def load_config():
     return {}
 
 
+def _cfg_bool(cfg: dict, key: str, default: bool) -> bool:
+    try:
+        value = cfg.get(key, default)
+    except Exception:
+        return bool(default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        txt = value.strip().lower()
+        if txt in {"1", "true", "yes", "on", "si"}:
+            return True
+        if txt in {"0", "false", "no", "off"}:
+            return False
+    return bool(default)
+
+
 def _normalize_toolbar_key(text: str) -> str:
     s = str(text or "").strip().lower()
     if not s:
@@ -50,6 +68,9 @@ def _normalize_toolbar_key(text: str) -> str:
 _WRAPPED_COMMANDS = {}
 _LOG_ENABLED = False
 _CONNECTED_TOOLBARS = set()
+_QT_MSG_FILTER_INSTALLED = False
+_QT_PREV_MSG_HANDLER = None
+_QT_EFFECTS_DISABLED = False
 
 
 def _sanitize_id(text: str) -> str:
@@ -183,6 +204,115 @@ def _qmods():
             return QtWidgets
         except Exception:
             return None
+
+
+def _qmods_with_core():
+    try:
+        from PySide2 import QtWidgets, QtCore
+        return QtWidgets, QtCore
+    except Exception:
+        try:
+            from PySide import QtGui as QtWidgets
+            from PySide import QtCore
+            return QtWidgets, QtCore
+        except Exception:
+            return None, None
+
+
+def _qt_message_filter(*args):
+    msg = ""
+    try:
+        if args:
+            msg = str(args[-1])
+    except Exception:
+        msg = ""
+    if "UpdateLayeredWindowIndirect failed" in msg:
+        return
+
+    prev = _QT_PREV_MSG_HANDLER
+    if prev is not None:
+        try:
+            prev(*args)
+            return
+        except Exception:
+            pass
+
+
+def _install_windows_qt_layered_filter(cfg: dict) -> None:
+    global _QT_MSG_FILTER_INSTALLED, _QT_PREV_MSG_HANDLER
+    if os.name != "nt":
+        return
+    if not _cfg_bool(cfg, "suppress_qt_layered_warnings", True):
+        return
+    if _QT_MSG_FILTER_INSTALLED:
+        return
+
+    _QtWidgets, QtCore = _qmods_with_core()
+    if QtCore is None:
+        return
+    try:
+        if hasattr(QtCore, "qInstallMessageHandler"):
+            _QT_PREV_MSG_HANDLER = QtCore.qInstallMessageHandler(_qt_message_filter)
+            _QT_MSG_FILTER_INSTALLED = True
+        elif hasattr(QtCore, "qInstallMsgHandler"):
+            _QT_PREV_MSG_HANDLER = QtCore.qInstallMsgHandler(_qt_message_filter)
+            _QT_MSG_FILTER_INSTALLED = True
+    except Exception:
+        return
+
+    if _QT_MSG_FILTER_INSTALLED:
+        try:
+            App.Console.PrintMessage(
+                "ElectricCR: filtro Qt activado para UpdateLayeredWindowIndirect en Windows.\n"
+            )
+        except Exception:
+            pass
+
+
+def _disable_windows_qt_ui_effects(cfg: dict) -> None:
+    global _QT_EFFECTS_DISABLED
+    if os.name != "nt":
+        return
+    if not _cfg_bool(cfg, "disable_qt_ui_effects", True):
+        return
+    if _QT_EFFECTS_DISABLED:
+        return
+
+    QtWidgets, QtCore = _qmods_with_core()
+    if QtWidgets is None or QtCore is None:
+        return
+    try:
+        app = QtWidgets.QApplication.instance()
+    except Exception:
+        app = None
+    if app is None:
+        return
+
+    changed = 0
+    for effect_name in (
+        "UI_AnimateMenu",
+        "UI_FadeMenu",
+        "UI_AnimateCombo",
+        "UI_AnimateTooltip",
+        "UI_FadeTooltip",
+    ):
+        try:
+            effect = getattr(QtCore.Qt, effect_name, None)
+            if effect is None:
+                continue
+            app.setEffectEnabled(effect, False)
+            changed += 1
+        except Exception:
+            continue
+
+    if changed > 0:
+        _QT_EFFECTS_DISABLED = True
+        try:
+            App.Console.PrintMessage(
+                "ElectricCR: efectos UI de Qt desactivados en Windows (mitigacion layered windows).\n"
+            )
+        except Exception:
+            pass
 
 
 def _action_command_id(action) -> str:
@@ -388,6 +518,16 @@ class ElectricCRWorkbench(Gui.Workbench):
         global _LOG_ENABLED
         _LOG_ENABLED = True
         _connect_toolbar_logger()
+        cfg = load_config()
+        _install_windows_qt_layered_filter(cfg)
+        _disable_windows_qt_ui_effects(cfg)
+        # En Windows, el overlay de Snapper puede disparar spam de
+        # UpdateLayeredWindowIndirect en ciertas combinaciones Qt/GPU.
+        snapper_default = False if os.name == "nt" else True
+        toolbar_default = False if os.name == "nt" else True
+        enable_draft_toolbar = _cfg_bool(cfg, "draft_toolbar_autoload", toolbar_default)
+        enable_snapper_overlay = _cfg_bool(cfg, "draft_snapper_overlay", snapper_default)
+        enable_statusbar = _cfg_bool(cfg, "draft_statusbar", True)
         # Habilitar snap y barra de estado de Draft al entrar al WB
         try:
             import DraftTools  # noqa: F401
@@ -395,9 +535,26 @@ class ElectricCRWorkbench(Gui.Workbench):
             pass
         try:
             if hasattr(Gui, "draftToolBar"):
-                Gui.draftToolBar.Activated()
+                if enable_draft_toolbar:
+                    Gui.draftToolBar.Activated()
+                else:
+                    Gui.draftToolBar.Deactivated()
+                    if os.name == "nt":
+                        App.Console.PrintMessage(
+                            "ElectricCR: autoactivacion de Draft toolbar desactivada "
+                            "(config 'draft_toolbar_autoload': true para reactivarla).\n"
+                        )
             if hasattr(Gui, "Snapper"):
-                Gui.Snapper.show()
+                if enable_snapper_overlay:
+                    Gui.Snapper.show()
+                else:
+                    Gui.Snapper.hide()
+                    if os.name == "nt":
+                        App.Console.PrintMessage(
+                            "ElectricCR: overlay de Snapper desactivado en Windows "
+                            "(config 'draft_snapper_overlay': true para reactivarlo).\n"
+                        )
+            if enable_statusbar:
                 from draftutils import init_draft_statusbar
                 init_draft_statusbar.show_draft_statusbar()
         except Exception:
@@ -406,13 +563,19 @@ class ElectricCRWorkbench(Gui.Workbench):
     def Deactivated(self):
         global _LOG_ENABLED
         _LOG_ENABLED = False
+        cfg = load_config()
+        enable_statusbar = _cfg_bool(cfg, "draft_statusbar", True)
         # Ocultar snap/estado cuando se sale del WB
         try:
             if hasattr(Gui, "draftToolBar"):
                 Gui.draftToolBar.Deactivated()
             if hasattr(Gui, "Snapper"):
                 Gui.Snapper.hide()
-                from PySide import QtCore
+            if enable_statusbar:
+                try:
+                    from PySide2 import QtCore
+                except Exception:
+                    from PySide import QtCore
                 from draftutils import init_draft_statusbar
                 t = QtCore.QTimer()
                 t.singleShot(700, init_draft_statusbar.hide_draft_statusbar)

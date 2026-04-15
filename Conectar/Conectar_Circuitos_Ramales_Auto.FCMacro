@@ -307,7 +307,8 @@ def es_ruta_guia(obj):
 
 
 def es_generado_ramal(obj):
-    return texto_seguro(getattr(obj, "GeneradoPor", "")).strip() == "Conectar_Circuitos_Ramales_Auto"
+    gen = texto_seguro(getattr(obj, "GeneradoPor", "")).strip()
+    return gen in ("Conectar_Circuitos_Ramales_Auto", "Conectar_Circuitos_Luminarias_Auto")
 
 
 def es_apagador(obj):
@@ -501,7 +502,10 @@ def limpiar_ramales_generados_compat(doc, group_obj):
             generado = es_generado_ramal(child)
             kind = texto_seguro(getattr(child, "LinkKind", "")).strip().lower()
             autoroute = bool(texto_seguro(getattr(child, "AutoRouteKey", "")).strip())
-            if generado or (autoroute and kind in ("backbone", "drop_box", "drop_nearest")):
+            tipo = texto_seguro(getattr(child, "Tipo", "")).strip().lower()
+            cid = texto_seguro(getattr(child, "CircuitoID", "")).strip()
+            es_conduit_circuito = (tipo == "conduitpath") and bool(cid)
+            if generado or es_conduit_circuito or (autoroute and kind in ("backbone", "switch_backbone", "drop_box", "drop_nearest")):
                 if name not in names:
                     names.append(name)
     removed = 0
@@ -1009,6 +1013,7 @@ def procesar_circuito(doc, group_obj, cfg):
         devices, boxes = backend.collect_circuit_objects(
             group_obj,
             include_apagadores=bool(cfg.get("include_apagadores", True)),
+            mode="tomas",
         )
     except Exception as ex:
         raise RuntimeError(f"No se pudieron recolectar objetos del circuito: {ex}")
@@ -1030,7 +1035,9 @@ def procesar_circuito(doc, group_obj, cfg):
 
     cfg_v1 = {
         "connect_to_board": False,
+        "circuit_mode": "tomas",
         "include_apagadores": bool(cfg.get("include_apagadores", DEFAULT_INCLUDE_APAGADORES)),
+        "lighting_switch_spine": False,
         "route_by_perimeter": bool(cfg.get("route_by_perimeter", DEFAULT_ROUTE_BY_PERIMETER)),
         "route_z": float(cfg.get("route_z", DEFAULT_ROUTE_Z)),
         "bend_radius": float(cfg.get("bend_radius", DEFAULT_BEND_RADIUS)),
@@ -1365,20 +1372,26 @@ def conectar_circuitos_ramales_auto():
         return
 
     log_info(f"Circuitos seleccionados para ramales: {len(groups)}")
-    try:
-        doc.openTransaction("ElectricCR: Conectar Circuitos Ramales Auto")
-        total = 0
-        for group in groups:
-            total += procesar_circuito(doc, group, cfg)
-        doc.recompute()
-        doc.commitTransaction()
-        log_info(f"Proceso terminado | circuitos={len(groups)} | enlaces_generados={total}")
-    except Exception as ex:
+    total = 0
+    errores = 0
+    for group in groups:
+        gid = texto_seguro(getattr(group, "Label", "")) or texto_seguro(getattr(group, "Name", ""))
         try:
-            doc.abortTransaction()
-        except Exception:
-            pass
-        log_error(f"Error general: {ex}")
+            doc.openTransaction(f"ElectricCR: Ramales {gid}")
+            total += procesar_circuito(doc, group, cfg)
+            doc.recompute()
+            doc.commitTransaction()
+        except Exception as ex:
+            errores += 1
+            try:
+                doc.abortTransaction()
+            except Exception:
+                pass
+            log_warn(f"Circuito fallido: {gid} | {ex}")
+    if errores:
+        log_warn(f"Proceso terminado con errores | circuitos={len(groups)} | errores={errores} | enlaces_generados={total}")
+    else:
+        log_info(f"Proceso terminado | circuitos={len(groups)} | enlaces_generados={total}")
 
 
 conectar_circuitos_ramales_auto()

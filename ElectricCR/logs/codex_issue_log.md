@@ -81,3 +81,15 @@
   - fix_all_links: changed_links=195 | warning_links=0.
   - Interpretacion: normalizacion tecnica aplicada correctamente en datos.
   - Estado funcional: si el menu contextual Transform sigue inactivo, se confirma limitacion de habilitacion UI en FreeCAD para ciertos App::Link/contextos (pendiente resolver en siguiente iteracion).
+- [2026-04-14 16:31:09] ModoVisual Solo3D aplicado con sincronizacion reforzada
+  - Problema recurrente reportado: objetos seguian viendose en Ambos tras cambiar a Solo3D.
+  - Objetos con ModoVisual actualizados: 117.
+  - Ajustes directos de visibilidad Link2D/Link3D: 18.
+  - Links retargeted a master de modo correcto: 231.
+  - Ajustes fallback por deteccion componente 2D/3D: 282.
+- [2026-04-14 16:32:28] ModoVisual Solo3D aplicado con sincronizacion reforzada
+  - Problema recurrente reportado: objetos seguian viendose en Ambos tras cambiar a Solo3D.
+  - Objetos con ModoVisual actualizados: 0.
+  - Ajustes directos de visibilidad Link2D/Link3D: 15.
+  - Links retargeted a master de modo correcto: 0.
+  - Ajustes fallback por deteccion componente 2D/3D: 16.

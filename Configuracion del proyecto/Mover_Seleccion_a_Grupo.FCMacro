@@ -1,0 +1,645 @@
+# -*- coding: utf-8 -*-
+# MenuText: Mover Seleccion a Grupo...
+# ToolTip: Mueve objetos seleccionados a un grupo existente o nuevo y limpia grupos vacios
+# Icon: Configuracion del proyecto/Mover_Seleccion_a_Grupo.svg
+# Transaction: self
+"""
+Mover seleccion a grupo (general)
+
+Objetivo:
+- Seleccionar objetos (incluso de distintos grupos).
+- Moverlos a un grupo existente o crear uno nuevo.
+- Limpiar grupos vacios luego del movimiento.
+
+Notas:
+- Si selecciona un grupo, puede mover recursivamente su contenido no-contenedor.
+- Por seguridad, se pueden conservar grupos base vacios (electrico/_lib/instancias).
+"""
+
+import re
+import FreeCAD as App
+import FreeCADGui as Gui
+
+try:
+    from PySide2 import QtWidgets, QtCore
+except Exception:
+    try:
+        from PySide import QtGui as QtWidgets  # type: ignore
+        from PySide import QtCore  # type: ignore
+    except Exception:
+        QtWidgets = None
+        QtCore = None
+
+
+TAG = "GRUPOS"
+DEFAULT_NEW_LABEL = "Grupo_Organizado"
+PROTECTED_EMPTY_GROUPS = {"electrico", "_lib", "instancias"}
+
+
+def _info(msg):
+    App.Console.PrintMessage(f"[{TAG}][INFO] {msg}\n")
+
+
+def _warn(msg):
+    App.Console.PrintWarning(f"[{TAG}][WARN] {msg}\n")
+
+
+def _err(msg):
+    App.Console.PrintError(f"[{TAG}][ERROR] {msg}\n")
+
+
+def _safe_text(value):
+    try:
+        return str(value or "")
+    except Exception:
+        return ""
+
+
+def _norm_key(text):
+    s = _safe_text(text).strip().lower()
+    return re.sub(r"[^a-z0-9_]+", "", s)
+
+
+def _is_container(obj):
+    type_id = _safe_text(getattr(obj, "TypeId", ""))
+    if type_id.startswith("App::DocumentObjectGroup"):
+        return True
+    if type_id.startswith("App::Part"):
+        return True
+    return False
+
+
+def _display_name(obj):
+    label = _safe_text(getattr(obj, "Label", "")).strip()
+    return label or _safe_text(getattr(obj, "Name", "<?>"))
+
+
+def _iter_containers(doc):
+    return [obj for obj in (getattr(doc, "Objects", []) or []) if _is_container(obj)]
+
+
+def _scan_relationships(doc):
+    containers = _iter_containers(doc)
+    parent_of = {}    # child container Name -> parent container obj (first hit)
+    member_of = {}    # child object Name -> [containers]
+    for grp in containers:
+        for child in (getattr(grp, "Group", []) or []):
+            if child is None:
+                continue
+            cname = _safe_text(getattr(child, "Name", "")).strip()
+            if not cname:
+                continue
+            member_of.setdefault(cname, []).append(grp)
+            if _is_container(child) and (cname not in parent_of):
+                parent_of[cname] = grp
+    return containers, parent_of, member_of
+
+
+def _container_paths(doc):
+    containers, parent_of, _ = _scan_relationships(doc)
+    by_name = {c.Name: c for c in containers}
+    memo = {}
+
+    def _path_for(name):
+        if name in memo:
+            return memo[name]
+        grp = by_name.get(name)
+        if grp is None:
+            memo[name] = name
+            return name
+        parent = parent_of.get(name)
+        if parent is None:
+            p = _display_name(grp)
+        else:
+            p = f"{_path_for(parent.Name)}/{_display_name(grp)}"
+        memo[name] = p
+        return p
+
+    rows = [(_path_for(grp.Name), grp.Name) for grp in containers]
+    rows.sort(key=lambda r: r[0].lower())
+    return rows
+
+
+def _selection_related_group_names(doc, selection):
+    containers, parent_of, member_of = _scan_relationships(doc)
+    by_name = {grp.Name: grp for grp in containers}
+    out = set()
+
+    def _add_with_ancestors(name):
+        if not name:
+            return
+        cur_name = str(name)
+        seen = set()
+        while cur_name and cur_name not in seen:
+            seen.add(cur_name)
+            out.add(cur_name)
+            parent = parent_of.get(cur_name)
+            if parent is None:
+                break
+            cur_name = _safe_text(getattr(parent, "Name", "")).strip()
+
+    def _add_child_containers(container_obj):
+        for child in (getattr(container_obj, "Group", []) or []):
+            if _is_container(child):
+                cname = _safe_text(getattr(child, "Name", "")).strip()
+                if cname:
+                    out.add(cname)
+
+    for obj in (selection or []):
+        if obj is None:
+            continue
+        if _is_container(obj):
+            gname = _safe_text(getattr(obj, "Name", "")).strip()
+            if not gname:
+                continue
+            _add_with_ancestors(gname)
+            _add_child_containers(obj)
+            continue
+
+        oname = _safe_text(getattr(obj, "Name", "")).strip()
+        if not oname:
+            continue
+        for parent_grp in (member_of.get(oname, []) or []):
+            pname = _safe_text(getattr(parent_grp, "Name", "")).strip()
+            if not pname:
+                continue
+            _add_with_ancestors(pname)
+            _add_child_containers(parent_grp)
+
+    # Incluir grupos base si existen.
+    for base_name in ("electrico", "_lib", "instancias"):
+        grp = doc.getObject(base_name)
+        if grp is not None and _is_container(grp):
+            out.add(grp.Name)
+
+    # Limpiar referencias que ya no existan.
+    return {name for name in out if name in by_name}
+
+
+def _container_paths_filtered(doc, allowed_names):
+    rows_all = _container_paths(doc)
+    allowed = set(allowed_names or [])
+    if not allowed:
+        return rows_all
+    rows = [row for row in rows_all if row[1] in allowed]
+    return rows or rows_all
+
+
+def _unique_internal_name(doc, base_label):
+    token = re.sub(r"[^0-9A-Za-z_]+", "_", _safe_text(base_label).strip()).strip("_")
+    token = token or "Grupo"
+    if doc.getObject(token) is None:
+        return token
+    i = 2
+    while True:
+        cand = f"{token}_{i:02d}"
+        if doc.getObject(cand) is None:
+            return cand
+        i += 1
+
+
+def _collect_non_container_descendants(root_group):
+    out = []
+    seen = set()
+    stack = [root_group]
+    while stack:
+        grp = stack.pop()
+        for child in (getattr(grp, "Group", []) or []):
+            if child is None:
+                continue
+            key = _safe_text(getattr(child, "Name", "")).strip() or str(id(child))
+            if key in seen:
+                continue
+            seen.add(key)
+            if _is_container(child):
+                stack.append(child)
+            else:
+                out.append(child)
+    return out
+
+
+def _collect_selected_objects(include_group_children=True):
+    picked = []
+    seen = set()
+
+    def _add(obj):
+        if obj is None:
+            return
+        key = _safe_text(getattr(obj, "Name", "")).strip() or str(id(obj))
+        if key in seen:
+            return
+        seen.add(key)
+        picked.append(obj)
+
+    sel_ex = []
+    try:
+        sel_ex = Gui.Selection.getSelectionEx() or []
+    except Exception:
+        sel_ex = []
+
+    for sx in sel_ex:
+        obj = getattr(sx, "Object", None)
+        if obj is None:
+            continue
+        if _is_container(obj):
+            if include_group_children:
+                for leaf in _collect_non_container_descendants(obj):
+                    _add(leaf)
+            continue
+        _add(obj)
+
+    if picked:
+        return picked
+
+    # Fallback simple
+    simple_sel = []
+    try:
+        simple_sel = Gui.Selection.getSelection() or []
+    except Exception:
+        simple_sel = []
+
+    for obj in simple_sel:
+        if _is_container(obj):
+            if include_group_children:
+                for leaf in _collect_non_container_descendants(obj):
+                    _add(leaf)
+            continue
+        _add(obj)
+
+    return picked
+
+
+class _MoveDialog(QtWidgets.QDialog):
+    def __init__(self, group_rows, selected_count, parent=None):
+        super(_MoveDialog, self).__init__(parent)
+        self.setWindowTitle("Mover seleccion a grupo")
+        self.setMinimumWidth(620)
+        self._rows = list(group_rows or [])
+        self._build_ui(selected_count)
+        self._refresh_mode()
+
+    def _build_ui(self, selected_count):
+        lay = QtWidgets.QVBoxLayout(self)
+
+        info = QtWidgets.QLabel(
+            "Mover objetos seleccionados a un grupo destino.\n"
+            "Puede usar grupo existente o crear grupo nuevo."
+        )
+        info.setWordWrap(True)
+        lay.addWidget(info)
+
+        lbl_sel = QtWidgets.QLabel(f"Seleccion actual: {int(selected_count)} item(s)")
+        lay.addWidget(lbl_sel)
+
+        box_mode = QtWidgets.QGroupBox("Destino")
+        mode_lay = QtWidgets.QVBoxLayout(box_mode)
+        self.rb_existing = QtWidgets.QRadioButton("Usar grupo existente")
+        self.rb_new = QtWidgets.QRadioButton("Crear grupo nuevo")
+        self.rb_existing.setChecked(True)
+        mode_lay.addWidget(self.rb_existing)
+        mode_lay.addWidget(self.rb_new)
+
+        self.cb_existing = QtWidgets.QComboBox()
+        self.cb_existing.setMinimumContentsLength(48)
+        for path, name in self._rows:
+            self.cb_existing.addItem(path, name)
+        mode_lay.addWidget(self.cb_existing)
+        if self.cb_existing.count() == 0:
+            self.rb_new.setChecked(True)
+            self.rb_existing.setEnabled(False)
+
+        form_new = QtWidgets.QFormLayout()
+        self.cb_parent = QtWidgets.QComboBox()
+        self.cb_parent.addItem("[Raiz del documento]", "")
+        for path, name in self._rows:
+            self.cb_parent.addItem(path, name)
+        self.ed_new_label = QtWidgets.QLineEdit(DEFAULT_NEW_LABEL)
+        form_new.addRow("Padre del grupo nuevo:", self.cb_parent)
+        form_new.addRow("Nombre del grupo nuevo:", self.ed_new_label)
+        mode_lay.addLayout(form_new)
+        lay.addWidget(box_mode)
+
+        box_opts = QtWidgets.QGroupBox("Opciones")
+        opt_lay = QtWidgets.QVBoxLayout(box_opts)
+        self.chk_include_children = QtWidgets.QCheckBox(
+            "Si selecciono grupos, mover su contenido (recursivo)"
+        )
+        self.chk_include_children.setChecked(True)
+        self.chk_detach = QtWidgets.QCheckBox(
+            "Quitar objetos de grupos anteriores antes de mover (evita duplicados)"
+        )
+        self.chk_detach.setChecked(True)
+        self.chk_cleanup_empty = QtWidgets.QCheckBox("Borrar grupos vacios despues de mover")
+        self.chk_cleanup_empty.setChecked(True)
+        self.chk_cleanup_global = QtWidgets.QCheckBox("Limpiar vacios en TODO el documento")
+        self.chk_cleanup_global.setChecked(False)
+        self.chk_protect_base = QtWidgets.QCheckBox("Conservar grupos base vacios (electrico/_lib/instancias)")
+        self.chk_protect_base.setChecked(True)
+        opt_lay.addWidget(self.chk_include_children)
+        opt_lay.addWidget(self.chk_detach)
+        opt_lay.addWidget(self.chk_cleanup_empty)
+        opt_lay.addWidget(self.chk_cleanup_global)
+        opt_lay.addWidget(self.chk_protect_base)
+        lay.addWidget(box_opts)
+
+        btns = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+        )
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        lay.addWidget(btns)
+
+        self.rb_existing.toggled.connect(self._refresh_mode)
+        self.chk_cleanup_empty.toggled.connect(self._refresh_cleanup_mode)
+        self._refresh_cleanup_mode()
+
+    def _refresh_mode(self):
+        use_existing = self.rb_existing.isChecked()
+        self.cb_existing.setEnabled(use_existing)
+        self.cb_parent.setEnabled(not use_existing)
+        self.ed_new_label.setEnabled(not use_existing)
+
+    def _refresh_cleanup_mode(self):
+        enabled = self.chk_cleanup_empty.isChecked()
+        self.chk_cleanup_global.setEnabled(enabled)
+        self.chk_protect_base.setEnabled(enabled)
+
+    def get_cfg(self):
+        mode = "existing" if self.rb_existing.isChecked() else "new"
+        return {
+            "mode": mode,
+            "existing_name": _safe_text(self.cb_existing.currentData()).strip(),
+            "new_parent_name": _safe_text(self.cb_parent.currentData()).strip(),
+            "new_label": _safe_text(self.ed_new_label.text()).strip(),
+            "include_group_children": bool(self.chk_include_children.isChecked()),
+            "detach_from_all": bool(self.chk_detach.isChecked()),
+            "cleanup_empty": bool(self.chk_cleanup_empty.isChecked()),
+            "cleanup_global": bool(self.chk_cleanup_global.isChecked()),
+            "protect_base": bool(self.chk_protect_base.isChecked()),
+        }
+
+
+def _create_group(doc, label, parent=None):
+    name = _unique_internal_name(doc, label)
+    grp = doc.addObject("App::DocumentObjectGroup", name)
+    try:
+        grp.Label = label
+    except Exception:
+        pass
+    if parent is not None:
+        parent.addObject(grp)
+    return grp
+
+
+def _resolve_destination(doc, cfg):
+    mode = _safe_text(cfg.get("mode", "existing")).strip().lower()
+    if mode == "existing":
+        name = _safe_text(cfg.get("existing_name", "")).strip()
+        if not name:
+            raise RuntimeError("No selecciono grupo destino existente.")
+        grp = doc.getObject(name)
+        if grp is None or (not _is_container(grp)):
+            raise RuntimeError("El grupo destino existente ya no es valido.")
+        return grp, False
+
+    label = _safe_text(cfg.get("new_label", "")).strip() or DEFAULT_NEW_LABEL
+    parent_name = _safe_text(cfg.get("new_parent_name", "")).strip()
+    parent = doc.getObject(parent_name) if parent_name else None
+    if parent_name and (parent is None or (not _is_container(parent))):
+        raise RuntimeError("El padre del grupo nuevo ya no es valido.")
+    grp = _create_group(doc, label, parent=parent)
+    return grp, True
+
+
+def _move_objects_to_group(doc, objects, destination, detach_from_all=True):
+    _, _, member_of = _scan_relationships(doc)
+    touched_groups = set()
+    moved = 0
+    already = 0
+    skipped = 0
+
+    for obj in (objects or []):
+        if obj is None:
+            skipped += 1
+            continue
+        if _is_container(obj):
+            skipped += 1
+            continue
+
+        oname = _safe_text(getattr(obj, "Name", "")).strip()
+        if not oname:
+            skipped += 1
+            continue
+
+        src_groups = list(member_of.get(oname, []))
+        in_dest = obj in (getattr(destination, "Group", []) or [])
+
+        if detach_from_all:
+            for grp in src_groups:
+                if grp is None or grp == destination:
+                    continue
+                try:
+                    if obj in (getattr(grp, "Group", []) or []):
+                        grp.removeObject(obj)
+                        touched_groups.add(grp.Name)
+                except Exception as ex:
+                    _warn(f"No se pudo remover '{_display_name(obj)}' de '{_display_name(grp)}': {ex}")
+
+        if in_dest:
+            already += 1
+            continue
+
+        try:
+            destination.addObject(obj)
+            moved += 1
+        except Exception as ex:
+            skipped += 1
+            _warn(f"No se pudo mover '{_display_name(obj)}' a '{_display_name(destination)}': {ex}")
+
+    return moved, already, skipped, touched_groups
+
+
+def _is_protected_empty_group(grp, protect_base):
+    if not protect_base:
+        return False
+    n_name = _norm_key(getattr(grp, "Name", ""))
+    n_label = _norm_key(getattr(grp, "Label", ""))
+    protected = {_norm_key(x) for x in PROTECTED_EMPTY_GROUPS}
+    return (n_name in protected) or (n_label in protected)
+
+
+def _cleanup_empty_groups(doc, destination_name, touched_group_names, global_mode=False, protect_base=True):
+    removed = 0
+    containers, parent_of, _ = _scan_relationships(doc)
+
+    if global_mode:
+        candidate_names = {grp.Name for grp in containers}
+    else:
+        candidate_names = set(touched_group_names or [])
+        # Tambien revisar ancestros por si quedan vacios en cascada.
+        for name in list(candidate_names):
+            cur = parent_of.get(name)
+            seen = set()
+            while cur is not None:
+                if cur.Name in seen:
+                    break
+                seen.add(cur.Name)
+                candidate_names.add(cur.Name)
+                cur = parent_of.get(cur.Name)
+
+    candidate_names.discard(_safe_text(destination_name))
+
+    while True:
+        containers, parent_of, _ = _scan_relationships(doc)
+        by_name = {grp.Name: grp for grp in containers}
+
+        def _depth(name):
+            d = 0
+            seen = set()
+            cur = name
+            while cur in parent_of and cur not in seen:
+                seen.add(cur)
+                cur = parent_of[cur].Name
+                d += 1
+            return d
+
+        ordered = sorted(
+            [by_name[n] for n in candidate_names if n in by_name],
+            key=lambda grp: _depth(grp.Name),
+            reverse=True,
+        )
+
+        removed_this_round = 0
+        for grp in ordered:
+            if grp is None:
+                continue
+            if grp.Name == destination_name:
+                continue
+            if _is_protected_empty_group(grp, protect_base):
+                continue
+            if (getattr(grp, "Group", []) or []):
+                continue
+
+            parent = parent_of.get(grp.Name)
+            gname = grp.Name
+            glabel = _display_name(grp)
+            try:
+                if parent is not None:
+                    try:
+                        if grp in (getattr(parent, "Group", []) or []):
+                            parent.removeObject(grp)
+                    except Exception:
+                        pass
+                doc.removeObject(gname)
+                removed += 1
+                removed_this_round += 1
+                candidate_names.discard(gname)
+                if parent is not None:
+                    candidate_names.add(parent.Name)
+                _info(f"Grupo vacio eliminado: {glabel}")
+            except Exception as ex:
+                _warn(f"No se pudo eliminar grupo vacio '{glabel}': {ex}")
+
+        if removed_this_round == 0:
+            break
+
+    return removed
+
+
+def _container_path(doc, name):
+    rows = _container_paths(doc)
+    for path, gname in rows:
+        if gname == name:
+            return path
+    grp = doc.getObject(name)
+    return _display_name(grp) if grp is not None else name
+
+
+def main():
+    doc = App.ActiveDocument
+    if doc is None:
+        _err("No hay documento activo.")
+        return
+    if QtWidgets is None:
+        _err("PySide no disponible; esta macro requiere GUI.")
+        return
+
+    sel_raw = []
+    try:
+        sel_raw = Gui.Selection.getSelection() or []
+    except Exception:
+        sel_raw = []
+
+    if not sel_raw:
+        _warn("Seleccione objetos o grupos en el arbol.")
+        return
+
+    scoped_names = _selection_related_group_names(doc, sel_raw)
+    group_rows = _container_paths_filtered(doc, scoped_names)
+    if not group_rows:
+        _warn("No hay grupos disponibles. Cree uno nuevo en el dialogo.")
+        return
+
+    _info(f"Grupos destino mostrados (filtrados): {len(group_rows)}")
+
+    parent = None
+    try:
+        parent = Gui.getMainWindow()
+    except Exception:
+        parent = None
+
+    dlg = _MoveDialog(group_rows, selected_count=len(sel_raw), parent=parent)
+    dlg_result = dlg.exec() if hasattr(dlg, "exec") else dlg.exec_()
+    if dlg_result != QtWidgets.QDialog.Accepted:
+        _warn("Operacion cancelada.")
+        return
+
+    cfg = dlg.get_cfg()
+    sel_objects = _collect_selected_objects(include_group_children=cfg["include_group_children"])
+    if not sel_objects:
+        _warn("No hay objetos movibles en la seleccion.")
+        return
+
+    _info(f"Objetos a mover: {len(sel_objects)}")
+    doc.openTransaction("ElectricCR: mover seleccion a grupo")
+    try:
+        destination, created = _resolve_destination(doc, cfg)
+        dest_name = _safe_text(getattr(destination, "Name", "")).strip()
+
+        moved, already, skipped, touched = _move_objects_to_group(
+            doc=doc,
+            objects=sel_objects,
+            destination=destination,
+            detach_from_all=bool(cfg["detach_from_all"]),
+        )
+
+        removed_empty = 0
+        if cfg["cleanup_empty"]:
+            removed_empty = _cleanup_empty_groups(
+                doc=doc,
+                destination_name=dest_name,
+                touched_group_names=touched,
+                global_mode=bool(cfg["cleanup_global"]),
+                protect_base=bool(cfg["protect_base"]),
+            )
+
+        doc.recompute()
+        doc.commitTransaction()
+
+        where = _container_path(doc, dest_name)
+        _info(
+            f"Finalizado. destino={where} | creado={'SI' if created else 'NO'} | "
+            f"movidos={moved} | ya_en_destino={already} | omitidos={skipped} | "
+            f"grupos_vacios_eliminados={removed_empty}"
+        )
+    except Exception as ex:
+        try:
+            doc.abortTransaction()
+        except Exception:
+            pass
+        _err(f"Fallo general: {ex}")
+        return
+
+
+if __name__ == "__main__":
+    main()

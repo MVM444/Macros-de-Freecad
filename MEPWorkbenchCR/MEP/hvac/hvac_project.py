@@ -14,6 +14,12 @@ MEP_TYPE = "HVACProject"
 ROOT_GROUP_MEP_TYPE = "HVACRootGroup"
 ROOT_GROUP_NAME = "HVAC_Air_Ventilation"
 ROOT_GROUP_LABEL = "HVAC Air and Ventilation"
+SPACES_GROUP_MEP_TYPE = "HVACSpacesGroup"
+SPACES_GROUP_NAME = "HVAC_Espacios"
+SPACES_GROUP_LABEL = "Espacios"
+EQUIPMENT_GROUP_MEP_TYPE = "HVACEquipmentsGroup"
+EQUIPMENT_GROUP_NAME = "HVAC_Equipos"
+EQUIPMENT_GROUP_LABEL = "Equipos"
 LABEL_GROUP_MEP_TYPE = "HVACLabelGroup"
 LABEL_GROUP_NAME = "HVAC_Labels"
 LABEL_GROUP_LABEL = "HVAC Labels"
@@ -38,6 +44,14 @@ def _to_float(value, default=0.0):
         return float(value)
     except Exception:
         return float(default)
+
+
+def _clamp(value, min_value, max_value):
+    try:
+        value_f = float(value)
+    except Exception:
+        value_f = float(min_value)
+    return max(float(min_value), min(float(max_value), value_f))
 
 
 def _normalize_text(value):
@@ -123,6 +137,38 @@ def _ensure_label_group_marker(group_obj):
         group_obj.Label = LABEL_GROUP_LABEL
 
 
+def _ensure_spaces_group_marker(group_obj):
+    if group_obj is None or not hasattr(group_obj, "PropertiesList"):
+        return
+    if "MEPType" not in group_obj.PropertiesList:
+        group_obj.addProperty(
+            "App::PropertyString",
+            "MEPType",
+            "MEP",
+            "Internal marker for HVAC spaces group",
+        )
+    if str(getattr(group_obj, "MEPType", "")) != SPACES_GROUP_MEP_TYPE:
+        group_obj.MEPType = SPACES_GROUP_MEP_TYPE
+    if getattr(group_obj, "Label", "") != SPACES_GROUP_LABEL:
+        group_obj.Label = SPACES_GROUP_LABEL
+
+
+def _ensure_equipment_group_marker(group_obj):
+    if group_obj is None or not hasattr(group_obj, "PropertiesList"):
+        return
+    if "MEPType" not in group_obj.PropertiesList:
+        group_obj.addProperty(
+            "App::PropertyString",
+            "MEPType",
+            "MEP",
+            "Internal marker for HVAC equipment group",
+        )
+    if str(getattr(group_obj, "MEPType", "")) != EQUIPMENT_GROUP_MEP_TYPE:
+        group_obj.MEPType = EQUIPMENT_GROUP_MEP_TYPE
+    if getattr(group_obj, "Label", "") != EQUIPMENT_GROUP_LABEL:
+        group_obj.Label = EQUIPMENT_GROUP_LABEL
+
+
 def _ensure_internal_group_marker(group_obj):
     if group_obj is None or not hasattr(group_obj, "PropertiesList"):
         return
@@ -165,16 +211,79 @@ def _set_aux_object_tree_hidden(obj):
         pass
 
 
+def _detach_from_hvac_subgroups(root_group, obj, keep_group=None):
+    if root_group is None or obj is None:
+        return
+    for child in list(getattr(root_group, "Group", []) or []):
+        if not _is_group(child):
+            continue
+        if keep_group is not None and child == keep_group:
+            continue
+        try:
+            children = list(getattr(child, "Group", []) or [])
+            if obj in children:
+                child.removeObject(obj)
+        except Exception:
+            continue
+
+
+def _remove_object_from_group(group_obj, obj):
+    if group_obj is None or obj is None:
+        return False
+    removed = False
+    doc = getattr(group_obj, "Document", None)
+    obj_name = str(getattr(obj, "Name", "") or "")
+    obj_by_name = None
+    if doc is not None and obj_name:
+        try:
+            obj_by_name = doc.getObject(obj_name)
+        except Exception:
+            obj_by_name = None
+    try:
+        for _ in range(4):
+            children = list(getattr(group_obj, "Group", []) or [])
+            if obj not in children:
+                if obj_by_name is None or obj_by_name not in children:
+                    break
+            try:
+                group_obj.removeObject(obj)
+                removed = True
+            except Exception:
+                if obj_by_name is not None:
+                    group_obj.removeObject(obj_by_name)
+                    removed = True
+                else:
+                    break
+    except Exception:
+        pass
+    return removed
+
+
 def _is_label_like(obj):
     if obj is None:
         return False
-    if _mep_type(obj) == "HVACLabel":
+    mep = _mep_type(obj)
+    if mep in {"HVACLabel", "HVACEquipmentInfo2D", "HVACCondenserInfo2D"}:
         return True
     name = str(getattr(obj, "Name", "") or "")
     label = str(getattr(obj, "Label", "") or "")
-    if name.startswith("HVAC_Label") or label.startswith("HVAC_Label"):
+    if (
+        name.startswith("HVAC_Label")
+        or name.startswith("HVAC_EvapInfo2D")
+        or name.startswith("HVAC_CondInfo2D")
+        or label.startswith("HVAC_Label")
+        or label.startswith("HVAC_INFO2D_")
+        or label.startswith("HVAC_INFO2D_COND_")
+    ):
         return True
-    if "Space" in getattr(obj, "PropertiesList", []) and "Text" in str(getattr(obj, "TypeId", "") or ""):
+    props = list(getattr(obj, "PropertiesList", []) or [])
+    type_id = str(getattr(obj, "TypeId", "") or "")
+    if "Text" in type_id:
+        if "Space" in props:
+            return True
+        if "EquipmentName" in props or "CondenserName" in props:
+            return True
+    if "Space" in props and "Text" in type_id:
         return True
     return False
 
@@ -183,13 +292,147 @@ def _is_internal_like(obj):
     if obj is None:
         return False
     mep = _mep_type(obj)
-    if mep in {"HVACPort", "HVACEvaporatorMaster"}:
+    if mep in {"HVACPort", "HVACEvaporatorMaster", "HVACCondenserMaster"}:
         return True
     name = str(getattr(obj, "Name", "") or "")
     label = str(getattr(obj, "Label", "") or "")
-    if name.startswith("SYM2D_") or label.startswith("SYM2D_") or name.startswith("HVAC_EvapMaster_"):
+    if (
+        name.startswith("SYM2D_")
+        or label.startswith("SYM2D_")
+        or name.startswith("HVAC_EvapMaster_")
+        or name.startswith("HVAC_CondMaster_")
+        or label.startswith("MASTER_COND_")
+    ):
         return True
     return False
+
+
+def _is_space_like(obj):
+    if obj is None:
+        return False
+    mep = _mep_type(obj)
+    if mep == "HVACSpace":
+        return True
+    props = getattr(obj, "PropertiesList", [])
+    if ("AreaObject" in props and "CoolingLoadBTU" in props) or ("BaseSpace" in props and "CoolingLoadBTU" in props):
+        return True
+    name = str(getattr(obj, "Name", "") or "")
+    if name.startswith("HVAC_") and "BaseSpace" in props and "Area" in props:
+        return True
+    return False
+
+
+def _is_equipment_like(obj):
+    if obj is None:
+        return False
+    mep = _mep_type(obj)
+    if mep in {"HVACEquipment", "HVACCondenser", "HVACRoute", "HVACEquipment2D", "HVACCondenser2D"}:
+        return True
+    props = getattr(obj, "PropertiesList", [])
+    if "Model" in props and "CapacityBTU" in props and "Space" in props:
+        return True
+    if "ConnectedUnits" in props and "CoveragePct" in props:
+        return True
+    if "RouteType" in props and ("StartPort" in props or "EndPort" in props):
+        return True
+    name = str(getattr(obj, "Name", "") or "")
+    if name.startswith("HVAC_Evaporator") or name.startswith("HVAC_Condenser") or name.startswith("HVAC_Route"):
+        return True
+    return False
+
+
+def _is_project_like(obj):
+    if obj is None:
+        return False
+    if _mep_type(obj) == MEP_TYPE:
+        return True
+    return str(getattr(obj, "Name", "") or "").startswith("HVAC_Project")
+
+
+def _is_hvac_object_like(obj):
+    if obj is None:
+        return False
+    mep = _mep_type(obj)
+    if mep.startswith("HVAC") and mep not in {
+        ROOT_GROUP_MEP_TYPE,
+        SPACES_GROUP_MEP_TYPE,
+        EQUIPMENT_GROUP_MEP_TYPE,
+        LABEL_GROUP_MEP_TYPE,
+        INTERNAL_GROUP_MEP_TYPE,
+    }:
+        return True
+    if _is_space_like(obj) or _is_equipment_like(obj) or _is_label_like(obj) or _is_project_like(obj):
+        return True
+    name = str(getattr(obj, "Name", "") or "")
+    label = str(getattr(obj, "Label", "") or "")
+    # Conservative legacy fallback: do not accept generic "HVAC " labels
+    # (e.g. imported CAD like "HVAC Externo.ipt"). Only keep known HVAC families.
+    known_name_prefixes = (
+        "HVAC_Project",
+        "HVAC_Space",
+        "HVAC_Label",
+        "HVAC_EvapInfo2D",
+        "HVAC_CondInfo2D",
+        "HVAC_Evaporator",
+        "HVAC_Condenser",
+        "HVAC_Route",
+        "EVAP_",
+    )
+    known_label_prefixes = (
+        "HVAC_Project",
+        "HVAC_Space",
+        "HVAC_Label",
+        "HVAC_INFO2D_",
+        "HVAC_INFO2D_COND_",
+        "EVAP_",
+    )
+    return name.startswith(known_name_prefixes) or label.startswith(known_label_prefixes)
+
+
+def _cleanup_hvac_groups(root_group, spaces_group, equipment_group, label_group, internal_group):
+    if root_group is None:
+        return 0
+    cleaned = 0
+
+    # Root should keep only HVAC project-like objects and managed HVAC subgroups.
+    for child in list(getattr(root_group, "Group", []) or []):
+        if child is None:
+            continue
+        if _is_group(child):
+            continue
+        if _is_project_like(child):
+            continue
+        if _is_hvac_object_like(child):
+            # Keep generic HVAC-like object only if it does not fit a subgroup class.
+            if not (_is_space_like(child) or _is_equipment_like(child) or _is_label_like(child) or _is_internal_like(child)):
+                continue
+        try:
+            root_group.removeObject(child)
+            cleaned += 1
+        except Exception:
+            continue
+
+    group_rules = (
+        (spaces_group, _is_space_like),
+        (equipment_group, _is_equipment_like),
+        (label_group, _is_label_like),
+        (internal_group, _is_internal_like),
+    )
+    for grp, predicate in group_rules:
+        if grp is None:
+            continue
+        for child in list(getattr(grp, "Group", []) or []):
+            if child is None or _is_group(child):
+                continue
+            if predicate(child):
+                continue
+            try:
+                grp.removeObject(child)
+                cleaned += 1
+            except Exception:
+                continue
+
+    return cleaned
 
 
 def find_root_groups(doc):
@@ -322,6 +565,112 @@ def ensure_hvac_internal_group(doc=None):
     return group
 
 
+def ensure_hvac_spaces_group(doc=None):
+    if doc is None:
+        doc = App.ActiveDocument
+    if doc is None:
+        return None
+    root = ensure_hvac_root_group(doc)
+    if root is None:
+        return None
+
+    for child in list(getattr(root, "Group", []) or []):
+        if not _is_group(child):
+            continue
+        marker = _mep_type(child)
+        if marker == SPACES_GROUP_MEP_TYPE:
+            _ensure_spaces_group_marker(child)
+            _set_group_tree_visibility(child, show_in_tree=True)
+            return child
+        child_name = _normalize_text(getattr(child, "Name", ""))
+        child_label = _normalize_text(getattr(child, "Label", ""))
+        if child_name == _normalize_text(SPACES_GROUP_NAME) or child_label == _normalize_text(SPACES_GROUP_LABEL):
+            _ensure_spaces_group_marker(child)
+            _set_group_tree_visibility(child, show_in_tree=True)
+            return child
+
+    for obj in list(getattr(doc, "Objects", []) or []):
+        if not _is_group(obj):
+            continue
+        marker = _mep_type(obj)
+        obj_name = _normalize_text(getattr(obj, "Name", ""))
+        obj_label = _normalize_text(getattr(obj, "Label", ""))
+        if marker == SPACES_GROUP_MEP_TYPE or obj_name == _normalize_text(SPACES_GROUP_NAME) or obj_label == _normalize_text(
+            SPACES_GROUP_LABEL
+        ):
+            _ensure_spaces_group_marker(obj)
+            _set_group_tree_visibility(obj, show_in_tree=True)
+            try:
+                root_children = list(getattr(root, "Group", []) or [])
+                if obj not in root_children:
+                    root.addObject(obj)
+            except Exception:
+                pass
+            return obj
+
+    group = doc.addObject("App::DocumentObjectGroup", SPACES_GROUP_NAME)
+    _ensure_spaces_group_marker(group)
+    _set_group_tree_visibility(group, show_in_tree=True)
+    try:
+        root.addObject(group)
+    except Exception:
+        pass
+    return group
+
+
+def ensure_hvac_equipment_group(doc=None):
+    if doc is None:
+        doc = App.ActiveDocument
+    if doc is None:
+        return None
+    root = ensure_hvac_root_group(doc)
+    if root is None:
+        return None
+
+    for child in list(getattr(root, "Group", []) or []):
+        if not _is_group(child):
+            continue
+        marker = _mep_type(child)
+        if marker == EQUIPMENT_GROUP_MEP_TYPE:
+            _ensure_equipment_group_marker(child)
+            _set_group_tree_visibility(child, show_in_tree=True)
+            return child
+        child_name = _normalize_text(getattr(child, "Name", ""))
+        child_label = _normalize_text(getattr(child, "Label", ""))
+        if child_name == _normalize_text(EQUIPMENT_GROUP_NAME) or child_label == _normalize_text(EQUIPMENT_GROUP_LABEL):
+            _ensure_equipment_group_marker(child)
+            _set_group_tree_visibility(child, show_in_tree=True)
+            return child
+
+    for obj in list(getattr(doc, "Objects", []) or []):
+        if not _is_group(obj):
+            continue
+        marker = _mep_type(obj)
+        obj_name = _normalize_text(getattr(obj, "Name", ""))
+        obj_label = _normalize_text(getattr(obj, "Label", ""))
+        if marker == EQUIPMENT_GROUP_MEP_TYPE or obj_name == _normalize_text(EQUIPMENT_GROUP_NAME) or obj_label == _normalize_text(
+            EQUIPMENT_GROUP_LABEL
+        ):
+            _ensure_equipment_group_marker(obj)
+            _set_group_tree_visibility(obj, show_in_tree=True)
+            try:
+                root_children = list(getattr(root, "Group", []) or [])
+                if obj not in root_children:
+                    root.addObject(obj)
+            except Exception:
+                pass
+            return obj
+
+    group = doc.addObject("App::DocumentObjectGroup", EQUIPMENT_GROUP_NAME)
+    _ensure_equipment_group_marker(group)
+    _set_group_tree_visibility(group, show_in_tree=True)
+    try:
+        root.addObject(group)
+    except Exception:
+        pass
+    return group
+
+
 def ensure_hvac_root_group(doc=None):
     if doc is None:
         doc = App.ActiveDocument
@@ -360,6 +709,14 @@ def add_object_to_hvac_group(doc, obj):
         internal_group = ensure_hvac_internal_group(doc)
         if internal_group is not None:
             target_group = internal_group
+    elif _is_space_like(obj):
+        spaces_group = ensure_hvac_spaces_group(doc)
+        if spaces_group is not None:
+            target_group = spaces_group
+    elif _is_equipment_like(obj):
+        equipment_group = ensure_hvac_equipment_group(doc)
+        if equipment_group is not None:
+            target_group = equipment_group
 
     try:
         children = list(getattr(target_group, "Group", []) or [])
@@ -368,14 +725,58 @@ def add_object_to_hvac_group(doc, obj):
     except Exception:
         pass
     if target_group != root_group:
+        _remove_object_from_group(root_group, obj)
+
+        # Defensive fallback: some Draft text objects may fail to move
+        # unless detached first from root/other groups.
         try:
-            root_children = list(getattr(root_group, "Group", []) or [])
-            if obj in root_children:
-                root_group.removeObject(obj)
+            target_children = list(getattr(target_group, "Group", []) or [])
+        except Exception:
+            target_children = []
+        if obj not in target_children:
+            try:
+                _detach_from_hvac_subgroups(root_group, obj, keep_group=None)
+            except Exception:
+                pass
+            _remove_object_from_group(root_group, obj)
+            try:
+                target_group.addObject(obj)
+            except Exception:
+                pass
+
+    _detach_from_hvac_subgroups(root_group, obj, keep_group=target_group if target_group is not root_group else None)
+    if target_group != root_group:
+        _remove_object_from_group(root_group, obj)
+
+    if target_group != root_group:
+        try:
+            target_children = list(getattr(target_group, "Group", []) or [])
+            if obj not in target_children:
+                target_group.addObject(obj)
         except Exception:
             pass
-    if target_group is not root_group:
+
+    if _is_internal_like(obj):
         _set_aux_object_tree_hidden(obj)
+
+    if _is_label_like(obj):
+        try:
+            target_children = list(getattr(target_group, "Group", []) or [])
+            root_children = list(getattr(root_group, "Group", []) or [])
+            in_target = obj in target_children
+            in_root = obj in root_children
+            if target_group != root_group and (not in_target or in_root):
+                log(
+                    "Route warning etiqueta: obj={0} mep={1} in_target={2} in_root={3} target={4}".format(
+                        str(getattr(obj, "Name", "") or "?"),
+                        str(_mep_type(obj) or ""),
+                        int(bool(in_target)),
+                        int(bool(in_root)),
+                        str(getattr(target_group, "Name", "") or "?"),
+                    )
+                )
+        except Exception:
+            pass
     return target_group
 
 
@@ -386,6 +787,8 @@ def organize_hvac_objects(doc=None):
         return 0
 
     group = ensure_hvac_root_group(doc)
+    spaces_group = ensure_hvac_spaces_group(doc)
+    equipment_group = ensure_hvac_equipment_group(doc)
     label_group = ensure_hvac_label_group(doc)
     internal_group = ensure_hvac_internal_group(doc)
     if group is None:
@@ -397,26 +800,20 @@ def organize_hvac_objects(doc=None):
             continue
         if _is_group(obj):
             continue
-        include = False
-        if hasattr(obj, "PropertiesList") and "MEPType" in obj.PropertiesList:
-            mep_type = str(getattr(obj, "MEPType", "") or "")
-            if mep_type == ROOT_GROUP_MEP_TYPE:
-                continue
-            if mep_type.startswith("HVAC"):
-                include = True
-        if not include:
-            name = str(getattr(obj, "Name", "") or "")
-            label = str(getattr(obj, "Label", "") or "")
-            if name.startswith("HVAC_") or label.startswith("HVAC "):
-                include = True
-        if not include:
+        if not _is_hvac_object_like(obj):
             continue
 
         target_group = group
-        if _is_label_like(obj) and label_group is not None:
+        if _is_project_like(obj):
+            target_group = group
+        elif _is_label_like(obj) and label_group is not None:
             target_group = label_group
         elif _is_internal_like(obj) and internal_group is not None:
             target_group = internal_group
+        elif _is_space_like(obj) and spaces_group is not None:
+            target_group = spaces_group
+        elif _is_equipment_like(obj) and equipment_group is not None:
+            target_group = equipment_group
 
         before = list(getattr(target_group, "Group", []) or [])
         try:
@@ -424,16 +821,66 @@ def organize_hvac_objects(doc=None):
                 target_group.addObject(obj)
                 moved += 1
             if target_group != group:
-                root_before = list(getattr(group, "Group", []) or [])
-                if obj in root_before:
-                    group.removeObject(obj)
+                _remove_object_from_group(group, obj)
+            _detach_from_hvac_subgroups(group, obj, keep_group=target_group if target_group is not group else None)
+            if target_group != group:
+                _remove_object_from_group(group, obj)
+            if _is_internal_like(obj):
                 _set_aux_object_tree_hidden(obj)
         except Exception:
             continue
 
+    cleaned = _cleanup_hvac_groups(group, spaces_group, equipment_group, label_group, internal_group)
+    if cleaned > 0:
+        log("HVAC group cleanup aplicado: removidos={0}".format(cleaned))
+
     if moved > 0:
         log("HVAC objects organized into root group: {0}".format(moved))
-    return moved
+    return moved + cleaned
+
+
+def toggle_hvac_visibility(doc=None):
+    if doc is None:
+        doc = App.ActiveDocument
+    if doc is None:
+        return False
+
+    ensure_hvac_root_group(doc)
+    organize_hvac_objects(doc)
+
+    candidates = []
+    for obj in list(getattr(doc, "Objects", []) or []):
+        if _is_group(obj):
+            continue
+        if not _is_hvac_object_like(obj):
+            continue
+        if _is_internal_like(obj):
+            continue
+        vobj = getattr(obj, "ViewObject", None)
+        if vobj is None:
+            continue
+        candidates.append(obj)
+
+    if not candidates:
+        log("No hay objetos HVAC para mostrar/ocultar")
+        return False
+
+    visible_any = False
+    for obj in candidates:
+        if bool(getattr(obj.ViewObject, "Visibility", False)):
+            visible_any = True
+            break
+    target_visibility = not visible_any
+
+    for obj in candidates:
+        try:
+            obj.ViewObject.Visibility = target_visibility
+        except Exception:
+            continue
+
+    state = "visibles" if target_visibility else "ocultos"
+    log("Objetos HVAC {0}: {1}".format(state, len(candidates)))
+    return target_visibility
 
 
 def ensure_project_properties(obj):
@@ -443,7 +890,10 @@ def ensure_project_properties(obj):
     added_altitude = False
     added_outdoor = False
     added_humidity = False
+    added_outdoor_humidity = False
+    added_indoor_humidity = False
     added_indoor = False
+    added_base_factor = False
     added_factor = False
     added_offset = False
     added_bonus = False
@@ -474,11 +924,35 @@ def ensure_project_properties(obj):
     if "Humidity" not in obj.PropertiesList:
         obj.addProperty("App::PropertyFloat", "Humidity", "HVAC Project", tr("project.prop.humidity"))
         added_humidity = True
+    if "OutdoorHumidity" not in obj.PropertiesList:
+        obj.addProperty(
+            "App::PropertyFloat",
+            "OutdoorHumidity",
+            "HVAC Project",
+            "Outdoor relative humidity (%)",
+        )
+        added_outdoor_humidity = True
+    if "IndoorHumidity" not in obj.PropertiesList:
+        obj.addProperty(
+            "App::PropertyFloat",
+            "IndoorHumidity",
+            "HVAC Project",
+            "Indoor relative humidity (%)",
+        )
+        added_indoor_humidity = True
     if "IndoorTemp" not in obj.PropertiesList:
         obj.addProperty(
             "App::PropertyFloat", "IndoorTemp", "HVAC Project", tr("project.prop.indoor_temp")
         )
         added_indoor = True
+    if "BaseFactor" not in obj.PropertiesList:
+        obj.addProperty(
+            "App::PropertyFloat",
+            "BaseFactor",
+            "HVAC Project",
+            "Base cooling factor (BTU/h*m2)",
+        )
+        added_base_factor = True
     if "ClimateFactor" not in obj.PropertiesList:
         obj.addProperty(
             "App::PropertyFloat",
@@ -512,8 +986,14 @@ def ensure_project_properties(obj):
         obj.OutdoorTemp = 30.0
     if added_humidity:
         obj.Humidity = 100.0
+    if added_outdoor_humidity:
+        obj.OutdoorHumidity = _to_float(getattr(obj, "Humidity", 100.0), 100.0)
+    if added_indoor_humidity:
+        obj.IndoorHumidity = 55.0
     if added_indoor:
         obj.IndoorTemp = 22.0
+    if added_base_factor:
+        obj.BaseFactor = 600.0
     if added_factor:
         obj.ClimateFactor = 400.0
     if added_offset:
@@ -523,13 +1003,21 @@ def ensure_project_properties(obj):
 
 
 def compute_climate_factor(project_obj):
-    """Compute climate factor (BTU/h*m2) from project environment values."""
+    """Compute climate factor (BTU/h*m2) from max outdoor temp and altitude."""
 
+    # Inputs aligned with climate_factor_btu macro convention.
     altitude = max(0.0, _to_float(project_obj.Altitude, 0.0))
-    outdoor = _to_float(project_obj.OutdoorTemp, 30.0)
-    indoor = _to_float(project_obj.IndoorTemp, 22.0)
-    humidity = max(20.0, min(100.0, _to_float(project_obj.Humidity, 100.0)))
-    delta_t = max(2.0, outdoor - indoor)
+    temp_max = _to_float(project_obj.OutdoorTemp, 30.0)
+    humidity_out = _clamp(
+        _to_float(
+            getattr(project_obj, "OutdoorHumidity", getattr(project_obj, "Humidity", 100.0)),
+            100.0,
+        ),
+        20.0,
+        100.0,
+    )
+    humidity_in = _clamp(_to_float(getattr(project_obj, "IndoorHumidity", 55.0), 55.0), 20.0, 100.0)
+    factor_base = max(0.0, _to_float(getattr(project_obj, "BaseFactor", 600.0), 600.0))
     location = str(getattr(project_obj, "Location", "") or "")
     regional_bonus = _location_microclimate_bonus(location)
     manual_offset = _to_float(getattr(project_obj, "ClimateOffset", 0.0), 0.0)
@@ -539,18 +1027,42 @@ def compute_climate_factor(project_obj):
         if abs(old_bonus - regional_bonus) > 0.001:
             project_obj.RegionalBonus = regional_bonus
 
-    # Conservative pre-sizing formula.
-    # Altitude must decrease cooling factor (lower air density at higher altitude).
-    altitude_penalty = min(140.0, altitude * 0.035)  # 35 BTU/h*m2 per 1000 m
-    factor = (
-        260.0
-        + (delta_t * 11.0)
-        + (humidity * 0.75)
-        - altitude_penalty
-        + regional_bonus
-        + manual_offset
+    # Apply clamp on thermal component first, then altitude attenuation.
+    # This keeps the expected monotonic behavior: higher altitude -> lower factor.
+    thermal_component_raw = (temp_max - 22.0) / 8.0
+    thermal_component = _clamp(thermal_component_raw, 0.7, 1.5)
+    altitude_component = max(0.0, 1.0 - 0.06 * (altitude / 1000.0))
+
+    # Humidity correction:
+    #  - outdoor humidity above indoor humidity increases latent load
+    #  - outdoor humidity below indoor humidity decreases latent load
+    humidity_delta = humidity_out - humidity_in
+    humidity_component = _clamp(1.0 + (humidity_delta / 100.0) * 0.5, 0.8, 1.2)
+
+    climate_raw = thermal_component * altitude_component * humidity_component
+    climate_multiplier = _clamp(climate_raw, 0.7, 1.5)
+
+    # Preserve existing regional calibration and manual offset on top of macro base formula.
+    factor = (factor_base * climate_multiplier) + regional_bonus + manual_offset
+    factor = max(0.0, factor)
+
+    w_m2 = factor / 3.412
+    log(
+        "Clima rapido: temp_max={0} C, altitud={1} m, hr_ext={2} %, hr_int={3} %, term_temp={4}, term_alt={5}, term_hum={6}, f_raw={7}, f_clima={8}, factor={9} BTU/h*m2, {10} W/m2".format(
+            round(temp_max, 2),
+            round(altitude, 2),
+            round(humidity_out, 2),
+            round(humidity_in, 2),
+            round(thermal_component, 3),
+            round(altitude_component, 3),
+            round(humidity_component, 3),
+            round(climate_raw, 3),
+            round(climate_multiplier, 3),
+            round(factor, 2),
+            round(w_m2, 2),
+        )
     )
-    return round(max(220.0, factor), 2)
+    return round(factor, 2)
 
 
 def recalculate_project(project_obj):
@@ -607,15 +1119,41 @@ class HVACProjectProxy:
 
     def __init__(self, obj):
         obj.Proxy = self
-        self._busy = False
-        ensure_project_properties(obj)
+        self._busy = True
+        try:
+            ensure_project_properties(obj)
+        finally:
+            self._busy = False
 
     def onChanged(self, obj, prop):  # noqa: N802
         if not hasattr(self, "_busy"):
             self._busy = False
         if self._busy:
             return
-        if prop in {"Location", "Altitude", "OutdoorTemp", "Humidity", "IndoorTemp", "ClimateOffset"}:
+        if prop in {"Humidity", "OutdoorHumidity"}:
+            self._busy = True
+            try:
+                if prop == "Humidity" and "OutdoorHumidity" in obj.PropertiesList:
+                    current = _to_float(getattr(obj, "Humidity", 100.0), 100.0)
+                    if abs(_to_float(getattr(obj, "OutdoorHumidity", 100.0), 100.0) - current) > 0.001:
+                        obj.OutdoorHumidity = current
+                elif prop == "OutdoorHumidity" and "Humidity" in obj.PropertiesList:
+                    current = _to_float(getattr(obj, "OutdoorHumidity", 100.0), 100.0)
+                    if abs(_to_float(getattr(obj, "Humidity", 100.0), 100.0) - current) > 0.001:
+                        obj.Humidity = current
+            finally:
+                self._busy = False
+        if prop in {
+            "Location",
+            "Altitude",
+            "OutdoorTemp",
+            "Humidity",
+            "OutdoorHumidity",
+            "IndoorHumidity",
+            "IndoorTemp",
+            "BaseFactor",
+            "ClimateOffset",
+        }:
             self._busy = True
             try:
                 recalculate_project(obj)

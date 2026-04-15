@@ -1,0 +1,1142 @@
+# -*- coding: utf-8 -*-
+# MenuText: Conectar Octogonales 45 (Diagonal)
+# ToolTip: Conecta 2 cajas octogonales con ruta a 45 grados usando un lado diagonal o ambos
+# Icon: Conectar/Conectar_objetos_en_L.svg
+# Toolbar: Herramientas ortogonales
+# Transaction: self
+"""
+Uso:
+- Seleccione exactamente 2 cajas octogonales.
+- En modo "Un lado diagonal", la primera seleccionada se toma como origen.
+- La macro crea/actualiza una conexion con tramos a 45 grados.
+"""
+
+import os
+import sys
+import math
+import json
+import importlib
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Draft
+import Part
+
+try:
+    from PySide2 import QtWidgets, QtCore
+except Exception:
+    from PySide import QtGui as QtWidgets  # type: ignore
+    from PySide import QtCore  # type: ignore
+
+
+THIS_DIR = os.path.dirname(__file__) if "__file__" in globals() else ""
+if THIS_DIR and THIS_DIR not in sys.path:
+    sys.path.insert(0, THIS_DIR)
+
+try:
+    import conexiones_grouping as _cg
+
+    _cg = importlib.reload(_cg)
+    ensure_conexiones_group = _cg.ensure_conexiones_group
+except Exception:
+    ensure_conexiones_group = None
+
+try:
+    import component_classifier as _cc
+
+    _cc = importlib.reload(_cc)
+except Exception:
+    _cc = None
+
+try:
+    import connection_matrix as _cm
+
+    _cm = importlib.reload(_cm)
+except Exception:
+    _cm = None
+
+
+TAG = "OCTO45"
+GENERATED_BY = "Conectar_Octogonales_45"
+EPS = 1e-9
+DEFAULT_FILLET_MM = 120.0
+DEFAULT_CONDUIT = "EMT"
+DEFAULT_DIAMETER_MM = 22.2
+DEFAULT_LINK_KIND = "backbone"
+DIRECT_ALIGN_TOL_MM = 60.0
+
+CARDINAL_NAMES = ("North", "East", "South", "West")
+DIAGONAL_NAMES = ("NorthEast", "NorthWest", "SouthEast", "SouthWest")
+PORT_ORDER = ("North", "NorthEast", "East", "SouthEast", "South", "SouthWest", "West", "NorthWest")
+
+PORT_DIRS = {
+    "North": (0.0, 1.0),
+    "South": (0.0, -1.0),
+    "East": (1.0, 0.0),
+    "West": (-1.0, 0.0),
+    "NorthEast": (1.0, 1.0),
+    "NorthWest": (-1.0, 1.0),
+    "SouthEast": (1.0, -1.0),
+    "SouthWest": (-1.0, -1.0),
+}
+
+CANON = {
+    "north": "North",
+    "n": "North",
+    "south": "South",
+    "s": "South",
+    "east": "East",
+    "e": "East",
+    "west": "West",
+    "w": "West",
+    "northeast": "NorthEast",
+    "north_east": "NorthEast",
+    "north-east": "NorthEast",
+    "ne": "NorthEast",
+    "northwest": "NorthWest",
+    "north_west": "NorthWest",
+    "north-west": "NorthWest",
+    "nw": "NorthWest",
+    "southeast": "SouthEast",
+    "south_east": "SouthEast",
+    "south-east": "SouthEast",
+    "se": "SouthEast",
+    "southwest": "SouthWest",
+    "south_west": "SouthWest",
+    "south-west": "SouthWest",
+    "sw": "SouthWest",
+}
+
+
+def _safe_text(value):
+    try:
+        return str(value or "")
+    except Exception:
+        return ""
+
+
+def _vec(x=0.0, y=0.0, z=0.0):
+    return App.Vector(float(x), float(y), float(z))
+
+
+def _vlen_xy(v):
+    return math.hypot(float(v.x), float(v.y))
+
+
+def _unit_xy(v, fallback=None):
+    d = _vlen_xy(v)
+    if d <= EPS:
+        if fallback is not None:
+            return _unit_xy(fallback, fallback=None)
+        return _vec(1.0, 0.0, 0.0)
+    return _vec(float(v.x) / d, float(v.y) / d, 0.0)
+
+
+def _dot_xy(a, b):
+    return (float(a.x) * float(b.x)) + (float(a.y) * float(b.y))
+
+
+def _vlen(v):
+    return math.sqrt((float(v.x) ** 2) + (float(v.y) ** 2) + (float(v.z) ** 2))
+
+
+def _unit(v, fallback=None):
+    d = _vlen(v)
+    if d <= EPS:
+        if fallback is not None:
+            return _unit(fallback, fallback=None)
+        return _vec(1.0, 0.0, 0.0)
+    return _vec(float(v.x) / d, float(v.y) / d, float(v.z) / d)
+
+
+def _dot(a, b):
+    return (float(a.x) * float(b.x)) + (float(a.y) * float(b.y)) + (float(a.z) * float(b.z))
+
+
+def _log(msg):
+    App.Console.PrintMessage(f"[{TAG}][INFO] {msg}\n")
+
+
+def _warn(msg):
+    App.Console.PrintWarning(f"[{TAG}][WARN] {msg}\n")
+
+
+def _err(msg):
+    App.Console.PrintError(f"[{TAG}][ERROR] {msg}\n")
+
+
+def _canon_port_name(name):
+    raw = _safe_text(name).strip()
+    if not raw:
+        return ""
+    low = raw.replace(" ", "").replace(".", "").replace("/", "_").lower()
+    return CANON.get(low, raw if raw in PORT_DIRS else "")
+
+
+def _ensure_property(obj, ptype, pname, pgroup, pdesc):
+    try:
+        if pname not in getattr(obj, "PropertiesList", []):
+            obj.addProperty(ptype, pname, pgroup, pdesc)
+    except Exception:
+        pass
+
+
+def _selection_objects_ordered():
+    out = []
+    seen = set()
+    try:
+        sel_ex = Gui.Selection.getSelectionEx() or []
+    except Exception:
+        sel_ex = []
+
+    for sx in sel_ex:
+        obj = getattr(sx, "Object", None)
+        if obj is None:
+            continue
+        key = _safe_text(getattr(obj, "Name", "")).strip() or str(id(obj))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(obj)
+
+    if out:
+        return out
+
+    try:
+        basic = Gui.Selection.getSelection() or []
+    except Exception:
+        basic = []
+    for obj in basic:
+        if obj is None:
+            continue
+        key = _safe_text(getattr(obj, "Name", "")).strip() or str(id(obj))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(obj)
+    return out
+
+
+def _is_octogonal_candidate(obj):
+    if _cc is not None and hasattr(_cc, "is_octogonal_endpoint"):
+        try:
+            return bool(_cc.is_octogonal_endpoint(obj))
+        except Exception:
+            pass
+    if obj is None:
+        return False
+    txt = (
+        f"{_safe_text(getattr(obj, 'Label', ''))} "
+        f"{_safe_text(getattr(obj, 'Name', ''))} "
+        f"{_safe_text(getattr(obj, 'Tipo', ''))} "
+        f"{_safe_text(getattr(obj, 'TipoLogico', ''))} "
+        f"{_safe_text(getattr(obj, 'Categoria', ''))}"
+    ).lower()
+    if ("octogonal" in txt) or ("octagonal" in txt) or ("emt_octagon_box" in txt):
+        return True
+    raw_ports = _safe_text(getattr(obj, "PuertosJSON", "")).strip()
+    if raw_ports.startswith("[") and raw_ports.endswith("]"):
+        return True
+    try:
+        linked = getattr(obj, "LinkedObject", None)
+    except Exception:
+        linked = None
+    if linked is not None:
+        ltxt = f"{_safe_text(getattr(linked, 'Label', ''))} {_safe_text(getattr(linked, 'Name', ''))}".lower()
+        if ("octogonal" in ltxt) or ("octagonal" in ltxt) or ("emt_octagon_box" in ltxt):
+            return True
+        lports = _safe_text(getattr(linked, "PuertosJSON", "")).strip()
+        if lports.startswith("[") and lports.endswith("]"):
+            return True
+    return False
+
+
+def _object_anchor(obj):
+    try:
+        shp = getattr(obj, "Shape", None)
+        if shp is not None and (not shp.isNull()):
+            bb = shp.BoundBox
+            return _vec(
+                0.5 * (float(bb.XMin) + float(bb.XMax)),
+                0.5 * (float(bb.YMin) + float(bb.YMax)),
+                0.5 * (float(bb.ZMin) + float(bb.ZMax)),
+            )
+    except Exception:
+        pass
+    try:
+        b = obj.Placement.Base
+        return _vec(b.x, b.y, b.z)
+    except Exception:
+        return _vec(0.0, 0.0, 0.0)
+
+
+def _infer_port_name_from_vector(v):
+    uv = _unit_xy(v)
+    targets = {
+        "East": _vec(1.0, 0.0, 0.0),
+        "NorthEast": _unit_xy(_vec(1.0, 1.0, 0.0)),
+        "North": _vec(0.0, 1.0, 0.0),
+        "NorthWest": _unit_xy(_vec(-1.0, 1.0, 0.0)),
+        "West": _vec(-1.0, 0.0, 0.0),
+        "SouthWest": _unit_xy(_vec(-1.0, -1.0, 0.0)),
+        "South": _vec(0.0, -1.0, 0.0),
+        "SouthEast": _unit_xy(_vec(1.0, -1.0, 0.0)),
+    }
+    best_name = "East"
+    best_score = -1e9
+    for name, tv in targets.items():
+        sc = _dot_xy(uv, tv)
+        if sc > best_score:
+            best_score = sc
+            best_name = name
+    return best_name
+
+
+def _ports_from_json_world(obj):
+    raw = _safe_text(getattr(obj, "PuertosJSON", "")).strip()
+    data_owner = obj
+    if not raw:
+        try:
+            linked = getattr(obj, "LinkedObject", None)
+        except Exception:
+            linked = None
+        if linked is not None:
+            raw = _safe_text(getattr(linked, "PuertosJSON", "")).strip()
+            if raw:
+                data_owner = obj
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return []
+    if not isinstance(data, list):
+        return []
+
+    try:
+        placement = getattr(data_owner, "Placement", App.Placement())
+    except Exception:
+        placement = App.Placement()
+    rot = getattr(placement, "Rotation", App.Rotation())
+    center = _object_anchor(obj)
+
+    out = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        pos = item.get("position")
+        if not (isinstance(pos, (list, tuple)) and len(pos) >= 3):
+            continue
+        try:
+            lp = _vec(pos[0], pos[1], pos[2])
+        except Exception:
+            continue
+        wp = placement.multVec(lp)
+
+        d = item.get("direction")
+        if isinstance(d, (list, tuple)) and len(d) >= 3:
+            try:
+                wd = rot.multVec(_vec(d[0], d[1], d[2]))
+            except Exception:
+                wd = _vec(0.0, 0.0, 0.0)
+        else:
+            wd = _vec(0.0, 0.0, 0.0)
+
+        name = _canon_port_name(item.get("name", ""))
+        if not name:
+            radial = _vec(float(wp.x - center.x), float(wp.y - center.y), 0.0)
+            if _vlen_xy(radial) <= EPS:
+                radial = wd
+            name = _infer_port_name_from_vector(radial)
+
+        if name not in PORT_DIRS:
+            continue
+        out.append({"name": name, "point": _vec(wp.x, wp.y, wp.z), "dir": _unit_xy(wd)})
+    return out
+
+
+def _virtual_ports(obj):
+    center = _object_anchor(obj)
+    rx = 120.0
+    ry = 120.0
+    z = float(center.z)
+    try:
+        shp = getattr(obj, "Shape", None)
+        if shp is not None and (not shp.isNull()):
+            bb = shp.BoundBox
+            rx = max(20.0, 0.5 * abs(float(bb.XMax) - float(bb.XMin)))
+            ry = max(20.0, 0.5 * abs(float(bb.YMax) - float(bb.YMin)))
+            z = 0.5 * (float(bb.ZMin) + float(bb.ZMax))
+    except Exception:
+        pass
+
+    r = max(15.0, 0.85 * min(rx, ry))
+    out = []
+    for name in PORT_ORDER:
+        dx, dy = PORT_DIRS[name]
+        dxy = _unit_xy(_vec(dx, dy, 0.0))
+        pt = _vec(float(center.x) + (float(dxy.x) * r), float(center.y) + (float(dxy.y) * r), z)
+        out.append({"name": name, "point": pt, "dir": dxy})
+    return out
+
+
+def _world_ports(obj):
+    real = _ports_from_json_world(obj)
+    virtual = _virtual_ports(obj)
+    by_name = {}
+    for p in virtual:
+        by_name[p["name"]] = p
+    for p in real:
+        by_name[p["name"]] = p
+    return [by_name[n] for n in PORT_ORDER if n in by_name]
+
+
+def _pick_port(obj, ports, allowed_names, toward_point, preferred_name="Auto"):
+    allowed = tuple(n for n in allowed_names if n in PORT_DIRS)
+    if not allowed:
+        raise RuntimeError("No hay puertos permitidos para seleccionar.")
+
+    candidates = [p for p in (ports or []) if p.get("name") in allowed]
+    if not candidates:
+        candidates = [p for p in _virtual_ports(obj) if p.get("name") in allowed]
+    if not candidates:
+        raise RuntimeError("No se pudieron resolver puertos en el objeto.")
+
+    pref = _canon_port_name(preferred_name)
+    if pref and pref in allowed:
+        for p in candidates:
+            if p.get("name") == pref:
+                return p
+        _warn(f"El puerto preferido '{preferred_name}' no existe; se usara Auto.")
+
+    center = _object_anchor(obj)
+    vtarget = _unit_xy(_vec(float(toward_point.x) - float(center.x), float(toward_point.y) - float(center.y), 0.0))
+
+    def _score(port):
+        radial = _unit_xy(
+            _vec(
+                float(port["point"].x) - float(center.x),
+                float(port["point"].y) - float(center.y),
+                0.0,
+            ),
+            fallback=port.get("dir"),
+        )
+        align = _dot_xy(radial, vtarget)
+        dist = float(port["point"].distanceToPoint(toward_point))
+        return (-align, dist)
+
+    return sorted(candidates, key=_score)[0]
+
+
+def _dedupe_points(points, tol=1e-6):
+    out = []
+    for p in points or []:
+        q = _vec(p.x, p.y, p.z)
+        if not out:
+            out.append(q)
+            continue
+        if out[-1].distanceToPoint(q) > float(tol):
+            out.append(q)
+    return out
+
+
+def _is_aligned_xy(p1, p2, tol_mm=1.0):
+    return (abs(float(p1.x) - float(p2.x)) <= float(tol_mm)) or (
+        abs(float(p1.y) - float(p2.y)) <= float(tol_mm)
+    )
+
+
+def _object_xy_axes(obj):
+    rot = None
+    try:
+        rot = getattr(getattr(obj, "Placement", None), "Rotation", None)
+    except Exception:
+        rot = None
+    if rot is None:
+        return _vec(1.0, 0.0, 0.0), _vec(0.0, 1.0, 0.0)
+    ax = _unit_xy(rot.multVec(_vec(1.0, 0.0, 0.0)), fallback=_vec(1.0, 0.0, 0.0))
+    ay = _unit_xy(rot.multVec(_vec(0.0, 1.0, 0.0)), fallback=_vec(0.0, 1.0, 0.0))
+    return ax, ay
+
+
+def _object_half_extents_xy(obj, center, ax, ay):
+    hx = 20.0
+    hy = 20.0
+    try:
+        shp = getattr(obj, "Shape", None)
+        if shp is None or shp.isNull():
+            return hx, hy
+        bb = shp.BoundBox
+        corners = (
+            _vec(bb.XMin, bb.YMin, bb.ZMin),
+            _vec(bb.XMin, bb.YMax, bb.ZMin),
+            _vec(bb.XMax, bb.YMin, bb.ZMin),
+            _vec(bb.XMax, bb.YMax, bb.ZMin),
+            _vec(bb.XMin, bb.YMin, bb.ZMax),
+            _vec(bb.XMin, bb.YMax, bb.ZMax),
+            _vec(bb.XMax, bb.YMin, bb.ZMax),
+            _vec(bb.XMax, bb.YMax, bb.ZMax),
+        )
+        hx = max(abs(_dot_xy(_vec(c.x - center.x, c.y - center.y, 0.0), ax)) for c in corners)
+        hy = max(abs(_dot_xy(_vec(c.x - center.x, c.y - center.y, 0.0), ay)) for c in corners)
+    except Exception:
+        pass
+    return max(20.0, float(hx)), max(20.0, float(hy))
+
+
+def _face_center_port(obj, face_name):
+    face = _safe_text(face_name).strip()
+    center = _object_anchor(obj)
+    ax, ay = _object_xy_axes(obj)
+    hx, hy = _object_half_extents_xy(obj, center, ax, ay)
+    z = float(center.z)
+    if face == "East":
+        return {
+            "name": "East",
+            "point": _vec(center.x + (ax.x * hx), center.y + (ax.y * hx), z),
+            "dir": _unit_xy(ax, fallback=_vec(1.0, 0.0, 0.0)),
+        }
+    if face == "West":
+        return {
+            "name": "West",
+            "point": _vec(center.x - (ax.x * hx), center.y - (ax.y * hx), z),
+            "dir": _unit_xy(_vec(-ax.x, -ax.y, 0.0), fallback=_vec(-1.0, 0.0, 0.0)),
+        }
+    if face == "North":
+        return {
+            "name": "North",
+            "point": _vec(center.x + (ay.x * hy), center.y + (ay.y * hy), z),
+            "dir": _unit_xy(ay, fallback=_vec(0.0, 1.0, 0.0)),
+        }
+    if face == "South":
+        return {
+            "name": "South",
+            "point": _vec(center.x - (ay.x * hy), center.y - (ay.y * hy), z),
+            "dir": _unit_xy(_vec(-ay.x, -ay.y, 0.0), fallback=_vec(0.0, -1.0, 0.0)),
+        }
+    return {"name": "", "point": center, "dir": _vec(0.0, 0.0, 0.0)}
+
+
+def _pick_direct_ports(obj_a, obj_b, tol_mm=DIRECT_ALIGN_TOL_MM):
+    ca = _object_anchor(obj_a)
+    cb = _object_anchor(obj_b)
+    dx = float(cb.x - ca.x)
+    dy = float(cb.y - ca.y)
+    adx = abs(dx)
+    ady = abs(dy)
+
+    if ady <= float(tol_mm):
+        face_a = "East" if dx >= 0.0 else "West"
+        face_b = "West" if dx >= 0.0 else "East"
+    elif adx <= float(tol_mm):
+        face_a = "North" if dy >= 0.0 else "South"
+        face_b = "South" if dy >= 0.0 else "North"
+    else:
+        raise RuntimeError(
+            f"Modo directo requiere alineacion XY (desfase <= {float(tol_mm):.1f} mm)."
+        )
+
+    return _face_center_port(obj_a, face_a), _face_center_port(obj_b, face_b)
+
+
+def _build_45_xy_points(start_xy, end_xy, use_two_diagonals):
+    sx = float(start_xy.x)
+    sy = float(start_xy.y)
+    ex = float(end_xy.x)
+    ey = float(end_xy.y)
+    z = float(start_xy.z)
+
+    dx = ex - sx
+    dy = ey - sy
+    adx = abs(dx)
+    ady = abs(dy)
+
+    out = [_vec(sx, sy, z)]
+    if adx <= EPS and ady <= EPS:
+        out.append(_vec(ex, ey, z))
+        return _dedupe_points(out)
+
+    sign_x = 1.0 if dx >= 0.0 else -1.0
+    sign_y = 1.0 if dy >= 0.0 else -1.0
+
+    if use_two_diagonals:
+        d = 0.5 * min(adx, ady)
+        if d > EPS:
+            p1 = _vec(sx + (sign_x * d), sy + (sign_y * d), z)
+            p2 = _vec(ex - (sign_x * d), ey - (sign_y * d), z)
+            out.extend([p1, p2])
+    else:
+        d = min(adx, ady)
+        if d > EPS:
+            p1 = _vec(sx + (sign_x * d), sy + (sign_y * d), z)
+            out.append(p1)
+
+    out.append(_vec(ex, ey, z))
+    return _dedupe_points(out)
+
+
+def _build_connection_points(port_a, port_b, mode_key, stub_mm):
+    pa = _vec(port_a["point"].x, port_a["point"].y, port_a["point"].z)
+    pb = _vec(port_b["point"].x, port_b["point"].y, port_b["point"].z)
+
+    if _safe_text(mode_key).strip() == "directo":
+        return _dedupe_points([pa, pb])
+
+    dir_a = _unit_xy(
+        port_a.get("dir", _vec(0.0, 0.0, 0.0)),
+        fallback=_vec(float(pb.x - pa.x), float(pb.y - pa.y), 0.0),
+    )
+    dir_b = _unit_xy(
+        port_b.get("dir", _vec(0.0, 0.0, 0.0)),
+        fallback=_vec(float(pa.x - pb.x), float(pa.y - pb.y), 0.0),
+    )
+
+    stub = max(0.0, float(stub_mm))
+    p_a_out = _vec(float(pa.x + (dir_a.x * stub)), float(pa.y + (dir_a.y * stub)), float(pa.z))
+    p_b_pre = _vec(float(pb.x + (dir_b.x * stub)), float(pb.y + (dir_b.y * stub)), float(pb.z))
+
+    z_route = float(p_a_out.z)
+    route_start = _vec(float(p_a_out.x), float(p_a_out.y), z_route)
+    route_end = _vec(float(p_b_pre.x), float(p_b_pre.y), z_route)
+    core = _build_45_xy_points(route_start, route_end, use_two_diagonals=(mode_key == "dos"))
+
+    pts = [pa, p_a_out]
+    if core:
+        pts.extend(core[1:])
+    if abs(float(p_b_pre.z) - z_route) > EPS:
+        pts.append(p_b_pre)
+    pts.append(pb)
+    return _dedupe_points(pts)
+
+
+def _make_shape(points):
+    pts = _dedupe_points(points)
+    if len(pts) < 2:
+        return None
+    if len(pts) == 2:
+        return Part.makeLine(pts[0], pts[1])
+    try:
+        return Part.makePolygon(pts)
+    except Exception:
+        return None
+
+
+def _draft_make_wire(points):
+    maker = getattr(Draft, "make_wire", None)
+    if maker is None:
+        maker = getattr(Draft, "makeWire", None)
+    if maker is None:
+        raise RuntimeError("No se encontro Draft.make_wire ni Draft.makeWire.")
+    attempts = [
+        lambda: maker(points, closed=False, face=False),
+        lambda: maker(points, False, False),
+        lambda: maker(points, False),
+        lambda: maker(points),
+    ]
+    last_err = None
+    for fn in attempts:
+        try:
+            return fn()
+        except Exception as ex:
+            last_err = ex
+    raise RuntimeError(f"No se pudo crear Draft Wire: {last_err}")
+
+
+def _safe_fillet_radius(points, requested_radius):
+    req = max(0.0, float(requested_radius))
+    pts = _dedupe_points(points)
+    if req <= EPS or len(pts) < 3:
+        return 0.0
+
+    min_run = float("inf")
+    found_corner = False
+    for i in range(1, len(pts) - 1):
+        a = pts[i - 1]
+        b = pts[i]
+        c = pts[i + 1]
+        ab = _vec(float(b.x - a.x), float(b.y - a.y), float(b.z - a.z))
+        bc = _vec(float(c.x - b.x), float(c.y - b.y), float(c.z - b.z))
+        l1 = _vlen(ab)
+        l2 = _vlen(bc)
+        if l1 <= EPS or l2 <= EPS:
+            continue
+        d1 = _unit(ab)
+        d2 = _unit(bc)
+        if abs(_dot(d1, d2)) >= 0.999:
+            continue
+        found_corner = True
+        min_run = min(min_run, l1, l2)
+
+    if not found_corner or (not math.isfinite(min_run)):
+        return 0.0
+    cap = max(0.0, 0.45 * float(min_run))
+    if cap <= EPS:
+        return 0.0
+    return min(req, cap)
+
+
+def _style_connection(obj, conduit_type=DEFAULT_CONDUIT):
+    vo = getattr(obj, "ViewObject", None)
+    if vo is None:
+        return
+    ctype = _safe_text(conduit_type).upper()
+    color = (0.07, 0.31, 0.58) if ctype == "EMT" else (0.72, 0.34, 0.08)
+    try:
+        vo.DisplayMode = "Wireframe"
+    except Exception:
+        pass
+    try:
+        vo.LineColor = color
+    except Exception:
+        pass
+    try:
+        vo.PointColor = color
+    except Exception:
+        pass
+    try:
+        vo.ShapeColor = color
+    except Exception:
+        pass
+    try:
+        vo.LineWidth = 2.0
+    except Exception:
+        pass
+    if hasattr(obj, "CornerStyle"):
+        try:
+            obj.CornerStyle = "Round"
+        except Exception:
+            pass
+
+
+def _safe_attr_text(obj, prop_name):
+    try:
+        return _safe_text(getattr(obj, prop_name, "")).strip()
+    except Exception:
+        return ""
+
+
+def _guess_circuit_id(obj_a, obj_b):
+    for obj in (obj_a, obj_b):
+        for pname in ("CircuitoID", "Circuito", "CircuitoNominal", "CircuitoNombre", "CircuitoName"):
+            val = _safe_attr_text(obj, pname)
+            if val:
+                return val
+    return "Circuito Manual"
+
+
+def _slug_token(text):
+    token = _safe_text(text).strip().replace(" ", "_")
+    while "__" in token:
+        token = token.replace("__", "_")
+    token = token.strip("_")
+    return token or "Manual"
+
+
+def _connection_key(circuit_id, a_obj, b_obj, a_port, b_port):
+    a_name = _safe_text(getattr(a_obj, "Name", "")).strip()
+    b_name = _safe_text(getattr(b_obj, "Name", "")).strip()
+    a_end = f"{a_name}:{_safe_text(a_port).strip()}"
+    b_end = f"{b_name}:{_safe_text(b_port).strip()}"
+    e1, e2 = sorted([a_end, b_end])
+    return f"{_safe_text(circuit_id).strip()}|{e1}|{e2}"
+
+
+def _pair_label(obj_a, obj_b, circuit_id=""):
+    la = _safe_text(getattr(obj_a, "Label", "")) or _safe_text(getattr(obj_a, "Name", "Origen"))
+    lb = _safe_text(getattr(obj_b, "Label", "")) or _safe_text(getattr(obj_b, "Name", "Destino"))
+    cir = _slug_token(circuit_id or "Circuito")
+    return f"EMT_{cir}: {la} -> {lb}"
+
+
+def _remove_previous_pair(doc, obj_a, obj_b):
+    names = {_safe_text(getattr(obj_a, "Name", "")).strip(), _safe_text(getattr(obj_b, "Name", "")).strip()}
+    if "" in names:
+        return 0
+    removed = 0
+    for obj in list(getattr(doc, "Objects", []) or []):
+        on = _safe_text(getattr(obj, "Name", "")).strip()
+        if not on or on in names:
+            continue
+        generated_by = _safe_text(getattr(obj, "GeneradoPor", "")).strip()
+        tipo_con = _safe_text(getattr(obj, "TipoConexion", "")).strip()
+        if (generated_by != GENERATED_BY) and (tipo_con != "EMT_45"):
+            continue
+        oo = _safe_text(getattr(obj, "ObjetoOrigen", "")).strip() or _safe_text(getattr(obj, "OrigenName", "")).strip()
+        od = _safe_text(getattr(obj, "ObjetoDestino", "")).strip() or _safe_text(getattr(obj, "DestinoName", "")).strip()
+        if {oo, od} != names:
+            continue
+        try:
+            doc.removeObject(on)
+            removed += 1
+        except Exception:
+            pass
+    return removed
+
+
+class Connect45Dialog(QtWidgets.QDialog):
+    def __init__(self):
+        super(Connect45Dialog, self).__init__()
+        self.setWindowTitle("Conectar Octogonales en 45")
+        self.setMinimumWidth(390)
+
+        lay = QtWidgets.QVBoxLayout(self)
+        info = QtWidgets.QLabel(
+            "Seleccione 2 octogonales.\n"
+            "En 'Un lado diagonal', se usa diagonal solo en el origen.\n"
+            "Use 'Directo (alineados)' para trazo recto desde centro de cara.\n"
+            f"Tolerancia de alineacion directa: {float(DIRECT_ALIGN_TOL_MM):.0f} mm."
+        )
+        info.setWordWrap(True)
+        lay.addWidget(info)
+
+        form = QtWidgets.QFormLayout()
+        lay.addLayout(form)
+
+        self.cmb_mode = QtWidgets.QComboBox()
+        self.cmb_mode.addItem("Un lado diagonal", "uno")
+        self.cmb_mode.addItem("Dos lados diagonales", "dos")
+        self.cmb_mode.addItem("Directo (alineados)", "directo")
+        form.addRow("Modo:", self.cmb_mode)
+
+        self.cmb_diag_origen = QtWidgets.QComboBox()
+        self.cmb_diag_destino = QtWidgets.QComboBox()
+        for cmb in (self.cmb_diag_origen, self.cmb_diag_destino):
+            cmb.addItem("Auto", "Auto")
+            cmb.addItem("NorthEast (NE)", "NorthEast")
+            cmb.addItem("NorthWest (NW)", "NorthWest")
+            cmb.addItem("SouthEast (SE)", "SouthEast")
+            cmb.addItem("SouthWest (SW)", "SouthWest")
+
+        form.addRow("Diagonal origen:", self.cmb_diag_origen)
+        form.addRow("Diagonal destino:", self.cmb_diag_destino)
+
+        self.sp_stub = QtWidgets.QDoubleSpinBox()
+        self.sp_stub.setRange(0.0, 5000.0)
+        self.sp_stub.setDecimals(1)
+        self.sp_stub.setSingleStep(10.0)
+        self.sp_stub.setValue(60.0)
+        self.sp_stub.setSuffix(" mm")
+        form.addRow("Salida desde puertos:", self.sp_stub)
+
+        self.sp_fillet = QtWidgets.QDoubleSpinBox()
+        self.sp_fillet.setRange(0.0, 5000.0)
+        self.sp_fillet.setDecimals(1)
+        self.sp_fillet.setSingleStep(10.0)
+        self.sp_fillet.setValue(DEFAULT_FILLET_MM)
+        self.sp_fillet.setSuffix(" mm")
+        form.addRow("Fillet (radio):", self.sp_fillet)
+
+        self.chk_replace = QtWidgets.QCheckBox("Reemplazar conexion previa de este par")
+        self.chk_replace.setChecked(True)
+        lay.addWidget(self.chk_replace)
+
+        row = QtWidgets.QHBoxLayout()
+        btn_ok = QtWidgets.QPushButton("Crear conexion")
+        btn_cancel = QtWidgets.QPushButton("Cancelar")
+        row.addStretch(1)
+        row.addWidget(btn_ok)
+        row.addWidget(btn_cancel)
+        lay.addLayout(row)
+
+        btn_ok.clicked.connect(self.accept)
+        btn_cancel.clicked.connect(self.reject)
+        self.cmb_mode.currentIndexChanged.connect(self._refresh_mode)
+        self._refresh_mode()
+
+    def _refresh_mode(self):
+        mode = _safe_text(self.cmb_mode.currentData()).strip()
+        use_diag = mode in ("uno", "dos")
+        self.cmb_diag_origen.setEnabled(use_diag)
+        self.cmb_diag_destino.setEnabled(mode == "dos")
+
+    def values(self):
+        return {
+            "mode": _safe_text(self.cmb_mode.currentData()).strip() or "uno",
+            "diag_origen": _safe_text(self.cmb_diag_origen.currentData()).strip() or "Auto",
+            "diag_destino": _safe_text(self.cmb_diag_destino.currentData()).strip() or "Auto",
+            "stub_mm": float(self.sp_stub.value()),
+            "fillet_mm": float(self.sp_fillet.value()),
+            "replace_previous": bool(self.chk_replace.isChecked()),
+        }
+
+
+def _show_config_dialog():
+    dlg = Connect45Dialog()
+    if dlg.exec_() != QtWidgets.QDialog.Accepted:
+        return None
+    return dlg.values()
+
+
+def _create_connection(doc, obj_a, obj_b, cfg):
+    ports_a = _world_ports(obj_a)
+    ports_b = _world_ports(obj_b)
+    center_a = _object_anchor(obj_a)
+    center_b = _object_anchor(obj_b)
+
+    mode = _safe_text(cfg.get("mode", "uno")).strip() or "uno"
+    prefer_a = _safe_text(cfg.get("diag_origen", "Auto")).strip() or "Auto"
+    prefer_b = _safe_text(cfg.get("diag_destino", "Auto")).strip() or "Auto"
+    stub_mm = float(cfg.get("stub_mm", 60.0))
+    fillet_mm = float(cfg.get("fillet_mm", DEFAULT_FILLET_MM))
+    conduit_type = DEFAULT_CONDUIT
+    diameter_mm = float(DEFAULT_DIAMETER_MM)
+    link_kind = DEFAULT_LINK_KIND
+
+    if mode == "directo":
+        p_a, p_b = _pick_direct_ports(obj_a, obj_b, tol_mm=DIRECT_ALIGN_TOL_MM)
+    else:
+        allowed_a = DIAGONAL_NAMES
+        allowed_b = DIAGONAL_NAMES if mode == "dos" else CARDINAL_NAMES
+        pref_a = prefer_a
+        pref_b = prefer_b if mode == "dos" else "Auto"
+        p_a = _pick_port(
+            obj_a,
+            ports_a,
+            allowed_a,
+            toward_point=center_b,
+            preferred_name=pref_a,
+        )
+        p_b = _pick_port(
+            obj_b,
+            ports_b,
+            allowed_b,
+            toward_point=center_a,
+            preferred_name=pref_b,
+        )
+
+    pts = _build_connection_points(p_a, p_b, mode_key=mode, stub_mm=stub_mm)
+    safe_fillet = _safe_fillet_radius(pts, fillet_mm)
+    circuit_id = _guess_circuit_id(obj_a, obj_b)
+    route_key = _connection_key(circuit_id, obj_a, obj_b, p_a.get("name", ""), p_b.get("name", ""))
+
+    wire_err = None
+    obj = None
+    try:
+        obj = _draft_make_wire(pts)
+    except Exception as ex:
+        wire_err = ex
+
+    if obj is None:
+        shp = _make_shape(pts)
+        if shp is None:
+            raise RuntimeError("No se pudo construir la geometria de conexion.")
+        obj = doc.addObject("Part::Feature", "EMT_Conexion_45")
+        obj.Shape = shp
+        if fillet_mm > 0.0:
+            _warn(f"No se pudo crear Draft Wire para fillet ({wire_err}); se creo polilinea sin fillet.")
+    try:
+        obj.Label = _pair_label(obj_a, obj_b, circuit_id=circuit_id)
+    except Exception:
+        pass
+
+    _ensure_property(obj, "App::PropertyString", "Tipo", "ElectricCR", "Tipo logico de objeto")
+    _ensure_property(obj, "App::PropertyString", "ConduitType", "ElectricCR", "Tipo de canalizacion")
+    _ensure_property(obj, "App::PropertyFloat", "DiametroConduit", "ElectricCR", "Diametro de canalizacion (mm)")
+    _ensure_property(obj, "App::PropertyFloat", "RadioCurvatura", "ElectricCR", "Radio de curvatura solicitado (mm)")
+    _ensure_property(obj, "App::PropertyString", "CircuitoID", "Circuito", "Identificador de circuito")
+    _ensure_property(obj, "App::PropertyString", "OrigenName", "Vinculo", "Objeto origen")
+    _ensure_property(obj, "App::PropertyString", "DestinoName", "Vinculo", "Objeto destino")
+    _ensure_property(obj, "App::PropertyString", "LinkKind", "Vinculo", "Tipo de enlace generado")
+    _ensure_property(obj, "App::PropertyString", "AutoRouteKey", "Vinculo", "Llave unica de ruta")
+    _ensure_property(obj, "App::PropertyString", "TipoConexion", "ElectricCR", "Tipo de conexion")
+    _ensure_property(obj, "App::PropertyString", "Modo45", "ElectricCR", "Modo de conexion 45")
+    _ensure_property(obj, "App::PropertyString", "PuertoOrigen", "Vinculo", "Puerto usado en origen")
+    _ensure_property(obj, "App::PropertyString", "PuertoDestino", "Vinculo", "Puerto usado en destino")
+    _ensure_property(obj, "App::PropertyString", "ObjetoOrigen", "Vinculo", "Objeto origen (Name)")
+    _ensure_property(obj, "App::PropertyString", "ObjetoDestino", "Vinculo", "Objeto destino (Name)")
+    _ensure_property(obj, "App::PropertyString", "GeneradoPor", "ElectricCR", "Macro generadora")
+    _ensure_property(obj, "App::PropertyFloat", "LongitudMM", "ElectricCR", "Longitud aproximada")
+    _ensure_property(obj, "App::PropertyFloat", "FilletMM", "ElectricCR", "Radio fillet aplicado")
+
+    try:
+        obj.TipoConexion = "EMT_45"
+    except Exception:
+        pass
+    try:
+        obj.Tipo = "ConduitPath"
+    except Exception:
+        pass
+    try:
+        obj.ConduitType = _safe_text(conduit_type)
+    except Exception:
+        pass
+    try:
+        obj.DiametroConduit = float(diameter_mm)
+    except Exception:
+        pass
+    try:
+        obj.RadioCurvatura = float(fillet_mm)
+    except Exception:
+        pass
+    try:
+        obj.CircuitoID = _safe_text(circuit_id)
+    except Exception:
+        pass
+    try:
+        obj.OrigenName = _safe_text(getattr(obj_a, "Name", ""))
+    except Exception:
+        pass
+    try:
+        obj.DestinoName = _safe_text(getattr(obj_b, "Name", ""))
+    except Exception:
+        pass
+    try:
+        obj.LinkKind = _safe_text(link_kind)
+    except Exception:
+        pass
+    try:
+        obj.AutoRouteKey = _safe_text(route_key)
+    except Exception:
+        pass
+    try:
+        if mode == "dos":
+            obj.Modo45 = "DosDiagonales"
+        elif mode == "directo":
+            obj.Modo45 = "Directo"
+        else:
+            obj.Modo45 = "UnDiagonal"
+    except Exception:
+        pass
+    try:
+        obj.PuertoOrigen = _safe_text(p_a.get("name", ""))
+    except Exception:
+        pass
+    try:
+        obj.PuertoDestino = _safe_text(p_b.get("name", ""))
+    except Exception:
+        pass
+    try:
+        obj.ObjetoOrigen = _safe_text(getattr(obj_a, "Name", ""))
+    except Exception:
+        pass
+    try:
+        obj.ObjetoDestino = _safe_text(getattr(obj_b, "Name", ""))
+    except Exception:
+        pass
+    try:
+        obj.GeneradoPor = GENERATED_BY
+    except Exception:
+        pass
+
+    if hasattr(obj, "FilletRadius"):
+        try:
+            obj.FilletRadius = float(safe_fillet)
+        except Exception:
+            pass
+    if hasattr(obj, "Fillet"):
+        try:
+            obj.Fillet = bool(safe_fillet > 0.0)
+        except Exception:
+            pass
+    if hasattr(obj, "CornerStyle"):
+        try:
+            obj.CornerStyle = "Round"
+        except Exception:
+            pass
+
+    try:
+        obj.FilletMM = float(safe_fillet)
+    except Exception:
+        pass
+    try:
+        obj.LongitudMM = float(getattr(getattr(obj, "Shape", None), "Length", 0.0) or 0.0)
+    except Exception:
+        pass
+
+    _style_connection(obj, conduit_type=conduit_type)
+    return obj, p_a.get("name", ""), p_b.get("name", ""), float(safe_fillet), _safe_text(circuit_id)
+
+
+def main():
+    doc = App.ActiveDocument
+    if doc is None:
+        _err("No hay documento activo.")
+        return
+
+    selected = _selection_objects_ordered()
+    octos = [o for o in selected if _is_octogonal_candidate(o)]
+    if len(octos) != 2:
+        _err("Seleccione exactamente 2 cajas octogonales.")
+        return
+
+    cfg = None
+    panel_cfg = globals().get("ELECTRICCR_PANEL_CFG", None)
+    if isinstance(panel_cfg, dict):
+        cfg = dict(panel_cfg)
+    else:
+        cfg = _show_config_dialog()
+        if cfg is None:
+            _warn("Operacion cancelada por el usuario.")
+            return
+
+    obj_a, obj_b = octos[0], octos[1]
+    if _cc is not None and _cm is not None:
+        try:
+            kind_a = _safe_text(_cc.get_endpoint_kind(obj_a)).strip()
+            kind_b = _safe_text(_cc.get_endpoint_kind(obj_b)).strip()
+            if kind_a and kind_b:
+                if not _cm.is_supported_connection(kind_a, kind_b):
+                    _err(f"La matriz no soporta conexion entre '{kind_a}' y '{kind_b}'.")
+                    return
+                pref = _safe_text(_cm.preferred_strategy(kind_a, kind_b)).strip()
+                if pref:
+                    _log(f"Matriz de conexion: {kind_a}<->{kind_b} | estrategia preferida={pref}")
+        except Exception:
+            pass
+    mode = _safe_text(cfg.get("mode", "uno")).strip() or "uno"
+    if mode not in ("uno", "dos", "directo"):
+        mode = "uno"
+    cfg["mode"] = mode
+
+    if mode == "directo":
+        ca = _object_anchor(obj_a)
+        cb = _object_anchor(obj_b)
+        if not _is_aligned_xy(ca, cb, tol_mm=DIRECT_ALIGN_TOL_MM):
+            _err(
+                "Modo directo requiere octogonales casi alineadas en X o Y "
+                f"(desfase <= {float(DIRECT_ALIGN_TOL_MM):.1f} mm)."
+            )
+            return
+
+    doc.openTransaction("ElectricCR: conectar octogonales 45")
+    try:
+        if bool(cfg.get("replace_previous", True)):
+            _remove_previous_pair(doc, obj_a, obj_b)
+
+        conn_obj, p_from, p_to, fillet_applied, circuito_id = _create_connection(doc, obj_a, obj_b, cfg)
+
+        if ensure_conexiones_group is not None:
+            try:
+                g = ensure_conexiones_group(doc, objects=[obj_a, obj_b])
+                if g is not None:
+                    g.addObject(conn_obj)
+            except Exception as ex:
+                _warn(f"No se pudo ubicar en grupo Conexiones: {ex}")
+
+        doc.recompute()
+        doc.commitTransaction()
+    except Exception as ex:
+        doc.abortTransaction()
+        _err(f"Fallo al crear conexion: {ex}")
+        return
+
+    if mode == "dos":
+        mode_txt = "dos lados diagonales"
+    elif mode == "directo":
+        mode_txt = "directo alineado"
+    else:
+        mode_txt = "un lado diagonal"
+    _log(
+        "Conexion creada: {} -> {} | circuito={} | modo={} | puerto origen={} | puerto destino={}".format(
+            _safe_text(getattr(obj_a, "Name", "")),
+            _safe_text(getattr(obj_b, "Name", "")),
+            _safe_text(circuito_id),
+            mode_txt,
+            _safe_text(p_from),
+            _safe_text(p_to),
+        )
+    )
+    _log(f"Fillet aplicado: {float(fillet_applied):.1f} mm")
+
+
+main()

@@ -80,6 +80,8 @@ OCTAGON_PORT_TARGETS = (
     ("SouthEast", -45.0),
 )
 STRICT_BACKBONE_CARDINAL = True
+ALLOW_DIAGONAL_PORTS_FOR_SWITCH_BOXES = True
+RAMAL_LUZ_PATCH_ACTIVE = False
 MAX_FEEDER_SPREAD_MM = 600.0
 try:
     DEBUG_LOG_PATH = Path(__file__).resolve().with_name("Conectar_Cajas_a_Tablero_Auto.debug.log")
@@ -2433,6 +2435,24 @@ def _rename_octagon_ports_world(obj, ports):
         angle = _angle_deg_xy(wd) if _vlen(wd) > EPS else 0.0
         side.append((dict(p), angle))
 
+    # Filtrar puertos internos: solo conservar puertos cercanos al perimetro
+    # de la caja para evitar rutas que nacen dentro del volumen.
+    if side and bool(globals().get("RAMAL_LUZ_PATCH_ACTIVE", False)):
+        with_radius = []
+        for p, ang in side:
+            try:
+                r = _distance_xy(p["point"], center)
+            except Exception:
+                r = 0.0
+            with_radius.append((p, ang, float(r)))
+        max_r = max((r for _p, _a, r in with_radius), default=0.0)
+        if max_r > EPS:
+            min_r = max(5.0, 0.55 * float(max_r))
+            ring = [(p, ang) for p, ang, r in with_radius if r >= min_r]
+            # Si el filtro deja demasiado poco, no romper compatibilidad.
+            if len(ring) >= 4:
+                side = ring
+
     remaining = list(side)
     assigned = {}
     for label, target in OCTAGON_PORT_TARGETS:
@@ -2460,6 +2480,12 @@ def _rename_octagon_ports_world(obj, ports):
         if port is not None:
             out.append(port)
     if bottom is not None:
+        try:
+            bdir = bottom.get("dir", _vec(0.0, 0.0, 0.0))
+            if _vlen(bdir) <= EPS:
+                bottom["dir"] = _vec(0.0, 0.0, -1.0)
+        except Exception:
+            pass
         out.append(bottom)
     return out
 
@@ -2522,6 +2548,117 @@ def _ordered_cardinal_ports(obj, toward_point):
             out.append(name)
             seen.add(name)
     return tuple(out)
+
+
+def _ordered_diagonal_ports(obj, toward_point):
+    base = _anchor_point(obj)
+    vt = _normalize(_vec(float(toward_point.x) - float(base.x), float(toward_point.y) - float(base.y), 0.0))
+    if _vlen(vt) <= EPS:
+        return ("NorthEast", "NorthWest", "SouthEast", "SouthWest")
+
+    diag_dirs = {
+        "NorthEast": _normalize(_vec(1.0, 1.0, 0.0)),
+        "NorthWest": _normalize(_vec(-1.0, 1.0, 0.0)),
+        "SouthEast": _normalize(_vec(1.0, -1.0, 0.0)),
+        "SouthWest": _normalize(_vec(-1.0, -1.0, 0.0)),
+    }
+    ranked = sorted(
+        list(diag_dirs.items()),
+        key=lambda kv: -float(_dot(kv[1], vt)),
+    )
+    out = []
+    seen = set()
+    for name, _dir in ranked:
+        if name not in seen:
+            out.append(name)
+            seen.add(name)
+    for name in ("NorthEast", "NorthWest", "SouthEast", "SouthWest"):
+        if name not in seen:
+            out.append(name)
+            seen.add(name)
+    return tuple(out)
+
+
+def _is_switch_origin_box(obj):
+    if obj is None or (not _is_octagon_box(obj)):
+        return False
+    txt = (
+        f"{_safe_text(getattr(obj, 'CajaOrigenName', ''))} "
+        f"{_safe_text(getattr(obj, 'Label', ''))} "
+        f"{_safe_text(getattr(obj, 'Name', ''))}"
+    ).strip().lower()
+    compact = re.sub(r"[\s_\-]+", "", txt)
+    if ("3way" in compact) or ("3vias" in compact) or ("tresvias" in compact):
+        return True
+    return any(tok in txt for tok in ("apagador", "switch", "interruptor", "conmutador", "triway", "threeway"))
+
+
+def _ordered_all_side_ports(obj, toward_point, include_diagonal=False):
+    allowed = set(CARDINAL_PORTS)
+    if include_diagonal:
+        allowed.update(("NorthEast", "NorthWest", "SouthEast", "SouthWest"))
+    ports = [p for p in (_world_ports(obj) or []) if _safe_text(p.get("name", "")).strip() in allowed]
+    if not ports:
+        if include_diagonal:
+            return ("North", "East", "South", "West", "NorthEast", "NorthWest", "SouthEast", "SouthWest")
+        return CARDINAL_PORTS
+
+    base = _anchor_point(obj)
+    vt = _normalize(
+        _vec(
+            float(toward_point.x) - float(base.x),
+            float(toward_point.y) - float(base.y),
+            0.0,
+        )
+    )
+    if _vlen(vt) <= EPS:
+        if include_diagonal:
+            return ("North", "East", "South", "West", "NorthEast", "NorthWest", "SouthEast", "SouthWest")
+        return CARDINAL_PORTS
+
+    ranked = []
+    for p in ports:
+        name = _safe_text(p.get("name", "")).strip()
+        dxy = _normalize(
+            _vec(
+                float(p["point"].x) - float(base.x),
+                float(p["point"].y) - float(base.y),
+                0.0,
+            )
+        )
+        if _vlen(dxy) <= EPS:
+            dxy = _normalize(_vec(float(p.get("dir", _vec(0.0, 0.0, 0.0)).x), float(p.get("dir", _vec(0.0, 0.0, 0.0)).y), 0.0))
+        score = -float(_dot(dxy, vt)) if _vlen(dxy) > EPS else 1e9
+        ranked.append((score, name))
+
+    ranked.sort(key=lambda it: (float(it[0]), _safe_text(it[1])))
+    out = []
+    seen = set()
+    for _score, name in ranked:
+        if name and name not in seen:
+            out.append(name)
+            seen.add(name)
+    fallback = ("North", "East", "South", "West", "NorthEast", "NorthWest", "SouthEast", "SouthWest") if include_diagonal else CARDINAL_PORTS
+    for name in fallback:
+        if name not in seen:
+            out.append(name)
+            seen.add(name)
+    return tuple(out)
+
+
+def _is_luminaria_like(obj):
+    if obj is None or _is_group(obj):
+        return False
+    txt = (
+        f"{_safe_text(getattr(obj, 'Tipo', ''))} "
+        f"{_safe_text(getattr(obj, 'TipoLogico', ''))} "
+        f"{_safe_text(getattr(obj, 'Categoria', ''))} "
+        f"{_safe_text(getattr(obj, 'Label', ''))} "
+        f"{_safe_text(getattr(obj, 'Name', ''))}"
+    ).lower()
+    if ("toma" in txt) or ("apagador" in txt) or ("switch" in txt) or ("interruptor" in txt) or ("tablero" in txt):
+        return False
+    return ("lumin" in txt) or ("lum " in f"{txt} ") or (" lampara" in f" {txt}") or ("luz" in txt)
 
 
 def _port_point_by_name(obj, port_name):
@@ -2945,6 +3082,31 @@ def _dedup_points(points):
     return out
 
 
+def _route_crosses_box_interior_xy(obj, points, margin=2.0):
+    pts = list(points or [])
+    if obj is None or len(pts) < 3:
+        return False
+    try:
+        shape = getattr(obj, "Shape", None)
+        if shape is None or shape.isNull():
+            return False
+        bb = shape.BoundBox
+    except Exception:
+        return False
+    xmin = float(bb.XMin) + float(margin)
+    xmax = float(bb.XMax) - float(margin)
+    ymin = float(bb.YMin) + float(margin)
+    ymax = float(bb.YMax) - float(margin)
+    if xmin >= xmax or ymin >= ymax:
+        return False
+    for p in pts[1:-1]:
+        x = float(p.x)
+        y = float(p.y)
+        if (xmin < x < xmax) and (ymin < y < ymax):
+            return True
+    return False
+
+
 def _simplify_orthogonal_points(points):
     pts = _dedup_points(points)
     if len(pts) < 3:
@@ -3004,6 +3166,47 @@ def _simplify_orthogonal_points(points):
             out.append(b)
         out.append(pts[-1])
         pts = _dedup_points(out)
+    return pts
+
+
+def _trim_endpoint_backtrack(points):
+    pts = _dedup_points(points)
+    if len(pts) < 3:
+        return pts
+
+    def _axis_and_delta(a, b):
+        dx = float(b.x) - float(a.x)
+        dy = float(b.y) - float(a.y)
+        dz = float(b.z) - float(a.z)
+        axes = []
+        if abs(dx) > 0.1:
+            axes.append(("x", dx))
+        if abs(dy) > 0.1:
+            axes.append(("y", dy))
+        if abs(dz) > 0.1:
+            axes.append(("z", dz))
+        if len(axes) != 1:
+            return "", 0.0
+        return axes[0][0], float(axes[0][1])
+
+    changed = True
+    while changed and len(pts) >= 3:
+        changed = False
+        # Inicio: A->B->C sobre mismo eje y en sentido opuesto.
+        ax1, d1 = _axis_and_delta(pts[0], pts[1])
+        ax2, d2 = _axis_and_delta(pts[1], pts[2])
+        if ax1 and ax1 == ax2 and (d1 * d2) < 0.0:
+            del pts[1]
+            pts = _dedup_points(pts)
+            changed = True
+            continue
+        # Final: ...A->B->C sobre mismo eje y en sentido opuesto.
+        ax1, d1 = _axis_and_delta(pts[-3], pts[-2])
+        ax2, d2 = _axis_and_delta(pts[-2], pts[-1])
+        if ax1 and ax1 == ax2 and (d1 * d2) < 0.0:
+            del pts[-2]
+            pts = _dedup_points(pts)
+            changed = True
     return pts
 
 
@@ -4399,21 +4602,33 @@ def _preferred_backbone_port_pair(src_obj, dst_obj):
         dst_name = "West" if dx >= 0.0 else "East"
         return {"src": (src_name,), "dst": (dst_name,), "final_axis": "x"}
 
+    # Regla estable: usar el eje dominante para ambos extremos.
+    # Esto evita combinaciones cruzadas (ej. East -> North) que suelen generar
+    # sobrepaso y retorno en la llegada.
     if abs(dx) >= abs(dy):
         src_name = "East" if dx >= 0.0 else "West"
-        dst_name = "South" if dy >= 0.0 else "North"
-        return {"src": (src_name,), "dst": (dst_name,), "final_axis": "y"}
+        dst_name = "West" if dx >= 0.0 else "East"
+        return {"src": (src_name,), "dst": (dst_name,), "final_axis": "x"}
 
     src_name = "North" if dy >= 0.0 else "South"
-    dst_name = "West" if dx >= 0.0 else "East"
-    return {"src": (src_name,), "dst": (dst_name,), "final_axis": "x"}
+    dst_name = "South" if dy >= 0.0 else "North"
+    return {"src": (src_name,), "dst": (dst_name,), "final_axis": "y"}
 
 
 def _preferred_ports_for_link_end(end_obj, other_obj, link_kind, toward_point=None):
     if not _is_octagon_box(end_obj):
         return None
-    if _safe_text(link_kind).strip().lower() == "drop_box":
-        return ("Bottom",)
+    kind = _safe_text(link_kind).strip().lower()
+    patch_active = bool(globals().get("RAMAL_LUZ_PATCH_ACTIVE", False))
+    use_all_sides = bool(patch_active and ALLOW_DIAGONAL_PORTS_FOR_SWITCH_BOXES and _is_switch_origin_box(end_obj))
+    if kind in ("drop_box", "drop_nearest") and _is_luminaria_like(other_obj):
+        if toward_point is not None:
+            return _ordered_all_side_ports(end_obj, toward_point, include_diagonal=True)
+        return ("North", "East", "South", "West", "NorthEast", "NorthWest", "SouthEast", "SouthWest")
+    if use_all_sides:
+        if toward_point is not None:
+            return _ordered_all_side_ports(end_obj, toward_point, include_diagonal=True)
+        return ("North", "East", "South", "West", "NorthEast", "NorthWest", "SouthEast", "SouthWest")
     if toward_point is not None:
         return _ordered_cardinal_ports(end_obj, toward_point)
     return CARDINAL_PORTS
@@ -4421,6 +4636,11 @@ def _preferred_ports_for_link_end(end_obj, other_obj, link_kind, toward_point=No
 
 def _strict_cardinal_for_link_end(end_obj, other_obj, link_kind):
     if not STRICT_BACKBONE_CARDINAL:
+        return False
+    patch_active = bool(globals().get("RAMAL_LUZ_PATCH_ACTIVE", False))
+    if patch_active and ALLOW_DIAGONAL_PORTS_FOR_SWITCH_BOXES and _is_switch_origin_box(end_obj):
+        return False
+    if patch_active and _safe_text(link_kind).strip().lower() in ("drop_box", "drop_nearest") and _is_luminaria_like(other_obj):
         return False
     if _safe_text(link_kind).strip().lower() == "drop_box":
         return _is_octagon_box(end_obj)
@@ -4470,6 +4690,7 @@ def _connect_pair(
 ):
     if src_obj is None or dst_obj is None or src_obj is dst_obj:
         return "skip", None
+    patch_active = bool(globals().get("RAMAL_LUZ_PATCH_ACTIVE", False))
 
     board_name = _safe_text(getattr(board_obj, "Name", ""))
     src_name = _safe_text(getattr(src_obj, "Name", ""))
@@ -4543,7 +4764,8 @@ def _connect_pair(
     ) if is_feeder and guide_candidates else None
     kind_txt = _safe_text(link_kind).strip().lower()
     use_backbone_perimeter = bool(route_by_perimeter) and kind_txt == "backbone" and route_rect is not None
-    backbone_pair = _preferred_backbone_port_pair(src_obj, dst_obj) if kind_txt == "backbone" and not use_backbone_perimeter else None
+    is_trunk_link = kind_txt in ("backbone", "switch_backbone", "feeder")
+    backbone_pair = _preferred_backbone_port_pair(src_obj, dst_obj) if is_trunk_link and not use_backbone_perimeter else None
 
     src_hint = _anchor_point(dst_obj)
     dst_hint = _anchor_point(src_obj)
@@ -4610,6 +4832,8 @@ def _connect_pair(
         )
         src_strict = _strict_cardinal_for_link_end(src_obj, dst_obj, link_kind)
         dst_strict = _strict_cardinal_for_link_end(dst_obj, src_obj, link_kind)
+        avoid_reuse_src = _is_octagon_box(src_obj) and (kind_txt in ("drop_box", "drop_nearest"))
+        avoid_reuse_dst = _is_octagon_box(dst_obj) and (kind_txt in ("drop_box", "drop_nearest"))
         if is_src_board and _is_board_like(src_obj):
             ep_src = _board_face_endpoint(
                 src_obj,
@@ -4633,7 +4857,7 @@ def _connect_pair(
                 reserve_ports=reserve_ports,
                 prefer_port_names=src_pref_ports,
                 strict_preferred=src_strict,
-                avoid_reuse=_is_octagon_box(src_obj),
+                avoid_reuse=avoid_reuse_src,
             )
         if is_dst_board and _is_board_like(dst_obj):
             ep_dst = _board_face_endpoint(
@@ -4658,7 +4882,7 @@ def _connect_pair(
                 reserve_ports=reserve_ports,
                 prefer_port_names=dst_pref_ports,
                 strict_preferred=dst_strict,
-                avoid_reuse=_is_octagon_box(dst_obj),
+                avoid_reuse=avoid_reuse_dst,
             )
 
     p1 = ep_src["point"]
@@ -4688,8 +4912,31 @@ def _connect_pair(
     stub_dst = None
     src_port_name = _safe_text(ep_src.get("port", "")).strip()
     dst_port_name = _safe_text(ep_dst.get("port", "")).strip()
-    allow_src_stub = _is_octagon_box(src_obj) and _vlen(src_dir) > EPS and src_port_name != "Bottom" and kind_txt != "drop_box" and not use_backbone_perimeter
-    allow_dst_stub = _is_octagon_box(dst_obj) and _vlen(dst_dir) > EPS and dst_port_name != "Bottom" and kind_txt != "drop_box" and not use_backbone_perimeter
+
+    src_to_other = _normalize(_vec(float(p2.x) - float(p1.x), float(p2.y) - float(p1.y), 0.0))
+    dst_to_other = _normalize(_vec(float(p1.x) - float(p2.x), float(p1.y) - float(p2.y), 0.0))
+    src_align = _dot(src_dir, src_to_other) if (_vlen(src_dir) > EPS and _vlen(src_to_other) > EPS) else 0.0
+    dst_align = _dot(dst_dir, dst_to_other) if (_vlen(dst_dir) > EPS and _vlen(dst_to_other) > EPS) else 0.0
+    align_min = 0.35
+
+    allow_src_stub = (
+        _is_octagon_box(src_obj)
+        and _vlen(src_dir) > EPS
+        and src_port_name != "Bottom"
+        and kind_txt != "drop_box"
+        and ((not is_trunk_link) if patch_active else True)
+        and not use_backbone_perimeter
+        and src_align >= align_min
+    )
+    allow_dst_stub = (
+        _is_octagon_box(dst_obj)
+        and _vlen(dst_dir) > EPS
+        and dst_port_name != "Bottom"
+        and kind_txt != "drop_box"
+        and ((not is_trunk_link) if patch_active else True)
+        and not use_backbone_perimeter
+        and dst_align >= align_min
+    )
     if allow_src_stub:
         stub_src = _vec(p1.x + (src_dir.x * stub_len), p1.y + (src_dir.y * stub_len), p1.z)
     if allow_dst_stub:
@@ -4732,6 +4979,63 @@ def _connect_pair(
         dst_port=ep_dst.get("port", ""),
         entry_axis=(guide_entry_axis if is_feeder and guide_route is not None else None),
     )
+    if patch_active and is_trunk_link and (not use_backbone_perimeter) and pts:
+        escape_len = max(18.0, min(float(bend_radius) * 0.45, 42.0))
+        rp1_fix = rp1
+        rp2_fix = rp2
+        reroute = False
+        src_cross = (
+            _is_octagon_box(src_obj)
+            and (not is_src_board)
+            and _vlen(src_dir) > EPS
+            and src_port_name != "Bottom"
+            and _route_crosses_box_interior_xy(src_obj, pts, margin=1.0)
+        )
+        dst_cross = (
+            _is_octagon_box(dst_obj)
+            and (not is_dst_board)
+            and _vlen(dst_dir) > EPS
+            and dst_port_name != "Bottom"
+            and _route_crosses_box_interior_xy(dst_obj, pts, margin=1.0)
+        )
+        if src_cross:
+            rp1_fix = _vec(
+                float(p1.x) + (float(src_dir.x) * escape_len),
+                float(p1.y) + (float(src_dir.y) * escape_len),
+                float(p1.z),
+            )
+            reroute = True
+        if dst_cross:
+            rp2_fix = _vec(
+                float(p2.x) + (float(dst_dir.x) * escape_len),
+                float(p2.y) + (float(dst_dir.y) * escape_len),
+                float(p2.z),
+            )
+            reroute = True
+        if reroute:
+            pts = _route_points(
+                rp1_fix,
+                rp2_fix,
+                z_level=active_route_z,
+                orthogonal=orthogonal_route,
+                route_by_perimeter=route_by_perimeter,
+                rect=route_rect,
+                guide_info=guide_route,
+                final_axis=final_axis,
+                src_port=ep_src.get("port", ""),
+                dst_port=ep_dst.get("port", ""),
+                entry_axis=(guide_entry_axis if is_feeder and guide_route is not None else None),
+            )
+            if rp1_fix.distanceToPoint(p1) > 0.1:
+                pts = _dedup_points([p1] + list(pts or []))
+            if rp2_fix.distanceToPoint(p2) > 0.1:
+                pts = _dedup_points(list(pts or []) + [p2])
+            _debug(
+                f"Ajuste anti-atravesar caja | src_cross={'SI' if src_cross else 'NO'} "
+                f"dst_cross={'SI' if dst_cross else 'NO'} "
+                f"rp1_fix={_fmt_vec(rp1_fix)} rp2_fix={_fmt_vec(rp2_fix)} "
+                f"pts={_fmt_points(pts)}"
+            )
     if use_backbone_perimeter and len(pts) >= 2:
         src_trim_ep = _reserve_perimeter_box_endpoint(src_obj, pts[1], used_ports, reserve_ports=reserve_ports)
         dst_trim_ep = _reserve_perimeter_box_endpoint(dst_obj, pts[-2], used_ports, reserve_ports=reserve_ports)
@@ -4773,6 +5077,9 @@ def _connect_pair(
     elif stub_dst is not None and pts:
         pts = _dedup_points(pts[:-1] + [stub_dst, p2])
     pts_before = list(pts)
+    pts = _simplify_orthogonal_points(pts)
+    if patch_active:
+        pts = _trim_endpoint_backtrack(pts)
     pts = _simplify_orthogonal_points(pts)
     if pts_before != pts:
         _debug(f"Ruta simplificada | antes={_fmt_points(pts_before)} | despues={_fmt_points(pts)}")

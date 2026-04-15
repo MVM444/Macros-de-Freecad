@@ -3,11 +3,14 @@
 import os
 
 import FreeCAD as App
+import Part
 
 from ..utils import selection
 
 MEP_TYPE = "HVACPort"
 PORT_TYPES = ["Gas", "Liquid", "Electric", "Drain"]
+MARKER_RADIUS_BIG_MM = 30.0
+MARKER_RADIUS_SMALL_MM = 16.0
 LOG_PREFIX = "[MEP-HVAC][Port] "
 ICON_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "resources", "icons", "hvac.svg")
@@ -38,6 +41,93 @@ def _list_changed(existing, updated):
     return old_names != new_names
 
 
+def _port_marker_radius_mm(port_type):
+    role = str(port_type or "")
+    if role == "Drain":
+        return float(MARKER_RADIUS_SMALL_MM)
+    return float(MARKER_RADIUS_BIG_MM)
+
+
+def _port_marker_color(port_type):
+    role = str(port_type or "")
+    palette = {
+        "Gas": (1.0, 0.0, 0.0),
+        "Liquid": (0.0, 0.25, 1.0),
+        "Electric": (1.0, 0.85, 0.0),
+        "Drain": (0.0, 0.75, 0.0),
+    }
+    return palette.get(role, (0.9, 0.9, 0.9))
+
+
+def _safe_normal(direction):
+    try:
+        vec = App.Vector(direction)
+    except Exception:
+        return App.Vector(1, 0, 0)
+    length = float(vec.Length)
+    if length <= 1e-6:
+        return App.Vector(1, 0, 0)
+    return App.Vector(float(vec.x) / length, float(vec.y) / length, float(vec.z) / length)
+
+
+def _update_port_shape(port_obj):
+    if port_obj is None:
+        return
+    if "Shape" not in getattr(port_obj, "PropertiesList", []):
+        return
+    center = App.Vector(getattr(port_obj, "Position", App.Vector(0, 0, 0)))
+    normal = _safe_normal(getattr(port_obj, "Direction", App.Vector(1, 0, 0)))
+    radius = _port_marker_radius_mm(getattr(port_obj, "Type", "Gas"))
+    if "MarkerRadiusMM" in getattr(port_obj, "PropertiesList", []):
+        try:
+            current = float(getattr(port_obj, "MarkerRadiusMM", radius))
+            if abs(current - radius) > 0.01:
+                port_obj.MarkerRadiusMM = radius
+            else:
+                radius = current
+        except Exception:
+            try:
+                port_obj.MarkerRadiusMM = radius
+            except Exception:
+                pass
+    try:
+        port_obj.Shape = Part.makeCircle(float(radius), center, normal)
+    except Exception:
+        pass
+
+
+def _update_port_view(port_obj):
+    view_obj = getattr(port_obj, "ViewObject", None)
+    if view_obj is None:
+        return
+    color = _port_marker_color(getattr(port_obj, "Type", "Gas"))
+    try:
+        view_obj.Visibility = True
+    except Exception:
+        pass
+    if hasattr(view_obj, "ShowInTree"):
+        try:
+            view_obj.ShowInTree = True
+        except Exception:
+            pass
+    try:
+        view_obj.LineColor = color
+    except Exception:
+        pass
+    try:
+        view_obj.ShapeColor = color
+    except Exception:
+        pass
+    try:
+        view_obj.PointColor = color
+    except Exception:
+        pass
+    try:
+        view_obj.LineWidth = 3.0
+    except Exception:
+        pass
+
+
 def ensure_port_properties(obj):
     added_type = False
     added_position = False
@@ -59,6 +149,10 @@ def ensure_port_properties(obj):
     if "Direction" not in obj.PropertiesList:
         obj.addProperty("App::PropertyVector", "Direction", "HVAC Port", "Connection direction vector")
         added_direction = True
+    if "Shape" not in obj.PropertiesList:
+        obj.addProperty("Part::PropertyPartShape", "Shape", "HVAC Port", "Port visual circle marker")
+    if "MarkerRadiusMM" not in obj.PropertiesList:
+        obj.addProperty("App::PropertyFloat", "MarkerRadiusMM", "HVAC Port", "Port marker radius (mm)")
     if "EquipmentName" not in obj.PropertiesList:
         obj.addProperty("App::PropertyString", "EquipmentName", "HVAC Port", "Owner equipment object name")
     if "ConnectedToName" not in obj.PropertiesList:
@@ -87,30 +181,88 @@ def ensure_port_properties(obj):
         obj.Position = App.Vector(0, 0, 0)
     if added_direction:
         obj.Direction = App.Vector(0, -1, 0)
+    if "MarkerRadiusMM" in obj.PropertiesList and float(getattr(obj, "MarkerRadiusMM", 0.0) or 0.0) <= 0.0:
+        obj.MarkerRadiusMM = _port_marker_radius_mm(getattr(obj, "Type", "Gas"))
     if added_valid:
         obj.Valid = False
     if "ConnectedToName" in obj.PropertiesList and getattr(obj, "ConnectedToName", None) is None:
         obj.ConnectedToName = ""
+    _update_port_shape(obj)
+    _update_port_view(obj)
 
 
 def _equipment_dimensions(equipment_obj):
+    shape = getattr(equipment_obj, "Shape", None)
+    if shape is not None:
+        try:
+            if not shape.isNull():
+                bbox = shape.BoundBox
+                sx = float(bbox.XLength)
+                sy = float(bbox.YLength)
+                sz = float(bbox.ZLength)
+                if sx > 1.0 and sy > 1.0 and sz > 1.0:
+                    return (sx, sy, sz)
+        except Exception:
+            pass
+
+    mep_type = str(getattr(equipment_obj, "MEPType", "") or "")
+    if mep_type == "HVACCondenser":
+        return (1200.0, 500.0, 900.0)
+
     eq_type = str(getattr(equipment_obj, "Type", "Wall"))
     if eq_type == "Cassette":
         return (600.0, 600.0, 320.0)
+    if eq_type == "FloorCeiling":
+        return (1100.0, 300.0, 260.0)
     if eq_type == "Duct":
         return (1200.0, 360.0, 320.0)
     return (900.0, 260.0, 220.0)
 
 
+def _equipment_kind(equipment_obj):
+    if equipment_obj is None:
+        return "Evaporator"
+    mep_type = str(getattr(equipment_obj, "MEPType", "") or "")
+    if mep_type == "HVACCondenser":
+        return "Condenser"
+    props = set(getattr(equipment_obj, "PropertiesList", []) or [])
+    if "ConnectedUnits" in props:
+        return "Condenser"
+    return "Evaporator"
+
+
+def _local_ports_for_evaporator(dx, dy, dz):
+    # Indoor unit connectors are grouped near one side toward the wall.
+    y_wall = -float(dy) * 0.5
+    x_side = float(dx) * 0.45
+    return {
+        "Gas": (App.Vector(x_side, y_wall, float(dz) * 0.58), App.Vector(1, 0, 0)),
+        "Liquid": (App.Vector(x_side - float(dx) * 0.09, y_wall, float(dz) * 0.50), App.Vector(1, 0, 0)),
+        "Electric": (App.Vector(x_side - float(dx) * 0.17, y_wall, float(dz) * 0.70), App.Vector(1, 0, 0)),
+        "Drain": (App.Vector(x_side - float(dx) * 0.04, y_wall, float(dz) * 0.26), App.Vector(1, 0, -0.5)),
+    }
+
+
+def _local_ports_for_condenser(equipment_obj, dx, dy, dz):
+    # Outdoor unit service valves and electrical cover are typically on one side.
+    x_side = float(dx) * 0.5
+    discharge = str(getattr(equipment_obj, "Discharge", "Horizontal") or "Horizontal")
+    is_vertical = discharge.lower().startswith("v")
+    electric_y = float(dy) * (0.25 if is_vertical else 0.35)
+    return {
+        "Gas": (App.Vector(x_side, -float(dy) * 0.22, float(dz) * 0.26), App.Vector(1, 0, 0)),
+        "Liquid": (App.Vector(x_side, -float(dy) * 0.34, float(dz) * 0.20), App.Vector(1, 0, 0)),
+        "Electric": (App.Vector(x_side, electric_y, float(dz) * 0.72), App.Vector(1, 0, 0)),
+        "Drain": (App.Vector(x_side, -float(dy) * 0.08, float(dz) * 0.15), App.Vector(1, 0, -0.5)),
+    }
+
+
 def _local_ports_for_equipment(equipment_obj):
     dx, dy, dz = _equipment_dimensions(equipment_obj)
-    ports = {
-        "Gas": (App.Vector(dx * 0.45, -dy * 0.5, dz * 0.55), App.Vector(0, -1, 0)),
-        "Liquid": (App.Vector(-dx * 0.45, -dy * 0.5, dz * 0.55), App.Vector(0, -1, 0)),
-        "Electric": (App.Vector(-dx * 0.40, -dy * 0.5, dz * 0.85), App.Vector(0, -1, 0)),
-        "Drain": (App.Vector(dx * 0.40, -dy * 0.5, dz * 0.20), App.Vector(0, -1, -0.5)),
-    }
-    return ports
+    kind = _equipment_kind(equipment_obj)
+    if kind == "Condenser":
+        return _local_ports_for_condenser(equipment_obj, dx, dy, dz)
+    return _local_ports_for_evaporator(dx, dy, dz)
 
 
 def _transform_port_vectors(equipment_obj, local_position, local_direction):
@@ -123,17 +275,17 @@ def _transform_port_vectors(equipment_obj, local_position, local_direction):
 def create_port(doc, equipment_obj, port_type):
     port = doc.addObject("App::FeaturePython", "HVAC_Port")
     HVACPortProxy(port)
-    HVACPortViewProvider(port.ViewObject)
+    view_obj = getattr(port, "ViewObject", None)
+    if view_obj is not None:
+        HVACPortViewProvider(view_obj)
     ensure_port_properties(port)
     port.Type = port_type
     port.EquipmentName = str(getattr(equipment_obj, "Name", ""))
     if "ConnectedToName" in port.PropertiesList:
         port.ConnectedToName = ""
     port.Label = "{0}_{1}".format(equipment_obj.Label, port_type)
-    if hasattr(port, "ViewObject"):
-        port.ViewObject.Visibility = False
-        if hasattr(port.ViewObject, "ShowInTree"):
-            port.ViewObject.ShowInTree = False
+    _update_port_shape(port)
+    _update_port_view(port)
     return port
 
 
@@ -176,6 +328,11 @@ def ensure_equipment_ports(equipment_obj):
         )
         if str(getattr(port, "Type", "")) != port_type:
             port.Type = port_type
+            if "MarkerRadiusMM" in port.PropertiesList:
+                try:
+                    port.MarkerRadiusMM = _port_marker_radius_mm(port_type)
+                except Exception:
+                    pass
         if _vector_changed(getattr(port, "Position", App.Vector(0, 0, 0)), position):
             port.Position = position
         if _vector_changed(getattr(port, "Direction", App.Vector(0, -1, 0)), direction):
@@ -183,6 +340,8 @@ def ensure_equipment_ports(equipment_obj):
         equipment_name = str(getattr(equipment_obj, "Name", ""))
         if str(getattr(port, "EquipmentName", "")) != equipment_name:
             port.EquipmentName = equipment_name
+        _update_port_shape(port)
+        _update_port_view(port)
         updated_ports.append(port)
 
     if _list_changed(getattr(equipment_obj, "Ports", []), updated_ports):
@@ -325,9 +484,14 @@ class HVACPortProxy:
             new_valid = target is not None and validate_port_pair(obj, target)
             if bool(getattr(obj, "Valid", False)) != bool(new_valid):
                 obj.Valid = new_valid
+        if prop in {"Type", "Position", "Direction", "MarkerRadiusMM"}:
+            _update_port_shape(obj)
+            _update_port_view(obj)
 
     def execute(self, obj):
         ensure_port_properties(obj)
+        _update_port_shape(obj)
+        _update_port_view(obj)
 
 
 class HVACPortViewProvider:

@@ -38,6 +38,7 @@ GRUPO_SKETCH_LABEL     = "apagadores"
 SKETCH_TARGET_LABEL    = "Sketch apagadores"
 GRUPO_CIRCUITOS_LABEL  = "Circuitos"
 GRUPO_RECINTOS_LABEL   = "Recintos"
+GRUPO_HUERFANAS_LABEL  = "Huerfanas"
 DEFAULT_CIRCUITO_LABEL = "Circuito_01"
 
 PARAM_PATH             = "User parameter:BaseApp/Preferences/Mod/ElectricCR/ApagadoresSketch"
@@ -47,6 +48,7 @@ ROTATION_EXTRA_DEG     = 0.0
 OFFSET_LOCAL           = App.Vector(0.0, 0.0, 0.0)
 BB_TOL                 = 2.0
 SKIP_IF_LABEL_EXISTS   = True
+FALLBACK_RECINTO_TO_HUERFANAS = True
 
 AREA_GROUP_ALIASES = (
     "grupo de areas", "areas", "recintos", "espacios", "zonas"
@@ -1099,7 +1101,8 @@ def _ask_options_dialog(selected_objs):
     if cmb_key.currentIndex() < 0 and saved_key:
         cmb_key.setEditText(saved_key)
 
-    if dlg.exec_() != QtWidgets.QDialog.Accepted:
+    _exec_fn = getattr(dlg, "exec", None) or getattr(dlg, "exec_", None)
+    if _exec_fn is None or _exec_fn() != QtWidgets.QDialog.Accepted:
         return None
 
     sketch_name = cmb_sketch.currentData()
@@ -1343,6 +1346,7 @@ def main():
 
     count = 0
     fallback_nearest = 0
+    fallback_recinto = 0
     skipped_existing = 0
     fixed_dest_groups = set()
     dest_paths_count = {}
@@ -1375,24 +1379,43 @@ def main():
             warn("No se pudo resolver circuito para '{}'. Se omite punto {}.".format(base_label, i + 1))
             continue
 
+        used_huerfanas = False
         recinto_group = _find_recinto_group_in_circuit(circuit_group, base_label)
         if recinto_group is None:
-            warn(
-                "No existe recinto '{}' dentro de '{}'. Se omite punto {}.".format(
-                    base_label,
-                    _group_label_or_name(circuit_group),
-                    i + 1,
+            if FALLBACK_RECINTO_TO_HUERFANAS:
+                g_h = ensure_child_group(circuit_group, GRUPO_HUERFANAS_LABEL, reuse_global=False)
+                recinto_group = ensure_child_group(g_h, base_label, reuse_global=False)
+                fallback_recinto += 1
+                used_huerfanas = True
+                warn(
+                    "No existe recinto '{}' dentro de '{}'. Se usa fallback en '{}/{}/{}' (punto {}).".format(
+                        base_label,
+                        _group_label_or_name(circuit_group),
+                        _group_label_or_name(circuit_group),
+                        _group_label_or_name(g_h),
+                        _group_label_or_name(recinto_group),
+                        i + 1,
+                    )
                 )
-            )
-            continue
+            else:
+                warn(
+                    "No existe recinto '{}' dentro de '{}'. Se omite punto {}.".format(
+                        base_label,
+                        _group_label_or_name(circuit_group),
+                        i + 1,
+                    )
+                )
+                continue
 
         grp_dest = _find_child_group_by_label(recinto_group, GRUPO_DESTINO_LABEL)
         if grp_dest is None:
+            if used_huerfanas:
+                grp_dest = ensure_child_group(recinto_group, GRUPO_DESTINO_LABEL, reuse_global=False)
             rec_key = "{}|{}".format(
                 getattr(circuit_group, "Name", "") or _group_label_or_name(circuit_group),
                 getattr(recinto_group, "Name", "") or _group_label_or_name(recinto_group),
             )
-            if rec_key not in warned_no_apagadores:
+            if (not used_huerfanas) and rec_key not in warned_no_apagadores:
                 warned_no_apagadores.add(rec_key)
                 warn(
                     "No existe grupo '{}' dentro de '{}/{}'. Se usa el recinto como destino sin crear grupos.".format(
@@ -1401,7 +1424,8 @@ def main():
                         _group_label_or_name(recinto_group),
                     )
                 )
-            grp_dest = recinto_group
+            if not used_huerfanas:
+                grp_dest = recinto_group
 
         dest_gid = getattr(grp_dest, "Name", None) or id(grp_dest)
         if dest_gid not in fixed_dest_groups:
@@ -1467,7 +1491,11 @@ def main():
                     pl.Base.z,
                     int(yaw),
                     int(push_mm),
-                    " [{}]{}".format(wall_src, " [fallback_area]" if not inside_any else ""),
+                    " [{}]{}{}".format(
+                        wall_src,
+                        " [fallback_area]" if not inside_any else "",
+                        " [fallback_recinto]" if used_huerfanas else "",
+                    ),
                     dest_path,
                 )
             )
@@ -1481,12 +1509,13 @@ def main():
         warn("Recompute final con advertencia: {}".format(ex))
 
     log(
-        "Listo. Insertados {} simbolos | existentes_omitidos={} | destinos={} | altura={} mm | fallback_area={}.".format(
+        "Listo. Insertados {} simbolos | existentes_omitidos={} | destinos={} | altura={} mm | fallback_area={} | fallback_recinto={}.".format(
             count,
             int(skipped_existing),
             len(dest_paths_count),
             int(z_base),
             int(fallback_nearest),
+            int(fallback_recinto),
         )
     )
 

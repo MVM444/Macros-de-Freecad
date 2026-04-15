@@ -31,6 +31,8 @@ ensure_conexiones_group = _conexiones_grouping_mod.ensure_conexiones_group
 
 EPS = 1e-9
 POINT_TOL = 0.1
+PREVIEW_COLOR = (0.26, 0.84, 1.0)
+PREVIEW_LINEWIDTH = 3.0
 
 
 def _safe_text(v):
@@ -162,19 +164,58 @@ def _point_from_selection(sel_ex):
     return None
 
 
+class _HoverPreviewButton(QtWidgets.QPushButton):
+    def __init__(self, text, on_enter=None, on_leave=None):
+        super(_HoverPreviewButton, self).__init__(text)
+        self._on_enter = on_enter
+        self._on_leave = on_leave
+        self.setMouseTracking(True)
+
+    def enterEvent(self, event):
+        try:
+            if callable(self._on_enter):
+                self._on_enter()
+        except Exception:
+            pass
+        super(_HoverPreviewButton, self).enterEvent(event)
+
+    def leaveEvent(self, event):
+        try:
+            if callable(self._on_leave):
+                self._on_leave()
+        except Exception:
+            pass
+        super(_HoverPreviewButton, self).leaveEvent(event)
+
+
 class LSelectorDialog(QtWidgets.QDialog):
-    def __init__(self, axis_primary, axis_secondary):
+    def __init__(self, doc, p1, p2, axis_primary, axis_secondary):
         super(LSelectorDialog, self).__init__()
         self.selected_mode = None
+        self._doc = doc
+        self._p1 = _vec(p1.x, p1.y, p1.z)
+        self._p2 = _vec(p2.x, p2.y, p2.z)
+        self._preview_obj_name = f"__Preview_Conexion_L_{id(self)}"
         self.setWindowTitle("Conectar en L")
-        self.setFixedSize(340, 170)
+        self.setFixedSize(360, 190)
 
         axis_txt = f"Ejes principales: {axis_primary.upper()} y {axis_secondary.upper()}"
         lbl = QtWidgets.QLabel(axis_txt)
         lbl.setAlignment(QtCore.Qt.AlignCenter)
 
-        btn_normal = QtWidgets.QPushButton("L normal")
-        btn_inv = QtWidgets.QPushButton("L invertida")
+        hint = QtWidgets.QLabel("Pase el cursor sobre cada boton para vista previa.")
+        hint.setAlignment(QtCore.Qt.AlignCenter)
+
+        btn_normal = _HoverPreviewButton(
+            "L normal",
+            on_enter=lambda: self._show_preview("normal"),
+            on_leave=self._hide_preview,
+        )
+        btn_inv = _HoverPreviewButton(
+            "L invertida",
+            on_enter=lambda: self._show_preview("invertida"),
+            on_leave=self._hide_preview,
+        )
         btn_cancel = QtWidgets.QPushButton("Cancelar")
 
         btn_normal.clicked.connect(lambda: self._set_mode("normal"))
@@ -187,19 +228,113 @@ class LSelectorDialog(QtWidgets.QDialog):
 
         root = QtWidgets.QVBoxLayout()
         root.addWidget(lbl)
+        root.addSpacing(6)
+        root.addWidget(hint)
         root.addSpacing(10)
         root.addLayout(row)
         root.addSpacing(8)
         root.addWidget(btn_cancel)
         self.setLayout(root)
 
+    def _preview_obj(self):
+        if self._doc is None:
+            return None
+        obj = self._doc.getObject(self._preview_obj_name)
+        if obj is not None:
+            return obj
+        try:
+            obj = self._doc.addObject("Part::Feature", self._preview_obj_name)
+            obj.Label = "VistaPrevia_Conexion_L"
+            return obj
+        except Exception:
+            return None
+
+    def _show_preview(self, mode):
+        if self._doc is None:
+            return
+        try:
+            pts, _ax1, _ax2 = _build_l_points(self._p1, self._p2, mode)
+            pts = _dedup_points(pts)
+            if len(pts) < 2:
+                return
+            shp = Part.makePolygon(pts)
+            pobj = self._preview_obj()
+            if pobj is None:
+                return
+            pobj.Shape = shp
+            try:
+                pobj.Visibility = True
+            except Exception:
+                pass
+            vo = getattr(pobj, "ViewObject", None)
+            if vo is not None:
+                try:
+                    vo.DisplayMode = "Wireframe"
+                except Exception:
+                    pass
+                try:
+                    vo.LineColor = PREVIEW_COLOR
+                except Exception:
+                    pass
+                try:
+                    vo.PointColor = PREVIEW_COLOR
+                except Exception:
+                    pass
+                try:
+                    vo.ShapeColor = PREVIEW_COLOR
+                except Exception:
+                    pass
+                try:
+                    vo.LineWidth = float(PREVIEW_LINEWIDTH)
+                except Exception:
+                    pass
+            try:
+                FreeCADGui.updateGui()
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _hide_preview(self):
+        if self._doc is None:
+            return
+        try:
+            pobj = self._doc.getObject(self._preview_obj_name)
+            if pobj is None:
+                return
+            pobj.Visibility = False
+            try:
+                FreeCADGui.updateGui()
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _cleanup_preview(self):
+        if self._doc is None:
+            return
+        try:
+            pobj = self._doc.getObject(self._preview_obj_name)
+            if pobj is not None:
+                self._doc.removeObject(pobj.Name)
+                try:
+                    FreeCADGui.updateGui()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def done(self, result):
+        self._cleanup_preview()
+        super(LSelectorDialog, self).done(result)
+
     def _set_mode(self, mode):
         self.selected_mode = mode
         self.accept()
 
 
-def _choose_l_mode(axis_primary, axis_secondary):
-    dlg = LSelectorDialog(axis_primary, axis_secondary)
+def _choose_l_mode(doc, p1, p2, axis_primary, axis_secondary):
+    dlg = LSelectorDialog(doc, p1, p2, axis_primary, axis_secondary)
     if dlg.exec_() == QtWidgets.QDialog.Accepted:
         return dlg.selected_mode
     return None
@@ -253,7 +388,7 @@ def conectar_objetos_en_L():
     axis_primary = order[0]
     axis_secondary = order[1]
 
-    mode = _choose_l_mode(axis_primary, axis_secondary)
+    mode = _choose_l_mode(doc, p1, p2, axis_primary, axis_secondary)
     if mode is None:
         FreeCAD.Console.PrintWarning("Operacion cancelada por el usuario.\n")
         return

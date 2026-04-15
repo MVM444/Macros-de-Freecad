@@ -43,6 +43,14 @@ MEPWorkbenchCR se estructura como un Workbench modular de FreeCAD. El alcance in
 - Proyecto HVAC -> influye en factor climatico (soporte transversal).
 - Condensadora/Ruta/Puertos -> fase posterior de sistema completo.
 
+## Modelo Areas y SubAreas por disciplina (proxima base)
+
+- `Area` define el perfil del recinto y puede ser de cualquier forma.
+- `SubArea` define zonas internas de calculo/criterio por disciplina.
+- Un recinto puede tener varias subareas de una misma disciplina.
+- Un recinto puede tener subareas de multiples disciplinas al mismo tiempo (Iluminacion, Incendio, HVAC).
+- Regla de evaluacion base: priorizar subareas de la disciplina activa; fallback al Area del recinto.
+
 ## Rol del Loader
 
 - El loader permite cargar o recargar el Workbench sin reiniciar FreeCAD.

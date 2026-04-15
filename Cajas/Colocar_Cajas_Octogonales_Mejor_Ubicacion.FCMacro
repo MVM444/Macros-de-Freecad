@@ -843,6 +843,60 @@ def _object_anchor_world(obj):
         return App.Vector(0.0, 0.0, 0.0)
 
 
+def _closest_point_on_bbox(bb, ref_point):
+    if bb is None or ref_point is None:
+        return None
+    try:
+        x = min(max(float(ref_point.x), float(bb.XMin)), float(bb.XMax))
+        y = min(max(float(ref_point.y), float(bb.YMin)), float(bb.YMax))
+        z = min(max(float(ref_point.z), float(bb.ZMin)), float(bb.ZMax))
+        return App.Vector(x, y, z)
+    except Exception:
+        return None
+
+
+def _object_connection_point_world(obj, toward_point=None):
+    # Punto de arranque en superficie del bounding box para evitar que
+    # la conexion nazca dentro del objeto 3D.
+    try:
+        shape = getattr(obj, "Shape", None)
+        if shape is not None and not shape.isNull():
+            bb = shape.BoundBox
+            if toward_point is not None:
+                p = _closest_point_on_bbox(bb, toward_point)
+                if p is not None:
+                    return p
+            return App.Vector(
+                0.5 * (float(bb.XMin) + float(bb.XMax)),
+                0.5 * (float(bb.YMin) + float(bb.YMax)),
+                0.5 * (float(bb.ZMin) + float(bb.ZMax)),
+            )
+    except Exception:
+        pass
+    return _object_anchor_world(obj)
+
+
+def _is_luminaria_source(doc, obj):
+    if obj is None:
+        return False
+
+    # Deteccion directa por metadatos comunes de dispositivo.
+    attrs = ("Label", "Name", "Tipo", "TipoLogico", "Categoria", "KeyRegistro", "EtiquetaPlano")
+    raw = " ".join(_safe_text(getattr(obj, a, "")) for a in attrs)
+    n = _normalize(raw)
+    if ("luminaria" in n) or ("lampara" in n):
+        return True
+
+    # Fallback por contexto de arbol.
+    chain = _group_chain_topdown(doc, obj) if doc is not None else []
+    for grp in (chain or []):
+        txt = f"{_safe_text(getattr(grp, 'Label', ''))} {_safe_text(getattr(grp, 'Name', ''))}"
+        ng = _normalize(txt)
+        if ("luminaria" in ng) or ("iluminacion" in ng):
+            return True
+    return False
+
+
 def _object_rotation(obj):
     try:
         return obj.Placement.Rotation
@@ -1067,18 +1121,24 @@ def _dedupe_points(points, tol=1e-6):
     return out
 
 
-def _make_solid_shape(p0, p1, box_dir_xy):
+def _make_solid_shape(p0, p1, box_dir_xy, p0_exit=None):
     src_raise = 100.0
     side_out = 120.0
-    z_run = max(float(p0.z) + src_raise, float(p1.z) - 60.0)
+    p0_start = App.Vector(float(p0.x), float(p0.y), float(p0.z))
+    if p0_exit is not None:
+        p0_work = App.Vector(float(p0_exit.x), float(p0_exit.y), float(p0_exit.z))
+    else:
+        p0_work = App.Vector(p0_start)
+    z_run = max(float(p0_work.z) + src_raise, float(p1.z) - 60.0)
     p1_out = App.Vector(
         float(p1.x + box_dir_xy.x * side_out),
         float(p1.y + box_dir_xy.y * side_out),
         float(p1.z),
     )
     pts = [
-        App.Vector(float(p0.x), float(p0.y), float(p0.z)),
-        App.Vector(float(p0.x), float(p0.y), z_run),
+        App.Vector(p0_start),
+        App.Vector(p0_work),
+        App.Vector(float(p0_work.x), float(p0_work.y), z_run),
         App.Vector(float(p1_out.x), float(p1_out.y), z_run),
         App.Vector(float(p1_out.x), float(p1_out.y), float(p1_out.z)),
         App.Vector(float(p1.x), float(p1.y), float(p1.z)),
@@ -1091,11 +1151,20 @@ def _make_solid_shape(p0, p1, box_dir_xy):
     return Part.makePolygon(pts)
 
 
-def _make_flexible_shape(p0, p1, box_dir_xy):
+def _make_flexible_shape(p0, p1, box_dir_xy, p0_exit=None):
     src_raise = 100.0
-    side_out = 120.0
+    p0_start = App.Vector(float(p0.x), float(p0.y), float(p0.z))
+    if p0_exit is not None:
+        p0_work = App.Vector(float(p0_exit.x), float(p0_exit.y), float(p0_exit.z))
+    else:
+        p0_work = App.Vector(p0_start)
 
-    p0_up = App.Vector(float(p0.x), float(p0.y), float(p0.z + src_raise))
+    raw_dx = float(p1.x - p0_work.x)
+    raw_dy = float(p1.y - p0_work.y)
+    raw_dxy = math.hypot(raw_dx, raw_dy)
+    side_out = min(120.0, max(20.0, raw_dxy * 0.25))
+
+    p0_up = App.Vector(float(p0_work.x), float(p0_work.y), float(p0_work.z + src_raise))
     p1_out = App.Vector(
         float(p1.x + box_dir_xy.x * side_out),
         float(p1.y + box_dir_xy.y * side_out),
@@ -1104,26 +1173,31 @@ def _make_flexible_shape(p0, p1, box_dir_xy):
 
     dx = float(p1_out.x - p0_up.x)
     dy = float(p1_out.y - p0_up.y)
+    dz = float(p1_out.z - p0_up.z)
     dxy = math.hypot(dx, dy)
     if dxy <= 1e-6:
         vx, vy = 1.0, 0.0
     else:
         vx, vy = (dx / dxy), (dy / dxy)
     px, py = -vy, vx
-    amp = min(max(dxy * 0.16, 40.0), 160.0)
+    if raw_dxy <= 20.0:
+        # En trayectos casi verticales conservar spline con oscilacion minima.
+        amp = min(max(abs(float(p1.z - p0.z)) * 0.02, 3.0), 8.0)
+    else:
+        amp = min(max(dxy * 0.10, 18.0), 90.0)
 
     c1 = App.Vector(
         float(p0_up.x + dx * 0.25 + px * amp),
         float(p0_up.y + dy * 0.25 + py * amp),
-        float(p0_up.z + 0.20 * max(40.0, float(p1.z - p0.z))),
+        float(p0_up.z + dz * 0.30),
     )
     c2 = App.Vector(
         float(p0_up.x + dx * 0.75 - px * amp),
         float(p0_up.y + dy * 0.75 - py * amp),
-        float(max(p0_up.z, p1_out.z) - 20.0),
+        float(p0_up.z + dz * 0.80),
     )
 
-    pts = [App.Vector(p0), p0_up, c1, c2, p1_out, App.Vector(p1)]
+    pts = [App.Vector(p0_start), App.Vector(p0_work), p0_up, c1, c2, p1_out, App.Vector(p1)]
     pts = _dedupe_points(pts)
     if len(pts) < 2:
         return None
@@ -1154,14 +1228,14 @@ def _style_connection(obj, conn_type):
             pass
 
 
-def _create_connection(doc, src_obj, box_obj, p_src, p_box, box_dir_xy, conn_type):
+def _create_connection(doc, src_obj, box_obj, p_src, p_box, box_dir_xy, conn_type, p_src_exit=None):
     if conn_type not in {"EMT_Solido", "EMT_Flexible"}:
         return None
     try:
         shape = (
-            _make_flexible_shape(p_src, p_box, box_dir_xy)
+            _make_flexible_shape(p_src, p_box, box_dir_xy, p0_exit=p_src_exit)
             if conn_type == "EMT_Flexible"
-            else _make_solid_shape(p_src, p_box, box_dir_xy)
+            else _make_solid_shape(p_src, p_box, box_dir_xy, p0_exit=p_src_exit)
         )
     except Exception:
         return None
@@ -1280,7 +1354,8 @@ def _run_dialog():
     lay.addLayout(form)
     lay.addWidget(btns)
 
-    if dlg.exec_() != QtWidgets.QDialog.Accepted:
+    dlg_result = dlg.exec() if hasattr(dlg, "exec") else dlg.exec_()
+    if dlg_result != QtWidgets.QDialog.Accepted:
         return None
 
     cfg["altura_mm"] = float(sp_alt.value())
@@ -1410,9 +1485,24 @@ def main():
             if g_conex is not None:
                 for src in items:
                     try:
-                        p_src = _object_anchor_world(src)
-                        p_box, box_dir_xy = _pick_box_entry_port(box, p_src)
-                        conn = _create_connection(doc, src, box, p_src, p_box, box_dir_xy, conn_type)
+                        p_src_hint = _object_anchor_world(src)
+                        p_box, box_dir_xy = _pick_box_entry_port(box, p_src_hint)
+                        if _is_luminaria_source(doc, src):
+                            p_src_conn = App.Vector(p_src_hint)
+                            p_src_exit = _object_connection_point_world(src, toward_point=p_box)
+                        else:
+                            p_src_conn = _object_connection_point_world(src, toward_point=p_box)
+                            p_src_exit = None
+                        conn = _create_connection(
+                            doc,
+                            src,
+                            box,
+                            p_src_conn,
+                            p_box,
+                            box_dir_xy,
+                            conn_type,
+                            p_src_exit=p_src_exit,
+                        )
                     except Exception:
                         conn = None
                     if conn is None:

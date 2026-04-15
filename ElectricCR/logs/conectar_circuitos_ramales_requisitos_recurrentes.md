@@ -26,6 +26,12 @@ No debe intentar:
 - enrutar alimentadores
 - mezclar en una misma logica ramales y alimentadores
 
+Decision de arquitectura (2026-03-26):
+
+- separar flujo de tomacorrientes y flujo de luminarias en macros distintas para evitar regresiones cruzadas.
+- `Conectar_Circuitos_Ramales_Auto.FCMacro`: circuito de tomacorrientes (y apagadores segun configuracion), sin planner de luminarias.
+- `Conectar_Circuitos_Luminarias_Auto.FCMacro`: circuito de luminarias/apagadores con troncal por apagadores y distribucion por recintos.
+
 
 ## Reglas funcionales recurrentes
 

@@ -56,6 +56,17 @@ Canonical rule for this project:
 Reason:
 - Modal dialogs block reliable selection and cause recurrent user friction in geometry-alignment workflows.
 
+## Dock panels canon (acoplar/desacoplar)
+
+Canonical rule:
+1. For non-modal macro forms, prefer `QDockWidget` with movable+floatable features enabled.
+2. Keep a stable `setObjectName(...)` per macro and avoid hard-fixed panel widths.
+3. Forms must use expanding field policies (`AllNonFixedFieldsGrow`, `QSizePolicy.Expanding`).
+4. Persist at least dock floating state in macro preferences.
+
+Detailed checklist:
+- `ElectricCR/logs/paneles_freecad_requisitos_recurrentes.md`
+
 ## CSV assistants: type mapping canon
 
 Canonical rule for two-step CSV workflows:
@@ -76,6 +87,9 @@ Canonical rule for two-step CSV workflows:
 9. For conversion workflows, split UI into:
    - basic conversion tab (safe defaults)
    - optional/advanced tab (alignment, overrides, mapping)
+10. In object selectors for CSV conversion, do not scan the whole `Electrico` tree.
+11. Prefer only `Electrico/Componentes` as source for user-selectable base objects.
+12. Treat `_lib` as internal library storage, not as default source for combo lists.
 
 ## Link selection blocked in 3D view (tree selection only)
 
@@ -161,3 +175,63 @@ Current UI canon for this macro:
    - reacomodar objetos
    - indice con links
 3. Keep optional renaming by area/apagador from the same form.
+
+## Arbol canon de iluminacion por circuito (sin carpeta RECINTOS)
+
+Canonical rule:
+1. Do not create intermediate `RECINTOS` under iluminacion circuits.
+2. Expected path is:
+   - `Electric/ILUMINACION/<Circuito o TP-01>/<Recinto>/<Apagador>`
+3. If legacy `RECINTOS` or `AREAS` container exists, macro must reuse/migrate recinto groups to direct children of the circuito.
+4. Normalize recinto labels to avoid duplicates created by auto-number suffixes:
+   - `Archivo007` -> `Archivo`
+   - `Suministros 004` -> `Suministros`
+
+## Puertos de caja octogonal: regla general de conexion
+
+Canonical rule:
+1. Para **ramales y alimentadores** entre cajas/apagadores, preferir puertos cardinales de la octogonal:
+   - `North`, `South`, `East`, `West`.
+2. Para conexiones de **luminarias hacia caja octogonal**, preferir puertos diagonales:
+   - `NorthEast`, `NorthWest`, `SouthEast`, `SouthWest`.
+3. Evitar usar `Bottom` como preferencia por defecto en ramales de iluminacion, salvo casos especiales de diseno.
+4. Mantener esta prioridad como comportamiento por defecto en backends compartidos.
+
+## Apagadores from sketch: missing recinto fallback
+
+Canonical rule:
+1. Do not silently lose points when area label exists but recinto node is missing in circuit tree.
+2. On missing recinto, route insertion to:
+   - `Circuito/Huerfanas/<AreaLabel>/Apagadores`
+3. Keep explicit warning in console and include fallback count in final summary.
+4. Keep duplicate-skip behavior (`SKIP_IF_LABEL_EXISTS`) unchanged.
+
+## Tablero v1: backlog de mejoras de puertos (NO aplicar directo)
+
+Contexto:
+- Se probaron mejoras para evitar rutas que atraviesan la octogonal y regresan.
+- Esas pruebas pueden alterar el comportamiento estable de:
+  - `Conectar_Cajas_a_Tablero_Auto.FCMacro`.
+
+Regla de mantenimiento:
+1. No introducir heuristicas experimentales directamente en la macro de tablero v1.
+2. Cualquier mejora nueva debe vivir primero en macro/backend de ramales/luminarias.
+3. Si una mejora pasa validacion, integrarla en tablero solo con `feature flag` apagado por defecto.
+
+Backlog tecnico (pendiente):
+1. Validar consistencia etiqueta->direccion de puertos octogonales (cardinal/diagonal).
+2. Priorizar cardinales en enlaces troncales; diagonales solo como fallback controlado.
+3. Detectar y corregir retroceso de entrada/salida (`snake`) antes de crear el wire final.
+
+## Regla transversal Areas/SubAreas (proxima base)
+
+Canonical rule:
+1. Aplicar la misma jerarquia de calculo/organizacion en ElectricCR, HVAC, Incendio y futuras mesas de trabajo.
+2. El contorno de Area puede ser cualquier geometria plana cerrada (no solo rectangulos).
+3. SubAreas tambien pueden ser de cualquier forma, con preferencia operativa por rectangulos.
+4. Prioridad de uso: `SubAreas > Areas`.
+5. Fallback:
+   - si no hay SubAreas, usar Areas
+   - si no hay Areas pero si SubAreas validas, usar SubAreas
+6. Un mismo recinto puede tener multiples subareas de una misma disciplina (ejemplo: 2 o mas subareas de iluminacion en un recinto).
+7. El modelo debe soportar subareas simultaneas por disciplina (iluminacion, incendio, HVAC) dentro del mismo recinto.

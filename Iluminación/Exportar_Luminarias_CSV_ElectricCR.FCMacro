@@ -178,8 +178,8 @@ def export_luminarias_csv():
     if BASE_OBJECT_NAME.strip():
         base_obj = find_object_by_name_or_label(doc, BASE_OBJECT_NAME)
         if base_obj is None:
-            log("[ERROR] No existe objeto base para filtro: {}".format(BASE_OBJECT_NAME))
-            return
+            log("[WARN] No existe objeto base para filtro: {}. Se exporta sin filtro.".format(BASE_OBJECT_NAME))
+            base_obj = None
 
     source_group = resolve_source_group(doc)
     if source_group is None:
@@ -252,4 +252,3 @@ def export_luminarias_csv():
 
 
 export_luminarias_csv()
-

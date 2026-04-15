@@ -1,0 +1,2828 @@
+﻿# -*- coding: utf-8 -*-
+# MenuText: Panel Conexiones Endpoints (Beta)
+# ToolTip: Panel unificado para conexiones por tipo de endpoint (octogonal, cuadrada, luminaria, otros)
+# Icon: Conectar/Panel_Conexiones_Endpoints.svg
+# Toolbar: Herramientas ortogonales
+# Transaction: self
+"""
+Panel unificado de conexion:
+- Usa component_classifier.get_endpoint_kind
+- Usa connection_matrix para estrategias permitidas
+- Ejecuta conexion directamente desde el panel
+"""
+
+import os
+import sys
+import math
+import json
+import importlib
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+try:
+    import Draft
+except Exception:
+    Draft = None
+
+try:
+    from PySide2 import QtWidgets, QtCore, QtGui
+except Exception:
+    from PySide import QtGui as QtWidgets  # type: ignore
+    from PySide import QtCore  # type: ignore
+    from PySide import QtGui  # type: ignore
+
+try:
+    from pivy import coin
+except Exception:
+    coin = None
+
+
+THIS_DIR = os.path.dirname(__file__) if "__file__" in globals() else os.getcwd()
+if THIS_DIR and THIS_DIR not in sys.path:
+    sys.path.insert(0, THIS_DIR)
+
+
+def _safe_text(value):
+    try:
+        return str(value or "")
+    except Exception:
+        return ""
+
+
+def _log(msg):
+    App.Console.PrintMessage(f"[CONEX_PANEL][INFO] {msg}\n")
+
+
+def _warn(msg):
+    App.Console.PrintWarning(f"[CONEX_PANEL][WARN] {msg}\n")
+
+
+def _err(msg):
+    App.Console.PrintError(f"[CONEX_PANEL][ERROR] {msg}\n")
+
+
+def _dbg(msg):
+    if not DEBUG_ENABLED:
+        return
+    App.Console.PrintMessage(f"[CONEX_PANEL][DEBUG] {msg}\n")
+
+
+def _is_group(obj):
+    if obj is None:
+        return False
+    try:
+        if obj.isDerivedFrom("App::DocumentObjectGroup"):
+            return True
+    except Exception:
+        pass
+    try:
+        if obj.isDerivedFrom("App::Part"):
+            return True
+    except Exception:
+        pass
+    return hasattr(obj, "Group")
+
+
+def _selection_objects():
+    out = []
+    seen = set()
+    try:
+        sel_ex = Gui.Selection.getSelectionEx() or []
+    except Exception:
+        sel_ex = []
+    for sx in sel_ex:
+        obj = getattr(sx, "Object", None)
+        if obj is None or _is_group(obj):
+            continue
+        key = _safe_text(getattr(obj, "Name", "")).strip() or str(id(obj))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(obj)
+    if out:
+        return out
+    try:
+        sel = Gui.Selection.getSelection() or []
+    except Exception:
+        sel = []
+    for obj in sel:
+        if obj is None or _is_group(obj):
+            continue
+        key = _safe_text(getattr(obj, "Name", "")).strip() or str(id(obj))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(obj)
+    return out
+
+
+try:
+    import component_classifier as _cc
+
+    _cc = importlib.reload(_cc)
+except Exception:
+    _cc = None
+
+try:
+    import connection_matrix as _cm
+
+    _cm = importlib.reload(_cm)
+except Exception:
+    _cm = None
+
+try:
+    import conexiones_grouping as _cg
+
+    _cg = importlib.reload(_cg)
+    ensure_conexiones_group = _cg.ensure_conexiones_group
+except Exception:
+    ensure_conexiones_group = None
+
+
+STRATEGY_LABELS = {
+    "octo_45_uno": "Octogonales 45 (1 diagonal)",
+    "octo_45_dos": "Octogonales 45 (2 diagonales)",
+    "octo_direct": "Octogonales directo",
+    "orthogonal_l": "Conectar en L",
+    "orthogonal_l_inv": "Conectar en L invertida",
+    "snake": "Ruta Snake",
+    "spline_diag": "Spline diagonal desde caja",
+    "spline": "Spline flexible",
+}
+
+STRATEGY_ICON_FILES = {
+    "octo_45_uno": "Conectar_objetos_en_L.svg",
+    "octo_45_dos": "conectar_objetos_en_eSe.svg",
+    "octo_direct": "Conectar_objetos_en_C.svg",
+    "orthogonal_l": "Conectar_objetos_en_L.svg",
+    "orthogonal_l_inv": "conectar_objetos_en_eSe.svg",
+    "snake": "ConectarTomasSnake.svg",
+    "spline_diag": "Conectar_Luminarias_a_Octogonal_Existente.svg",
+    "spline": "Conectar_Luminarias_a_Octogonal_Existente.svg",
+}
+
+PREVIEW_BASE_COLOR = (0.95, 0.38, 0.06)
+PREVIEW_WIDTH = 4.0
+DIRECT_ALIGN_TOL_MM = 60.0
+DEFAULT_FILLET_MM = 36.0
+DEFAULT_CONDUIT = "EMT"
+DEFAULT_DIAMETER_MM = 22.2
+DEFAULT_LINK_KIND = "backbone"
+PANEL_GENERATED_BY = "Panel_Conexiones_Endpoints"
+DEBUG_ENABLED = True
+EPS = 1e-9
+OCTO45_STUB_MM = 60.0
+
+CARDINAL_NAMES = ("North", "East", "South", "West")
+DIAGONAL_NAMES = ("NorthEast", "NorthWest", "SouthEast", "SouthWest")
+PORT_ORDER = ("North", "NorthEast", "East", "SouthEast", "South", "SouthWest", "West", "NorthWest")
+PORT_DIRS = {
+    "North": (0.0, 1.0),
+    "South": (0.0, -1.0),
+    "East": (1.0, 0.0),
+    "West": (-1.0, 0.0),
+    "NorthEast": (1.0, 1.0),
+    "NorthWest": (-1.0, 1.0),
+    "SouthEast": (1.0, -1.0),
+    "SouthWest": (-1.0, -1.0),
+}
+CANON = {
+    "north": "North",
+    "n": "North",
+    "south": "South",
+    "s": "South",
+    "east": "East",
+    "e": "East",
+    "west": "West",
+    "w": "West",
+    "northeast": "NorthEast",
+    "north_east": "NorthEast",
+    "north-east": "NorthEast",
+    "ne": "NorthEast",
+    "northwest": "NorthWest",
+    "north_west": "NorthWest",
+    "north-west": "NorthWest",
+    "nw": "NorthWest",
+    "southeast": "SouthEast",
+    "south_east": "SouthEast",
+    "south-east": "SouthEast",
+    "se": "SouthEast",
+    "southwest": "SouthWest",
+    "south_west": "SouthWest",
+    "south-west": "SouthWest",
+    "sw": "SouthWest",
+}
+
+
+def _strategy_icon_path(strategy_key):
+    fn = _safe_text(STRATEGY_ICON_FILES.get(strategy_key, "")).strip()
+    if not fn:
+        return ""
+    p = os.path.join(THIS_DIR, fn)
+    if os.path.exists(p):
+        return p
+    return ""
+
+
+def _normalize_strategy_key(strategy_key):
+    k = _safe_text(strategy_key).strip()
+    if k in ("octo_45_uno", "octo_45_dos"):
+        return "octo_45"
+    if k in ("orthogonal_l", "orthogonal_l_inv"):
+        return "orthogonal_l"
+    return k
+
+
+def _octo45_mode_from_strategy(strategy_key):
+    k = _safe_text(strategy_key).strip()
+    if k == "octo_45_dos":
+        return "dos"
+    return "uno"
+
+
+def _orth_l_invert_from_strategy(strategy_key):
+    return _safe_text(strategy_key).strip() == "orthogonal_l_inv"
+
+
+def _expand_allowed_strategies(allowed, preferred=""):
+    out = []
+    pref = _safe_text(preferred).strip()
+    mapped_pref = pref
+    for k in (allowed or ()):
+        kk = _safe_text(k).strip()
+        if kk == "octo_45":
+            out.extend(["octo_45_uno", "octo_45_dos"])
+            if pref == "octo_45":
+                mapped_pref = "octo_45_uno"
+        elif kk == "orthogonal_l":
+            out.extend(["orthogonal_l", "orthogonal_l_inv"])
+            if pref == "orthogonal_l":
+                mapped_pref = "orthogonal_l"
+        elif kk:
+            out.append(kk)
+    # Deduplicate preserving order.
+    seen = set()
+    final = []
+    for k in out:
+        if k in seen:
+            continue
+        seen.add(k)
+        final.append(k)
+    return tuple(final), mapped_pref
+
+
+def _endpoint_kind(obj):
+    if _cc is None or not hasattr(_cc, "get_endpoint_kind"):
+        return None
+    try:
+        return _safe_text(_cc.get_endpoint_kind(obj)).strip()
+    except Exception:
+        return None
+
+
+def _pair_rule(kind_a, kind_b):
+    if _cm is None:
+        return None
+    try:
+        return _cm.get_connection_rule(kind_a, kind_b)
+    except Exception:
+        return None
+
+
+def _object_props(obj):
+    try:
+        return set(getattr(obj, "PropertiesList", []) or [])
+    except Exception:
+        return set()
+
+
+def _is_route_like(obj):
+    if obj is None:
+        return False
+    props = _object_props(obj)
+    if {"AutoRouteKey", "ConduitType", "CircuitoID", "LinkKind", "OrigenName", "DestinoName"} & props:
+        return True
+    tipo = _safe_text(getattr(obj, "Tipo", "")).strip().lower()
+    if tipo == "conduitpath":
+        return True
+    txt = " ".join(
+        [
+            _safe_text(getattr(obj, "Label", "")).lower(),
+            _safe_text(getattr(obj, "Name", "")).lower(),
+            _safe_text(getattr(obj, "TypeId", "")).lower(),
+        ]
+    )
+    if "->" in txt and any(tok in txt for tok in ("emt", "conduit", "alimentador", "ramal", "circuito")):
+        return True
+    return False
+
+
+def _extract_name_from_endpoint_token(token):
+    raw = _safe_text(token).strip()
+    if not raw:
+        return ""
+    name = raw.split(":", 1)[0].strip()
+    if not name:
+        return ""
+    return name
+
+
+def _doc_get_object(doc, name):
+    nm = _safe_text(name).strip()
+    if doc is None or not nm:
+        return None
+    try:
+        obj = doc.getObject(nm)
+        if obj is not None:
+            return obj
+    except Exception:
+        pass
+    try:
+        for obj in (getattr(doc, "Objects", []) or []):
+            if _safe_text(getattr(obj, "Name", "")).strip() == nm:
+                return obj
+    except Exception:
+        pass
+    return None
+
+
+def _route_endpoint_names(route_obj):
+    if route_obj is None:
+        return "", ""
+    name_a = _safe_text(getattr(route_obj, "OrigenName", "")).strip()
+    name_b = _safe_text(getattr(route_obj, "DestinoName", "")).strip()
+    if name_a and name_b:
+        return name_a, name_b
+
+    key = _safe_text(getattr(route_obj, "AutoRouteKey", "")).strip()
+    parts = [p.strip() for p in key.split("|") if _safe_text(p).strip()]
+    if len(parts) >= 3:
+        # Soporta formatos:
+        # 1) strategy|objA|objB
+        # 2) circuito|objA:port|objB:port
+        pa = _extract_name_from_endpoint_token(parts[-2])
+        pb = _extract_name_from_endpoint_token(parts[-1])
+        if pa and pb:
+            return pa, pb
+
+    return "", ""
+
+
+def _resolve_route_endpoints(route_obj):
+    if route_obj is None:
+        return None
+    doc = getattr(route_obj, "Document", None) or App.ActiveDocument
+    if doc is None:
+        return None
+    name_a, name_b = _route_endpoint_names(route_obj)
+    if not (name_a and name_b):
+        return None
+    obj_a = _doc_get_object(doc, name_a)
+    obj_b = _doc_get_object(doc, name_b)
+    if obj_a is None or obj_b is None or obj_a is obj_b:
+        return None
+    if _is_group(obj_a) or _is_group(obj_b):
+        return None
+    return (obj_a, obj_b)
+
+
+def _canon_cardinal_name(name):
+    c = _canon_port_name(name)
+    return c if c in CARDINAL_NAMES else ""
+
+
+def _cardinal_axis(name):
+    c = _canon_cardinal_name(name)
+    if c in ("East", "West"):
+        return "x"
+    if c in ("North", "South"):
+        return "y"
+    return ""
+
+
+def _polyline_points_from_object(obj):
+    if obj is None:
+        return []
+    try:
+        pts_attr = list(getattr(obj, "Points", []) or [])
+    except Exception:
+        pts_attr = []
+    if len(pts_attr) >= 2:
+        pts = []
+        for p in pts_attr:
+            if p is None:
+                continue
+            try:
+                pts.append(_vec(p.x, p.y, p.z))
+            except Exception:
+                pass
+        if len(pts) >= 2:
+            return _dedupe_points(pts)
+
+    shape = getattr(obj, "Shape", None)
+    if shape is None:
+        return []
+    try:
+        wires = list(getattr(shape, "Wires", []) or [])
+    except Exception:
+        wires = []
+    if wires:
+        cands = []
+        for w in wires:
+            pts = []
+            for vtx in (getattr(w, "OrderedVertexes", []) or []):
+                pt = getattr(vtx, "Point", None)
+                if pt is not None:
+                    pts.append(_vec(pt.x, pt.y, pt.z))
+            if len(pts) >= 2:
+                cands.append(_dedupe_points(pts))
+        if cands:
+            cands.sort(key=lambda it: len(it), reverse=True)
+            return cands[0]
+    try:
+        pts = []
+        for vtx in (getattr(shape, "OrderedVertexes", []) or []):
+            pt = getattr(vtx, "Point", None)
+            if pt is not None:
+                pts.append(_vec(pt.x, pt.y, pt.z))
+        if len(pts) >= 2:
+            return _dedupe_points(pts)
+    except Exception:
+        pass
+    return []
+
+
+def _l_axis_default_ports(obj_a, obj_b, invert=False):
+    ca = _object_guide_center(obj_a)
+    cb = _object_guide_center(obj_b)
+    dx = float(cb.x - ca.x)
+    dy = float(cb.y - ca.y)
+    dz = float(cb.z - ca.z)
+    order = sorted(
+        [("x", abs(dx)), ("y", abs(dy)), ("z", abs(dz))],
+        key=lambda it: float(it[1]),
+        reverse=True,
+    )
+    a1 = order[0][0]
+    a2 = order[1][0]
+    first = a2 if bool(invert) else a1
+    if first == "z":
+        first = "x" if abs(dx) >= abs(dy) else "y"
+
+    if first == "x":
+        pa = "East" if dx >= 0.0 else "West"
+        pb = "West" if dx >= 0.0 else "East"
+    else:
+        pa = "North" if dy >= 0.0 else "South"
+        pb = "South" if dy >= 0.0 else "North"
+    return pa, pb
+
+
+def _cardinal_from_vector_world(v):
+    vx = float(v.x)
+    vy = float(v.y)
+    if abs(vx) >= abs(vy):
+        return "East" if vx >= 0.0 else "West"
+    return "North" if vy >= 0.0 else "South"
+
+
+def _nearest_cardinal_face_for_point(obj, pt):
+    p = _vec(pt.x, pt.y, pt.z)
+    best_name = "East"
+    best_dist = float("inf")
+    for name in CARDINAL_NAMES:
+        try:
+            fc = _face_center_endpoint(obj, name)
+        except Exception:
+            continue
+        d = float(fc.distanceToPoint(p))
+        if d < best_dist:
+            best_dist = d
+            best_name = name
+    return best_name
+
+
+def _route_endpoints_for_objects(route_obj, obj_a, obj_b):
+    pts = _polyline_points_from_object(route_obj)
+    if len(pts) < 2:
+        return None, None
+    p0 = pts[0]
+    p1 = pts[-1]
+    ca = _object_guide_center(obj_a)
+    cb = _object_guide_center(obj_b)
+    s_ab = float(p0.distanceToPoint(ca)) + float(p1.distanceToPoint(cb))
+    s_ba = float(p0.distanceToPoint(cb)) + float(p1.distanceToPoint(ca))
+    if s_ab <= s_ba:
+        return p0, p1
+    return p1, p0
+
+
+def _l_ports_from_route_geometry(route_obj, obj_a, obj_b):
+    pa_pt, pb_pt = _route_endpoints_for_objects(route_obj, obj_a, obj_b)
+    if pa_pt is None or pb_pt is None:
+        return "", ""
+    pa = _nearest_cardinal_face_for_point(obj_a, pa_pt)
+    pb = _nearest_cardinal_face_for_point(obj_b, pb_pt)
+    _dbg(
+        "orthL geometry infer endpoint_origen=({:.1f},{:.1f},{:.1f}) endpoint_destino=({:.1f},{:.1f},{:.1f}) puerto_origen={} puerto_destino={}".format(
+            float(pa_pt.x),
+            float(pa_pt.y),
+            float(pa_pt.z),
+            float(pb_pt.x),
+            float(pb_pt.y),
+            float(pb_pt.z),
+            pa or "Auto",
+            pb or "Auto",
+        )
+    )
+    return pa, pb
+
+
+def _l_preferred_ports_from_route(route_obj, obj_a, obj_b, invert=False):
+    if route_obj is None or obj_a is None or obj_b is None:
+        return "", ""
+    pref_a = ""
+    pref_b = ""
+
+    # 1) Preferir inferencia desde geometria real de la ruta anterior.
+    ga, gb = _l_ports_from_route_geometry(route_obj, obj_a, obj_b)
+    if ga:
+        pref_a = ga
+    if gb:
+        pref_b = gb
+
+    # 2) Metadata solo como respaldo si geometria no alcanzo.
+    r_a = _safe_text(getattr(route_obj, "OrigenName", "")).strip()
+    r_b = _safe_text(getattr(route_obj, "DestinoName", "")).strip()
+    po = _canon_cardinal_name(getattr(route_obj, "PuertoOrigen", ""))
+    pd = _canon_cardinal_name(getattr(route_obj, "PuertoDestino", ""))
+    a_name = _safe_text(getattr(obj_a, "Name", "")).strip()
+    b_name = _safe_text(getattr(obj_b, "Name", "")).strip()
+
+    if (not pref_a or not pref_b) and r_a and r_b and po and pd:
+        if r_a == a_name and r_b == b_name:
+            if not pref_a:
+                pref_a = po
+            if not pref_b:
+                pref_b = pd
+        elif r_a == b_name and r_b == a_name:
+            if not pref_a:
+                pref_a = pd
+            if not pref_b:
+                pref_b = po
+
+    _dbg(f"orthL replace prefs puerto_origen={pref_a or 'Auto'} puerto_destino={pref_b or 'Auto'}")
+    return pref_a, pref_b
+
+
+def _vec(x=0.0, y=0.0, z=0.0):
+    return App.Vector(float(x), float(y), float(z))
+
+
+def _vlen_xy(v):
+    return math.hypot(float(v.x), float(v.y))
+
+
+def _unit_xy(v, fallback=None):
+    d = _vlen_xy(v)
+    if d <= 1e-9:
+        if fallback is not None:
+            return _unit_xy(fallback, fallback=None)
+        return _vec(1.0, 0.0, 0.0)
+    return _vec(float(v.x) / d, float(v.y) / d, 0.0)
+
+
+def _dot_xy(a, b):
+    return (float(a.x) * float(b.x)) + (float(a.y) * float(b.y))
+
+
+def _object_anchor(obj):
+    try:
+        shp = getattr(obj, "Shape", None)
+        if shp is not None and (not shp.isNull()):
+            bb = shp.BoundBox
+            return _vec(
+                0.5 * (float(bb.XMin) + float(bb.XMax)),
+                0.5 * (float(bb.YMin) + float(bb.YMax)),
+                0.5 * (float(bb.ZMin) + float(bb.ZMax)),
+            )
+    except Exception:
+        pass
+    try:
+        b = getattr(getattr(obj, "Placement", None), "Base", None)
+        if b is not None:
+            return _vec(b.x, b.y, b.z)
+    except Exception:
+        pass
+    return _vec(0.0, 0.0, 0.0)
+
+
+def _object_guide_center(obj):
+    # Centro de masa como guia principal para decidir la direccion de conexion.
+    try:
+        shp = getattr(obj, "Shape", None)
+        if shp is not None and (not shp.isNull()):
+            cm = getattr(shp, "CenterOfMass", None)
+            if cm is not None:
+                return _vec(cm.x, cm.y, cm.z)
+    except Exception:
+        pass
+    return _object_anchor(obj)
+
+
+def _canon_port_name(name):
+    raw = _safe_text(name).strip()
+    if not raw:
+        return ""
+    low = raw.replace(" ", "").replace(".", "").replace("/", "_").lower()
+    return CANON.get(low, raw if raw in PORT_DIRS else "")
+
+
+def _infer_port_name_from_vector(v):
+    uv = _unit_xy(v)
+    targets = {
+        "East": _vec(1.0, 0.0, 0.0),
+        "NorthEast": _unit_xy(_vec(1.0, 1.0, 0.0)),
+        "North": _vec(0.0, 1.0, 0.0),
+        "NorthWest": _unit_xy(_vec(-1.0, 1.0, 0.0)),
+        "West": _vec(-1.0, 0.0, 0.0),
+        "SouthWest": _unit_xy(_vec(-1.0, -1.0, 0.0)),
+        "South": _vec(0.0, -1.0, 0.0),
+        "SouthEast": _unit_xy(_vec(1.0, -1.0, 0.0)),
+    }
+    best_name = "East"
+    best_score = -1e9
+    for name, tv in targets.items():
+        sc = _dot_xy(uv, tv)
+        if sc > best_score:
+            best_score = sc
+            best_name = name
+    return best_name
+
+
+def _ports_from_json_world(obj):
+    raw = _safe_text(getattr(obj, "PuertosJSON", "")).strip()
+    data_owner = obj
+    if not raw:
+        try:
+            linked = getattr(obj, "LinkedObject", None)
+        except Exception:
+            linked = None
+        if linked is not None:
+            raw = _safe_text(getattr(linked, "PuertosJSON", "")).strip()
+            if raw:
+                data_owner = obj
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return []
+    if not isinstance(data, list):
+        return []
+
+    try:
+        placement = getattr(data_owner, "Placement", App.Placement())
+    except Exception:
+        placement = App.Placement()
+    rot = getattr(placement, "Rotation", App.Rotation())
+    center = _object_anchor(obj)
+
+    out = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        pos = item.get("position")
+        if not (isinstance(pos, (list, tuple)) and len(pos) >= 3):
+            continue
+        try:
+            lp = _vec(pos[0], pos[1], pos[2])
+        except Exception:
+            continue
+        wp = placement.multVec(lp)
+        d = item.get("direction")
+        if isinstance(d, (list, tuple)) and len(d) >= 3:
+            try:
+                wd = rot.multVec(_vec(d[0], d[1], d[2]))
+            except Exception:
+                wd = _vec(0.0, 0.0, 0.0)
+        else:
+            wd = _vec(0.0, 0.0, 0.0)
+
+        name = _canon_port_name(item.get("name", ""))
+        if not name:
+            radial = _vec(float(wp.x - center.x), float(wp.y - center.y), 0.0)
+            if _vlen_xy(radial) <= EPS:
+                radial = wd
+            name = _infer_port_name_from_vector(radial)
+        if name not in PORT_DIRS:
+            continue
+        out.append({"name": name, "point": _vec(wp.x, wp.y, wp.z), "dir": _unit_xy(wd)})
+    return out
+
+
+def _virtual_ports(obj):
+    center = _object_anchor(obj)
+    rx = 120.0
+    ry = 120.0
+    z = float(center.z)
+    try:
+        shp = getattr(obj, "Shape", None)
+        if shp is not None and (not shp.isNull()):
+            bb = shp.BoundBox
+            rx = max(20.0, 0.5 * abs(float(bb.XMax) - float(bb.XMin)))
+            ry = max(20.0, 0.5 * abs(float(bb.YMax) - float(bb.YMin)))
+            z = 0.5 * (float(bb.ZMin) + float(bb.ZMax))
+    except Exception:
+        pass
+    r = max(15.0, 0.85 * min(rx, ry))
+    out = []
+    for name in PORT_ORDER:
+        dx, dy = PORT_DIRS[name]
+        dxy = _unit_xy(_vec(dx, dy, 0.0))
+        pt = _vec(float(center.x) + (float(dxy.x) * r), float(center.y) + (float(dxy.y) * r), z)
+        out.append({"name": name, "point": pt, "dir": dxy})
+    return out
+
+
+def _world_ports(obj):
+    real = _ports_from_json_world(obj)
+    virtual = _virtual_ports(obj)
+    by_name = {}
+    for p in virtual:
+        by_name[p["name"]] = p
+    for p in real:
+        by_name[p["name"]] = p
+    return [by_name[n] for n in PORT_ORDER if n in by_name]
+
+
+def _pick_port(obj, ports, allowed_names, toward_point, preferred_name="Auto"):
+    allowed = tuple(n for n in allowed_names if n in PORT_DIRS)
+    if not allowed:
+        raise RuntimeError("No hay puertos permitidos para seleccionar.")
+    candidates = [p for p in (ports or []) if p.get("name") in allowed]
+    if not candidates:
+        candidates = [p for p in _virtual_ports(obj) if p.get("name") in allowed]
+    if not candidates:
+        raise RuntimeError("No se pudieron resolver puertos en el objeto.")
+
+    pref = _canon_port_name(preferred_name)
+    if pref and pref in allowed:
+        for p in candidates:
+            if p.get("name") == pref:
+                return p
+
+    center = _object_anchor(obj)
+    vtarget = _unit_xy(_vec(float(toward_point.x) - float(center.x), float(toward_point.y) - float(center.y), 0.0))
+
+    def _score(port):
+        radial = _unit_xy(
+            _vec(float(port["point"].x) - float(center.x), float(port["point"].y) - float(center.y), 0.0),
+            fallback=port.get("dir"),
+        )
+        align = _dot_xy(radial, vtarget)
+        dist = float(port["point"].distanceToPoint(toward_point))
+        return (-align, dist)
+
+    return sorted(candidates, key=_score)[0]
+
+
+def _build_45_xy_points(start_xy, end_xy, use_two_diagonals):
+    sx = float(start_xy.x)
+    sy = float(start_xy.y)
+    ex = float(end_xy.x)
+    ey = float(end_xy.y)
+    z = float(start_xy.z)
+    dx = ex - sx
+    dy = ey - sy
+    adx = abs(dx)
+    ady = abs(dy)
+    out = [_vec(sx, sy, z)]
+    if adx <= EPS and ady <= EPS:
+        out.append(_vec(ex, ey, z))
+        return _dedupe_points(out)
+    sign_x = 1.0 if dx >= 0.0 else -1.0
+    sign_y = 1.0 if dy >= 0.0 else -1.0
+    if use_two_diagonals:
+        d = 0.5 * min(adx, ady)
+        if d > EPS:
+            out.extend([_vec(sx + (sign_x * d), sy + (sign_y * d), z), _vec(ex - (sign_x * d), ey - (sign_y * d), z)])
+    else:
+        d = min(adx, ady)
+        if d > EPS:
+            out.append(_vec(sx + (sign_x * d), sy + (sign_y * d), z))
+    out.append(_vec(ex, ey, z))
+    return _dedupe_points(out)
+
+
+def _build_connection_points_45(port_a, port_b, mode_key="uno", stub_mm=OCTO45_STUB_MM):
+    pa = _vec(port_a["point"].x, port_a["point"].y, port_a["point"].z)
+    pb = _vec(port_b["point"].x, port_b["point"].y, port_b["point"].z)
+    dir_a = _unit_xy(port_a.get("dir", _vec(0.0, 0.0, 0.0)), fallback=_vec(float(pb.x - pa.x), float(pb.y - pa.y), 0.0))
+    dir_b = _unit_xy(port_b.get("dir", _vec(0.0, 0.0, 0.0)), fallback=_vec(float(pa.x - pb.x), float(pa.y - pb.y), 0.0))
+    stub = max(0.0, float(stub_mm))
+    p_a_out = _vec(float(pa.x + (dir_a.x * stub)), float(pa.y + (dir_a.y * stub)), float(pa.z))
+    p_b_pre = _vec(float(pb.x + (dir_b.x * stub)), float(pb.y + (dir_b.y * stub)), float(pb.z))
+    z_route = float(p_a_out.z)
+    route_start = _vec(float(p_a_out.x), float(p_a_out.y), z_route)
+    route_end = _vec(float(p_b_pre.x), float(p_b_pre.y), z_route)
+    core = _build_45_xy_points(route_start, route_end, use_two_diagonals=(_safe_text(mode_key).strip() == "dos"))
+    pts = [pa, p_a_out]
+    if core:
+        pts.extend(core[1:])
+    if abs(float(p_b_pre.z) - z_route) > EPS:
+        pts.append(p_b_pre)
+    pts.append(pb)
+    return _dedupe_points(pts)
+
+
+def _octo45_route(obj_a, obj_b, mode_key="uno", diag_origen="Auto", diag_destino="Auto", stub_mm=OCTO45_STUB_MM):
+    ports_a = _world_ports(obj_a)
+    ports_b = _world_ports(obj_b)
+    center_a = _object_anchor(obj_a)
+    center_b = _object_anchor(obj_b)
+    mode = _safe_text(mode_key).strip() or "uno"
+    pref_a = _safe_text(diag_origen).strip() or "Auto"
+    pref_b = _safe_text(diag_destino).strip() or "Auto"
+    p_a = _pick_port(obj_a, ports_a, DIAGONAL_NAMES, toward_point=center_b, preferred_name=pref_a)
+    allowed_b = DIAGONAL_NAMES if mode == "dos" else CARDINAL_NAMES
+    p_b = _pick_port(obj_b, ports_b, allowed_b, toward_point=center_a, preferred_name=(pref_b if mode == "dos" else "Auto"))
+    pts = _build_connection_points_45(p_a, p_b, mode_key=mode, stub_mm=stub_mm)
+    _dbg(
+        "octo45 mode={} puerto_origen={} puerto_destino={} p0=({:.1f},{:.1f},{:.1f}) p1=({:.1f},{:.1f},{:.1f})".format(
+            mode,
+            _safe_text(p_a.get("name", "")),
+            _safe_text(p_b.get("name", "")),
+            float(pts[0].x),
+            float(pts[0].y),
+            float(pts[0].z),
+            float(pts[-1].x),
+            float(pts[-1].y),
+            float(pts[-1].z),
+        )
+    )
+    return {"points": pts, "port_a": _safe_text(p_a.get("name", "")), "port_b": _safe_text(p_b.get("name", ""))}
+
+
+def _port_route_endpoint(obj, toward_point, allowed_names=CARDINAL_NAMES, preferred_name="Auto"):
+    kind = _safe_text(_endpoint_kind(obj)).strip()
+    if kind in ("Octogonal", "Cuadrada"):
+        try:
+            p = _pick_port(
+                obj,
+                _world_ports(obj),
+                allowed_names,
+                toward_point=toward_point,
+                preferred_name=(_safe_text(preferred_name).strip() or "Auto"),
+            )
+            pname = _canon_cardinal_name(p.get("name", ""))
+            pxyz = _vec(p["point"].x, p["point"].y, p["point"].z)
+            # Requisito: conexiones cardinales deben salir desde el centro de la cara.
+            if pname in CARDINAL_NAMES:
+                try:
+                    pxyz = _face_center_endpoint(obj, pname)
+                except Exception:
+                    pass
+            return {"point": pxyz, "port": _safe_text(p.get("name", ""))}
+        except Exception as ex:
+            _dbg(f"port route fallback ({kind}) por error: {ex}")
+    return {"point": _endpoint_point_for_obj(obj, toward_point), "port": ""}
+
+
+def _orthogonal_l_route(obj_a, obj_b, invert=False, preferred_a="", preferred_b=""):
+    center_a = _object_guide_center(obj_a)
+    center_b = _object_guide_center(obj_b)
+    auto_a, auto_b = _l_axis_default_ports(obj_a, obj_b, invert=bool(invert))
+    pref_a = _canon_cardinal_name(preferred_a) or auto_a
+    pref_b = _canon_cardinal_name(preferred_b) or auto_b
+    ep_a = _port_route_endpoint(obj_a, toward_point=center_b, allowed_names=CARDINAL_NAMES, preferred_name=pref_a)
+    ep_b = _port_route_endpoint(obj_b, toward_point=center_a, allowed_names=CARDINAL_NAMES, preferred_name=pref_b)
+    pts = _build_l_points_preview(ep_a["point"], ep_b["point"], invert=bool(invert))
+    _dbg(
+        "orthL invert={} guideA=({:.1f},{:.1f},{:.1f}) guideB=({:.1f},{:.1f},{:.1f}) pref_origen={} pref_destino={} puerto_origen={} puerto_destino={} p0=({:.1f},{:.1f},{:.1f}) p1=({:.1f},{:.1f},{:.1f})".format(
+            bool(invert),
+            float(center_a.x),
+            float(center_a.y),
+            float(center_a.z),
+            float(center_b.x),
+            float(center_b.y),
+            float(center_b.z),
+            pref_a or "Auto",
+            pref_b or "Auto",
+            _safe_text(ep_a.get("port", "")),
+            _safe_text(ep_b.get("port", "")),
+            float(pts[0].x),
+            float(pts[0].y),
+            float(pts[0].z),
+            float(pts[-1].x),
+            float(pts[-1].y),
+            float(pts[-1].z),
+        )
+    )
+    return {"points": pts, "port_a": _safe_text(ep_a.get("port", "")), "port_b": _safe_text(ep_b.get("port", ""))}
+
+
+def _is_aligned_xy(p1, p2, tol_mm=1.0):
+    return (abs(float(p1.x) - float(p2.x)) <= float(tol_mm)) or (
+        abs(float(p1.y) - float(p2.y)) <= float(tol_mm)
+    )
+
+
+def _object_xy_axes(obj):
+    rot = None
+    try:
+        rot = getattr(getattr(obj, "Placement", None), "Rotation", None)
+    except Exception:
+        rot = None
+    if rot is None:
+        return _vec(1.0, 0.0, 0.0), _vec(0.0, 1.0, 0.0)
+    ax = _unit_xy(rot.multVec(_vec(1.0, 0.0, 0.0)), fallback=_vec(1.0, 0.0, 0.0))
+    ay = _unit_xy(rot.multVec(_vec(0.0, 1.0, 0.0)), fallback=_vec(0.0, 1.0, 0.0))
+    return ax, ay
+
+
+def _object_half_extents_xy(obj, center, ax, ay):
+    hx = 20.0
+    hy = 20.0
+    try:
+        shp = getattr(obj, "Shape", None)
+        if shp is None or shp.isNull():
+            return hx, hy
+        bb = shp.BoundBox
+        corners = (
+            _vec(bb.XMin, bb.YMin, bb.ZMin),
+            _vec(bb.XMin, bb.YMax, bb.ZMin),
+            _vec(bb.XMax, bb.YMin, bb.ZMin),
+            _vec(bb.XMax, bb.YMax, bb.ZMin),
+            _vec(bb.XMin, bb.YMin, bb.ZMax),
+            _vec(bb.XMin, bb.YMax, bb.ZMax),
+            _vec(bb.XMax, bb.YMin, bb.ZMax),
+            _vec(bb.XMax, bb.YMax, bb.ZMax),
+        )
+        hx = max(abs(_dot_xy(_vec(c.x - center.x, c.y - center.y, 0.0), ax)) for c in corners)
+        hy = max(abs(_dot_xy(_vec(c.x - center.x, c.y - center.y, 0.0), ay)) for c in corners)
+    except Exception:
+        pass
+    return max(20.0, float(hx)), max(20.0, float(hy))
+
+
+def _face_center_endpoint(obj, face_name):
+    face = _safe_text(face_name).strip()
+    center = _object_anchor(obj)
+    ax, ay = _object_xy_axes(obj)
+    hx, hy = _object_half_extents_xy(obj, center, ax, ay)
+    z = float(center.z)
+    if face == "East":
+        return _vec(center.x + (ax.x * hx), center.y + (ax.y * hx), z)
+    if face == "West":
+        return _vec(center.x - (ax.x * hx), center.y - (ax.y * hx), z)
+    if face == "North":
+        return _vec(center.x + (ay.x * hy), center.y + (ay.y * hy), z)
+    if face == "South":
+        return _vec(center.x - (ay.x * hy), center.y - (ay.y * hy), z)
+    return _vec(center.x, center.y, z)
+
+
+def _face_name_toward(obj, toward_point):
+    center = _object_anchor(obj)
+    ax, ay = _object_xy_axes(obj)
+    v = _vec(float(toward_point.x - center.x), float(toward_point.y - center.y), 0.0)
+    vx = _dot_xy(v, ax)
+    vy = _dot_xy(v, ay)
+    if abs(vx) >= abs(vy):
+        return "East" if vx >= 0.0 else "West"
+    return "North" if vy >= 0.0 else "South"
+
+
+def _diagonal_name_toward(obj, toward_point):
+    center = _object_anchor(obj)
+    ax, ay = _object_xy_axes(obj)
+    v = _vec(float(toward_point.x - center.x), float(toward_point.y - center.y), 0.0)
+    vx = _dot_xy(v, ax)
+    vy = _dot_xy(v, ay)
+    sx = 1.0 if vx >= 0.0 else -1.0
+    sy = 1.0 if vy >= 0.0 else -1.0
+    if sx > 0.0 and sy > 0.0:
+        return "NorthEast"
+    if sx < 0.0 and sy > 0.0:
+        return "NorthWest"
+    if sx > 0.0 and sy < 0.0:
+        return "SouthEast"
+    return "SouthWest"
+
+
+def _diagonal_endpoint(obj, toward_point):
+    center = _object_anchor(obj)
+    ax, ay = _object_xy_axes(obj)
+    hx, hy = _object_half_extents_xy(obj, center, ax, ay)
+    name = _diagonal_name_toward(obj, toward_point)
+    sx = 1.0 if "East" in name else -1.0
+    sy = 1.0 if "North" in name else -1.0
+    # Aproxima el centro del lado diagonal de la octogonal.
+    r = max(12.0, 0.84 * min(float(hx), float(hy)))
+    d = _unit_xy(_vec((ax.x * sx) + (ay.x * sy), (ax.y * sx) + (ay.y * sy), 0.0))
+    return _vec(float(center.x + (d.x * r)), float(center.y + (d.y * r)), float(center.z))
+
+
+def _endpoint_point_for_obj(obj, toward_point):
+    kind = _safe_text(_endpoint_kind(obj)).strip()
+    if kind == "Octogonal":
+        face = _face_name_toward(obj, toward_point)
+        return _face_center_endpoint(obj, face)
+    return _object_anchor(obj)
+
+
+def _direct_face_points(obj_a, obj_b, tol_mm=DIRECT_ALIGN_TOL_MM):
+    c1 = _object_anchor(obj_a)
+    c2 = _object_anchor(obj_b)
+    dx = float(c2.x - c1.x)
+    dy = float(c2.y - c1.y)
+    adx = abs(dx)
+    ady = abs(dy)
+
+    if ady <= float(tol_mm):
+        face_a = "East" if dx >= 0.0 else "West"
+        face_b = "West" if dx >= 0.0 else "East"
+    elif adx <= float(tol_mm):
+        face_a = "North" if dy >= 0.0 else "South"
+        face_b = "South" if dy >= 0.0 else "North"
+    else:
+        return None
+
+    p1 = _face_center_endpoint(obj_a, face_a)
+    p2 = _face_center_endpoint(obj_b, face_b)
+    return _dedupe_points([p1, p2])
+
+
+def _dedupe_points(points, tol=0.1):
+    out = []
+    for p in points or []:
+        q = _vec(p.x, p.y, p.z)
+        if not out:
+            out.append(q)
+            continue
+        if out[-1].distanceToPoint(q) > float(tol):
+            out.append(q)
+    return out
+
+
+def _build_l_points_preview(p1, p2, invert=False):
+    dx = abs(float(p2.x) - float(p1.x))
+    dy = abs(float(p2.y) - float(p1.y))
+    dz = abs(float(p2.z) - float(p1.z))
+
+    order = sorted(
+        [("x", dx), ("y", dy), ("z", dz)],
+        key=lambda it: float(it[1]),
+        reverse=True,
+    )
+    a1 = order[0][0]
+    a2 = order[1][0]
+    first, second = (a2, a1) if invert else (a1, a2)
+
+    def _set_axis(pt, axis, value):
+        if axis == "x":
+            return _vec(value, pt.y, pt.z)
+        if axis == "y":
+            return _vec(pt.x, value, pt.z)
+        return _vec(pt.x, pt.y, value)
+
+    p_mid1 = _set_axis(p1, first, getattr(p2, first))
+    pts = [p1, p_mid1]
+    if dz > 1e-6 and second != "z":
+        p_mid2 = _set_axis(p_mid1, second, getattr(p2, second))
+        pts.append(p_mid2)
+    pts.append(p2)
+    return _dedupe_points(pts)
+
+
+def _build_45_points_preview(p1, p2):
+    sx, sy, sz = float(p1.x), float(p1.y), float(p1.z)
+    ex, ey = float(p2.x), float(p2.y)
+    dx = ex - sx
+    dy = ey - sy
+    adx = abs(dx)
+    ady = abs(dy)
+    if adx <= 1e-6 and ady <= 1e-6:
+        return [p1, p2]
+    sign_x = 1.0 if dx >= 0.0 else -1.0
+    sign_y = 1.0 if dy >= 0.0 else -1.0
+    d = min(adx, ady)
+    p_mid = _vec(sx + (sign_x * d), sy + (sign_y * d), sz)
+    return _dedupe_points([p1, p_mid, _vec(ex, ey, sz), p2])
+
+
+def _build_spline_preview_points(p0, p1, diagonal_start=False):
+    z = float(p0.z)
+    p0 = _vec(p0.x, p0.y, p0.z)
+    p3 = _vec(p1.x, p1.y, p1.z)
+    vx = float(p3.x - p0.x)
+    vy = float(p3.y - p0.y)
+    dxy = math.hypot(vx, vy)
+    if dxy <= 1e-6:
+        return _dedupe_points([p0, p3])
+    ux = vx / max(dxy, 1e-9)
+    uy = vy / max(dxy, 1e-9)
+    if diagonal_start:
+        sx = 1.0 if ux >= 0.0 else -1.0
+        sy = 1.0 if uy >= 0.0 else -1.0
+        d = min(max(dxy * 0.22, 80.0), 260.0) / math.sqrt(2.0)
+        p1a = _vec(float(p0.x + sx * d), float(p0.y + sy * d), z)
+    else:
+        d = min(max(dxy * 0.22, 80.0), 260.0)
+        p1a = _vec(float(p0.x + ux * d), float(p0.y + uy * d), z)
+    p2a = _vec(float(p0.x + vx * 0.6), float(p0.y + vy * 0.6), float(p0.z + (p3.z - p0.z) * 0.6))
+    return _dedupe_points([p0, p1a, p2a, p3])
+
+
+def _make_preview_shape(points, prefer_spline=False):
+    pts = _dedupe_points(points)
+    if len(pts) < 2:
+        return None
+    if len(pts) == 2:
+        return Part.makeLine(pts[0], pts[1])
+    if prefer_spline:
+        try:
+            c = Part.BSplineCurve()
+            c.interpolate(pts)
+            return c.toShape()
+        except Exception:
+            pass
+    try:
+        return Part.makePolygon(pts)
+    except Exception:
+        return None
+
+
+def _strategy_supported_for_selection(strategy_key, objs, kinds):
+    strategy_key = _normalize_strategy_key(strategy_key)
+    n = len(objs or [])
+    kinds = tuple(kinds or ())
+    if n < 2:
+        return False
+    if strategy_key == "orthogonal_l":
+        return n == 2
+    if strategy_key == "octo_45":
+        if n != 2:
+            return False
+        # Macro actual soporta cajas octogonales.
+        return kinds.count("Octogonal") == 2
+    if strategy_key == "octo_direct":
+        if n != 2 or kinds.count("Octogonal") != 2:
+            return False
+        return _direct_face_points(objs[0], objs[1], tol_mm=DIRECT_ALIGN_TOL_MM) is not None
+    if strategy_key in ("spline_diag", "spline"):
+        if n == 2:
+            return ("Octogonal" in kinds) and (kinds[0] != kinds[1] or kinds[0] == "Octogonal")
+        return kinds.count("Octogonal") == 1
+    if strategy_key == "snake":
+        return n >= 2
+    return True
+
+
+def _preview_paths_for_strategy(strategy_key, objs, kinds, replace_route=None):
+    strategy_key_raw = _safe_text(strategy_key).strip()
+    strategy_key = _normalize_strategy_key(strategy_key_raw)
+    paths = []
+    objs = list(objs or [])
+    kinds = list(kinds or [])
+    if len(objs) < 2:
+        return paths
+
+    anchors = [_object_anchor(o) for o in objs]
+
+    def _pair_points(i, j):
+        pa = _endpoint_point_for_obj(objs[i], anchors[j])
+        pb = _endpoint_point_for_obj(objs[j], anchors[i])
+        return pa, pb
+
+    if strategy_key == "orthogonal_l":
+        try:
+            pref_a = ""
+            pref_b = ""
+            if replace_route is not None:
+                pref_a, pref_b = _l_preferred_ports_from_route(
+                    replace_route,
+                    objs[0],
+                    objs[1],
+                    invert=_orth_l_invert_from_strategy(strategy_key_raw),
+                )
+            route = _orthogonal_l_route(
+                objs[0],
+                objs[1],
+                invert=_orth_l_invert_from_strategy(strategy_key_raw),
+                preferred_a=pref_a,
+                preferred_b=pref_b,
+            )
+            paths.append(("poly", list(route.get("points", []) or [])))
+        except Exception as ex:
+            _dbg(f"preview orthogonal_l fallback por error: {ex}")
+            p0, p1 = _pair_points(0, 1)
+            paths.append(("poly", _build_l_points_preview(p0, p1, invert=_orth_l_invert_from_strategy(strategy_key_raw))))
+        return paths
+
+    if strategy_key == "octo_45":
+        try:
+            route = _octo45_route(
+                objs[0],
+                objs[1],
+                mode_key=_octo45_mode_from_strategy(strategy_key_raw),
+                stub_mm=OCTO45_STUB_MM,
+            )
+            paths.append(("poly", list(route.get("points", []) or [])))
+        except Exception as ex:
+            _dbg(f"preview octo_45 fallback por error: {ex}")
+            p0, p1 = _pair_points(0, 1)
+            paths.append(("poly", _build_45_points_preview(p0, p1)))
+        return paths
+    if strategy_key == "octo_direct":
+        pts = _direct_face_points(objs[0], objs[1], tol_mm=DIRECT_ALIGN_TOL_MM)
+        if pts:
+            paths.append(("poly", pts))
+        return paths
+
+    if strategy_key in ("spline_diag", "spline"):
+        diag = strategy_key == "spline_diag"
+        if len(objs) > 2 and kinds.count("Octogonal") == 1:
+            idx_o = kinds.index("Octogonal")
+            for i, p in enumerate(anchors):
+                if i == idx_o:
+                    continue
+                p0, p1 = _pair_points(idx_o, i)
+                paths.append(("spline", _build_spline_preview_points(p0, p1, diagonal_start=diag)))
+            return paths
+        p0, p1 = _pair_points(0, 1)
+        paths.append(("spline", _build_spline_preview_points(p0, p1, diagonal_start=diag)))
+        return paths
+
+    if strategy_key == "snake":
+        if len(anchors) == 2:
+            p0, p1 = _pair_points(0, 1)
+            paths.append(("poly", _build_l_points_preview(p0, p1, invert=False)))
+            return paths
+        for i in range(1, len(anchors)):
+            p0, p1 = _pair_points(i - 1, i)
+            paths.append(("poly", _build_l_points_preview(p0, p1, invert=False)))
+        return paths
+
+    # Fallback lineal.
+    p0, p1 = _pair_points(0, 1)
+    paths.append(("poly", [p0, p1]))
+    return paths
+
+
+def _analyze_effective_selection(objs, kinds):
+    if len(objs) < 2:
+        return {
+            "valid": False,
+            "summary": "Seleccione al menos 2 objetos.",
+            "allowed": (),
+            "preferred": None,
+            "kinds": kinds,
+        }
+
+    # Caso especial: 1 octogonal + N objetivos (luminarias/u otros)
+    if len(objs) >= 2:
+        oct_idxs = [i for i, k in enumerate(kinds) if k == "Octogonal"]
+        if len(oct_idxs) == 1 and len(objs) > 2:
+            oidx = oct_idxs[0]
+            ok = True
+            allowed_union = set()
+            preferred = None
+            for i, k in enumerate(kinds):
+                if i == oidx:
+                    continue
+                rule = _pair_rule("Octogonal", k)
+                if not rule:
+                    ok = False
+                    break
+                allowed = tuple(rule.get("allowed", ()) or ())
+                if not allowed:
+                    ok = False
+                    break
+                allowed_union.update(allowed)
+                if preferred is None:
+                    preferred = _safe_text(rule.get("preferred", "")).strip() or None
+            if ok:
+                if "spline_diag" in allowed_union:
+                    preferred = "spline_diag"
+                return {
+                    "valid": True,
+                    "summary": "Modo lote: Octogonal -> multiples objetivos.",
+                    "allowed": tuple(sorted(allowed_union)),
+                    "preferred": preferred,
+                    "kinds": kinds,
+                }
+
+    if len(objs) != 2:
+        return {
+            "valid": False,
+            "summary": "Para combinaciones generales, use exactamente 2 objetos (o 1 octogonal + N objetivos).",
+            "allowed": (),
+            "preferred": None,
+            "kinds": kinds,
+        }
+
+    kind_a, kind_b = kinds[0], kinds[1]
+    rule = _pair_rule(kind_a, kind_b)
+    if not rule:
+        return {
+            "valid": False,
+            "summary": f"Par no soportado por matriz: {kind_a} <-> {kind_b}",
+            "allowed": (),
+            "preferred": None,
+            "kinds": kinds,
+        }
+    allowed = tuple(rule.get("allowed", ()) or ())
+    preferred = _safe_text(rule.get("preferred", "")).strip() or None
+    if kind_a == "Octogonal" and kind_b == "Octogonal":
+        if (_direct_face_points(objs[0], objs[1], tol_mm=DIRECT_ALIGN_TOL_MM) is not None) and (
+            "octo_direct" not in allowed
+        ):
+            allowed = allowed + ("octo_direct",)
+    return {
+        "valid": True,
+        "summary": f"Par detectado: {kind_a} <-> {kind_b}",
+        "allowed": allowed,
+        "preferred": preferred,
+        "kinds": kinds,
+    }
+
+
+def _analyze_selection(objs):
+    raw_objs = list(objs or [])
+    raw_kinds = [(_endpoint_kind(obj) or "Otro") for obj in raw_objs]
+
+    # Modo reemplazo: seleccionar una conexion existente y reconstruirla
+    # segun estrategia, resolviendo endpoints desde Origen/Destino o AutoRouteKey.
+    if len(raw_objs) == 1 and _is_route_like(raw_objs[0]):
+        route_obj = raw_objs[0]
+        endpoints = _resolve_route_endpoints(route_obj)
+        if endpoints is None:
+            return {
+                "valid": False,
+                "summary": "Conexion seleccionada, pero no se pudieron resolver Origen/Destino para reemplazo.",
+                "allowed": (),
+                "preferred": None,
+                "kinds": (),
+                "raw_kinds": raw_kinds,
+                "source_mode": "replace",
+                "replace_route": route_obj,
+                "effective_objs": (),
+            }
+        eff_objs = [endpoints[0], endpoints[1]]
+        eff_kinds = [(_endpoint_kind(eff_objs[0]) or "Otro"), (_endpoint_kind(eff_objs[1]) or "Otro")]
+        info = _analyze_effective_selection(eff_objs, eff_kinds)
+        route_lbl = _safe_text(getattr(route_obj, "Label", "")).strip() or _safe_text(getattr(route_obj, "Name", ""))
+        if info.get("valid", False):
+            info["summary"] = f"Modo reemplazo: {route_lbl} | {info.get('summary', '')}"
+        else:
+            info["summary"] = f"Modo reemplazo: {route_lbl} | {info.get('summary', '')}"
+        info["raw_kinds"] = raw_kinds
+        info["source_mode"] = "replace"
+        info["replace_route"] = route_obj
+        info["effective_objs"] = eff_objs
+        return info
+
+    info = _analyze_effective_selection(raw_objs, raw_kinds)
+    info["raw_kinds"] = raw_kinds
+    info["source_mode"] = "normal"
+    info["replace_route"] = None
+    info["effective_objs"] = list(raw_objs)
+    return info
+
+
+def _ensure_property(obj, ptype, pname, pgroup, pdesc):
+    try:
+        if pname not in getattr(obj, "PropertiesList", []):
+            obj.addProperty(ptype, pname, pgroup, pdesc)
+    except Exception:
+        pass
+
+
+def _polyline_length(points):
+    pts = _dedupe_points(points, tol=1e-6)
+    if len(pts) < 2:
+        return 0.0
+    total = 0.0
+    for i in range(1, len(pts)):
+        total += float(pts[i - 1].distanceToPoint(pts[i]))
+    return float(total)
+
+
+def _safe_fillet_radius(points, requested_radius):
+    req = max(0.0, float(requested_radius))
+    pts = _dedupe_points(points, tol=1e-6)
+    if req <= 1e-9 or len(pts) < 3:
+        return 0.0
+    min_run = float("inf")
+    found_corner = False
+    for i in range(1, len(pts) - 1):
+        a = pts[i - 1]
+        b = pts[i]
+        c = pts[i + 1]
+        l1 = float(a.distanceToPoint(b))
+        l2 = float(b.distanceToPoint(c))
+        if l1 <= 1e-9 or l2 <= 1e-9:
+            continue
+        found_corner = True
+        min_run = min(min_run, l1, l2)
+    if (not found_corner) or (not math.isfinite(min_run)):
+        return 0.0
+    cap = max(0.0, 0.45 * float(min_run))
+    return min(req, cap)
+
+
+def _draft_make_wire(points):
+    maker = getattr(Draft, "make_wire", None)
+    if maker is None:
+        maker = getattr(Draft, "makeWire", None)
+    if maker is None:
+        raise RuntimeError("No se encontro Draft.make_wire ni Draft.makeWire.")
+    attempts = [
+        lambda: maker(points, closed=False, face=False),
+        lambda: maker(points, False, False),
+        lambda: maker(points, False),
+        lambda: maker(points),
+    ]
+    last_err = None
+    for fn in attempts:
+        try:
+            return fn()
+        except Exception as ex:
+            last_err = ex
+    raise RuntimeError(f"No se pudo crear Draft Wire: {last_err}")
+
+
+def _style_connection(obj, conduit_type=DEFAULT_CONDUIT):
+    vo = getattr(obj, "ViewObject", None)
+    if vo is None:
+        return
+    ctype = _safe_text(conduit_type).upper()
+    color = (0.07, 0.31, 0.58) if ctype == "EMT" else (0.72, 0.34, 0.08)
+    try:
+        vo.DisplayMode = "Wireframe"
+    except Exception:
+        pass
+    for pname in ("LineColor", "PointColor", "ShapeColor"):
+        try:
+            setattr(vo, pname, color)
+        except Exception:
+            pass
+    try:
+        vo.LineWidth = 2.0
+    except Exception:
+        pass
+    if hasattr(obj, "CornerStyle"):
+        try:
+            obj.CornerStyle = "Round"
+        except Exception:
+            pass
+
+
+def _guess_circuit_id(obj_a, obj_b):
+    for obj in (obj_a, obj_b):
+        for pname in ("CircuitoID", "Circuito", "CircuitoNominal", "CircuitoNombre", "CircuitoName"):
+            val = _safe_text(getattr(obj, pname, "")).strip()
+            if val:
+                return val
+    return "Circuito Manual"
+
+
+def _slug_token(text):
+    token = _safe_text(text).strip().replace(" ", "_")
+    while "__" in token:
+        token = token.replace("__", "_")
+    token = token.strip("_")
+    return token or "Manual"
+
+
+def _pair_label(obj_a, obj_b, circuit_id=""):
+    la = _safe_text(getattr(obj_a, "Label", "")) or _safe_text(getattr(obj_a, "Name", "Origen"))
+    lb = _safe_text(getattr(obj_b, "Label", "")) or _safe_text(getattr(obj_b, "Name", "Destino"))
+    cir = _slug_token(circuit_id or "Circuito")
+    return f"EMT_{cir}: {la} -> {lb}"
+
+
+def _connection_key(strategy_key, obj_a, obj_b):
+    a_name = _safe_text(getattr(obj_a, "Name", "")).strip()
+    b_name = _safe_text(getattr(obj_b, "Name", "")).strip()
+    e1, e2 = sorted([a_name, b_name])
+    return f"{strategy_key}|{e1}|{e2}"
+
+
+def _strategy_jobs(strategy_key, objs, kinds, replace_route=None):
+    strategy_key_raw = _safe_text(strategy_key).strip()
+    strategy_key = _normalize_strategy_key(strategy_key_raw)
+    jobs = []
+    objs = list(objs or [])
+    kinds = list(kinds or [])
+    if len(objs) < 2:
+        return jobs
+    anchors = [_object_anchor(o) for o in objs]
+
+    def _add_job(obj_a, obj_b, kind, pts, port_a="", port_b=""):
+        pts = _dedupe_points(pts)
+        if len(pts) >= 2:
+            jobs.append(
+                {
+                    "from": obj_a,
+                    "to": obj_b,
+                    "shape_kind": kind,
+                    "points": pts,
+                    "port_a": _safe_text(port_a).strip(),
+                    "port_b": _safe_text(port_b).strip(),
+                }
+            )
+
+    def _pair_points(i, j):
+        pa = _endpoint_point_for_obj(objs[i], anchors[j])
+        pb = _endpoint_point_for_obj(objs[j], anchors[i])
+        return pa, pb
+
+    if strategy_key == "orthogonal_l":
+        pref_a = ""
+        pref_b = ""
+        if replace_route is not None:
+            pref_a, pref_b = _l_preferred_ports_from_route(
+                replace_route,
+                objs[0],
+                objs[1],
+                invert=_orth_l_invert_from_strategy(strategy_key_raw),
+            )
+        route = _orthogonal_l_route(
+            objs[0],
+            objs[1],
+            invert=_orth_l_invert_from_strategy(strategy_key_raw),
+            preferred_a=pref_a,
+            preferred_b=pref_b,
+        )
+        _add_job(
+            objs[0],
+            objs[1],
+            "poly",
+            list(route.get("points", []) or []),
+            port_a=_safe_text(route.get("port_a", "")),
+            port_b=_safe_text(route.get("port_b", "")),
+        )
+        return jobs
+    if strategy_key == "octo_45":
+        route = _octo45_route(
+            objs[0],
+            objs[1],
+            mode_key=_octo45_mode_from_strategy(strategy_key_raw),
+            stub_mm=OCTO45_STUB_MM,
+        )
+        _add_job(
+            objs[0],
+            objs[1],
+            "poly",
+            list(route.get("points", []) or []),
+            port_a=_safe_text(route.get("port_a", "")),
+            port_b=_safe_text(route.get("port_b", "")),
+        )
+        return jobs
+    if strategy_key == "octo_direct":
+        pts = _direct_face_points(objs[0], objs[1], tol_mm=DIRECT_ALIGN_TOL_MM)
+        if pts:
+            _add_job(objs[0], objs[1], "poly", pts)
+        return jobs
+    if strategy_key in ("spline_diag", "spline"):
+        diag = strategy_key == "spline_diag"
+        if len(objs) > 2 and kinds.count("Octogonal") == 1:
+            idx_o = kinds.index("Octogonal")
+            for i, obj in enumerate(objs):
+                if i == idx_o:
+                    continue
+                p0, p1 = _pair_points(idx_o, i)
+                _add_job(objs[idx_o], obj, "spline", _build_spline_preview_points(p0, p1, diagonal_start=diag))
+            return jobs
+        p0, p1 = _pair_points(0, 1)
+        _add_job(objs[0], objs[1], "spline", _build_spline_preview_points(p0, p1, diagonal_start=diag))
+        return jobs
+    if strategy_key == "snake":
+        if len(objs) == 2:
+            p0, p1 = _pair_points(0, 1)
+            _add_job(objs[0], objs[1], "poly", _build_l_points_preview(p0, p1, invert=False))
+            return jobs
+        for i in range(1, len(objs)):
+            p0, p1 = _pair_points(i - 1, i)
+            _add_job(objs[i - 1], objs[i], "poly", _build_l_points_preview(p0, p1, invert=False))
+        return jobs
+    p0, p1 = _pair_points(0, 1)
+    _add_job(objs[0], objs[1], "poly", [p0, p1])
+    return jobs
+
+
+def _create_connection_object(doc, strategy_key, job):
+    obj_a = job["from"]
+    obj_b = job["to"]
+    shape_kind = _safe_text(job.get("shape_kind", "poly")).strip() or "poly"
+    pts = _dedupe_points(job.get("points", []), tol=1e-6)
+    if shape_kind == "spline" and len(pts) >= 3:
+        try:
+            c = Part.BSplineCurve()
+            c.interpolate(pts)
+            pts = [_vec(p.x, p.y, p.z) for p in c.discretize(32)]
+        except Exception:
+            pass
+    if len(pts) < 2:
+        raise RuntimeError("Ruta invalida: menos de 2 puntos.")
+
+    obj = None
+    try:
+        obj = _draft_make_wire(pts)
+    except Exception:
+        shp = _make_preview_shape(pts, prefer_spline=False)
+        if shp is None:
+            raise RuntimeError("No se pudo crear geometria de conexion.")
+        obj = doc.addObject("Part::Feature", "EMT_Conexion")
+        obj.Shape = shp
+
+    circuit_id = _guess_circuit_id(obj_a, obj_b)
+    safe_fillet = 0.0 if shape_kind == "spline" else _safe_fillet_radius(pts, DEFAULT_FILLET_MM)
+    try:
+        obj.Label = _pair_label(obj_a, obj_b, circuit_id=circuit_id)
+    except Exception:
+        pass
+
+    _ensure_property(obj, "App::PropertyString", "Tipo", "ElectricCR", "Tipo logico de objeto")
+    _ensure_property(obj, "App::PropertyString", "ConduitType", "ElectricCR", "Tipo de canalizacion")
+    _ensure_property(obj, "App::PropertyFloat", "DiametroConduit", "ElectricCR", "Diametro de canalizacion (mm)")
+    _ensure_property(obj, "App::PropertyFloat", "RadioCurvatura", "ElectricCR", "Radio de curvatura (mm)")
+    _ensure_property(obj, "App::PropertyString", "CircuitoID", "Circuito", "Identificador de circuito")
+    _ensure_property(obj, "App::PropertyString", "OrigenName", "Vinculo", "Objeto origen")
+    _ensure_property(obj, "App::PropertyString", "DestinoName", "Vinculo", "Objeto destino")
+    _ensure_property(obj, "App::PropertyString", "PuertoOrigen", "Vinculo", "Puerto usado en origen")
+    _ensure_property(obj, "App::PropertyString", "PuertoDestino", "Vinculo", "Puerto usado en destino")
+    _ensure_property(obj, "App::PropertyString", "LinkKind", "Vinculo", "Tipo de enlace generado")
+    _ensure_property(obj, "App::PropertyString", "AutoRouteKey", "Vinculo", "Llave unica de ruta")
+    _ensure_property(obj, "App::PropertyString", "TipoConexion", "ElectricCR", "Tipo de conexion")
+    _ensure_property(obj, "App::PropertyString", "GeneradoPor", "ElectricCR", "Macro generadora")
+    _ensure_property(obj, "App::PropertyFloat", "LongitudMM", "ElectricCR", "Longitud aproximada")
+    _ensure_property(obj, "App::PropertyFloat", "FilletMM", "ElectricCR", "Radio fillet aplicado")
+
+    try:
+        obj.Tipo = "ConduitPath"
+    except Exception:
+        pass
+    try:
+        obj.ConduitType = DEFAULT_CONDUIT
+    except Exception:
+        pass
+    try:
+        obj.DiametroConduit = float(DEFAULT_DIAMETER_MM)
+    except Exception:
+        pass
+    try:
+        obj.RadioCurvatura = float(safe_fillet)
+    except Exception:
+        pass
+    try:
+        obj.CircuitoID = _safe_text(circuit_id)
+    except Exception:
+        pass
+    try:
+        obj.OrigenName = _safe_text(getattr(obj_a, "Name", ""))
+    except Exception:
+        pass
+    try:
+        obj.DestinoName = _safe_text(getattr(obj_b, "Name", ""))
+    except Exception:
+        pass
+    try:
+        obj.PuertoOrigen = _safe_text(job.get("port_a", ""))
+    except Exception:
+        pass
+    try:
+        obj.PuertoDestino = _safe_text(job.get("port_b", ""))
+    except Exception:
+        pass
+    try:
+        obj.LinkKind = DEFAULT_LINK_KIND
+    except Exception:
+        pass
+    try:
+        obj.AutoRouteKey = _connection_key(strategy_key, obj_a, obj_b)
+    except Exception:
+        pass
+    try:
+        obj.TipoConexion = f"EMT_PANEL_{strategy_key}"
+    except Exception:
+        pass
+    try:
+        obj.GeneradoPor = PANEL_GENERATED_BY
+    except Exception:
+        pass
+    try:
+        obj.LongitudMM = _polyline_length(pts)
+    except Exception:
+        pass
+    try:
+        obj.FilletMM = float(safe_fillet)
+    except Exception:
+        pass
+    if hasattr(obj, "FilletRadius"):
+        try:
+            obj.FilletRadius = float(safe_fillet)
+        except Exception:
+            pass
+    if hasattr(obj, "Fillet"):
+        try:
+            obj.Fillet = bool(safe_fillet > 0.0)
+        except Exception:
+            pass
+    _style_connection(obj, conduit_type=DEFAULT_CONDUIT)
+    return obj
+
+
+def _execute_strategy(doc, strategy_key, objs, kinds, replace_route=None):
+    jobs = _strategy_jobs(strategy_key, objs, kinds, replace_route=replace_route)
+    if not jobs:
+        raise RuntimeError("No se pudo resolver una ruta valida para la estrategia.")
+    _dbg(f"execute strategy={strategy_key} jobs={len(jobs)} objs={len(list(objs or []))}")
+    created = []
+    for idx, job in enumerate(jobs):
+        p0 = job.get("points", [None])[0]
+        p1 = job.get("points", [None, None])[-1]
+        if p0 is not None and p1 is not None:
+            _dbg(
+                "job#{:d} kind={} from={} to={} p0=({:.1f},{:.1f},{:.1f}) p1=({:.1f},{:.1f},{:.1f})".format(
+                    int(idx + 1),
+                    _safe_text(job.get("shape_kind", "")),
+                    _safe_text(getattr(job.get("from", None), "Name", "")),
+                    _safe_text(getattr(job.get("to", None), "Name", "")),
+                    float(p0.x),
+                    float(p0.y),
+                    float(p0.z),
+                    float(p1.x),
+                    float(p1.y),
+                    float(p1.z),
+                )
+            )
+        created.append(_create_connection_object(doc, strategy_key, job))
+    if ensure_conexiones_group is not None:
+        try:
+            g = ensure_conexiones_group(doc, objects=list(objs or []))
+            if g is not None:
+                for obj in created:
+                    try:
+                        g.addObject(obj)
+                    except Exception:
+                        pass
+        except Exception as ex:
+            _warn(f"No se pudo ubicar en grupo Conexiones: {ex}")
+    return created
+
+
+def _copy_route_prop(dst_obj, src_obj, pname):
+    try:
+        if pname not in (getattr(src_obj, "PropertiesList", []) or []):
+            return
+        if (pname in (getattr(dst_obj, "PropertiesList", []) or [])) or hasattr(dst_obj, pname):
+            setattr(dst_obj, pname, getattr(src_obj, pname))
+    except Exception:
+        pass
+
+
+def _property_is_readonly(obj, pname):
+    try:
+        st = obj.getPropertyStatus(pname)
+    except Exception:
+        st = None
+    if st is None:
+        return False
+    try:
+        if isinstance(st, str):
+            txt = st.lower()
+            return ("readonly" in txt) or ("immutable" in txt)
+        for it in list(st):
+            txt = _safe_text(it).lower()
+            if ("readonly" in txt) or ("immutable" in txt):
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _copy_route_view_style(dst_obj, src_obj):
+    vo_src = getattr(src_obj, "ViewObject", None)
+    vo_dst = getattr(dst_obj, "ViewObject", None)
+    if vo_src is None or vo_dst is None:
+        return 0
+    copied = 0
+    for attr in (
+        "LineColor",
+        "PointColor",
+        "ShapeColor",
+        "LineWidth",
+        "DrawStyle",
+        "Transparency",
+        "DisplayMode",
+    ):
+        try:
+            setattr(vo_dst, attr, getattr(vo_src, attr))
+            copied += 1
+        except Exception:
+            pass
+    return copied
+
+
+_REPLACE_COPY_SKIP = {
+    # Sistema / no transferibles
+    "Shape",
+    "Placement",
+    "Proxy",
+    "ExpressionEngine",
+    "AttachmentSupport",
+    "AttacherType",
+    "AttacherEngine",
+    "MapMode",
+    "MapPathParameter",
+    "MapReversed",
+    "AttachmentOffset",
+    # Geometria calculada de la ruta nueva
+    "Points",
+    "Start",
+    "End",
+    "Length",
+    "LongitudMM",
+    "FilletMM",
+    # Mantener identidad de la nueva estrategia generada
+    "PuertoOrigen",
+    "PuertoDestino",
+    "AutoRouteKey",
+    "TipoConexion",
+    "GeneradoPor",
+}
+
+
+def _copy_route_metadata(dst_obj, src_obj):
+    if dst_obj is None or src_obj is None:
+        return
+    try:
+        old_label = _safe_text(getattr(src_obj, "Label", "")).strip()
+        if old_label:
+            dst_obj.Label = old_label
+    except Exception:
+        pass
+    copied = 0
+    src_props = list(getattr(src_obj, "PropertiesList", []) or [])
+    dst_props = set(getattr(dst_obj, "PropertiesList", []) or [])
+    for pname in src_props:
+        nm = _safe_text(pname).strip()
+        if not nm:
+            continue
+        if nm in _REPLACE_COPY_SKIP:
+            continue
+        if nm.startswith("_"):
+            continue
+        if (nm not in dst_props) and (not hasattr(dst_obj, nm)):
+            continue
+        if _property_is_readonly(dst_obj, nm):
+            continue
+        try:
+            setattr(dst_obj, nm, getattr(src_obj, nm))
+            copied += 1
+        except Exception:
+            pass
+    copied_style = _copy_route_view_style(dst_obj, src_obj)
+    # Solo aplica estilo por defecto si no se pudo heredar ningun atributo visual.
+    if int(copied_style) <= 0:
+        _style_connection(dst_obj, conduit_type=_safe_text(getattr(dst_obj, "ConduitType", DEFAULT_CONDUIT)))
+    _dbg(f"replace metadata copied_props={copied}")
+
+
+def _copy_route_groups(dst_obj, src_obj):
+    if dst_obj is None or src_obj is None:
+        return
+    seen = set()
+    linked = 0
+    for g in (getattr(src_obj, "InList", []) or []):
+        if g is None:
+            continue
+        key = _safe_text(getattr(g, "Name", "")).strip() or str(id(g))
+        if key in seen:
+            continue
+        seen.add(key)
+        ok = False
+        if hasattr(g, "addObject"):
+            try:
+                g.addObject(dst_obj)
+                ok = True
+            except Exception:
+                ok = False
+        if not ok and hasattr(g, "Group"):
+            try:
+                members = list(getattr(g, "Group", []) or [])
+                if dst_obj not in members:
+                    members.append(dst_obj)
+                    g.Group = members
+                ok = True
+            except Exception:
+                ok = False
+        if ok:
+            linked += 1
+    _dbg(f"replace group links copied={linked}")
+
+
+def _replace_old_route(doc, old_route, created_objs):
+    if doc is None or old_route is None:
+        return
+    made = list(created_objs or [])
+    if not made:
+        return
+    # Heredar metadata/grupos principalmente al primer resultado.
+    _copy_route_metadata(made[0], old_route)
+    for obj in made:
+        _copy_route_groups(obj, old_route)
+    old_name = _safe_text(getattr(old_route, "Name", "")).strip()
+    if not old_name:
+        return
+    try:
+        doc.removeObject(old_name)
+        _dbg(f"replace removed old route={old_name}")
+    except Exception as ex:
+        _warn(f"No se pudo eliminar conexion anterior ({old_name}): {ex}")
+
+
+class ConexionesPanelDialog(QtWidgets.QWidget):
+    def __init__(self):
+        super(ConexionesPanelDialog, self).__init__()
+        self.setObjectName("ElectricCRConexPanelRoot")
+        self.setWindowTitle("Panel de Conexiones (Endpoints)")
+        self.setMinimumWidth(340)
+        try:
+            self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        except Exception:
+            pass
+        self._last_analysis = None
+        self._selected_objs = []
+        self._preview_root = None
+        self._strategy_buttons = {}
+        self._strategy_key = ""
+        self._last_selection_sig = ()
+        self._replace_route = None
+
+        root = QtWidgets.QVBoxLayout(self)
+
+        title = QtWidgets.QLabel("Conexiones unificadas por tipo de endpoint")
+        try:
+            f = title.font()
+            f.setBold(True)
+            title.setFont(f)
+        except Exception:
+            pass
+        root.addWidget(title)
+
+        self.info = QtWidgets.QLabel("")
+        self.info.setWordWrap(True)
+        root.addWidget(self.info)
+
+        self.lst = QtWidgets.QListWidget()
+        self.lst.setMinimumHeight(56)
+        self.lst.setMaximumHeight(120)
+        root.addWidget(self.lst)
+
+        root.addWidget(QtWidgets.QLabel("Estrategias:"))
+        self.strat_widget = QtWidgets.QWidget()
+        self.strat_grid = QtWidgets.QGridLayout(self.strat_widget)
+        self.strat_grid.setContentsMargins(0, 0, 0, 0)
+        self.strat_grid.setHorizontalSpacing(8)
+        self.strat_grid.setVerticalSpacing(8)
+        root.addWidget(self.strat_widget)
+
+        row_preview = QtWidgets.QHBoxLayout()
+        self.chk_auto_preview = QtWidgets.QCheckBox("Vista previa automatica")
+        self.chk_auto_preview.setChecked(True)
+        self.btn_preview = QtWidgets.QPushButton("Vista previa ahora")
+        row_preview.addWidget(self.chk_auto_preview)
+        row_preview.addStretch(1)
+        row_preview.addWidget(self.btn_preview)
+        root.addLayout(row_preview)
+
+        btn_row = QtWidgets.QHBoxLayout()
+        self.btn_refresh = QtWidgets.QPushButton("Actualizar seleccion")
+        self.btn_close = QtWidgets.QPushButton("Cerrar")
+        btn_row.addWidget(self.btn_refresh)
+        btn_row.addStretch(1)
+        btn_row.addWidget(self.btn_close)
+        root.addLayout(btn_row)
+
+        self.btn_refresh.clicked.connect(self.refresh_from_selection)
+        self.btn_close.clicked.connect(self._close_panel)
+        self.btn_preview.clicked.connect(self.update_preview)
+        self.chk_auto_preview.toggled.connect(self._on_strategy_changed)
+
+        self._sel_timer = QtCore.QTimer(self)
+        self._sel_timer.setInterval(600)
+        self._sel_timer.timeout.connect(self._poll_selection)
+        self._sel_timer.start()
+
+        self.refresh_from_selection()
+
+    def eventFilter(self, watched, event):
+        try:
+            if event is not None and int(event.type()) == int(QtCore.QEvent.Enter):
+                for key, btn in self._strategy_buttons.items():
+                    if watched is btn and btn.isEnabled():
+                        self._set_strategy_key(key, trigger_preview=True)
+                        return False
+        except Exception:
+            pass
+        return super(ConexionesPanelDialog, self).eventFilter(watched, event)
+
+    def _selection_signature(self):
+        objs = _selection_objects()
+        sig = []
+        for obj in objs:
+            sig.append(_safe_text(getattr(obj, "Name", "")).strip() or str(id(obj)))
+        return tuple(sig)
+
+    def _poll_selection(self):
+        sig = self._selection_signature()
+        if sig == self._last_selection_sig:
+            return
+        self.refresh_from_selection()
+
+    def _clear_strategy_buttons(self):
+        self._strategy_buttons = {}
+        while self.strat_grid.count() > 0:
+            item = self.strat_grid.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                try:
+                    w.removeEventFilter(self)
+                except Exception:
+                    pass
+                w.deleteLater()
+
+    def _fit_selection_list_height(self):
+        try:
+            n = max(1, int(self.lst.count()))
+            row_h = int(self.lst.sizeHintForRow(0))
+            if row_h <= 0:
+                row_h = 22
+            h = max(56, min(120, int((n * row_h) + 10)))
+            self.lst.setFixedHeight(h)
+        except Exception:
+            pass
+
+    def _rebuild_strategy_buttons(self, keys, selected_key=""):
+        self._clear_strategy_buttons()
+        cols = 3
+        for idx, key in enumerate(keys):
+            btn = QtWidgets.QToolButton(self)
+            btn.setCheckable(True)
+            btn.setToolButtonStyle(QtCore.Qt.ToolButtonTextUnderIcon)
+            btn.setMinimumHeight(64)
+            btn.setAutoRaise(False)
+            label = STRATEGY_LABELS.get(key, key)
+            btn.setText(label)
+            btn.setToolTip(label)
+            icon_path = _strategy_icon_path(key)
+            if icon_path:
+                try:
+                    btn.setIcon(QtGui.QIcon(icon_path))
+                    btn.setIconSize(QtCore.QSize(28, 28))
+                except Exception:
+                    pass
+            btn.clicked.connect(lambda _checked=False, k=key: self._on_strategy_button_clicked(k))
+            btn.installEventFilter(self)
+            self._strategy_buttons[key] = btn
+            row = idx // cols
+            col = idx % cols
+            self.strat_grid.addWidget(btn, row, col)
+
+        if not keys:
+            self._strategy_key = ""
+            return
+        key = selected_key if selected_key in keys else keys[0]
+        self._set_strategy_key(key, trigger_preview=False)
+
+    def _set_strategy_key(self, key, trigger_preview=True):
+        skey = _safe_text(key).strip()
+        if skey not in self._strategy_buttons:
+            return
+        self._strategy_key = skey
+        for k, btn in self._strategy_buttons.items():
+            try:
+                btn.setChecked(k == skey)
+            except Exception:
+                pass
+        if trigger_preview:
+            self._on_strategy_changed()
+
+    def _on_strategy_button_clicked(self, key):
+        self._set_strategy_key(key, trigger_preview=True)
+        self.run_selected_strategy()
+
+    def _current_strategy_key(self):
+        return _safe_text(self._strategy_key).strip()
+
+    def _scene_graph(self):
+        try:
+            gdoc = getattr(Gui, "ActiveDocument", None)
+            if gdoc is None:
+                return None
+            view = getattr(gdoc, "ActiveView", None)
+            if view is None:
+                return None
+            return view.getSceneGraph()
+        except Exception:
+            return None
+
+    def _ensure_preview_root(self):
+        if coin is None:
+            return None
+        if self._preview_root is not None:
+            return self._preview_root
+        sg = self._scene_graph()
+        if sg is None:
+            return None
+        root = coin.SoSeparator()
+        try:
+            root.setName("ElectricCR_CONEX_PREVIEW")
+        except Exception:
+            pass
+        try:
+            light = coin.SoLightModel()
+            light.model = coin.SoLightModel.BASE_COLOR
+            root.addChild(light)
+        except Exception:
+            pass
+        color_added = False
+        try:
+            base_color = coin.SoBaseColor()
+            base_color.rgb.setValue(*PREVIEW_BASE_COLOR)
+            root.addChild(base_color)
+            color_added = True
+        except Exception:
+            pass
+        if not color_added:
+            material = coin.SoMaterial()
+            material.diffuseColor.setValue(*PREVIEW_BASE_COLOR)
+            material.emissiveColor.setValue(*PREVIEW_BASE_COLOR)
+            root.addChild(material)
+        draw = coin.SoDrawStyle()
+        draw.style = coin.SoDrawStyle.LINES
+        draw.lineWidth = float(PREVIEW_WIDTH)
+        root.addChild(draw)
+        sg.addChild(root)
+        self._preview_root = root
+        return root
+
+    def _clear_preview(self):
+        root = self._preview_root
+        self._preview_root = None
+        if root is None:
+            return
+        sg = self._scene_graph()
+        if sg is None:
+            return
+        try:
+            sg.removeChild(root)
+        except Exception:
+            try:
+                root.removeAllChildren()
+            except Exception:
+                pass
+
+    def _add_preview_path(self, points):
+        root = self._ensure_preview_root()
+        if root is None:
+            return
+        try:
+            pts = _dedupe_points(points)
+            if len(pts) < 2:
+                return
+            seg = coin.SoSeparator()
+            coords = coin.SoCoordinate3()
+            coords.point.setNum(len(pts))
+            for i, p in enumerate(pts):
+                coords.point.set1Value(i, float(p.x), float(p.y), float(p.z))
+            line = coin.SoLineSet()
+            line.numVertices.setNum(1)
+            line.numVertices.set1Value(0, len(pts))
+            seg.addChild(coords)
+            seg.addChild(line)
+            root.addChild(seg)
+        except Exception:
+            pass
+
+    def update_preview(self):
+        self._clear_preview()
+        if not self._selected_objs or not self._last_analysis:
+            return
+        if not bool(self._last_analysis.get("valid", False)):
+            return
+
+        strategy_key = self._current_strategy_key()
+        if not strategy_key:
+            return
+
+        kinds = list(self._last_analysis.get("kinds", ()) or ())
+        if not _strategy_supported_for_selection(strategy_key, self._selected_objs, kinds):
+            return
+
+        paths = _preview_paths_for_strategy(
+            strategy_key,
+            self._selected_objs,
+            kinds,
+            replace_route=self._last_analysis.get("replace_route", None),
+        )
+        if not paths:
+            return
+
+        for shape_kind, points in paths:
+            pts = _dedupe_points(points)
+            if shape_kind == "spline" and len(pts) >= 3:
+                try:
+                    c = Part.BSplineCurve()
+                    c.interpolate(pts)
+                    pts = [_vec(p.x, p.y, p.z) for p in c.discretize(24)]
+                except Exception:
+                    pass
+            self._add_preview_path(pts)
+
+    def _on_strategy_changed(self, *_args):
+        if bool(self.chk_auto_preview.isChecked()):
+            self.update_preview()
+        else:
+            self._clear_preview()
+
+    def refresh_from_selection(self):
+        self._clear_preview()
+        objs = _selection_objects()
+        self._last_selection_sig = self._selection_signature()
+
+        analysis = _analyze_selection(objs)
+        self._last_analysis = analysis
+        self._selected_objs = list(analysis.get("effective_objs", objs) or objs)
+        self._replace_route = analysis.get("replace_route", None)
+        self.info.setText(analysis.get("summary", ""))
+
+        self.lst.clear()
+        for obj in objs:
+            kind = "Conexion" if _is_route_like(obj) else (_endpoint_kind(obj) or "Otro")
+            lbl = _safe_text(getattr(obj, "Label", "")) or _safe_text(getattr(obj, "Name", ""))
+            self.lst.addItem(f"{lbl}  [{kind}]")
+        if _safe_text(analysis.get("source_mode", "")).strip() == "replace":
+            eff_objs = list(analysis.get("effective_objs", ()) or ())
+            eff_kinds = list(analysis.get("kinds", ()) or ())
+            if len(eff_objs) >= 2:
+                self.lst.addItem("-- endpoints detectados --")
+                for i, obj in enumerate(eff_objs):
+                    kind = eff_kinds[i] if i < len(eff_kinds) else (_endpoint_kind(obj) or "Otro")
+                    lbl = _safe_text(getattr(obj, "Label", "")) or _safe_text(getattr(obj, "Name", ""))
+                    self.lst.addItem(f"{lbl}  [{kind}]")
+        self._fit_selection_list_height()
+
+        _dbg(
+            "refresh sel_raw={} sel_eff={} mode={} kinds={} valid={} allowed={} preferred={}".format(
+                len(objs),
+                len(self._selected_objs),
+                _safe_text(analysis.get("source_mode", "")),
+                ",".join(list(analysis.get("kinds", ()) or [])),
+                bool(analysis.get("valid", False)),
+                ",".join(list(analysis.get("allowed", ()) or [])),
+                _safe_text(analysis.get("preferred", "")),
+            )
+        )
+
+        self.btn_preview.setEnabled(False)
+        allowed_raw = tuple(analysis.get("allowed", ()) or ())
+        preferred_raw = _safe_text(analysis.get("preferred", "")).strip()
+        allowed, preferred = _expand_allowed_strategies(allowed_raw, preferred_raw)
+        prev_key = self._current_strategy_key()
+
+        if not allowed:
+            self._rebuild_strategy_buttons((), "")
+            return
+
+        kinds = list(analysis.get("kinds", ()) or ())
+        filtered = [k for k in allowed if _strategy_supported_for_selection(k, self._selected_objs, kinds)]
+        if not filtered:
+            self._rebuild_strategy_buttons((), "")
+            return
+
+        ordered = list(filtered)
+        if preferred and preferred in ordered:
+            ordered.remove(preferred)
+            ordered.insert(0, preferred)
+
+        selected_key = prev_key if prev_key in ordered else preferred
+        self._rebuild_strategy_buttons(ordered, selected_key)
+
+        valid = bool(analysis.get("valid", False)) and bool(ordered)
+        self.btn_preview.setEnabled(valid)
+
+        if valid and bool(self.chk_auto_preview.isChecked()):
+            self.update_preview()
+
+    def run_selected_strategy(self):
+        if not self._last_analysis or not bool(self._last_analysis.get("valid", False)):
+            _warn("Seleccion no valida para conexion.")
+            return
+
+        key = self._current_strategy_key()
+        if not key:
+            _warn("No hay estrategia seleccionada.")
+            return
+        if not _strategy_supported_for_selection(
+            key,
+            self._selected_objs,
+            list(self._last_analysis.get("kinds", ()) or ()),
+        ):
+            _warn("La estrategia seleccionada no aplica a la seleccion actual.")
+            return
+
+        doc = App.ActiveDocument
+        if doc is None:
+            _err("No hay documento activo.")
+            return
+        try:
+            self._clear_preview()
+            _log(f"Ejecutando estrategia interna={key}")
+            _dbg(f"transaction open strategy={key}")
+            doc.openTransaction(f"ElectricCR: panel conexion {key}")
+            created = _execute_strategy(
+                doc,
+                key,
+                list(self._selected_objs or []),
+                list(self._last_analysis.get("kinds", ()) or ()),
+                replace_route=self._last_analysis.get("replace_route", None),
+            )
+            old_route = self._last_analysis.get("replace_route", None)
+            if old_route is not None:
+                _replace_old_route(doc, old_route, created)
+            doc.recompute()
+            doc.commitTransaction()
+            _dbg(f"transaction commit strategy={key}")
+            self.refresh_from_selection()
+        except Exception as ex:
+            try:
+                doc.abortTransaction()
+                _dbg(f"transaction abort strategy={key}")
+            except Exception:
+                pass
+            _err(f"No se pudo ejecutar estrategia {key}: {ex}")
+
+    def _close_panel(self):
+        p = self.parent()
+        while p is not None:
+            try:
+                if isinstance(p, QtWidgets.QDockWidget):
+                    p.close()
+                    return
+            except Exception:
+                pass
+            p = p.parent()
+        self.hide()
+
+    def set_active(self, active):
+        on = bool(active)
+        try:
+            if on:
+                self._sel_timer.start()
+            else:
+                self._sel_timer.stop()
+        except Exception:
+            pass
+        if not on:
+            self._clear_preview()
+
+    def closeEvent(self, event):
+        self.set_active(False)
+        super(ConexionesPanelDialog, self).closeEvent(event)
+
+
+_PANEL_DOCK = None
+_PANEL_WIDGET = None
+_PANEL_DOCK_OBJECT = "ElectricCR_ConexionesEndpointsDock"
+_DOCK_PREF_PATH = "User parameter:BaseApp/Preferences/Macro/ElectricCRDock"
+_DOCK_PREF_KEY = "ConexionesEndpointsDock"
+_DOCK_DEFAULT_WIDTH = 420
+_DOCK_DEFAULT_HEIGHT = 520
+_DOCK_MIN_WIDTH = 340
+_DOCK_MIN_HEIGHT = 260
+_DOCK_MAX_WIDTH = 860
+_DOCK_MAX_FLOAT_WIDTH = 1400
+_DOCK_MAX_FLOAT_HEIGHT = 1100
+
+
+def _on_panel_destroyed(*_args):
+    global _PANEL_DOCK, _PANEL_WIDGET
+    _PANEL_DOCK = None
+    _PANEL_WIDGET = None
+
+
+def _on_dock_visibility_changed(visible):
+    global _PANEL_WIDGET
+    if _PANEL_WIDGET is not None:
+        try:
+            _PANEL_WIDGET.set_active(bool(visible))
+        except Exception:
+            pass
+
+
+def _find_combo_view_dock(main_window):
+    try:
+        docks = list(main_window.findChildren(QtWidgets.QDockWidget) or [])
+    except Exception:
+        docks = []
+    for d in docks:
+        title = _safe_text(getattr(d, "windowTitle", lambda: "")()).lower()
+        name = _safe_text(getattr(d, "objectName", lambda: "")()).lower()
+        if "combo" in title or "combo" in name:
+            return d
+    return None
+
+
+def _enable_dock_minmax_buttons(dock):
+    # Importante: en algunos builds de Qt/PySide, cambiar windowFlags de QDockWidget
+    # durante drag/topLevelChanged puede esconder el panel o romper el docking.
+    # Se deja como no-op para priorizar estabilidad.
+    return
+
+
+def _apply_panel_theme(panel_scroll, panel, main_window):
+    pal = None
+    try:
+        if main_window is not None:
+            pal = main_window.palette()
+    except Exception:
+        pal = None
+    if pal is None:
+        try:
+            pal = QtWidgets.QApplication.palette()
+        except Exception:
+            pal = None
+    if pal is None:
+        return
+
+    try:
+        bg = pal.color(QtGui.QPalette.Window).name()
+        fg = pal.color(QtGui.QPalette.WindowText).name()
+    except Exception:
+        bg = "#3d3d3d"
+        fg = "#f0f0f0"
+
+    for w in (panel_scroll, panel):
+        if w is None:
+            continue
+        try:
+            w.setPalette(pal)
+        except Exception:
+            pass
+        try:
+            w.setBackgroundRole(QtGui.QPalette.Window)
+        except Exception:
+            pass
+
+    try:
+        vp = panel_scroll.viewport()
+        if vp is not None:
+            vp.setPalette(pal)
+            vp.setBackgroundRole(QtGui.QPalette.Window)
+            vp.setAutoFillBackground(True)
+    except Exception:
+        pass
+
+    # Fuerza coherencia visual con el tema de FreeCAD y evita fondo blanco.
+    try:
+        panel_scroll.setStyleSheet(
+            "QScrollArea { border: 0px; background-color: %s; } "
+            "QScrollArea > QWidget#qt_scrollarea_viewport { background-color: %s; } "
+            "QWidget#ElectricCRConexPanelRoot { background-color: %s; color: %s; }"
+            % (bg, bg, bg, fg)
+        )
+    except Exception:
+        pass
+
+
+def _dock_pref_group():
+    try:
+        return App.ParamGet(_DOCK_PREF_PATH)
+    except Exception:
+        return None
+
+
+def _dock_pref_get_int(name, default_value):
+    p = _dock_pref_group()
+    if p is None:
+        return int(default_value)
+    try:
+        return int(p.GetInt(name, int(default_value)))
+    except Exception:
+        return int(default_value)
+
+
+def _dock_pref_set_int(name, value):
+    p = _dock_pref_group()
+    if p is None:
+        return
+    try:
+        p.SetInt(name, int(value))
+    except Exception:
+        pass
+
+
+def _dock_area_to_int(area_value):
+    try:
+        return int(area_value)
+    except Exception:
+        pass
+    try:
+        return int(getattr(area_value, "value"))
+    except Exception:
+        pass
+
+    known = (
+        (QtCore.Qt.NoDockWidgetArea, 0),
+        (QtCore.Qt.LeftDockWidgetArea, 1),
+        (QtCore.Qt.RightDockWidgetArea, 2),
+        (QtCore.Qt.TopDockWidgetArea, 4),
+        (QtCore.Qt.BottomDockWidgetArea, 8),
+    )
+    for enum_area, area_id in known:
+        try:
+            if area_value == enum_area:
+                return int(area_id)
+        except Exception:
+            pass
+
+    txt = _safe_text(area_value).lower()
+    if "left" in txt:
+        return 1
+    if "right" in txt:
+        return 2
+    if "top" in txt:
+        return 4
+    if "bottom" in txt:
+        return 8
+    return 2
+
+
+def _dock_area_from_int(area_int):
+    mapping = {
+        0: QtCore.Qt.NoDockWidgetArea,
+        1: QtCore.Qt.LeftDockWidgetArea,
+        2: QtCore.Qt.RightDockWidgetArea,
+        4: QtCore.Qt.TopDockWidgetArea,
+        8: QtCore.Qt.BottomDockWidgetArea,
+    }
+    return mapping.get(_dock_area_to_int(area_int), QtCore.Qt.RightDockWidgetArea)
+
+
+def _clamp_int(value, low, high):
+    try:
+        iv = int(value)
+    except Exception:
+        iv = int(low)
+    return max(int(low), min(int(high), iv))
+
+
+def _screen_available_size(main_window):
+    sw = 1920
+    sh = 1080
+    try:
+        screen = None
+        if main_window is not None and hasattr(main_window, "windowHandle"):
+            wh = main_window.windowHandle()
+            if wh is not None:
+                screen = wh.screen()
+        if screen is None:
+            app = QtWidgets.QApplication.instance()
+            if app is not None:
+                try:
+                    screen = app.primaryScreen()
+                except Exception:
+                    screen = None
+        if screen is not None and hasattr(screen, "availableGeometry"):
+            geo = screen.availableGeometry()
+            sw = max(800, int(geo.width()))
+            sh = max(600, int(geo.height()))
+    except Exception:
+        pass
+    return sw, sh
+
+
+def _clamp_float_size(main_window, width, height):
+    sw, sh = _screen_available_size(main_window)
+    max_w = min(int(_DOCK_MAX_FLOAT_WIDTH), max(_DOCK_MIN_WIDTH + 100, int(sw * 0.9)))
+    max_h = min(int(_DOCK_MAX_FLOAT_HEIGHT), max(_DOCK_MIN_HEIGHT + 100, int(sh * 0.9)))
+    w = _clamp_int(width, _DOCK_MIN_WIDTH, max_w)
+    h = _clamp_int(height, _DOCK_MIN_HEIGHT, max_h)
+    return w, h
+
+
+def _load_dock_prefs():
+    legacy_w = _dock_pref_get_int(f"{_DOCK_PREF_KEY}_w", _DOCK_DEFAULT_WIDTH)
+    legacy_h = _dock_pref_get_int(f"{_DOCK_PREF_KEY}_h", _DOCK_DEFAULT_HEIGHT)
+    dock_w = _dock_pref_get_int(f"{_DOCK_PREF_KEY}_dock_w", legacy_w)
+    float_w = _dock_pref_get_int(f"{_DOCK_PREF_KEY}_float_w", legacy_w)
+    float_h = _dock_pref_get_int(f"{_DOCK_PREF_KEY}_float_h", legacy_h)
+    area_raw = _dock_pref_get_int(
+        f"{_DOCK_PREF_KEY}_area",
+        _dock_area_to_int(QtCore.Qt.RightDockWidgetArea),
+    )
+    floating_raw = _dock_pref_get_int(f"{_DOCK_PREF_KEY}_floating", 0)
+    return {
+        "dock_width": _clamp_int(dock_w, _DOCK_MIN_WIDTH, _DOCK_MAX_WIDTH),
+        "float_width": _clamp_int(float_w, _DOCK_MIN_WIDTH, _DOCK_MAX_FLOAT_WIDTH),
+        "float_height": _clamp_int(float_h, _DOCK_MIN_HEIGHT, _DOCK_MAX_FLOAT_HEIGHT),
+        "area": _dock_area_from_int(area_raw),
+        "floating": bool(int(floating_raw)),
+    }
+
+
+def _save_dock_prefs(dock, main_window):
+    if dock is None:
+        return
+    try:
+        is_float = bool(dock.isFloating())
+        _dock_pref_set_int(f"{_DOCK_PREF_KEY}_floating", 1 if is_float else 0)
+        if is_float:
+            fw, fh = _clamp_float_size(main_window, dock.width(), dock.height())
+            _dock_pref_set_int(f"{_DOCK_PREF_KEY}_float_w", fw)
+            _dock_pref_set_int(f"{_DOCK_PREF_KEY}_float_h", fh)
+            _dbg(f"dock pref save float size={fw}x{fh}")
+        else:
+            dw = _clamp_int(dock.width(), _DOCK_MIN_WIDTH, _DOCK_MAX_WIDTH)
+            _dock_pref_set_int(f"{_DOCK_PREF_KEY}_dock_w", dw)
+            _dbg(f"dock pref save dock_width={dw}")
+    except Exception:
+        pass
+
+    try:
+        if main_window is None:
+            return
+        area = main_window.dockWidgetArea(dock)
+        if _dock_area_to_int(area) != _dock_area_to_int(QtCore.Qt.NoDockWidgetArea):
+            _dock_pref_set_int(f"{_DOCK_PREF_KEY}_area", _dock_area_to_int(area))
+            _dbg(f"dock pref save area={_dock_area_to_int(area)}")
+    except Exception:
+        pass
+
+
+def main():
+    global _PANEL_DOCK, _PANEL_WIDGET
+    if _cc is None or _cm is None:
+        _warn("No se pudo cargar component_classifier/connection_matrix. El panel puede quedar limitado.")
+    if _PANEL_DOCK is not None and _PANEL_WIDGET is not None:
+        try:
+            _PANEL_DOCK.show()
+            _PANEL_DOCK.raise_()
+            _PANEL_DOCK.activateWindow()
+            _PANEL_WIDGET.set_active(True)
+            _PANEL_WIDGET.refresh_from_selection()
+            return
+        except Exception:
+            _PANEL_DOCK = None
+            _PANEL_WIDGET = None
+
+    mw = None
+    try:
+        mw = Gui.getMainWindow()
+    except Exception:
+        mw = None
+    if mw is None:
+        _err("No se pudo obtener la ventana principal de FreeCAD.")
+        return
+
+    old = mw.findChild(QtWidgets.QDockWidget, _PANEL_DOCK_OBJECT)
+    if old is not None:
+        try:
+            old.close()
+        except Exception:
+            pass
+
+    prefs = _load_dock_prefs()
+    _dbg(
+        "dock pref load area={} dock_width={} float={} float_size={}x{}".format(
+            _dock_area_to_int(prefs.get("area", QtCore.Qt.RightDockWidgetArea)),
+            int(prefs.get("dock_width", _DOCK_DEFAULT_WIDTH)),
+            bool(prefs.get("floating", False)),
+            int(prefs.get("float_width", _DOCK_DEFAULT_WIDTH)),
+            int(prefs.get("float_height", _DOCK_DEFAULT_HEIGHT)),
+        )
+    )
+    dock = QtWidgets.QDockWidget("Conexiones Endpoints", mw)
+    dock.setObjectName(_PANEL_DOCK_OBJECT)
+    try:
+        dock.setAllowedAreas(QtCore.Qt.AllDockWidgetAreas)
+        dock.setFeatures(
+            QtWidgets.QDockWidget.DockWidgetClosable
+            | QtWidgets.QDockWidget.DockWidgetMovable
+            | QtWidgets.QDockWidget.DockWidgetFloatable
+        )
+    except Exception:
+        pass
+    _enable_dock_minmax_buttons(dock)
+
+    panel_scroll = QtWidgets.QScrollArea(dock)
+    panel_scroll.setWidgetResizable(True)
+    try:
+        panel_scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+    except Exception:
+        pass
+
+    panel = ConexionesPanelDialog()
+    try:
+        panel.setMaximumWidth(_DOCK_MAX_WIDTH)
+    except Exception:
+        pass
+    panel_scroll.setWidget(panel)
+    _apply_panel_theme(panel_scroll, panel, mw)
+    dock.setWidget(panel_scroll)
+
+    try:
+        dock.destroyed.connect(_on_panel_destroyed)
+    except Exception:
+        pass
+    try:
+        dock.visibilityChanged.connect(_on_dock_visibility_changed)
+    except Exception:
+        pass
+
+    def _persist_dock_state(*_args):
+        _save_dock_prefs(dock, mw)
+
+    def _on_dock_visibility_for_prefs(visible):
+        _dbg(f"dock visibility changed visible={bool(visible)}")
+        if not bool(visible):
+            _persist_dock_state()
+
+    def _on_dock_top_level_for_prefs(_top):
+        _dbg(
+            "dock topLevelChanged floating={} size={}x{}".format(
+                bool(dock.isFloating()),
+                int(dock.width()),
+                int(dock.height()),
+            )
+        )
+        _persist_dock_state()
+
+    def _on_dock_location_changed(area):
+        _dbg(f"dock location changed area={_dock_area_to_int(area)}")
+        _persist_dock_state()
+
+    try:
+        dock.visibilityChanged.connect(_on_dock_visibility_for_prefs)
+    except Exception:
+        pass
+    try:
+        dock.dockLocationChanged.connect(_on_dock_location_changed)
+    except Exception:
+        pass
+    try:
+        dock.topLevelChanged.connect(_on_dock_top_level_for_prefs)
+    except Exception:
+        pass
+    _PANEL_DOCK = dock
+    _PANEL_WIDGET = panel
+
+    try:
+        mw.addDockWidget(prefs["area"], dock, QtCore.Qt.Vertical)
+    except TypeError:
+        try:
+            mw.addDockWidget(prefs["area"], dock)
+        except Exception:
+            _err("No se pudo acoplar el panel en la ventana de FreeCAD.")
+            return
+    except Exception:
+        _err("No se pudo acoplar el panel en la ventana de FreeCAD.")
+        return
+    try:
+        combo_dock = _find_combo_view_dock(mw)
+        if combo_dock is not None and combo_dock is not dock:
+            try:
+                mw.tabifyDockWidget(combo_dock, dock)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    try:
+        mw.resizeDocks([dock], [prefs["dock_width"]], QtCore.Qt.Horizontal)
+    except Exception:
+        pass
+
+    panel.set_active(True)
+    panel.refresh_from_selection()
+
+    try:
+        if bool(prefs["floating"]):
+            fw, fh = _clamp_float_size(mw, prefs["float_width"], prefs["float_height"])
+            dock.setFloating(True)
+            dock.resize(fw, fh)
+        else:
+            dock.setFloating(False)
+    except Exception:
+        pass
+    dock.show()
+    _persist_dock_state()
+
+
+main()
