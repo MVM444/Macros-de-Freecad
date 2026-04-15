@@ -894,14 +894,41 @@ def _orthogonal_l_route(obj_a, obj_b, invert=False, preferred_a="", preferred_b=
     center_a = _object_guide_center(obj_a)
     center_b = _object_guide_center(obj_b)
     auto_a, auto_b = _l_axis_default_ports(obj_a, obj_b, invert=bool(invert))
-    pref_a = _canon_cardinal_name(preferred_a) or auto_a
-    pref_b = _canon_cardinal_name(preferred_b) or auto_b
+    axis_expected = _cardinal_axis(auto_a) or _cardinal_axis(auto_b)
+    pref_a_raw = _canon_cardinal_name(preferred_a)
+    pref_b_raw = _canon_cardinal_name(preferred_b)
+
+    # En L/L invertida, las preferencias de reemplazo no pueden contradecir
+    # el eje esperado del boton. Si contradicen, se descartan.
+    pref_a = pref_a_raw
+    pref_b = pref_b_raw
+    if axis_expected:
+        if pref_a and _cardinal_axis(pref_a) and _cardinal_axis(pref_a) != axis_expected:
+            _dbg(
+                "orthL discard pref_origen={} axis_expected={}".format(
+                    pref_a,
+                    axis_expected,
+                )
+            )
+            pref_a = ""
+        if pref_b and _cardinal_axis(pref_b) and _cardinal_axis(pref_b) != axis_expected:
+            _dbg(
+                "orthL discard pref_destino={} axis_expected={}".format(
+                    pref_b,
+                    axis_expected,
+                )
+            )
+            pref_b = ""
+
+    pref_a = pref_a or auto_a
+    pref_b = pref_b or auto_b
     ep_a = _port_route_endpoint(obj_a, toward_point=center_b, allowed_names=CARDINAL_NAMES, preferred_name=pref_a)
     ep_b = _port_route_endpoint(obj_b, toward_point=center_a, allowed_names=CARDINAL_NAMES, preferred_name=pref_b)
     pts = _build_l_points_preview(ep_a["point"], ep_b["point"], invert=bool(invert))
     _dbg(
-        "orthL invert={} guideA=({:.1f},{:.1f},{:.1f}) guideB=({:.1f},{:.1f},{:.1f}) pref_origen={} pref_destino={} puerto_origen={} puerto_destino={} p0=({:.1f},{:.1f},{:.1f}) p1=({:.1f},{:.1f},{:.1f})".format(
+        "orthL invert={} axis_expected={} guideA=({:.1f},{:.1f},{:.1f}) guideB=({:.1f},{:.1f},{:.1f}) pref_origen={} pref_destino={} puerto_origen={} puerto_destino={} p0=({:.1f},{:.1f},{:.1f}) p1=({:.1f},{:.1f},{:.1f})".format(
             bool(invert),
+            axis_expected or "-",
             float(center_a.x),
             float(center_a.y),
             float(center_a.z),
