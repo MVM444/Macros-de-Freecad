@@ -1,5 +1,75 @@
 """HVAC condenser object and capacity validation."""
 
+# Qt compatibility for FreeCAD 1.x (PySide6) and older builds.
+def _ensure_qt_compat():
+    import sys
+    import types
+
+    QtCore = QtGui = QtWidgets = None
+    binding_name = None
+
+    for candidate in ("PySide6", "PySide2", "PySide"):
+        try:
+            if candidate == "PySide":
+                from PySide import QtCore as _QtCore, QtGui as _QtGui
+                _QtWidgets = _QtGui
+            else:
+                module = __import__(candidate, fromlist=["QtCore", "QtGui", "QtWidgets"])
+                _QtCore = module.QtCore
+                _QtGui = module.QtGui
+                _QtWidgets = module.QtWidgets
+            QtCore, QtGui, QtWidgets = _QtCore, _QtGui, _QtWidgets
+            binding_name = candidate
+            break
+        except Exception:
+            continue
+
+    if QtCore is None:
+        return
+
+    qtgui_compat = types.ModuleType("QtGui")
+    qtgui_compat.__dict__.update(getattr(QtGui, "__dict__", {}))
+    qtgui_compat.__dict__.update(getattr(QtWidgets, "__dict__", {}))
+
+    qtsvg_compat = None
+    for module_name in ("QtSvg", "QtSvgWidgets"):
+        try:
+            module = __import__(binding_name, fromlist=[module_name])
+            qt_module = getattr(module, module_name)
+        except Exception:
+            continue
+        if qtsvg_compat is None:
+            qtsvg_compat = types.ModuleType("QtSvg")
+        qtsvg_compat.__dict__.update(getattr(qt_module, "__dict__", {}))
+
+    qtuitools_compat = None
+    try:
+        module = __import__(binding_name, fromlist=["QtUiTools"])
+        qtuitools_compat = module.QtUiTools
+    except Exception:
+        pass
+
+    for package_name in ("PySide2", "PySide"):
+        package = sys.modules.get(package_name)
+        if package is None:
+            package = types.ModuleType(package_name)
+            sys.modules[package_name] = package
+        package.QtCore = QtCore
+        package.QtGui = qtgui_compat
+        package.QtWidgets = QtWidgets
+        sys.modules[package_name + ".QtCore"] = QtCore
+        sys.modules[package_name + ".QtGui"] = qtgui_compat
+        sys.modules[package_name + ".QtWidgets"] = QtWidgets
+        if qtsvg_compat is not None:
+            package.QtSvg = qtsvg_compat
+            sys.modules[package_name + ".QtSvg"] = qtsvg_compat
+        if qtuitools_compat is not None:
+            package.QtUiTools = qtuitools_compat
+            sys.modules[package_name + ".QtUiTools"] = qtuitools_compat
+
+
+_ensure_qt_compat()
+
 import os
 
 import FreeCAD as App
@@ -239,9 +309,6 @@ def _is_master_condenser_obj(obj):
 def _configure_link_for_transform(link_obj):
     if link_obj is None or not _is_link_condenser(link_obj):
         return
-    placement_before = _clone_placement(getattr(link_obj, "Placement", None))
-    link_placement_before = _clone_placement(getattr(link_obj, "LinkPlacement", None))
-    had_link_transform = bool(getattr(link_obj, "LinkTransform", False))
     try:
         link_obj.LinkTransform = True
     except Exception:
@@ -268,17 +335,6 @@ def _configure_link_for_transform(link_obj):
                 link_obj.ViewObject.Selectable = True
     except Exception:
         pass
-
-    # Legacy migration: when LinkTransform was previously disabled, users may have
-    # moved the link with Placement. Mirror that transform to LinkPlacement once.
-    if not had_link_transform:
-        has_placement = placement_before is not None and not _placement_is_identity(placement_before)
-        has_link_placement = link_placement_before is not None and not _placement_is_identity(link_placement_before)
-        if has_placement and not has_link_placement:
-            try:
-                link_obj.LinkPlacement = placement_before
-            except Exception:
-                pass
 
 
 def _condenser_spec(model_name):
@@ -669,6 +725,48 @@ def _placement_is_identity(value, tol=1e-9):
         return False
 
 
+def _set_condenser_placement(condenser_obj, base_vec=None, rotation=None):
+    if condenser_obj is None:
+        return
+    current = getattr(condenser_obj, "Placement", App.Placement())
+    target = App.Vector(base_vec if base_vec is not None else current.Base)
+    target_rot = rotation if rotation is not None else current.Rotation
+
+    placement = getattr(condenser_obj, "Placement", App.Placement())
+    placement.Base = target
+    if rotation is not None:
+        placement.Rotation = target_rot
+    condenser_obj.Placement = placement
+
+    if _is_link_condenser(condenser_obj):
+        try:
+            condenser_obj.LinkPlacement = App.Placement()
+        except Exception:
+            pass
+
+
+def _global_placement_of(condenser_obj):
+    helper = getattr(hvac_equipment, "_global_placement_of", None)
+    if callable(helper):
+        try:
+            return helper(condenser_obj)
+        except Exception:
+            pass
+    if condenser_obj is None:
+        return App.Placement()
+    try:
+        if hasattr(condenser_obj, "getGlobalPlacement"):
+            placement = condenser_obj.getGlobalPlacement()
+            if placement is not None:
+                return App.Placement(placement)
+    except Exception:
+        pass
+    try:
+        return App.Placement(getattr(condenser_obj, "Placement", App.Placement()))
+    except Exception:
+        return App.Placement()
+
+
 def _build_condenser_shape_signature(condenser_obj):
     if condenser_obj is None:
         return "none"
@@ -945,7 +1043,7 @@ def _cleanup_orphan_symbol2d_objects(doc=None):
 
 
 def _symbol2d_placement_for_condenser(condenser_obj):
-    placement = getattr(condenser_obj, "Placement", App.Placement())
+    placement = _global_placement_of(condenser_obj)
     try:
         base = App.Vector(float(placement.Base.x), float(placement.Base.y), 0.0)
         rot = App.Rotation(placement.Rotation)
@@ -1369,31 +1467,23 @@ def _apply_condenser_shape(condenser_obj, force=False):
         _configure_link_for_transform(condenser_obj)
         has_placement = placement_before is not None and not _placement_is_identity(placement_before)
         has_link_placement = link_placement_before is not None and not _placement_is_identity(link_placement_before)
-        if has_link_placement and has_placement:
+        # Keep the runtime transform in Placement, matching evaporadoras and the
+        # route/symbol code. Older condensadoras may still carry LinkPlacement;
+        # migrate that value once so new refreshes do not double-offset links.
+        if has_link_placement and not has_placement:
             try:
-                condenser_obj.LinkPlacement = link_placement_before
+                condenser_obj.Placement = link_placement_before
             except Exception:
                 pass
+        elif placement_before is not None:
             try:
                 condenser_obj.Placement = placement_before
             except Exception:
                 pass
-        elif has_link_placement and not has_placement:
-            try:
-                condenser_obj.LinkPlacement = link_placement_before
-            except Exception:
-                pass
-        elif has_placement and not has_link_placement:
-            # Legacy links could have been moved with Placement while LinkPlacement
-            # stayed identity. Persist the effective transform in LinkPlacement.
-            try:
-                condenser_obj.LinkPlacement = placement_before
-            except Exception:
-                pass
-            try:
-                condenser_obj.Placement = App.Placement()
-            except Exception:
-                pass
+        try:
+            condenser_obj.LinkPlacement = App.Placement()
+        except Exception:
+            pass
         if "ShapeSignature" in getattr(condenser_obj, "PropertiesList", []):
             try:
                 condenser_obj.ShapeSignature = _master_shape_signature(getattr(condenser_obj, "Model", DEFAULT_CONDENSER_MODEL))
@@ -2089,22 +2179,18 @@ def insert_condenser_from_selection(doc=None, model_name=None):
     points = selection.get_selected_points()
     if points:
         point = App.Vector(points[0])
-        if _is_link_condenser(obj):
-            try:
-                link_placement = getattr(obj, "LinkPlacement", App.Placement())
-                link_placement.Base = point
-                obj.LinkPlacement = link_placement
-            except Exception:
-                pass
-        placement = getattr(obj, "Placement", App.Placement())
-        placement.Base = point
-        obj.Placement = placement
+        _set_condenser_placement(obj, base_vec=point)
+        _apply_condenser_shape(obj, force=False)
         log("Condenser ubicada en punto seleccionado")
     else:
         log("Condenser creada sin evaporadoras asignadas. Asigne manualmente.")
 
     recalculate_condenser(obj)
     hvac_project.add_object_to_hvac_group(doc, obj)
+    try:
+        doc.recompute()
+    except Exception as exc:
+        log("Recompute omitido tras insertar condensadora: {0}".format(exc))
 
     spec = _condenser_spec(selected_model)
     log(

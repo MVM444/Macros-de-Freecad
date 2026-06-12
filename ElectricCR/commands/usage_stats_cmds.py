@@ -1,6 +1,76 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+# Qt compatibility for FreeCAD 1.x (PySide6) and older builds.
+def _ensure_qt_compat():
+    import sys
+    import types
+
+    QtCore = QtGui = QtWidgets = None
+    binding_name = None
+
+    for candidate in ("PySide6", "PySide2", "PySide"):
+        try:
+            if candidate == "PySide":
+                from PySide import QtCore as _QtCore, QtGui as _QtGui
+                _QtWidgets = _QtGui
+            else:
+                module = __import__(candidate, fromlist=["QtCore", "QtGui", "QtWidgets"])
+                _QtCore = module.QtCore
+                _QtGui = module.QtGui
+                _QtWidgets = module.QtWidgets
+            QtCore, QtGui, QtWidgets = _QtCore, _QtGui, _QtWidgets
+            binding_name = candidate
+            break
+        except Exception:
+            continue
+
+    if QtCore is None:
+        return
+
+    qtgui_compat = types.ModuleType("QtGui")
+    qtgui_compat.__dict__.update(getattr(QtGui, "__dict__", {}))
+    qtgui_compat.__dict__.update(getattr(QtWidgets, "__dict__", {}))
+
+    qtsvg_compat = None
+    for module_name in ("QtSvg", "QtSvgWidgets"):
+        try:
+            module = __import__(binding_name, fromlist=[module_name])
+            qt_module = getattr(module, module_name)
+        except Exception:
+            continue
+        if qtsvg_compat is None:
+            qtsvg_compat = types.ModuleType("QtSvg")
+        qtsvg_compat.__dict__.update(getattr(qt_module, "__dict__", {}))
+
+    qtuitools_compat = None
+    try:
+        module = __import__(binding_name, fromlist=["QtUiTools"])
+        qtuitools_compat = module.QtUiTools
+    except Exception:
+        pass
+
+    for package_name in ("PySide2", "PySide"):
+        package = sys.modules.get(package_name)
+        if package is None:
+            package = types.ModuleType(package_name)
+            sys.modules[package_name] = package
+        package.QtCore = QtCore
+        package.QtGui = qtgui_compat
+        package.QtWidgets = QtWidgets
+        sys.modules[package_name + ".QtCore"] = QtCore
+        sys.modules[package_name + ".QtGui"] = qtgui_compat
+        sys.modules[package_name + ".QtWidgets"] = QtWidgets
+        if qtsvg_compat is not None:
+            package.QtSvg = qtsvg_compat
+            sys.modules[package_name + ".QtSvg"] = qtsvg_compat
+        if qtuitools_compat is not None:
+            package.QtUiTools = qtuitools_compat
+            sys.modules[package_name + ".QtUiTools"] = qtuitools_compat
+
+
+_ensure_qt_compat()
+
 import os
 import FreeCAD as App
 import FreeCADGui as Gui

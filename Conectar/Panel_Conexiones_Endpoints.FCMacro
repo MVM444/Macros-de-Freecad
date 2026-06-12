@@ -1,7 +1,78 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 # MenuText: Panel Conexiones Endpoints (Beta)
 # ToolTip: Panel unificado para conexiones por tipo de endpoint (octogonal, cuadrada, luminaria, otros)
 # Icon: Conectar/Panel_Conexiones_Endpoints.svg
+
+# Qt compatibility for FreeCAD 1.x (PySide6) and older builds.
+def _ensure_qt_compat():
+    import sys
+    import types
+
+    QtCore = QtGui = QtWidgets = None
+    binding_name = None
+
+    for candidate in ("PySide6", "PySide2", "PySide"):
+        try:
+            if candidate == "PySide":
+                from PySide import QtCore as _QtCore, QtGui as _QtGui
+                _QtWidgets = _QtGui
+            else:
+                module = __import__(candidate, fromlist=["QtCore", "QtGui", "QtWidgets"])
+                _QtCore = module.QtCore
+                _QtGui = module.QtGui
+                _QtWidgets = module.QtWidgets
+            QtCore, QtGui, QtWidgets = _QtCore, _QtGui, _QtWidgets
+            binding_name = candidate
+            break
+        except Exception:
+            continue
+
+    if QtCore is None:
+        return
+
+    qtgui_compat = types.ModuleType("QtGui")
+    qtgui_compat.__dict__.update(getattr(QtGui, "__dict__", {}))
+    qtgui_compat.__dict__.update(getattr(QtWidgets, "__dict__", {}))
+
+    qtsvg_compat = None
+    for module_name in ("QtSvg", "QtSvgWidgets"):
+        try:
+            module = __import__(binding_name, fromlist=[module_name])
+            qt_module = getattr(module, module_name)
+        except Exception:
+            continue
+        if qtsvg_compat is None:
+            qtsvg_compat = types.ModuleType("QtSvg")
+        qtsvg_compat.__dict__.update(getattr(qt_module, "__dict__", {}))
+
+    qtuitools_compat = None
+    try:
+        module = __import__(binding_name, fromlist=["QtUiTools"])
+        qtuitools_compat = module.QtUiTools
+    except Exception:
+        pass
+
+    for package_name in ("PySide2", "PySide"):
+        package = sys.modules.get(package_name)
+        if package is None:
+            package = types.ModuleType(package_name)
+            sys.modules[package_name] = package
+        package.QtCore = QtCore
+        package.QtGui = qtgui_compat
+        package.QtWidgets = QtWidgets
+        sys.modules[package_name + ".QtCore"] = QtCore
+        sys.modules[package_name + ".QtGui"] = qtgui_compat
+        sys.modules[package_name + ".QtWidgets"] = QtWidgets
+        if qtsvg_compat is not None:
+            package.QtSvg = qtsvg_compat
+            sys.modules[package_name + ".QtSvg"] = qtsvg_compat
+        if qtuitools_compat is not None:
+            package.QtUiTools = qtuitools_compat
+            sys.modules[package_name + ".QtUiTools"] = qtuitools_compat
+
+
+_ensure_qt_compat()
+
 # Toolbar: Herramientas ortogonales
 # Transaction: self
 """
@@ -142,6 +213,7 @@ except Exception:
 
 STRATEGY_LABELS = {
     "octo_45_uno": "Octogonales 45 (1 diagonal)",
+    "octo_45_uno_inv": "Octogonales 45 (1 diagonal invertida)",
     "octo_45_dos": "Octogonales 45 (2 diagonales)",
     "octo_direct": "Octogonales directo",
     "orthogonal_l": "Conectar en L",
@@ -153,6 +225,7 @@ STRATEGY_LABELS = {
 
 STRATEGY_ICON_FILES = {
     "octo_45_uno": "Conectar_objetos_en_L.svg",
+    "octo_45_uno_inv": "conectar_objetos_en_eSe.svg",
     "octo_45_dos": "conectar_objetos_en_eSe.svg",
     "octo_direct": "Conectar_objetos_en_C.svg",
     "orthogonal_l": "Conectar_objetos_en_L.svg",
@@ -165,7 +238,7 @@ STRATEGY_ICON_FILES = {
 PREVIEW_BASE_COLOR = (0.95, 0.38, 0.06)
 PREVIEW_WIDTH = 4.0
 DIRECT_ALIGN_TOL_MM = 60.0
-DEFAULT_FILLET_MM = 36.0
+DEFAULT_FILLET_MM = 100.0
 DEFAULT_CONDUIT = "EMT"
 DEFAULT_DIAMETER_MM = 22.2
 DEFAULT_LINK_KIND = "backbone"
@@ -173,6 +246,7 @@ PANEL_GENERATED_BY = "Panel_Conexiones_Endpoints"
 DEBUG_ENABLED = True
 EPS = 1e-9
 OCTO45_STUB_MM = 60.0
+ORTHO_PORT_STUB_MM = 40.0
 
 CARDINAL_NAMES = ("North", "East", "South", "West")
 DIAGONAL_NAMES = ("NorthEast", "NorthWest", "SouthEast", "SouthWest")
@@ -187,6 +261,9 @@ PORT_DIRS = {
     "SouthEast": (1.0, -1.0),
     "SouthWest": (-1.0, -1.0),
 }
+AUTO_PORT = "Auto"
+CARDINAL_PORT_OPTIONS = (AUTO_PORT, "North", "East", "South", "West")
+DIAGONAL_PORT_OPTIONS = (AUTO_PORT, "NorthEast", "NorthWest", "SouthEast", "SouthWest")
 CANON = {
     "north": "North",
     "n": "North",
@@ -227,7 +304,7 @@ def _strategy_icon_path(strategy_key):
 
 def _normalize_strategy_key(strategy_key):
     k = _safe_text(strategy_key).strip()
-    if k in ("octo_45_uno", "octo_45_dos"):
+    if k in ("octo_45_uno", "octo_45_uno_inv", "octo_45_dos"):
         return "octo_45"
     if k in ("orthogonal_l", "orthogonal_l_inv"):
         return "orthogonal_l"
@@ -238,11 +315,41 @@ def _octo45_mode_from_strategy(strategy_key):
     k = _safe_text(strategy_key).strip()
     if k == "octo_45_dos":
         return "dos"
+    if k == "octo_45_uno_inv":
+        return "uno_inv"
     return "uno"
 
 
 def _orth_l_invert_from_strategy(strategy_key):
     return _safe_text(strategy_key).strip() == "orthogonal_l_inv"
+
+
+def _strategy_port_options(strategy_key):
+    skey = _safe_text(strategy_key).strip()
+    nkey = _normalize_strategy_key(skey)
+    if nkey == "orthogonal_l" or nkey == "snake":
+        return CARDINAL_PORT_OPTIONS, CARDINAL_PORT_OPTIONS
+    if nkey == "octo_45":
+        mode = _octo45_mode_from_strategy(skey)
+        if mode == "dos":
+            return DIAGONAL_PORT_OPTIONS, DIAGONAL_PORT_OPTIONS
+        if mode == "uno_inv":
+            return CARDINAL_PORT_OPTIONS, DIAGONAL_PORT_OPTIONS
+        return DIAGONAL_PORT_OPTIONS, CARDINAL_PORT_OPTIONS
+    return (AUTO_PORT,), (AUTO_PORT,)
+
+
+def _manual_ports_norm(manual_ports):
+    raw = manual_ports or {}
+    po = _safe_text(raw.get("origin", AUTO_PORT)).strip() or AUTO_PORT
+    pd = _safe_text(raw.get("dest", AUTO_PORT)).strip() or AUTO_PORT
+    if po == AUTO_PORT:
+        po = ""
+    if pd == AUTO_PORT:
+        pd = ""
+    po = _canon_port_name(po) or ""
+    pd = _canon_port_name(pd) or ""
+    return po, pd
 
 
 def _expand_allowed_strategies(allowed, preferred=""):
@@ -252,7 +359,7 @@ def _expand_allowed_strategies(allowed, preferred=""):
     for k in (allowed or ()):
         kk = _safe_text(k).strip()
         if kk == "octo_45":
-            out.extend(["octo_45_uno", "octo_45_dos"])
+            out.extend(["octo_45_uno", "octo_45_uno_inv", "octo_45_dos"])
             if pref == "octo_45":
                 mapped_pref = "octo_45_uno"
         elif kk == "orthogonal_l":
@@ -384,6 +491,12 @@ def _resolve_route_endpoints(route_obj):
         return None
     if _is_group(obj_a) or _is_group(obj_b):
         return None
+    # Orden canonico para evitar alternancia A/B en modo reemplazo.
+    n_a = _safe_text(getattr(obj_a, "Name", "")).strip()
+    n_b = _safe_text(getattr(obj_b, "Name", "")).strip()
+    if n_a and n_b and (n_a > n_b):
+        _dbg(f"replace endpoint order normalized {n_a} <-> {n_b}")
+        return (obj_b, obj_a)
     return (obj_a, obj_b)
 
 
@@ -453,129 +566,6 @@ def _polyline_points_from_object(obj):
     return []
 
 
-def _l_axis_default_ports(obj_a, obj_b, invert=False):
-    ca = _object_guide_center(obj_a)
-    cb = _object_guide_center(obj_b)
-    dx = float(cb.x - ca.x)
-    dy = float(cb.y - ca.y)
-    dz = float(cb.z - ca.z)
-    order = sorted(
-        [("x", abs(dx)), ("y", abs(dy)), ("z", abs(dz))],
-        key=lambda it: float(it[1]),
-        reverse=True,
-    )
-    a1 = order[0][0]
-    a2 = order[1][0]
-    first = a2 if bool(invert) else a1
-    if first == "z":
-        first = "x" if abs(dx) >= abs(dy) else "y"
-
-    if first == "x":
-        pa = "East" if dx >= 0.0 else "West"
-        pb = "West" if dx >= 0.0 else "East"
-    else:
-        pa = "North" if dy >= 0.0 else "South"
-        pb = "South" if dy >= 0.0 else "North"
-    return pa, pb
-
-
-def _cardinal_from_vector_world(v):
-    vx = float(v.x)
-    vy = float(v.y)
-    if abs(vx) >= abs(vy):
-        return "East" if vx >= 0.0 else "West"
-    return "North" if vy >= 0.0 else "South"
-
-
-def _nearest_cardinal_face_for_point(obj, pt):
-    p = _vec(pt.x, pt.y, pt.z)
-    best_name = "East"
-    best_dist = float("inf")
-    for name in CARDINAL_NAMES:
-        try:
-            fc = _face_center_endpoint(obj, name)
-        except Exception:
-            continue
-        d = float(fc.distanceToPoint(p))
-        if d < best_dist:
-            best_dist = d
-            best_name = name
-    return best_name
-
-
-def _route_endpoints_for_objects(route_obj, obj_a, obj_b):
-    pts = _polyline_points_from_object(route_obj)
-    if len(pts) < 2:
-        return None, None
-    p0 = pts[0]
-    p1 = pts[-1]
-    ca = _object_guide_center(obj_a)
-    cb = _object_guide_center(obj_b)
-    s_ab = float(p0.distanceToPoint(ca)) + float(p1.distanceToPoint(cb))
-    s_ba = float(p0.distanceToPoint(cb)) + float(p1.distanceToPoint(ca))
-    if s_ab <= s_ba:
-        return p0, p1
-    return p1, p0
-
-
-def _l_ports_from_route_geometry(route_obj, obj_a, obj_b):
-    pa_pt, pb_pt = _route_endpoints_for_objects(route_obj, obj_a, obj_b)
-    if pa_pt is None or pb_pt is None:
-        return "", ""
-    pa = _nearest_cardinal_face_for_point(obj_a, pa_pt)
-    pb = _nearest_cardinal_face_for_point(obj_b, pb_pt)
-    _dbg(
-        "orthL geometry infer endpoint_origen=({:.1f},{:.1f},{:.1f}) endpoint_destino=({:.1f},{:.1f},{:.1f}) puerto_origen={} puerto_destino={}".format(
-            float(pa_pt.x),
-            float(pa_pt.y),
-            float(pa_pt.z),
-            float(pb_pt.x),
-            float(pb_pt.y),
-            float(pb_pt.z),
-            pa or "Auto",
-            pb or "Auto",
-        )
-    )
-    return pa, pb
-
-
-def _l_preferred_ports_from_route(route_obj, obj_a, obj_b, invert=False):
-    if route_obj is None or obj_a is None or obj_b is None:
-        return "", ""
-    pref_a = ""
-    pref_b = ""
-
-    # 1) Preferir inferencia desde geometria real de la ruta anterior.
-    ga, gb = _l_ports_from_route_geometry(route_obj, obj_a, obj_b)
-    if ga:
-        pref_a = ga
-    if gb:
-        pref_b = gb
-
-    # 2) Metadata solo como respaldo si geometria no alcanzo.
-    r_a = _safe_text(getattr(route_obj, "OrigenName", "")).strip()
-    r_b = _safe_text(getattr(route_obj, "DestinoName", "")).strip()
-    po = _canon_cardinal_name(getattr(route_obj, "PuertoOrigen", ""))
-    pd = _canon_cardinal_name(getattr(route_obj, "PuertoDestino", ""))
-    a_name = _safe_text(getattr(obj_a, "Name", "")).strip()
-    b_name = _safe_text(getattr(obj_b, "Name", "")).strip()
-
-    if (not pref_a or not pref_b) and r_a and r_b and po and pd:
-        if r_a == a_name and r_b == b_name:
-            if not pref_a:
-                pref_a = po
-            if not pref_b:
-                pref_b = pd
-        elif r_a == b_name and r_b == a_name:
-            if not pref_a:
-                pref_a = pd
-            if not pref_b:
-                pref_b = po
-
-    _dbg(f"orthL replace prefs puerto_origen={pref_a or 'Auto'} puerto_destino={pref_b or 'Auto'}")
-    return pref_a, pref_b
-
-
 def _vec(x=0.0, y=0.0, z=0.0):
     return App.Vector(float(x), float(y), float(z))
 
@@ -629,6 +619,15 @@ def _object_guide_center(obj):
     except Exception:
         pass
     return _object_anchor(obj)
+
+
+def _router_center(obj):
+    # Para cajas/octogonales, usar centro geometrico XY estable para clasificar
+    # la direccion dominante y evitar sesgos por geometria asimetrica.
+    kind = _safe_text(_endpoint_kind(obj)).strip()
+    if kind in ("Octogonal", "Cuadrada"):
+        return _object_anchor(obj)
+    return _object_guide_center(obj)
 
 
 def _canon_port_name(name):
@@ -757,6 +756,274 @@ def _world_ports(obj):
     return [by_name[n] for n in PORT_ORDER if n in by_name]
 
 
+def _world_ports_reoriented(obj, include_diagonal=True):
+    base = list(_world_ports(obj) or [])
+    center = _router_center(obj)
+    by_name = {}
+    for p in base:
+        try:
+            pt = p.get("point", center)
+            vec = _vec(float(pt.x - center.x), float(pt.y - center.y), 0.0)
+            if _vlen_xy(vec) <= EPS:
+                vec = p.get("dir", _vec(0.0, 0.0, 0.0))
+            name = _infer_port_name_from_vector(vec)
+            if (not include_diagonal) and (name in DIAGONAL_NAMES):
+                continue
+            dxy = _unit_xy(p.get("dir", _vec(0.0, 0.0, 0.0)), fallback=vec)
+            score = _vlen_xy(vec)
+            cand = {"name": name, "point": _vec(pt.x, pt.y, pt.z), "dir": dxy}
+            prev = by_name.get(name)
+            if prev is None or float(score) > float(prev[0]):
+                by_name[name] = (float(score), cand)
+        except Exception:
+            pass
+    ordered = list(PORT_ORDER if include_diagonal else CARDINAL_NAMES)
+    out = [by_name[n][1] for n in ordered if n in by_name]
+    if out:
+        return out
+    # Fallback geometrico si no hay puertos serializados.
+    try:
+        return [
+            {"name": _safe_text(p.get("name", "")), "point": p.get("point", center), "dir": p.get("direction", _vec(0, 0, 0))}
+            for p in (get_ports(obj, include_diagonal=include_diagonal) or [])
+        ]
+    except Exception:
+        return []
+
+
+def get_ports(obj, include_diagonal=False):
+    center = _router_center(obj)
+    names = list(CARDINAL_NAMES)
+    if bool(include_diagonal):
+        names.extend(list(DIAGONAL_NAMES))
+    out = []
+    for name in names:
+        if name in CARDINAL_NAMES:
+            pt = _cardinal_endpoint_world(obj, name)
+            fallback_dir = _world_dir_from_cardinal(name)
+        else:
+            dxy = PORT_DIRS.get(name, (0.0, 0.0))
+            fallback_dir = _unit_xy(_vec(float(dxy[0]), float(dxy[1]), 0.0))
+            pt = _shape_directional_endpoint(obj, fallback_dir)
+        d = _unit_xy(
+            _vec(float(pt.x) - float(center.x), float(pt.y) - float(center.y), 0.0),
+            fallback=fallback_dir,
+        )
+        out.append(
+            {
+                "name": name,
+                "point": _vec(float(pt.x), float(pt.y), float(pt.z)),
+                "direction": _vec(float(d.x), float(d.y), 0.0),
+            }
+        )
+    return out
+
+
+def _polyline_len_xy(points):
+    pts = list(points or [])
+    if len(pts) < 2:
+        return 0.0
+    total = 0.0
+    for i in range(1, len(pts)):
+        dx = float(pts[i].x) - float(pts[i - 1].x)
+        dy = float(pts[i].y) - float(pts[i - 1].y)
+        total += math.hypot(dx, dy)
+    return float(total)
+
+
+def _classify_spatial_relation(obj_a, obj_b):
+    ca = _router_center(obj_a)
+    cb = _router_center(obj_b)
+    dx = float(cb.x) - float(ca.x)
+    dy = float(cb.y) - float(ca.y)
+    dominant = "x" if abs(dx) >= abs(dy) else "y"
+    if dominant == "x":
+        pa = "East" if dx >= 0.0 else "West"
+        pb = "West" if dx >= 0.0 else "East"
+    else:
+        pa = "North" if dy >= 0.0 else "South"
+        pb = "South" if dy >= 0.0 else "North"
+    return {
+        "center_a": ca,
+        "center_b": cb,
+        "dx": float(dx),
+        "dy": float(dy),
+        "dominant_axis": dominant,
+        "dominant_port_a": pa,
+        "dominant_port_b": pb,
+    }
+
+
+def _route_core_orthogonal(p1, p2, mode_txt="auto", axis_txt="x"):
+    dx = float(p2.x) - float(p1.x)
+    dy = float(p2.y) - float(p1.y)
+    adx = abs(dx)
+    ady = abs(dy)
+    aligned = (adx <= EPS) or (ady <= EPS)
+    axis = _safe_text(axis_txt).strip().lower()
+    if axis not in ("x", "y"):
+        axis = "x" if adx >= ady else "y"
+    mode = _safe_text(mode_txt).strip().lower() or "auto"
+
+    pts = [p1]
+    if mode == "auto":
+        mode = "direct" if aligned else "l"
+
+    if mode == "direct":
+        if aligned:
+            pts.append(p2)
+        elif axis == "x":
+            pts.extend([_vec(float(p2.x), float(p1.y), float(p1.z)), p2])
+        else:
+            pts.extend([_vec(float(p1.x), float(p2.y), float(p1.z)), p2])
+        return _dedupe_points(pts)
+
+    if mode == "l":
+        if aligned:
+            pts.append(p2)
+        elif axis == "x":
+            pts.extend([_vec(float(p2.x), float(p1.y), float(p1.z)), p2])
+        else:
+            pts.extend([_vec(float(p1.x), float(p2.y), float(p1.z)), p2])
+        return _dedupe_points(pts)
+
+    if mode == "c":
+        off = max(90.0, min(260.0, 0.18 * max(1.0, adx + ady)))
+        if axis == "x":
+            x_off = (max(float(p1.x), float(p2.x)) + off) if dx >= 0.0 else (min(float(p1.x), float(p2.x)) - off)
+            pts.extend([_vec(x_off, float(p1.y), float(p1.z)), _vec(x_off, float(p2.y), float(p1.z)), p2])
+        else:
+            y_off = (max(float(p1.y), float(p2.y)) + off) if dy >= 0.0 else (min(float(p1.y), float(p2.y)) - off)
+            pts.extend([_vec(float(p1.x), y_off, float(p1.z)), _vec(float(p2.x), y_off, float(p1.z)), p2])
+        return _dedupe_points(pts)
+
+    if mode == "snake":
+        off = max(90.0, min(260.0, 0.18 * max(1.0, adx + ady)))
+        if aligned:
+            if adx <= EPS:
+                x_mid = float(p1.x) + (off if float(p2.x) >= float(p1.x) else -off)
+                pts.extend([_vec(x_mid, float(p1.y), float(p1.z)), _vec(x_mid, float(p2.y), float(p1.z)), p2])
+            else:
+                y_mid = float(p1.y) + (off if float(p2.y) >= float(p1.y) else -off)
+                pts.extend([_vec(float(p1.x), y_mid, float(p1.z)), _vec(float(p2.x), y_mid, float(p1.z)), p2])
+        elif axis == "x":
+            x_mid = 0.5 * (float(p1.x) + float(p2.x))
+            pts.extend([_vec(x_mid, float(p1.y), float(p1.z)), _vec(x_mid, float(p2.y), float(p1.z)), p2])
+        else:
+            y_mid = 0.5 * (float(p1.y) + float(p2.y))
+            pts.extend([_vec(float(p1.x), y_mid, float(p1.z)), _vec(float(p2.x), y_mid, float(p1.z)), p2])
+        return _dedupe_points(pts)
+
+    pts.append(p2)
+    return _dedupe_points(pts)
+
+
+def route_ports(port_a, port_b, mode="auto", first_axis=""):
+    pa = port_a.get("point", _vec(0.0, 0.0, 0.0))
+    pb = port_b.get("point", _vec(0.0, 0.0, 0.0))
+    z_route = float(pa.z)
+    p1 = _vec(float(pa.x), float(pa.y), z_route)
+    p2 = _vec(float(pb.x), float(pb.y), z_route)
+    axis_txt = _safe_text(first_axis).strip().lower()
+    if axis_txt not in ("x", "y"):
+        axis_txt = "x" if abs(float(p2.x) - float(p1.x)) >= abs(float(p2.y) - float(p1.y)) else "y"
+    mode_txt = _safe_text(mode).strip().lower() or "auto"
+
+    da_raw = port_a.get("direction", _vec(0.0, 0.0, 0.0))
+    db_raw = port_b.get("direction", _vec(0.0, 0.0, 0.0))
+    da = _unit_xy(da_raw) if _vlen_xy(da_raw) > EPS else _vec(0.0, 0.0, 0.0)
+    db = _unit_xy(db_raw) if _vlen_xy(db_raw) > EPS else _vec(0.0, 0.0, 0.0)
+    if mode_txt == "auto":
+        aligned = (abs(float(p2.x) - float(p1.x)) <= EPS) or (abs(float(p2.y) - float(p1.y)) <= EPS)
+        if aligned:
+            mode_txt = "direct"
+        else:
+            if _vlen_xy(da) <= EPS or _vlen_xy(db) <= EPS:
+                mode_txt = "l"
+            else:
+                dir_dot = _dot_xy(da, db)
+                mode_txt = "l" if abs(float(dir_dot)) <= 0.25 else "c"
+    span = max(1.0, abs(float(p2.x) - float(p1.x)) + abs(float(p2.y) - float(p1.y)))
+    stub = min(float(ORTHO_PORT_STUB_MM), max(8.0, 0.12 * span))
+    p1_stub = _vec(float(p1.x + (da.x * stub)), float(p1.y + (da.y * stub)), z_route) if _vlen_xy(da) > EPS else p1
+    p2_stub = _vec(float(p2.x + (db.x * stub)), float(p2.y + (db.y * stub)), z_route) if _vlen_xy(db) > EPS else p2
+
+    core = _route_core_orthogonal(p1_stub, p2_stub, mode_txt=mode_txt, axis_txt=axis_txt)
+    pts = [p1]
+    if p1.distanceToPoint(p1_stub) > EPS:
+        pts.append(p1_stub)
+    pts.extend(list(core[1:] if len(core) > 1 else []))
+    if pts and pts[-1].distanceToPoint(p2) > EPS:
+        pts.append(p2)
+
+    out = _dedupe_points(pts)
+    if abs(float(pb.z) - z_route) > EPS:
+        out.append(_vec(float(pb.x), float(pb.y), float(pb.z)))
+    return _dedupe_points(out)
+
+
+def _port_name_rank(name):
+    nm = _safe_text(name).strip()
+    rank = {n: i for i, n in enumerate(list(CARDINAL_NAMES) + list(DIAGONAL_NAMES))}
+    return int(rank.get(nm, 99))
+
+
+def select_best_port_pair(objA, objB, allowed_a=None, allowed_b=None, mode="auto", first_axis=""):
+    pa_all = list(get_ports(objA, include_diagonal=True) or [])
+    pb_all = list(get_ports(objB, include_diagonal=True) or [])
+    allow_a = {_safe_text(x).strip() for x in (allowed_a or []) if _safe_text(x).strip()}
+    allow_b = {_safe_text(x).strip() for x in (allowed_b or []) if _safe_text(x).strip()}
+    if allow_a:
+        pa_all = [p for p in pa_all if _safe_text(p.get("name", "")).strip() in allow_a]
+    if allow_b:
+        pb_all = [p for p in pb_all if _safe_text(p.get("name", "")).strip() in allow_b]
+    if not pa_all or not pb_all:
+        return None
+
+    axis_txt = _safe_text(first_axis).strip().lower()
+    best = None
+    best_score = None
+    for pa in pa_all:
+        for pb in pb_all:
+            pts = route_ports(pa, pb, mode=mode, first_axis=axis_txt)
+            if len(pts) < 2:
+                continue
+            manh = _polyline_len_xy(pts)
+            bends = max(0, len(pts) - 2)
+            da_raw = pa.get("direction", _vec(0.0, 0.0, 0.0))
+            db_raw = pb.get("direction", _vec(0.0, 0.0, 0.0))
+            da = _unit_xy(da_raw) if _vlen_xy(da_raw) > EPS else _vec(0.0, 0.0, 0.0)
+            db = _unit_xy(db_raw) if _vlen_xy(db_raw) > EPS else _vec(0.0, 0.0, 0.0)
+            dep = _unit_xy(_vec(float(pts[1].x) - float(pts[0].x), float(pts[1].y) - float(pts[0].y), 0.0))
+            arr = _unit_xy(_vec(float(pts[-1].x) - float(pts[-2].x), float(pts[-1].y) - float(pts[-2].y), 0.0))
+            align_a = max(-1.0, min(1.0, _dot_xy(da, dep)))
+            align_b = max(-1.0, min(1.0, _dot_xy(_vec(-db.x, -db.y, 0.0), arr)))
+            align_pen = float((1.0 - align_a) * 340.0) + float((1.0 - align_b) * 340.0)
+            bend_pen = float(bends) * 140.0
+            axis_pen = 0.0
+            if axis_txt in ("x", "y") and len(pts) >= 2:
+                ddx = abs(float(pts[1].x) - float(pts[0].x))
+                ddy = abs(float(pts[1].y) - float(pts[0].y))
+                first_seg_axis = "x" if ddx >= ddy else "y"
+                if first_seg_axis != axis_txt:
+                    axis_pen += 120.0
+            score = float(manh) + align_pen + bend_pen + axis_pen
+            score += (0.01 * float(_port_name_rank(pa.get("name", "")))) + (
+                0.001 * float(_port_name_rank(pb.get("name", "")))
+            )
+            if best is None or score < best_score:
+                best = (pa, pb, pts)
+                best_score = score
+    if best is None:
+        return None
+    return {
+        "port_a": best[0],
+        "port_b": best[1],
+        "points": best[2],
+        "score": float(best_score),
+    }
+
+
 def _pick_port(obj, ports, allowed_names, toward_point, preferred_name="Auto"):
     allowed = tuple(n for n in allowed_names if n in PORT_DIRS)
     if not allowed:
@@ -816,6 +1083,29 @@ def _build_45_xy_points(start_xy, end_xy, use_two_diagonals):
     return _dedupe_points(out)
 
 
+def _build_45_xy_points_inverted(start_xy, end_xy):
+    sx = float(start_xy.x)
+    sy = float(start_xy.y)
+    ex = float(end_xy.x)
+    ey = float(end_xy.y)
+    z = float(start_xy.z)
+    dx = ex - sx
+    dy = ey - sy
+    adx = abs(dx)
+    ady = abs(dy)
+    out = [_vec(sx, sy, z)]
+    if adx <= EPS and ady <= EPS:
+        out.append(_vec(ex, ey, z))
+        return _dedupe_points(out)
+    sign_x = 1.0 if dx >= 0.0 else -1.0
+    sign_y = 1.0 if dy >= 0.0 else -1.0
+    d = min(adx, ady)
+    if d > EPS:
+        out.append(_vec(ex - (sign_x * d), ey - (sign_y * d), z))
+    out.append(_vec(ex, ey, z))
+    return _dedupe_points(out)
+
+
 def _build_connection_points_45(port_a, port_b, mode_key="uno", stub_mm=OCTO45_STUB_MM):
     pa = _vec(port_a["point"].x, port_a["point"].y, port_a["point"].z)
     pb = _vec(port_b["point"].x, port_b["point"].y, port_b["point"].z)
@@ -827,7 +1117,13 @@ def _build_connection_points_45(port_a, port_b, mode_key="uno", stub_mm=OCTO45_S
     z_route = float(p_a_out.z)
     route_start = _vec(float(p_a_out.x), float(p_a_out.y), z_route)
     route_end = _vec(float(p_b_pre.x), float(p_b_pre.y), z_route)
-    core = _build_45_xy_points(route_start, route_end, use_two_diagonals=(_safe_text(mode_key).strip() == "dos"))
+    mode_txt = _safe_text(mode_key).strip()
+    if mode_txt == "dos":
+        core = _build_45_xy_points(route_start, route_end, use_two_diagonals=True)
+    elif mode_txt == "uno_inv":
+        core = _build_45_xy_points_inverted(route_start, route_end)
+    else:
+        core = _build_45_xy_points(route_start, route_end, use_two_diagonals=False)
     pts = [pa, p_a_out]
     if core:
         pts.extend(core[1:])
@@ -838,20 +1134,56 @@ def _build_connection_points_45(port_a, port_b, mode_key="uno", stub_mm=OCTO45_S
 
 
 def _octo45_route(obj_a, obj_b, mode_key="uno", diag_origen="Auto", diag_destino="Auto", stub_mm=OCTO45_STUB_MM):
-    ports_a = _world_ports(obj_a)
-    ports_b = _world_ports(obj_b)
+    ports_a = list(_world_ports_reoriented(obj_a, include_diagonal=True) or [])
+    ports_b = list(_world_ports_reoriented(obj_b, include_diagonal=True) or [])
+    if not ports_a:
+        ports_a = _world_ports(obj_a)
+    if not ports_b:
+        ports_b = _world_ports(obj_b)
     center_a = _object_anchor(obj_a)
     center_b = _object_anchor(obj_b)
     mode = _safe_text(mode_key).strip() or "uno"
     pref_a = _safe_text(diag_origen).strip() or "Auto"
     pref_b = _safe_text(diag_destino).strip() or "Auto"
-    p_a = _pick_port(obj_a, ports_a, DIAGONAL_NAMES, toward_point=center_b, preferred_name=pref_a)
-    allowed_b = DIAGONAL_NAMES if mode == "dos" else CARDINAL_NAMES
-    p_b = _pick_port(obj_b, ports_b, allowed_b, toward_point=center_a, preferred_name=(pref_b if mode == "dos" else "Auto"))
+    allow_a = DIAGONAL_NAMES
+    allow_b = CARDINAL_NAMES
+    if mode == "dos":
+        allow_a = DIAGONAL_NAMES
+        allow_b = DIAGONAL_NAMES
+    elif mode == "uno_inv":
+        allow_a = CARDINAL_NAMES
+        allow_b = DIAGONAL_NAMES
+
+    def _select_45_port(obj, ports, allowed_names, toward_point, preferred_name):
+        allowed = tuple(allowed_names or ())
+        if not allowed:
+            raise RuntimeError("Sin puertos permitidos para ruta 45.")
+        only_cardinal = all(n in CARDINAL_NAMES for n in allowed)
+        pref_txt = _canon_port_name(preferred_name)
+        if only_cardinal:
+            pref_card = _canon_cardinal_name(pref_txt)
+            if pref_card not in allowed:
+                pref_card = ""
+            auto_card = _canon_cardinal_name(_face_name_toward_world(obj, toward_point))
+            chosen = pref_card or auto_card
+            if chosen not in allowed:
+                chosen = allowed[0]
+            pxyz = _cardinal_endpoint_world(obj, chosen)
+            return {"name": chosen, "point": pxyz, "dir": _world_dir_from_cardinal(chosen)}
+
+        pref = pref_txt if pref_txt in allowed else "Auto"
+        return _pick_port(obj, ports, allowed, toward_point=toward_point, preferred_name=pref)
+
+    p_a = _select_45_port(obj_a, ports_a, allow_a, center_b, pref_a)
+    p_b = _select_45_port(obj_b, ports_b, allow_b, center_a, pref_b)
     pts = _build_connection_points_45(p_a, p_b, mode_key=mode, stub_mm=stub_mm)
     _dbg(
-        "octo45 mode={} puerto_origen={} puerto_destino={} p0=({:.1f},{:.1f},{:.1f}) p1=({:.1f},{:.1f},{:.1f})".format(
+        "octo45 mode={} pref_origen={} pref_destino={} allow_a={} allow_b={} puerto_origen={} puerto_destino={} p0=({:.1f},{:.1f},{:.1f}) p1=({:.1f},{:.1f},{:.1f})".format(
             mode,
+            pref_a or "Auto",
+            pref_b or "Auto",
+            ",".join(list(allow_a) or []),
+            ",".join(list(allow_b) or []),
             _safe_text(p_a.get("name", "")),
             _safe_text(p_b.get("name", "")),
             float(pts[0].x),
@@ -867,6 +1199,29 @@ def _octo45_route(obj_a, obj_b, mode_key="uno", diag_origen="Auto", diag_destino
 
 def _port_route_endpoint(obj, toward_point, allowed_names=CARDINAL_NAMES, preferred_name="Auto"):
     kind = _safe_text(_endpoint_kind(obj)).strip()
+    allowed = tuple(allowed_names or ())
+    pref_card = _canon_cardinal_name(preferred_name)
+    auto_card = _canon_cardinal_name(_face_name_toward(obj, toward_point))
+    desired_card = pref_card or auto_card
+
+    # Para rutas cardinales (L/snake), usar geometria local del objeto (cara) en vez de
+    # depender de nombres de puerto serializados, que pueden venir desfasados en objetos rotados.
+    if desired_card in CARDINAL_NAMES and ((not allowed) or (desired_card in allowed)):
+        try:
+            pxyz = _cardinal_endpoint_world(obj, desired_card)
+            _dbg(
+                "cardinal endpoint obj={} face={} p=({:.1f},{:.1f},{:.1f})".format(
+                    _safe_text(getattr(obj, "Name", "")),
+                    desired_card,
+                    float(pxyz.x),
+                    float(pxyz.y),
+                    float(pxyz.z),
+                )
+            )
+            return {"point": pxyz, "port": desired_card}
+        except Exception:
+            pass
+
     if kind in ("Octogonal", "Cuadrada"):
         try:
             p = _pick_port(
@@ -891,54 +1246,70 @@ def _port_route_endpoint(obj, toward_point, allowed_names=CARDINAL_NAMES, prefer
 
 
 def _orthogonal_l_route(obj_a, obj_b, invert=False, preferred_a="", preferred_b=""):
-    center_a = _object_guide_center(obj_a)
-    center_b = _object_guide_center(obj_b)
-    auto_a, auto_b = _l_axis_default_ports(obj_a, obj_b, invert=bool(invert))
-    axis_expected = _cardinal_axis(auto_a) or _cardinal_axis(auto_b)
-    pref_a_raw = _canon_cardinal_name(preferred_a)
-    pref_b_raw = _canon_cardinal_name(preferred_b)
-
-    # En L/L invertida, las preferencias de reemplazo no pueden contradecir
-    # el eje esperado del boton. Si contradicen, se descartan.
-    pref_a = pref_a_raw
-    pref_b = pref_b_raw
-    if axis_expected:
-        if pref_a and _cardinal_axis(pref_a) and _cardinal_axis(pref_a) != axis_expected:
-            _dbg(
-                "orthL discard pref_origen={} axis_expected={}".format(
-                    pref_a,
-                    axis_expected,
-                )
-            )
-            pref_a = ""
-        if pref_b and _cardinal_axis(pref_b) and _cardinal_axis(pref_b) != axis_expected:
-            _dbg(
-                "orthL discard pref_destino={} axis_expected={}".format(
-                    pref_b,
-                    axis_expected,
-                )
-            )
-            pref_b = ""
-
-    pref_a = pref_a or auto_a
-    pref_b = pref_b or auto_b
-    ep_a = _port_route_endpoint(obj_a, toward_point=center_b, allowed_names=CARDINAL_NAMES, preferred_name=pref_a)
-    ep_b = _port_route_endpoint(obj_b, toward_point=center_a, allowed_names=CARDINAL_NAMES, preferred_name=pref_b)
-    pts = _build_l_points_preview(ep_a["point"], ep_b["point"], invert=bool(invert))
+    rel = _classify_spatial_relation(obj_a, obj_b)
+    center_a = rel["center_a"]
+    center_b = rel["center_b"]
+    dx = float(rel["dx"])
+    dy = float(rel["dy"])
+    dominant_axis = _safe_text(rel["dominant_axis"]).strip() or "x"
+    first_axis = ("y" if dominant_axis == "x" else "x") if bool(invert) else dominant_axis
+    pref_a = _canon_cardinal_name(preferred_a)
+    pref_b = _canon_cardinal_name(preferred_b)
+    allow_a = (pref_a,) if pref_a else (_safe_text(rel["dominant_port_a"]).strip() or "",)
+    allow_b = (pref_b,) if pref_b else (_safe_text(rel["dominant_port_b"]).strip() or "",)
+    allow_a = tuple([x for x in allow_a if x in CARDINAL_NAMES])
+    allow_b = tuple([x for x in allow_b if x in CARDINAL_NAMES])
+    pair = select_best_port_pair(
+        obj_a,
+        obj_b,
+        allowed_a=allow_a,
+        allowed_b=allow_b,
+        mode="l",
+        first_axis=first_axis,
+    )
+    if pair is None:
+        _dbg("orthL strict pair not found; using constrained endpoint fallback")
+        ep_a = _port_route_endpoint(
+            obj_a,
+            toward_point=center_b,
+            allowed_names=(allow_a or CARDINAL_NAMES),
+            preferred_name=(pref_a or ""),
+        )
+        ep_b = _port_route_endpoint(
+            obj_b,
+            toward_point=center_a,
+            allowed_names=(allow_b or CARDINAL_NAMES),
+            preferred_name=(pref_b or ""),
+        )
+        pts = route_ports(
+            {"point": ep_a["point"], "name": _safe_text(ep_a.get("port", "")), "direction": _vec(0.0, 0.0, 0.0)},
+            {"point": ep_b["point"], "name": _safe_text(ep_b.get("port", "")), "direction": _vec(0.0, 0.0, 0.0)},
+            mode="l",
+            first_axis=first_axis,
+        )
+        pa_name = _safe_text(ep_a.get("port", ""))
+        pb_name = _safe_text(ep_b.get("port", ""))
+    else:
+        pts = list(pair.get("points", []) or [])
+        pa_name = _safe_text(pair.get("port_a", {}).get("name", ""))
+        pb_name = _safe_text(pair.get("port_b", {}).get("name", ""))
     _dbg(
-        "orthL invert={} axis_expected={} guideA=({:.1f},{:.1f},{:.1f}) guideB=({:.1f},{:.1f},{:.1f}) pref_origen={} pref_destino={} puerto_origen={} puerto_destino={} p0=({:.1f},{:.1f},{:.1f}) p1=({:.1f},{:.1f},{:.1f})".format(
+        "orthL invert={} dominant_axis={} first_axis={} dx={:.1f} dy={:.1f} allowed_a={} allowed_b={} guideA=({:.1f},{:.1f},{:.1f}) guideB=({:.1f},{:.1f},{:.1f}) puerto_origen={} puerto_destino={} p0=({:.1f},{:.1f},{:.1f}) p1=({:.1f},{:.1f},{:.1f})".format(
             bool(invert),
-            axis_expected or "-",
+            dominant_axis,
+            first_axis,
+            float(dx),
+            float(dy),
+            ",".join(allow_a) if allow_a else "ALL",
+            ",".join(allow_b) if allow_b else "ALL",
             float(center_a.x),
             float(center_a.y),
             float(center_a.z),
             float(center_b.x),
             float(center_b.y),
             float(center_b.z),
-            pref_a or "Auto",
-            pref_b or "Auto",
-            _safe_text(ep_a.get("port", "")),
-            _safe_text(ep_b.get("port", "")),
+            pa_name or "Auto",
+            pb_name or "Auto",
             float(pts[0].x),
             float(pts[0].y),
             float(pts[0].z),
@@ -947,7 +1318,58 @@ def _orthogonal_l_route(obj_a, obj_b, invert=False, preferred_a="", preferred_b=
             float(pts[-1].z),
         )
     )
-    return {"points": pts, "port_a": _safe_text(ep_a.get("port", "")), "port_b": _safe_text(ep_b.get("port", ""))}
+    return {"points": _dedupe_points(pts), "port_a": pa_name, "port_b": pb_name}
+
+
+def _snake_route(obj_a, obj_b, preferred_a="", preferred_b=""):
+    rel = _classify_spatial_relation(obj_a, obj_b)
+    dominant_axis = _safe_text(rel["dominant_axis"]).strip() or "x"
+    pref_a = _canon_cardinal_name(preferred_a)
+    pref_b = _canon_cardinal_name(preferred_b)
+    allow_a = (pref_a,) if pref_a else (_safe_text(rel["dominant_port_a"]).strip() or "",)
+    allow_b = (pref_b,) if pref_b else (_safe_text(rel["dominant_port_b"]).strip() or "",)
+    allow_a = tuple([x for x in allow_a if x in CARDINAL_NAMES])
+    allow_b = tuple([x for x in allow_b if x in CARDINAL_NAMES])
+    pair = select_best_port_pair(
+        obj_a,
+        obj_b,
+        allowed_a=allow_a,
+        allowed_b=allow_b,
+        mode="snake",
+        first_axis=dominant_axis,
+    )
+    if pair is None:
+        pair = select_best_port_pair(
+            obj_a,
+            obj_b,
+            allowed_a=CARDINAL_NAMES,
+            allowed_b=CARDINAL_NAMES,
+            mode="snake",
+            first_axis=dominant_axis,
+        )
+    if pair is None:
+        return _orthogonal_l_route(obj_a, obj_b, invert=False)
+    pts = list(pair.get("points", []) or [])
+    pa_name = _safe_text(pair.get("port_a", {}).get("name", ""))
+    pb_name = _safe_text(pair.get("port_b", {}).get("name", ""))
+    _dbg(
+        "snake dominant_axis={} pref_origen={} pref_destino={} allowed_a={} allowed_b={} puerto_origen={} puerto_destino={} p0=({:.1f},{:.1f},{:.1f}) p1=({:.1f},{:.1f},{:.1f})".format(
+            dominant_axis,
+            pref_a or "Auto",
+            pref_b or "Auto",
+            ",".join(allow_a) if allow_a else "ALL",
+            ",".join(allow_b) if allow_b else "ALL",
+            pa_name or "Auto",
+            pb_name or "Auto",
+            float(pts[0].x),
+            float(pts[0].y),
+            float(pts[0].z),
+            float(pts[-1].x),
+            float(pts[-1].y),
+            float(pts[-1].z),
+        )
+    )
+    return {"points": _dedupe_points(pts), "port_a": pa_name, "port_b": pb_name}
 
 
 def _is_aligned_xy(p1, p2, tol_mm=1.0):
@@ -976,6 +1398,16 @@ def _object_half_extents_xy(obj, center, ax, ay):
         shp = getattr(obj, "Shape", None)
         if shp is None or shp.isNull():
             return hx, hy
+        # Preferir vertices reales para objetos rotados (BoundBox puede sobredimensionar).
+        verts = []
+        for vtx in (getattr(shp, "Vertexes", []) or []):
+            pt = getattr(vtx, "Point", None)
+            if pt is not None:
+                verts.append(_vec(pt.x, pt.y, pt.z))
+        if verts:
+            hx = max(abs(_dot_xy(_vec(v.x - center.x, v.y - center.y, 0.0), ax)) for v in verts)
+            hy = max(abs(_dot_xy(_vec(v.x - center.x, v.y - center.y, 0.0), ay)) for v in verts)
+            return max(20.0, float(hx)), max(20.0, float(hy))
         bb = shp.BoundBox
         corners = (
             _vec(bb.XMin, bb.YMin, bb.ZMin),
@@ -994,9 +1426,123 @@ def _object_half_extents_xy(obj, center, ax, ay):
     return max(20.0, float(hx)), max(20.0, float(hy))
 
 
+def _world_dir_from_cardinal(face_name):
+    face = _canon_cardinal_name(face_name)
+    if face == "East":
+        return _vec(1.0, 0.0, 0.0)
+    if face == "West":
+        return _vec(-1.0, 0.0, 0.0)
+    if face == "North":
+        return _vec(0.0, 1.0, 0.0)
+    if face == "South":
+        return _vec(0.0, -1.0, 0.0)
+    return _vec(0.0, 0.0, 0.0)
+
+
+def _shape_directional_endpoint(obj, dir_world):
+    center = _router_center(obj)
+    u = _unit_xy(dir_world, fallback=_vec(1.0, 0.0, 0.0))
+    v = _vec(-u.y, u.x, 0.0)
+
+    pts = []
+    try:
+        shp = getattr(obj, "Shape", None)
+        if shp is not None and (not shp.isNull()):
+            for vv in (getattr(shp, "Vertexes", []) or []):
+                p = getattr(vv, "Point", None)
+                if p is not None:
+                    pts.append(_vec(p.x, p.y, center.z))
+            for ed in (getattr(shp, "Edges", []) or []):
+                try:
+                    t0 = float(getattr(ed, "FirstParameter", 0.0))
+                    t1 = float(getattr(ed, "LastParameter", 1.0))
+                    for f in (0.25, 0.5, 0.75):
+                        t = t0 + ((t1 - t0) * f)
+                        p = ed.valueAt(t)
+                        pts.append(_vec(p.x, p.y, center.z))
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    if not pts:
+        return _vec(center.x, center.y, center.z)
+
+    best = None
+    best_score = -1e99
+    for p in pts:
+        d = _vec(float(p.x - center.x), float(p.y - center.y), 0.0)
+        proj = _dot_xy(d, u)
+        if proj <= EPS:
+            continue
+        ortho = abs(_dot_xy(d, v))
+        score = float(proj - (0.35 * ortho))
+        if score > best_score:
+            best_score = score
+            best = p
+
+    if best is None:
+        return _vec(center.x, center.y, center.z)
+    return _vec(best.x, best.y, center.z)
+
+
+def _edge_face_center_endpoint(obj, dir_world):
+    center = _router_center(obj)
+    u = _unit_xy(dir_world, fallback=_vec(1.0, 0.0, 0.0))
+    best = None
+    best_score = -1e99
+    try:
+        shp = getattr(obj, "Shape", None)
+        if shp is None or shp.isNull():
+            return None
+        for ed in (getattr(shp, "Edges", []) or []):
+            vtx = list(getattr(ed, "Vertexes", []) or [])
+            if len(vtx) < 2:
+                continue
+            p0 = getattr(vtx[0], "Point", None)
+            p1 = getattr(vtx[-1], "Point", None)
+            if p0 is None or p1 is None:
+                continue
+            a = _vec(p0.x, p0.y, center.z)
+            b = _vec(p1.x, p1.y, center.z)
+            t = _vec(float(b.x - a.x), float(b.y - a.y), 0.0)
+            if _vlen_xy(t) <= EPS:
+                continue
+            mid = _vec(0.5 * (float(a.x) + float(b.x)), 0.5 * (float(a.y) + float(b.y)), center.z)
+            n1 = _unit_xy(_vec(float(t.y), float(-t.x), 0.0))
+            n2 = _unit_xy(_vec(float(-t.y), float(t.x), 0.0))
+            vc = _vec(float(mid.x - center.x), float(mid.y - center.y), 0.0)
+            n = n1 if _dot_xy(n1, vc) >= _dot_xy(n2, vc) else n2
+            align = _dot_xy(n, u)
+            if align <= -0.1:
+                continue
+            radial = _dot_xy(vc, u)
+            tangent_pen = abs(_dot_xy(t, u))
+            score = float(align * 500.0) + float(radial) - float(tangent_pen * 0.35)
+            if score > best_score:
+                best_score = score
+                best = mid
+    except Exception:
+        return None
+    return best
+
+
+def _cardinal_endpoint_world(obj, face_name):
+    face = _canon_cardinal_name(face_name)
+    if not face:
+        return _router_center(obj)
+    d = _world_dir_from_cardinal(face)
+    p = _edge_face_center_endpoint(obj, d)
+    if p is None:
+        p = _shape_directional_endpoint(obj, d)
+    if p is not None:
+        return _vec(p.x, p.y, _router_center(obj).z)
+    return _face_center_endpoint(obj, face)
+
+
 def _face_center_endpoint(obj, face_name):
     face = _safe_text(face_name).strip()
-    center = _object_anchor(obj)
+    center = _router_center(obj)
     ax, ay = _object_xy_axes(obj)
     hx, hy = _object_half_extents_xy(obj, center, ax, ay)
     z = float(center.z)
@@ -1012,11 +1558,20 @@ def _face_center_endpoint(obj, face_name):
 
 
 def _face_name_toward(obj, toward_point):
-    center = _object_anchor(obj)
+    center = _router_center(obj)
     ax, ay = _object_xy_axes(obj)
     v = _vec(float(toward_point.x - center.x), float(toward_point.y - center.y), 0.0)
     vx = _dot_xy(v, ax)
     vy = _dot_xy(v, ay)
+    if abs(vx) >= abs(vy):
+        return "East" if vx >= 0.0 else "West"
+    return "North" if vy >= 0.0 else "South"
+
+
+def _face_name_toward_world(obj, toward_point):
+    center = _router_center(obj)
+    vx = float(toward_point.x) - float(center.x)
+    vy = float(toward_point.y) - float(center.y)
     if abs(vx) >= abs(vy):
         return "East" if vx >= 0.0 else "West"
     return "North" if vy >= 0.0 else "South"
@@ -1208,7 +1763,7 @@ def _strategy_supported_for_selection(strategy_key, objs, kinds):
     return True
 
 
-def _preview_paths_for_strategy(strategy_key, objs, kinds, replace_route=None):
+def _preview_paths_for_strategy(strategy_key, objs, kinds, replace_route=None, manual_ports=None):
     strategy_key_raw = _safe_text(strategy_key).strip()
     strategy_key = _normalize_strategy_key(strategy_key_raw)
     paths = []
@@ -1218,6 +1773,7 @@ def _preview_paths_for_strategy(strategy_key, objs, kinds, replace_route=None):
         return paths
 
     anchors = [_object_anchor(o) for o in objs]
+    pref_a, pref_b = _manual_ports_norm(manual_ports)
 
     def _pair_points(i, j):
         pa = _endpoint_point_for_obj(objs[i], anchors[j])
@@ -1226,15 +1782,8 @@ def _preview_paths_for_strategy(strategy_key, objs, kinds, replace_route=None):
 
     if strategy_key == "orthogonal_l":
         try:
-            pref_a = ""
-            pref_b = ""
             if replace_route is not None:
-                pref_a, pref_b = _l_preferred_ports_from_route(
-                    replace_route,
-                    objs[0],
-                    objs[1],
-                    invert=_orth_l_invert_from_strategy(strategy_key_raw),
-                )
+                _dbg("orthL preview: reemplazo con guia COM (sin heredar puertos)")
             route = _orthogonal_l_route(
                 objs[0],
                 objs[1],
@@ -1255,6 +1804,8 @@ def _preview_paths_for_strategy(strategy_key, objs, kinds, replace_route=None):
                 objs[0],
                 objs[1],
                 mode_key=_octo45_mode_from_strategy(strategy_key_raw),
+                diag_origen=(pref_a or AUTO_PORT),
+                diag_destino=(pref_b or AUTO_PORT),
                 stub_mm=OCTO45_STUB_MM,
             )
             paths.append(("poly", list(route.get("points", []) or [])))
@@ -1285,12 +1836,29 @@ def _preview_paths_for_strategy(strategy_key, objs, kinds, replace_route=None):
 
     if strategy_key == "snake":
         if len(anchors) == 2:
-            p0, p1 = _pair_points(0, 1)
-            paths.append(("poly", _build_l_points_preview(p0, p1, invert=False)))
+            try:
+                if replace_route is not None:
+                    _dbg("snake preview: reemplazo con guia COM (sin heredar puertos)")
+                route = _snake_route(objs[0], objs[1], preferred_a=pref_a, preferred_b=pref_b)
+                paths.append(("poly", list(route.get("points", []) or [])))
+            except Exception as ex:
+                _dbg(f"preview snake fallback(2) por error: {ex}")
+                p0, p1 = _pair_points(0, 1)
+                paths.append(("poly", _build_l_points_preview(p0, p1, invert=False)))
             return paths
         for i in range(1, len(anchors)):
-            p0, p1 = _pair_points(i - 1, i)
-            paths.append(("poly", _build_l_points_preview(p0, p1, invert=False)))
+            try:
+                route = _snake_route(
+                    objs[i - 1],
+                    objs[i],
+                    preferred_a=(pref_a if i == 1 else ""),
+                    preferred_b=(pref_b if i == 1 else ""),
+                )
+                paths.append(("poly", list(route.get("points", []) or [])))
+            except Exception as ex:
+                _dbg(f"preview snake fallback seg#{i} por error: {ex}")
+                p0, p1 = _pair_points(i - 1, i)
+                paths.append(("poly", _build_l_points_preview(p0, p1, invert=False)))
         return paths
 
     # Fallback lineal.
@@ -1539,7 +2107,7 @@ def _connection_key(strategy_key, obj_a, obj_b):
     return f"{strategy_key}|{e1}|{e2}"
 
 
-def _strategy_jobs(strategy_key, objs, kinds, replace_route=None):
+def _strategy_jobs(strategy_key, objs, kinds, replace_route=None, manual_ports=None):
     strategy_key_raw = _safe_text(strategy_key).strip()
     strategy_key = _normalize_strategy_key(strategy_key_raw)
     jobs = []
@@ -1548,6 +2116,7 @@ def _strategy_jobs(strategy_key, objs, kinds, replace_route=None):
     if len(objs) < 2:
         return jobs
     anchors = [_object_anchor(o) for o in objs]
+    pref_a, pref_b = _manual_ports_norm(manual_ports)
 
     def _add_job(obj_a, obj_b, kind, pts, port_a="", port_b=""):
         pts = _dedupe_points(pts)
@@ -1569,15 +2138,8 @@ def _strategy_jobs(strategy_key, objs, kinds, replace_route=None):
         return pa, pb
 
     if strategy_key == "orthogonal_l":
-        pref_a = ""
-        pref_b = ""
         if replace_route is not None:
-            pref_a, pref_b = _l_preferred_ports_from_route(
-                replace_route,
-                objs[0],
-                objs[1],
-                invert=_orth_l_invert_from_strategy(strategy_key_raw),
-            )
+            _dbg("orthL execute: reemplazo con guia COM (sin heredar puertos)")
         route = _orthogonal_l_route(
             objs[0],
             objs[1],
@@ -1599,6 +2161,8 @@ def _strategy_jobs(strategy_key, objs, kinds, replace_route=None):
             objs[0],
             objs[1],
             mode_key=_octo45_mode_from_strategy(strategy_key_raw),
+            diag_origen=(pref_a or AUTO_PORT),
+            diag_destino=(pref_b or AUTO_PORT),
             stub_mm=OCTO45_STUB_MM,
         )
         _add_job(
@@ -1630,12 +2194,33 @@ def _strategy_jobs(strategy_key, objs, kinds, replace_route=None):
         return jobs
     if strategy_key == "snake":
         if len(objs) == 2:
-            p0, p1 = _pair_points(0, 1)
-            _add_job(objs[0], objs[1], "poly", _build_l_points_preview(p0, p1, invert=False))
+            if replace_route is not None:
+                _dbg("snake execute: reemplazo con guia COM (sin heredar puertos)")
+            route = _snake_route(objs[0], objs[1], preferred_a=pref_a, preferred_b=pref_b)
+            _add_job(
+                objs[0],
+                objs[1],
+                "poly",
+                list(route.get("points", []) or []),
+                port_a=_safe_text(route.get("port_a", "")),
+                port_b=_safe_text(route.get("port_b", "")),
+            )
             return jobs
         for i in range(1, len(objs)):
-            p0, p1 = _pair_points(i - 1, i)
-            _add_job(objs[i - 1], objs[i], "poly", _build_l_points_preview(p0, p1, invert=False))
+            route = _snake_route(
+                objs[i - 1],
+                objs[i],
+                preferred_a=(pref_a if i == 1 else ""),
+                preferred_b=(pref_b if i == 1 else ""),
+            )
+            _add_job(
+                objs[i - 1],
+                objs[i],
+                "poly",
+                list(route.get("points", []) or []),
+                port_a=_safe_text(route.get("port_a", "")),
+                port_b=_safe_text(route.get("port_b", "")),
+            )
         return jobs
     p0, p1 = _pair_points(0, 1)
     _add_job(objs[0], objs[1], "poly", [p0, p1])
@@ -1686,6 +2271,7 @@ def _create_connection_object(doc, strategy_key, job):
     _ensure_property(obj, "App::PropertyString", "LinkKind", "Vinculo", "Tipo de enlace generado")
     _ensure_property(obj, "App::PropertyString", "AutoRouteKey", "Vinculo", "Llave unica de ruta")
     _ensure_property(obj, "App::PropertyString", "TipoConexion", "ElectricCR", "Tipo de conexion")
+    _ensure_property(obj, "App::PropertyString", "Strategy", "ElectricCR", "Estrategia de ruteo usada")
     _ensure_property(obj, "App::PropertyString", "GeneradoPor", "ElectricCR", "Macro generadora")
     _ensure_property(obj, "App::PropertyFloat", "LongitudMM", "ElectricCR", "Longitud aproximada")
     _ensure_property(obj, "App::PropertyFloat", "FilletMM", "ElectricCR", "Radio fillet aplicado")
@@ -1739,6 +2325,10 @@ def _create_connection_object(doc, strategy_key, job):
     except Exception:
         pass
     try:
+        obj.Strategy = _safe_text(strategy_key)
+    except Exception:
+        pass
+    try:
         obj.GeneradoPor = PANEL_GENERATED_BY
     except Exception:
         pass
@@ -1764,8 +2354,8 @@ def _create_connection_object(doc, strategy_key, job):
     return obj
 
 
-def _execute_strategy(doc, strategy_key, objs, kinds, replace_route=None):
-    jobs = _strategy_jobs(strategy_key, objs, kinds, replace_route=replace_route)
+def _execute_strategy(doc, strategy_key, objs, kinds, replace_route=None, manual_ports=None):
+    jobs = _strategy_jobs(strategy_key, objs, kinds, replace_route=replace_route, manual_ports=manual_ports)
     if not jobs:
         raise RuntimeError("No se pudo resolver una ruta valida para la estrategia.")
     _dbg(f"execute strategy={strategy_key} jobs={len(jobs)} objs={len(list(objs or []))}")
@@ -1877,6 +2467,8 @@ _REPLACE_COPY_SKIP = {
     "LongitudMM",
     "FilletMM",
     # Mantener identidad de la nueva estrategia generada
+    "OrigenName",
+    "DestinoName",
     "PuertoOrigen",
     "PuertoDestino",
     "AutoRouteKey",
@@ -1991,6 +2583,7 @@ class ConexionesPanelDialog(QtWidgets.QWidget):
         self._strategy_key = ""
         self._last_selection_sig = ()
         self._replace_route = None
+        self._manual_ports_by_strategy = {}
 
         root = QtWidgets.QVBoxLayout(self)
 
@@ -2020,6 +2613,22 @@ class ConexionesPanelDialog(QtWidgets.QWidget):
         self.strat_grid.setVerticalSpacing(8)
         root.addWidget(self.strat_widget)
 
+        ports_row = QtWidgets.QHBoxLayout()
+        self.lbl_port_origin = QtWidgets.QLabel("Puerto salida:")
+        self.cmb_port_origin = QtWidgets.QComboBox()
+        self.lbl_port_dest = QtWidgets.QLabel("Puerto llegada:")
+        self.cmb_port_dest = QtWidgets.QComboBox()
+        for cb in (self.cmb_port_origin, self.cmb_port_dest):
+            try:
+                cb.setMinimumWidth(108)
+            except Exception:
+                pass
+        ports_row.addWidget(self.lbl_port_origin)
+        ports_row.addWidget(self.cmb_port_origin, 1)
+        ports_row.addWidget(self.lbl_port_dest)
+        ports_row.addWidget(self.cmb_port_dest, 1)
+        root.addLayout(ports_row)
+
         row_preview = QtWidgets.QHBoxLayout()
         self.chk_auto_preview = QtWidgets.QCheckBox("Vista previa automatica")
         self.chk_auto_preview.setChecked(True)
@@ -2041,6 +2650,8 @@ class ConexionesPanelDialog(QtWidgets.QWidget):
         self.btn_close.clicked.connect(self._close_panel)
         self.btn_preview.clicked.connect(self.update_preview)
         self.chk_auto_preview.toggled.connect(self._on_strategy_changed)
+        self.cmb_port_origin.currentIndexChanged.connect(self._on_manual_ports_changed)
+        self.cmb_port_dest.currentIndexChanged.connect(self._on_manual_ports_changed)
 
         self._sel_timer = QtCore.QTimer(self)
         self._sel_timer.setInterval(600)
@@ -2132,12 +2743,16 @@ class ConexionesPanelDialog(QtWidgets.QWidget):
         skey = _safe_text(key).strip()
         if skey not in self._strategy_buttons:
             return
+        prev_key = _safe_text(self._strategy_key).strip()
+        if prev_key:
+            self._store_manual_ports_for_strategy(prev_key)
         self._strategy_key = skey
         for k, btn in self._strategy_buttons.items():
             try:
                 btn.setChecked(k == skey)
             except Exception:
                 pass
+        self._update_port_controls()
         if trigger_preview:
             self._on_strategy_changed()
 
@@ -2147,6 +2762,85 @@ class ConexionesPanelDialog(QtWidgets.QWidget):
 
     def _current_strategy_key(self):
         return _safe_text(self._strategy_key).strip()
+
+    def _current_manual_ports(self):
+        po = AUTO_PORT
+        pd = AUTO_PORT
+        try:
+            po = _safe_text(self.cmb_port_origin.currentText()).strip() or AUTO_PORT
+        except Exception:
+            pass
+        try:
+            pd = _safe_text(self.cmb_port_dest.currentText()).strip() or AUTO_PORT
+        except Exception:
+            pass
+        return {"origin": po, "dest": pd}
+
+    def _manual_ports_for_strategy(self, strategy_key):
+        skey = _safe_text(strategy_key).strip()
+        if not skey:
+            return {"origin": AUTO_PORT, "dest": AUTO_PORT}
+        rec = self._manual_ports_by_strategy.get(skey, {}) or {}
+        po = _safe_text(rec.get("origin", AUTO_PORT)).strip() or AUTO_PORT
+        pd = _safe_text(rec.get("dest", AUTO_PORT)).strip() or AUTO_PORT
+        return {"origin": po, "dest": pd}
+
+    def _store_manual_ports_for_strategy(self, strategy_key, ports=None):
+        skey = _safe_text(strategy_key).strip()
+        if not skey:
+            return
+        src = dict(ports or self._current_manual_ports() or {})
+        po = _safe_text(src.get("origin", AUTO_PORT)).strip() or AUTO_PORT
+        pd = _safe_text(src.get("dest", AUTO_PORT)).strip() or AUTO_PORT
+        self._manual_ports_by_strategy[skey] = {"origin": po, "dest": pd}
+
+    def _rebuild_port_combo(self, combo, options, selected):
+        opts = list(options or [AUTO_PORT])
+        if not opts:
+            opts = [AUTO_PORT]
+        if selected not in opts:
+            selected = AUTO_PORT if AUTO_PORT in opts else opts[0]
+        block_prev = False
+        try:
+            block_prev = bool(combo.blockSignals(True))
+        except Exception:
+            pass
+        try:
+            combo.clear()
+            for o in opts:
+                combo.addItem(_safe_text(o))
+            idx = combo.findText(_safe_text(selected))
+            if idx < 0:
+                idx = 0
+            combo.setCurrentIndex(idx)
+            combo.setEnabled(len(opts) > 1)
+        except Exception:
+            pass
+        try:
+            combo.blockSignals(block_prev)
+        except Exception:
+            pass
+
+    def _update_port_controls(self):
+        skey = self._current_strategy_key()
+        opts_origin, opts_dest = _strategy_port_options(skey)
+        saved = self._manual_ports_for_strategy(skey)
+        cur_origin = _safe_text(saved.get("origin", AUTO_PORT)).strip() or AUTO_PORT
+        cur_dest = _safe_text(saved.get("dest", AUTO_PORT)).strip() or AUTO_PORT
+        self._rebuild_port_combo(self.cmb_port_origin, opts_origin, cur_origin)
+        self._rebuild_port_combo(self.cmb_port_dest, opts_dest, cur_dest)
+        try:
+            enabled = len(list(opts_origin or [])) > 1 or len(list(opts_dest or [])) > 1
+            self.lbl_port_origin.setEnabled(enabled)
+            self.lbl_port_dest.setEnabled(enabled)
+        except Exception:
+            pass
+
+    def _on_manual_ports_changed(self, *_args):
+        skey = self._current_strategy_key()
+        if skey:
+            self._store_manual_ports_for_strategy(skey)
+        self._on_strategy_changed()
 
     def _scene_graph(self):
         try:
@@ -2253,12 +2947,35 @@ class ConexionesPanelDialog(QtWidgets.QWidget):
         if not _strategy_supported_for_selection(strategy_key, self._selected_objs, kinds):
             return
 
-        paths = _preview_paths_for_strategy(
-            strategy_key,
-            self._selected_objs,
-            kinds,
-            replace_route=self._last_analysis.get("replace_route", None),
-        )
+        try:
+            jobs = _strategy_jobs(
+                strategy_key,
+                self._selected_objs,
+                kinds,
+                replace_route=self._last_analysis.get("replace_route", None),
+                manual_ports=self._current_manual_ports(),
+            )
+        except Exception as ex:
+            _dbg(f"preview jobs fallback por error: {ex}")
+            jobs = []
+
+        if not jobs:
+            paths = _preview_paths_for_strategy(
+                strategy_key,
+                self._selected_objs,
+                kinds,
+                replace_route=self._last_analysis.get("replace_route", None),
+                manual_ports=self._current_manual_ports(),
+            )
+        else:
+            paths = [
+                (
+                    _safe_text(job.get("shape_kind", "poly")).strip() or "poly",
+                    list(job.get("points", []) or []),
+                )
+                for job in jobs
+            ]
+
         if not paths:
             return
 
@@ -2326,12 +3043,14 @@ class ConexionesPanelDialog(QtWidgets.QWidget):
 
         if not allowed:
             self._rebuild_strategy_buttons((), "")
+            self._update_port_controls()
             return
 
         kinds = list(analysis.get("kinds", ()) or ())
         filtered = [k for k in allowed if _strategy_supported_for_selection(k, self._selected_objs, kinds)]
         if not filtered:
             self._rebuild_strategy_buttons((), "")
+            self._update_port_controls()
             return
 
         ordered = list(filtered)
@@ -2341,6 +3060,7 @@ class ConexionesPanelDialog(QtWidgets.QWidget):
 
         selected_key = prev_key if prev_key in ordered else preferred
         self._rebuild_strategy_buttons(ordered, selected_key)
+        self._update_port_controls()
 
         valid = bool(analysis.get("valid", False)) and bool(ordered)
         self.btn_preview.setEnabled(valid)
@@ -2380,6 +3100,7 @@ class ConexionesPanelDialog(QtWidgets.QWidget):
                 list(self._selected_objs or []),
                 list(self._last_analysis.get("kinds", ()) or ()),
                 replace_route=self._last_analysis.get("replace_route", None),
+                manual_ports=self._current_manual_ports(),
             )
             old_route = self._last_analysis.get("replace_route", None)
             if old_route is not None:

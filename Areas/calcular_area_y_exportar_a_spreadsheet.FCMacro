@@ -65,6 +65,67 @@ def _as_mm(value):
     except Exception:
         return 0.0
 
+def _norm_key(value):
+    s = str(value or "").strip().lower()
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    out = []
+    for ch in s:
+        if ch.isalnum():
+            out.append(ch)
+    return "".join(out)
+
+def _find_group_by_key(doc, wanted_key):
+    for obj in getattr(doc, "Objects", []) or []:
+        if getattr(obj, "TypeId", "") != "App::DocumentObjectGroup":
+            continue
+        if _norm_key(getattr(obj, "Label", "")) == wanted_key:
+            return obj
+        if _norm_key(getattr(obj, "Name", "")) == wanted_key:
+            return obj
+    return None
+
+def _create_group(doc, label):
+    base = "".join(ch if ch.isalnum() else "_" for ch in str(label or "").strip()) or "Grupo"
+    name = base
+    idx = 2
+    while doc.getObject(name) is not None:
+        name = "{}_{}".format(base, idx)
+        idx += 1
+    grp = doc.addObject("App::DocumentObjectGroup", name)
+    try:
+        grp.Label = label
+    except Exception:
+        pass
+    return grp
+
+def _ensure_calculation_group(doc):
+    for candidate in ("Hojas de Calculo", "Hojas de Cálculo", "Hojas_Calculo"):
+        grp = _find_group_by_key(doc, _norm_key(candidate))
+        if grp is not None:
+            try:
+                grp.Label = "Hojas de Calculo"
+            except Exception:
+                pass
+            return grp
+    legacy = _find_group_by_key(doc, _norm_key("Calculos"))
+    if legacy is not None:
+        try:
+            legacy.Label = "Hojas de Calculo"
+        except Exception:
+            pass
+        return legacy
+    return _create_group(doc, "Hojas de Calculo")
+
+def _add_to_group(group, obj):
+    if group is None or obj is None:
+        return
+    try:
+        if obj not in (getattr(group, "Group", []) or []):
+            group.addObject(obj)
+    except Exception:
+        pass
+
 def calcular_area_y_exportar_a_spreadsheet():
     doc = FreeCAD.ActiveDocument
     selected_objects = FreeCADGui.Selection.getSelection()
@@ -95,6 +156,9 @@ def calcular_area_y_exportar_a_spreadsheet():
     
     if not hoja:
         hoja = doc.addObject('Spreadsheet::Sheet', 'DatosRecintos')
+
+    calc_group = _ensure_calculation_group(doc)
+    _add_to_group(calc_group, hoja)
     
     hoja.Visibility = True  # Asegura que la hoja de calculo sea visible
 

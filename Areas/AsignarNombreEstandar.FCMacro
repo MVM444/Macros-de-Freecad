@@ -1,3 +1,73 @@
+# Qt compatibility for FreeCAD 1.x (PySide6) and older builds.
+def _ensure_qt_compat():
+    import sys
+    import types
+
+    QtCore = QtGui = QtWidgets = None
+    binding_name = None
+
+    for candidate in ("PySide6", "PySide2", "PySide"):
+        try:
+            if candidate == "PySide":
+                from PySide import QtCore as _QtCore, QtGui as _QtGui
+                _QtWidgets = _QtGui
+            else:
+                module = __import__(candidate, fromlist=["QtCore", "QtGui", "QtWidgets"])
+                _QtCore = module.QtCore
+                _QtGui = module.QtGui
+                _QtWidgets = module.QtWidgets
+            QtCore, QtGui, QtWidgets = _QtCore, _QtGui, _QtWidgets
+            binding_name = candidate
+            break
+        except Exception:
+            continue
+
+    if QtCore is None:
+        return
+
+    qtgui_compat = types.ModuleType("QtGui")
+    qtgui_compat.__dict__.update(getattr(QtGui, "__dict__", {}))
+    qtgui_compat.__dict__.update(getattr(QtWidgets, "__dict__", {}))
+
+    qtsvg_compat = None
+    for module_name in ("QtSvg", "QtSvgWidgets"):
+        try:
+            module = __import__(binding_name, fromlist=[module_name])
+            qt_module = getattr(module, module_name)
+        except Exception:
+            continue
+        if qtsvg_compat is None:
+            qtsvg_compat = types.ModuleType("QtSvg")
+        qtsvg_compat.__dict__.update(getattr(qt_module, "__dict__", {}))
+
+    qtuitools_compat = None
+    try:
+        module = __import__(binding_name, fromlist=["QtUiTools"])
+        qtuitools_compat = module.QtUiTools
+    except Exception:
+        pass
+
+    for package_name in ("PySide2", "PySide"):
+        package = sys.modules.get(package_name)
+        if package is None:
+            package = types.ModuleType(package_name)
+            sys.modules[package_name] = package
+        package.QtCore = QtCore
+        package.QtGui = qtgui_compat
+        package.QtWidgets = QtWidgets
+        sys.modules[package_name + ".QtCore"] = QtCore
+        sys.modules[package_name + ".QtGui"] = qtgui_compat
+        sys.modules[package_name + ".QtWidgets"] = QtWidgets
+        if qtsvg_compat is not None:
+            package.QtSvg = qtsvg_compat
+            sys.modules[package_name + ".QtSvg"] = qtsvg_compat
+        if qtuitools_compat is not None:
+            package.QtUiTools = qtuitools_compat
+            sys.modules[package_name + ".QtUiTools"] = qtuitools_compat
+
+
+_ensure_qt_compat()
+
 # Macro: AsignarNombreEstandar.FCMacro
 # Descripcion:
 # Esta macro muestra una ventana flotante con botones por cada nombre estandar definido en una hoja de calculo.
@@ -6,105 +76,183 @@
 # La hoja editable "NombresEstandar" permite personalizar los nombres.
 #
 # Fecha: 2025-07-05
-# Requiere: PySide2, FreeCADGui
+# Requiere: FreeCADGui y PySide/PySide2
 
 import FreeCAD
 import FreeCADGui
-from PySide2 import QtWidgets, QtCore
+import math
+
+try:
+    from PySide2 import QtWidgets, QtCore
+except Exception:
+    try:
+        from PySide import QtCore, QtGui
+        QtWidgets = QtGui
+    except Exception:
+        from PySide6 import QtWidgets, QtCore
 
 # Obtener documento
 doc = FreeCAD.ActiveDocument
 if doc is None:
     doc = FreeCAD.newDocument("Proyecto")
 
-# Crear hoja si no existe
 nombre_hoja = "NombresEstandar"
-crear_hoja = not hasattr(doc, nombre_hoja)
-if crear_hoja:
-    hoja = doc.addObject("Spreadsheet::Sheet", nombre_hoja)
-    hoja.set("A1", "Oficina")
-    hoja.set("A2", "Sala de Espera")
-    hoja.set("A3", "Bodega")
-    hoja.set("A4", "Recepcion")
-    hoja.set("A5", "Pasillo")
-    doc.recompute()
-    FreeCAD.Console.PrintMessage("Se creo la hoja 'NombresEstandar' con nombres iniciales.\n")
-else:
-    hoja = getattr(doc, nombre_hoja)
 
-# Leer nombres y estilos
-nombres = []
-marcados = []
-fila = 1
-while True:
-    celda = f"A{fila}"
+
+def obtener_hoja():
+    crear_hoja = not hasattr(doc, nombre_hoja)
+    if crear_hoja:
+        hoja = doc.addObject("Spreadsheet::Sheet", nombre_hoja)
+        hoja.set("A1", "Oficina")
+        hoja.set("A2", "Sala de Espera")
+        hoja.set("A3", "Bodega")
+        hoja.set("A4", "Recepcion")
+        hoja.set("A5", "Pasillo")
+        doc.recompute()
+        FreeCAD.Console.PrintMessage("Se creo la hoja 'NombresEstandar' con nombres iniciales.\n")
+        return hoja
+    return getattr(doc, nombre_hoja)
+
+
+def celda_marcada(hoja, celda):
     try:
-        valor = hoja.get(celda)
-    except:
-        break
-    if valor == "":
-        break
-    nombres.append(valor)
-
-    estilo = hoja.getStyle(celda)
+        estilo = hoja.getStyle(celda)
+    except Exception:
+        return False
     if estilo is None:
-        ya_usado = False
-    elif isinstance(estilo, str):
-        ya_usado = "#dddddd" in estilo.lower()
-    elif isinstance(estilo, set):
-        ya_usado = any("#dddddd" in s.lower() for s in estilo if isinstance(s, str))
-    else:
-        ya_usado = False
+        return False
+    if isinstance(estilo, str):
+        return "#dddddd" in estilo.lower()
+    if isinstance(estilo, set):
+        return any("#dddddd" in s.lower() for s in estilo if isinstance(s, str))
+    return False
 
-    marcados.append(ya_usado)
-    fila += 1
 
-if not nombres:
-    QtWidgets.QMessageBox.warning(None, "Error", "La hoja 'NombresEstandar' no contiene nombres.")
-    raise Exception("Lista vacia.")
+def leer_nombres():
+    hoja = obtener_hoja()
+    nombres = []
+    marcados = []
+    fila = 1
+    while True:
+        celda = "A{}".format(fila)
+        try:
+            valor = hoja.get(celda)
+        except Exception:
+            break
+        if valor == "":
+            break
+        nombres.append(valor)
+        marcados.append(celda_marcada(hoja, celda))
+        fila += 1
+    return hoja, nombres, marcados
 
 # Crear ventana con botones en varias columnas
 class VentanaNombres(QtWidgets.QDialog):
     def __init__(self):
         super().__init__(None, QtCore.Qt.Tool)
         self.setWindowTitle("Asignar Nombre Estandar")
-        self.resize(300, 400)
+        self.setSizeGripEnabled(True)
         self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
+        self.hoja = None
+        self.nombres = []
+        self.marcados = []
 
         layout_principal = QtWidgets.QVBoxLayout(self)
-        scroll = QtWidgets.QScrollArea()
-        scroll.setWidgetResizable(True)
-        contenedor = QtWidgets.QWidget()
-        self.grid = QtWidgets.QGridLayout(contenedor)
+        self.scroll = QtWidgets.QScrollArea()
+        self.scroll.setWidgetResizable(False)
+        self.contenedor = QtWidgets.QWidget()
+        self.grid = QtWidgets.QGridLayout(self.contenedor)
+        self.grid.setContentsMargins(4, 4, 4, 4)
 
         self.botones = []
-        columnas = 2
+        self.scroll.setWidget(self.contenedor)
+        layout_principal.addWidget(self.scroll)
 
-        for i, nombre in enumerate(nombres):
+        fila_acciones = QtWidgets.QHBoxLayout()
+        self.boton_actualizar = QtWidgets.QPushButton("Actualizar")
+        self.boton_cerrar = QtWidgets.QPushButton("Cerrar")
+        self.boton_actualizar.clicked.connect(self.actualizar_desde_hoja)
+        self.boton_cerrar.clicked.connect(self.close)
+        fila_acciones.addWidget(self.boton_actualizar)
+        fila_acciones.addWidget(self.boton_cerrar)
+        layout_principal.addLayout(fila_acciones)
+
+        self.actualizar_desde_hoja(inicial=True)
+
+    def mostrar_mensaje(self, icono, titulo, texto):
+        cuadro = QtWidgets.QMessageBox(self)
+        cuadro.setIcon(icono)
+        cuadro.setWindowTitle(titulo)
+        cuadro.setText(texto)
+        cuadro.setStandardButtons(QtWidgets.QMessageBox.Ok)
+        try:
+            cuadro.setWindowModality(QtCore.Qt.WindowModal)
+        except Exception:
+            pass
+        try:
+            cuadro.setWindowFlags(cuadro.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
+        except Exception:
+            pass
+        if hasattr(cuadro, "exec_"):
+            cuadro.exec_()
+        else:
+            cuadro.exec()
+
+    def limpiar_botones(self):
+        while self.grid.count():
+            item = self.grid.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+        self.botones = []
+
+    def columnas_para_botones(self):
+        total = len(self.nombres)
+        if total <= 4:
+            return 1
+        return max(2, min(4, int(math.ceil(math.sqrt(total)))))
+
+    def reconstruir_botones(self):
+        self.limpiar_botones()
+        columnas = self.columnas_para_botones()
+        for i, nombre in enumerate(self.nombres):
             boton = QtWidgets.QPushButton(nombre)
-            if marcados[i]:
+            boton.setMinimumWidth(120)
+            if self.marcados[i]:
                 boton.setStyleSheet("background-color: #dddddd")
             boton.clicked.connect(lambda checked=False, n=nombre, f=i, b=boton: self.renombrar(n, f, b))
             fila = i // columnas
             col = i % columnas
             self.grid.addWidget(boton, fila, col)
             self.botones.append(boton)
+        self.contenedor.adjustSize()
+        self.ajustar_tamano()
 
-        scroll.setWidget(contenedor)
-        layout_principal.addWidget(scroll)
+    def ajustar_tamano(self):
+        hint = self.contenedor.sizeHint()
+        ancho = max(260, min(hint.width() + 40, 760))
+        alto_scroll = max(80, min(hint.height() + 20, 520))
+        self.scroll.setMinimumWidth(ancho)
+        self.scroll.setMinimumHeight(alto_scroll)
+        self.scroll.resize(ancho, alto_scroll)
+        self.adjustSize()
 
-        boton_cerrar = QtWidgets.QPushButton("Cerrar")
-        boton_cerrar.clicked.connect(self.close)
-        layout_principal.addWidget(boton_cerrar)
+    def actualizar_desde_hoja(self, inicial=False):
+        self.hoja, self.nombres, self.marcados = leer_nombres()
+        self.reconstruir_botones()
+        if not self.nombres:
+            self.mostrar_mensaje(QtWidgets.QMessageBox.Warning, "Error", "La hoja 'NombresEstandar' no contiene nombres.")
+        elif not inicial:
+            FreeCAD.Console.PrintMessage("Lista de nombres actualizada desde 'NombresEstandar'.\n")
 
     def renombrar(self, nombre, fila_index, boton):
         seleccion = FreeCADGui.Selection.getSelection()
         if not seleccion:
-            QtWidgets.QMessageBox.warning(None, "Sin seleccion", "No hay objetos seleccionados.")
+            self.mostrar_mensaje(QtWidgets.QMessageBox.Warning, "Sin seleccion", "No hay objetos seleccionados.")
             return
 
-        if marcados[fila_index]:
-            QtWidgets.QMessageBox.information(None, "Advertencia", f"El nombre '{nombre}' ya ha sido utilizado.")
+        if self.marcados[fila_index]:
+            self.mostrar_mensaje(QtWidgets.QMessageBox.Information, "Advertencia", f"El nombre '{nombre}' ya ha sido utilizado.")
 
         for obj in seleccion:
             anterior = obj.Label
@@ -112,9 +260,10 @@ class VentanaNombres(QtWidgets.QDialog):
             FreeCAD.Console.PrintMessage(f"Objeto '{anterior}' renombrado como '{nombre}'.\n")
 
         try:
-            hoja.setStyle(f"A{fila_index+1}", "background-color: #DDDDDD")
+            self.hoja.setStyle(f"A{fila_index+1}", "background-color: #DDDDDD")
             boton.setStyleSheet("background-color: #dddddd")
-        except:
+            self.marcados[fila_index] = True
+        except Exception:
             FreeCAD.Console.PrintMessage(f"No se pudo marcar visualmente el nombre '{nombre}'.\n")
 
         doc.recompute()

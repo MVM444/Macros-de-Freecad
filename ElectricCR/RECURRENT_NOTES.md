@@ -235,3 +235,35 @@ Canonical rule:
    - si no hay Areas pero si SubAreas validas, usar SubAreas
 6. Un mismo recinto puede tener multiples subareas de una misma disciplina (ejemplo: 2 o mas subareas de iluminacion en un recinto).
 7. El modelo debe soportar subareas simultaneas por disciplina (iluminacion, incendio, HVAC) dentro del mismo recinto.
+
+## Layout de desarrollo: abrir documentos con proxies ElectricCR/MEP
+
+Recurrent symptom:
+- Al abrir un `.FCStd` en frio aparecen errores como:
+  - `ModuleNotFoundError: No module named 'ElectricCR'`
+  - `ModuleNotFoundError: No module named 'MEPWorkbenchCR'`
+  - `ModuleNotFoundError: No module named '_electriccr_tablero_runtime_<stamp>'`
+- Tambien puede aparecer:
+  - `Cannot find icon: SpreadsheetAlignLeft`
+
+Root cause pattern:
+1. El repositorio se usa en layout de desarrollo desde `Macros/` + `Macros-de-Freecad/`, no como instalacion normal en `Mod/`.
+2. FreeCAD intenta restaurar proxies serializados del documento antes de que corran los loaders manuales (`ElectricCRLoader.FCMacro`, `MEPWorkbenchCRLoader.FCMacro`).
+3. Si `Macros-de-Freecad` aun no esta en `sys.path`, la restauracion falla aunque luego el workbench cargue bien manualmente.
+
+Operational rule for now:
+1. En layout de desarrollo, no abrir directamente el documento al arrancar FreeCAD si contiene objetos ElectricCR o MEP.
+2. Primero ejecutar `ElectricCRLoader.FCMacro`.
+3. Si el archivo contiene objetos HVAC/MEP, ejecutar tambien `MEPWorkbenchCRLoader.FCMacro`.
+4. Solo despues abrir el `.FCStd`.
+
+Current status:
+1. Se reconoce como limitacion operativa del modo desarrollo.
+2. Se deja documentado y sin cierre tecnico definitivo por ahora.
+3. Si se quiere eliminar el problema de raiz, la solucion estable es:
+   - instalar los workbenches en layout real de `Mod/`, o
+   - completar un bootstrap temprano de imports para entorno de desarrollo.
+
+Noise classification:
+1. `Cannot find icon: SpreadsheetAlignLeft` se trata como warning cosmetico salvo que se observe perdida funcional real.
+2. Los `ModuleNotFoundError` de `ElectricCR`, `MEPWorkbenchCR` y runtimes legacy de tablero si son fallos reales de restauracion.

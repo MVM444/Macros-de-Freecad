@@ -1,9 +1,10 @@
 {
   "toolbar_order": [
     "Tomacorrientes",
-    "Iluminacion",
+    "Iluminación",
     "Importar y Exportar",
     "Conectar",
+    "Configuracion del proyecto",
     "Organizacion del proyecto",
     "Areas",
     "Objetos",

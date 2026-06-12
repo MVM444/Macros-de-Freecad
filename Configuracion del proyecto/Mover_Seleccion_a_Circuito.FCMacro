@@ -1,0 +1,1121 @@
+# -*- coding: utf-8 -*-
+# MenuText: Mover Seleccion a Circuito...
+# ToolTip: Mueve objetos seleccionados a un grupo de circuito bajo Iluminacion o Tomacorrientes.
+# Icon: Configuracion del proyecto/Mover_Seleccion_a_Grupo.svg
+
+# Qt compatibility for FreeCAD 1.x (PySide6) and older builds.
+def _ensure_qt_compat():
+    import sys
+    import types
+
+    QtCore = QtGui = QtWidgets = None
+    binding_name = None
+
+    for candidate in ("PySide6", "PySide2", "PySide"):
+        try:
+            if candidate == "PySide":
+                from PySide import QtCore as _QtCore, QtGui as _QtGui
+                _QtWidgets = _QtGui
+            else:
+                module = __import__(candidate, fromlist=["QtCore", "QtGui", "QtWidgets"])
+                _QtCore = module.QtCore
+                _QtGui = module.QtGui
+                _QtWidgets = module.QtWidgets
+            QtCore, QtGui, QtWidgets = _QtCore, _QtGui, _QtWidgets
+            binding_name = candidate
+            break
+        except Exception:
+            continue
+
+    if QtCore is None:
+        return
+
+    qtgui_compat = types.ModuleType("QtGui")
+    qtgui_compat.__dict__.update(getattr(QtGui, "__dict__", {}))
+    qtgui_compat.__dict__.update(getattr(QtWidgets, "__dict__", {}))
+
+    qtsvg_compat = None
+    for module_name in ("QtSvg", "QtSvgWidgets"):
+        try:
+            module = __import__(binding_name, fromlist=[module_name])
+            qt_module = getattr(module, module_name)
+        except Exception:
+            continue
+        if qtsvg_compat is None:
+            qtsvg_compat = types.ModuleType("QtSvg")
+        qtsvg_compat.__dict__.update(getattr(qt_module, "__dict__", {}))
+
+    qtuitools_compat = None
+    try:
+        module = __import__(binding_name, fromlist=["QtUiTools"])
+        qtuitools_compat = module.QtUiTools
+    except Exception:
+        pass
+
+    for package_name in ("PySide2", "PySide"):
+        package = sys.modules.get(package_name)
+        if package is None:
+            package = types.ModuleType(package_name)
+            sys.modules[package_name] = package
+        package.QtCore = QtCore
+        package.QtGui = qtgui_compat
+        package.QtWidgets = QtWidgets
+        sys.modules[package_name + ".QtCore"] = QtCore
+        sys.modules[package_name + ".QtGui"] = qtgui_compat
+        sys.modules[package_name + ".QtWidgets"] = QtWidgets
+        if qtsvg_compat is not None:
+            package.QtSvg = qtsvg_compat
+            sys.modules[package_name + ".QtSvg"] = qtsvg_compat
+        if qtuitools_compat is not None:
+            package.QtUiTools = qtuitools_compat
+            sys.modules[package_name + ".QtUiTools"] = qtuitools_compat
+
+
+_ensure_qt_compat()
+
+# Transaction: self
+"""
+Mover seleccion a circuito especifico.
+
+Objetivo:
+- Elegir un destino de circuito dentro de Iluminacion/Tomacorrientes.
+- Mover seleccion (incluyendo contenido de grupos si se desea).
+- Quitar los objetos de grupos anteriores para evitar dispersion.
+- Opcionalmente actualizar CircuitoID en los objetos movidos.
+"""
+
+import re
+import unicodedata
+
+import FreeCAD as App
+import FreeCADGui as Gui
+
+try:
+    from PySide2 import QtWidgets, QtCore
+except Exception:
+    try:
+        from PySide import QtGui as QtWidgets  # type: ignore
+        from PySide import QtCore  # type: ignore
+    except Exception:
+        QtWidgets = None
+        QtCore = None
+
+
+TAG = "CIR_MOVE"
+PROTECTED_EMPTY_GROUPS = {"electrico", "_lib", "instancias"}
+ROOT_ILLUM = {"iluminacion", "iluminación"}
+ROOT_TOMAS = {"tomacorrientes", "tomacorriente", "tomas"}
+GENERIC_BUCKETS = {
+    "electrico",
+    "_lib",
+    "instancias",
+    "iluminacion",
+    "iluminación",
+    "tomacorrientes",
+    "tomacorriente",
+    "tomas",
+    "circuitos",
+    "circuito",
+    "recintos",
+    "recinto",
+    "huerfanas",
+    "huerfanos",
+    "luminarias",
+    "apagadores",
+    "conexiones",
+    "cajas",
+    "alimentadores",
+    "ramales",
+    "tuberias",
+    "areas",
+    "grupo",
+    "grupos",
+    "dispositivos",
+}
+RECINTO_PROP_CANDIDATES = (
+    "Recinto",
+    "RecintoID",
+    "Area",
+    "AreaID",
+    "Espacio",
+    "Zona",
+    "Room",
+    "Habitacion",
+)
+ROOM_CONTAINER_HINTS = {"recintos", "recinto", "areas", "area", "espacios", "espacio", "zonas", "zona"}
+ORPHAN_HINTS = ("huerfana", "huerfano", "orphan")
+
+
+def _info(msg):
+    App.Console.PrintMessage(f"[{TAG}][INFO] {msg}\n")
+
+
+def _warn(msg):
+    App.Console.PrintWarning(f"[{TAG}][WARN] {msg}\n")
+
+
+def _err(msg):
+    App.Console.PrintError(f"[{TAG}][ERROR] {msg}\n")
+
+
+def _safe_text(value):
+    try:
+        return str(value or "")
+    except Exception:
+        return ""
+
+
+def _strip_accents(text):
+    txt = _safe_text(text)
+    txt = unicodedata.normalize("NFKD", txt)
+    return "".join(ch for ch in txt if not unicodedata.combining(ch))
+
+
+def _norm_key(text):
+    txt = _strip_accents(text).strip().lower()
+    return re.sub(r"[^a-z0-9_]+", "", txt)
+
+
+def _display_name(obj):
+    label = _safe_text(getattr(obj, "Label", "")).strip()
+    if label:
+        return label
+    return _safe_text(getattr(obj, "Name", "<?>")).strip() or "<?>"
+
+
+def _is_container(obj):
+    type_id = _safe_text(getattr(obj, "TypeId", "")).strip()
+    if type_id.startswith("App::DocumentObjectGroup"):
+        return True
+    if type_id.startswith("App::Part"):
+        return True
+    return False
+
+
+def _iter_containers(doc):
+    return [obj for obj in (getattr(doc, "Objects", []) or []) if _is_container(obj)]
+
+
+def _scan_relationships(doc):
+    containers = _iter_containers(doc)
+    parent_of = {}   # child container name -> parent container obj
+    member_of = {}   # child object name -> [parent containers]
+    for grp in containers:
+        for child in (getattr(grp, "Group", []) or []):
+            if child is None:
+                continue
+            cname = _safe_text(getattr(child, "Name", "")).strip()
+            if not cname:
+                continue
+            member_of.setdefault(cname, []).append(grp)
+            if _is_container(child) and cname not in parent_of:
+                parent_of[cname] = grp
+    return containers, parent_of, member_of
+
+
+def _container_paths(doc):
+    containers, parent_of, _ = _scan_relationships(doc)
+    by_name = {obj.Name: obj for obj in containers}
+    memo = {}
+
+    def _path_for(name):
+        if name in memo:
+            return memo[name]
+        grp = by_name.get(name)
+        if grp is None:
+            memo[name] = name
+            return name
+        parent = parent_of.get(name)
+        if parent is None:
+            p = _display_name(grp)
+        else:
+            p = f"{_path_for(parent.Name)}/{_display_name(grp)}"
+        memo[name] = p
+        return p
+
+    rows = [(_path_for(grp.Name), grp) for grp in containers]
+    rows.sort(key=lambda it: _strip_accents(it[0]).lower())
+    return rows, parent_of
+
+
+def _root_kind_for_group(group_obj):
+    txt = _norm_key(getattr(group_obj, "Label", "")) or _norm_key(getattr(group_obj, "Name", ""))
+    if txt in {_norm_key(x) for x in ROOT_ILLUM}:
+        return "iluminacion"
+    if txt in {_norm_key(x) for x in ROOT_TOMAS}:
+        return "tomacorrientes"
+    return ""
+
+
+def _find_circuit_roots(doc):
+    roots = []
+    for grp in _iter_containers(doc):
+        kind = _root_kind_for_group(grp)
+        if kind:
+            roots.append((kind, grp))
+    roots.sort(key=lambda it: _strip_accents(_display_name(it[1])).lower())
+    return roots
+
+
+def _iter_child_containers(parent_group):
+    for child in (getattr(parent_group, "Group", []) or []):
+        if _is_container(child):
+            yield child
+
+
+def _is_circuit_parent_bucket(group_obj):
+    txt = _strip_accents(_display_name(group_obj)).lower().strip()
+    key = _norm_key(txt)
+    if key in {"circuitos", "circuits"}:
+        return True
+    if re.match(r"^g[0-9]{2}_circuitos$", key):
+        return True
+    # Evitar capturar grupos reales tipo "Circuito 01".
+    if ("circuitos" in txt) and ("circuito " not in txt):
+        return True
+    return False
+
+
+def _is_descendant_of(group_obj, root_obj, parent_of):
+    if group_obj is None or root_obj is None:
+        return False
+    cur = group_obj
+    seen = set()
+    while cur is not None:
+        cname = _safe_text(getattr(cur, "Name", "")).strip()
+        if not cname or cname in seen:
+            break
+        seen.add(cname)
+        if cur == root_obj:
+            return True
+        cur = parent_of.get(cname)
+    return False
+
+
+def _relative_path_from_root(group_obj, root_obj, parent_of):
+    chain = []
+    cur = group_obj
+    seen = set()
+    while cur is not None:
+        cname = _safe_text(getattr(cur, "Name", "")).strip()
+        if not cname or cname in seen:
+            break
+        seen.add(cname)
+        chain.append(cur)
+        if cur == root_obj:
+            break
+        cur = parent_of.get(cname)
+    if not chain or chain[-1] != root_obj:
+        return _display_name(group_obj)
+    chain.reverse()
+    labels = [_display_name(obj) for obj in chain[1:]]
+    return "/".join(labels) if labels else _display_name(root_obj)
+
+
+def _is_bucket_like(label):
+    key = _norm_key(label)
+    if not key:
+        return True
+    if key in {_norm_key(x) for x in GENERIC_BUCKETS}:
+        return True
+    if re.match(r"^g[0-9]{2}_", key):
+        return True
+    for tok in ("alimentadores_", "ramales_", "tuberias_", "cajas_"):
+        if key.startswith(tok):
+            return True
+    return False
+
+
+def _infer_circuit_id_from_destination(dest_group, root_group, parent_of):
+    if dest_group is None:
+        return ""
+    chain = []
+    cur = dest_group
+    seen = set()
+    while cur is not None:
+        cname = _safe_text(getattr(cur, "Name", "")).strip()
+        if not cname or cname in seen:
+            break
+        seen.add(cname)
+        chain.append(cur)
+        if cur == root_group:
+            break
+        cur = parent_of.get(cname)
+    if not chain:
+        return ""
+    chain.reverse()  # root -> destination
+    for grp in chain[1:]:
+        label = _display_name(grp)
+        if not _is_bucket_like(label):
+            return label
+    return _display_name(dest_group)
+
+
+def _group_chain_to_root(group_obj, parent_of):
+    chain = []
+    cur = group_obj
+    seen = set()
+    while cur is not None:
+        cname = _safe_text(getattr(cur, "Name", "")).strip()
+        if not cname or cname in seen:
+            break
+        seen.add(cname)
+        chain.append(cur)
+        cur = parent_of.get(cname)
+    return chain
+
+
+def _group_chain_for_object(obj, member_of, parent_of):
+    oname = _safe_text(getattr(obj, "Name", "")).strip()
+    if not oname:
+        return []
+    parents = list((member_of or {}).get(oname, []) or [])
+    if not parents:
+        return []
+    # Si hay multiples padres, tomar el de mayor profundidad como contexto principal.
+    best_chain = []
+    for grp in parents:
+        chain = _group_chain_to_root(grp, parent_of)
+        if len(chain) > len(best_chain):
+            best_chain = chain
+    return best_chain
+
+
+def _first_non_empty_property(obj, candidates):
+    for pname in list(candidates or []):
+        try:
+            if pname in (getattr(obj, "PropertiesList", []) or []):
+                val = _safe_text(getattr(obj, pname)).strip()
+                if val:
+                    return val
+        except Exception:
+            continue
+    return ""
+
+
+def _resolve_object_room_hint(obj, member_of, parent_of):
+    by_prop = _first_non_empty_property(obj, RECINTO_PROP_CANDIDATES)
+    if by_prop:
+        v = _safe_text(by_prop).strip()
+        vlow = _strip_accents(v).lower()
+        if any(tok in vlow for tok in ORPHAN_HINTS):
+            return "", True
+        return v, False
+
+    chain = _group_chain_for_object(obj, member_of, parent_of)  # nearest -> root
+    if not chain:
+        return "", True
+
+    for grp in chain:
+        txt = _strip_accents(_display_name(grp)).lower()
+        if any(tok in txt for tok in ORPHAN_HINTS):
+            return "", True
+
+    # Buscar patron .../Recintos/<Recinto>/...
+    for idx, grp in enumerate(chain):
+        k = _norm_key(_display_name(grp))
+        if k in {_norm_key(x) for x in ROOM_CONTAINER_HINTS}:
+            if idx > 0:
+                room_label = _display_name(chain[idx - 1]).strip()
+                if room_label:
+                    return room_label, False
+
+    # Fallback: primer ancestro no tecnico.
+    for grp in chain:
+        label = _display_name(grp).strip()
+        if label and (not _is_bucket_like(label)):
+            return label, False
+    return "", True
+
+
+def _resolve_circuit_group_from_destination(dest_group, root_group, parent_of):
+    if dest_group is None:
+        return None
+    if root_group is None:
+        return dest_group
+    chain = []
+    cur = dest_group
+    seen = set()
+    while cur is not None:
+        cname = _safe_text(getattr(cur, "Name", "")).strip()
+        if not cname or cname in seen:
+            break
+        seen.add(cname)
+        chain.append(cur)
+        if cur == root_group:
+            break
+        cur = parent_of.get(cname)
+    if not chain:
+        return dest_group
+    chain.reverse()  # root -> destination
+    for grp in chain[1:]:
+        label = _display_name(grp).strip()
+        if label and (not _is_bucket_like(label)):
+            return grp
+    return dest_group
+
+
+def _collect_non_container_descendants(root_group):
+    out = []
+    seen = set()
+    stack = [root_group]
+    while stack:
+        grp = stack.pop()
+        for child in (getattr(grp, "Group", []) or []):
+            if child is None:
+                continue
+            key = _safe_text(getattr(child, "Name", "")).strip() or str(id(child))
+            if key in seen:
+                continue
+            seen.add(key)
+            if _is_container(child):
+                stack.append(child)
+            else:
+                out.append(child)
+    return out
+
+
+def _collect_selected_objects(include_group_children=True):
+    picked = []
+    seen = set()
+
+    def _add(obj):
+        if obj is None:
+            return
+        key = _safe_text(getattr(obj, "Name", "")).strip() or str(id(obj))
+        if key in seen:
+            return
+        seen.add(key)
+        picked.append(obj)
+
+    try:
+        sel_ex = Gui.Selection.getSelectionEx() or []
+    except Exception:
+        sel_ex = []
+
+    for sx in sel_ex:
+        obj = getattr(sx, "Object", None)
+        if obj is None:
+            continue
+        if _is_container(obj):
+            if include_group_children:
+                for leaf in _collect_non_container_descendants(obj):
+                    _add(leaf)
+            continue
+        _add(obj)
+
+    if picked:
+        return picked
+
+    try:
+        simple_sel = Gui.Selection.getSelection() or []
+    except Exception:
+        simple_sel = []
+
+    for obj in simple_sel:
+        if _is_container(obj):
+            if include_group_children:
+                for leaf in _collect_non_container_descendants(obj):
+                    _add(leaf)
+            continue
+        _add(obj)
+    return picked
+
+
+def _ensure_property(dst_obj, ptype, pname, pgroup, pdesc):
+    try:
+        if pname not in (getattr(dst_obj, "PropertiesList", []) or []):
+            dst_obj.addProperty(ptype, pname, pgroup, pdesc)
+    except Exception:
+        pass
+
+
+def _set_circuito_id(obj, circuito_id):
+    cid = _safe_text(circuito_id).strip()
+    if not cid:
+        return False
+    _ensure_property(obj, "App::PropertyString", "CircuitoID", "Circuito", "Identificador de circuito")
+    try:
+        obj.CircuitoID = cid
+        return True
+    except Exception:
+        return False
+
+
+def _unique_internal_name(doc, base_label):
+    token = re.sub(r"[^0-9A-Za-z_]+", "_", _safe_text(base_label).strip()).strip("_")
+    token = token or "Grupo"
+    if doc.getObject(token) is None:
+        return token
+    idx = 2
+    while True:
+        cand = f"{token}_{idx:02d}"
+        if doc.getObject(cand) is None:
+            return cand
+        idx += 1
+
+
+def _find_child_group_by_label(parent_group, label):
+    wanted = _norm_key(label)
+    for child in (getattr(parent_group, "Group", []) or []):
+        if not _is_container(child):
+            continue
+        if _norm_key(getattr(child, "Label", "")) == wanted:
+            return child
+        if _norm_key(getattr(child, "Name", "")) == wanted:
+            return child
+    return None
+
+
+def _ensure_child_group(doc, parent_group, label):
+    if parent_group is None:
+        return None
+    hit = _find_child_group_by_label(parent_group, label)
+    if hit is not None:
+        return hit
+    name = _unique_internal_name(doc, label)
+    grp = doc.addObject("App::DocumentObjectGroup", name)
+    try:
+        grp.Label = _safe_text(label).strip() or label
+    except Exception:
+        pass
+    try:
+        parent_group.addObject(grp)
+    except Exception:
+        pass
+    return grp
+
+
+def _resolve_object_destination_in_circuit(doc, obj, circuit_group, member_of, parent_of, keep_room_structure=True):
+    if circuit_group is None:
+        return None, ""
+    if not keep_room_structure:
+        return circuit_group, "circuito_directo"
+
+    room_label, is_orphan = _resolve_object_room_hint(obj, member_of, parent_of)
+    if is_orphan or (not _safe_text(room_label).strip()):
+        hgrp = _ensure_child_group(doc, circuit_group, "Huerfanas")
+        return hgrp if hgrp is not None else circuit_group, "huerfanas"
+
+    recintos = _find_child_group_by_label(circuit_group, "Recintos")
+    if recintos is None:
+        recintos = _ensure_child_group(doc, circuit_group, "Recintos")
+    if recintos is None:
+        return circuit_group, "fallback_circuito"
+
+    room_group = _ensure_child_group(doc, recintos, room_label)
+    if room_group is None:
+        return recintos, "fallback_recintos"
+    return room_group, "recinto"
+
+
+def _move_one_object_to_group(obj, destination, member_of, detach_from_all=True):
+    touched_groups = set()
+    if obj is None or destination is None:
+        return 0, 0, 1, touched_groups
+    if _is_container(obj):
+        return 0, 0, 1, touched_groups
+
+    oname = _safe_text(getattr(obj, "Name", "")).strip()
+    if not oname:
+        return 0, 0, 1, touched_groups
+
+    src_groups = list((member_of or {}).get(oname, []) or [])
+    in_dest = obj in (getattr(destination, "Group", []) or [])
+
+    if detach_from_all:
+        for grp in src_groups:
+            if grp is None or grp == destination:
+                continue
+            try:
+                if obj in (getattr(grp, "Group", []) or []):
+                    grp.removeObject(obj)
+                    touched_groups.add(grp.Name)
+            except Exception as ex:
+                _warn(
+                    "No se pudo remover '{}' de '{}': {}".format(
+                        _display_name(obj),
+                        _display_name(grp),
+                        ex,
+                    )
+                )
+
+    if in_dest:
+        return 0, 1, 0, touched_groups
+
+    try:
+        destination.addObject(obj)
+        return 1, 0, 0, touched_groups
+    except Exception as ex:
+        _warn(
+            "No se pudo mover '{}' a '{}': {}".format(
+                _display_name(obj),
+                _display_name(destination),
+                ex,
+            )
+        )
+        return 0, 0, 1, touched_groups
+
+
+def _move_objects_to_group(doc, objects, destination, detach_from_all=True):
+    _, _, member_of = _scan_relationships(doc)
+    touched_groups = set()
+    moved = 0
+    already = 0
+    skipped = 0
+
+    for obj in (objects or []):
+        m, a, s, touched = _move_one_object_to_group(
+            obj=obj,
+            destination=destination,
+            member_of=member_of,
+            detach_from_all=detach_from_all,
+        )
+        moved += int(m)
+        already += int(a)
+        skipped += int(s)
+        touched_groups.update(touched)
+
+    return moved, already, skipped, touched_groups
+
+
+def _is_protected_empty_group(grp, protect_base):
+    if not protect_base:
+        return False
+    n_name = _norm_key(getattr(grp, "Name", ""))
+    n_label = _norm_key(getattr(grp, "Label", ""))
+    protected = {_norm_key(x) for x in PROTECTED_EMPTY_GROUPS}
+    return (n_name in protected) or (n_label in protected)
+
+
+def _cleanup_empty_groups(doc, destination_name, touched_group_names, global_mode=False, protect_base=True):
+    removed = 0
+    containers, parent_of, _ = _scan_relationships(doc)
+
+    if global_mode:
+        candidate_names = {grp.Name for grp in containers}
+    else:
+        candidate_names = set(touched_group_names or [])
+        for name in list(candidate_names):
+            cur = parent_of.get(name)
+            seen = set()
+            while cur is not None:
+                if cur.Name in seen:
+                    break
+                seen.add(cur.Name)
+                candidate_names.add(cur.Name)
+                cur = parent_of.get(cur.Name)
+
+    candidate_names.discard(_safe_text(destination_name))
+
+    while True:
+        containers, parent_of, _ = _scan_relationships(doc)
+        by_name = {grp.Name: grp for grp in containers}
+
+        def _depth(name):
+            d = 0
+            seen = set()
+            cur = name
+            while cur in parent_of and cur not in seen:
+                seen.add(cur)
+                cur = parent_of[cur].Name
+                d += 1
+            return d
+
+        ordered = sorted(
+            [by_name[n] for n in candidate_names if n in by_name],
+            key=lambda grp: _depth(grp.Name),
+            reverse=True,
+        )
+
+        removed_round = 0
+        for grp in ordered:
+            if grp is None or grp.Name == destination_name:
+                continue
+            if _is_protected_empty_group(grp, protect_base):
+                continue
+            if (getattr(grp, "Group", []) or []):
+                continue
+
+            parent = parent_of.get(grp.Name)
+            gname = grp.Name
+            glabel = _display_name(grp)
+            try:
+                if parent is not None:
+                    try:
+                        if grp in (getattr(parent, "Group", []) or []):
+                            parent.removeObject(grp)
+                    except Exception:
+                        pass
+                doc.removeObject(gname)
+                removed += 1
+                removed_round += 1
+                candidate_names.discard(gname)
+                if parent is not None:
+                    candidate_names.add(parent.Name)
+                _info(f"Grupo vacio eliminado: {glabel}")
+            except Exception as ex:
+                _warn(f"No se pudo eliminar grupo vacio '{glabel}': {ex}")
+
+        if removed_round == 0:
+            break
+
+    return removed
+
+
+class _CircuitMoveDialog(QtWidgets.QDialog):
+    def __init__(self, rows, parent_of, roots_by_name, selected_count, parent=None):
+        super(_CircuitMoveDialog, self).__init__(parent)
+        self.setWindowTitle("Mover seleccion a circuito")
+        self.setMinimumWidth(760)
+        self._rows_all = list(rows or [])
+        self._parent_of = dict(parent_of or {})
+        self._roots_by_name = dict(roots_by_name or {})
+        self._build_ui(selected_count)
+        self._refresh_rows()
+
+    def _build_ui(self, selected_count):
+        lay = QtWidgets.QVBoxLayout(self)
+
+        info = QtWidgets.QLabel(
+            "Seleccione el circuito destino dentro de Iluminacion o Tomacorrientes."
+        )
+        info.setWordWrap(True)
+        lay.addWidget(info)
+
+        lay.addWidget(QtWidgets.QLabel(f"Seleccion actual: {int(selected_count)} item(s)"))
+
+        form = QtWidgets.QFormLayout()
+        self.cmb_scope = QtWidgets.QComboBox()
+        self.cmb_scope.addItem("Iluminacion", "iluminacion")
+        self.cmb_scope.addItem("Tomacorrientes", "tomacorrientes")
+        self.cmb_scope.addItem("Todos", "all")
+        form.addRow("Directorio:", self.cmb_scope)
+
+        self.ed_filter = QtWidgets.QLineEdit()
+        self.ed_filter.setPlaceholderText("Filtrar circuito por texto (ej: Frente)")
+        form.addRow("Filtro:", self.ed_filter)
+
+        self.cmb_dest = QtWidgets.QComboBox()
+        self.cmb_dest.setMinimumContentsLength(72)
+        form.addRow("Destino:", self.cmb_dest)
+
+        self.ed_circuito = QtWidgets.QLineEdit()
+        self.ed_circuito.setPlaceholderText("CircuitoID a asignar (auto por destino)")
+        form.addRow("CircuitoID:", self.ed_circuito)
+
+        lay.addLayout(form)
+
+        box_opts = QtWidgets.QGroupBox("Opciones")
+        opt_lay = QtWidgets.QVBoxLayout(box_opts)
+        self.chk_include_children = QtWidgets.QCheckBox(
+            "Si selecciono grupos, mover su contenido (recursivo)"
+        )
+        self.chk_include_children.setChecked(True)
+        self.chk_detach = QtWidgets.QCheckBox(
+            "Quitar objetos de grupos anteriores antes de mover (evita duplicados)"
+        )
+        self.chk_detach.setChecked(True)
+        self.chk_room_structure = QtWidgets.QCheckBox(
+            "Mantener estructura por recinto y enviar sin recinto a Huerfanas"
+        )
+        self.chk_room_structure.setChecked(True)
+        self.chk_set_cid = QtWidgets.QCheckBox("Actualizar propiedad CircuitoID")
+        self.chk_set_cid.setChecked(True)
+        self.chk_cleanup_empty = QtWidgets.QCheckBox("Borrar grupos vacios despues de mover")
+        self.chk_cleanup_empty.setChecked(True)
+        self.chk_cleanup_global = QtWidgets.QCheckBox("Limpiar vacios en TODO el documento")
+        self.chk_cleanup_global.setChecked(False)
+        self.chk_protect_base = QtWidgets.QCheckBox("Conservar grupos base vacios (electrico/_lib/instancias)")
+        self.chk_protect_base.setChecked(True)
+        opt_lay.addWidget(self.chk_include_children)
+        opt_lay.addWidget(self.chk_detach)
+        opt_lay.addWidget(self.chk_room_structure)
+        opt_lay.addWidget(self.chk_set_cid)
+        opt_lay.addWidget(self.chk_cleanup_empty)
+        opt_lay.addWidget(self.chk_cleanup_global)
+        opt_lay.addWidget(self.chk_protect_base)
+        lay.addWidget(box_opts)
+
+        btns = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+        )
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        lay.addWidget(btns)
+
+        self.cmb_scope.currentIndexChanged.connect(self._refresh_rows)
+        self.ed_filter.textChanged.connect(self._refresh_rows)
+        self.cmb_dest.currentIndexChanged.connect(self._refresh_circuito_suggestion)
+        self.chk_set_cid.toggled.connect(self._refresh_circuito_enabled)
+        self.chk_cleanup_empty.toggled.connect(self._refresh_cleanup_mode)
+        self._refresh_cleanup_mode()
+        self._refresh_circuito_enabled()
+
+    def _refresh_cleanup_mode(self):
+        enabled = self.chk_cleanup_empty.isChecked()
+        self.chk_cleanup_global.setEnabled(enabled)
+        self.chk_protect_base.setEnabled(enabled)
+
+    def _refresh_circuito_enabled(self):
+        enabled = self.chk_set_cid.isChecked()
+        self.ed_circuito.setEnabled(enabled)
+
+    def _refresh_rows(self):
+        self.cmb_dest.clear()
+        scope = _safe_text(self.cmb_scope.currentData()).strip().lower() or "iluminacion"
+        needle = _strip_accents(self.ed_filter.text()).lower().strip()
+
+        for row in self._rows_all:
+            kind = _safe_text(row.get("kind", "")).strip().lower()
+            if scope != "all" and kind != scope:
+                continue
+            label = _safe_text(row.get("display", ""))
+            if needle and needle not in _strip_accents(label).lower():
+                continue
+            self.cmb_dest.addItem(label, row)
+
+        if self.cmb_dest.count() == 0:
+            self.ed_circuito.setText("")
+            return
+        self._refresh_circuito_suggestion()
+
+    def _refresh_circuito_suggestion(self):
+        row = self.current_row()
+        if not row:
+            self.ed_circuito.setText("")
+            return
+        root_name = _safe_text(row.get("root_name", "")).strip()
+        grp = row.get("group")
+        root_grp = self._roots_by_name.get(root_name)
+        inferred = _infer_circuit_id_from_destination(grp, root_grp, self._parent_of)
+        self.ed_circuito.setText(_safe_text(inferred).strip())
+
+    def current_row(self):
+        data = self.cmb_dest.currentData()
+        if isinstance(data, dict):
+            return data
+        return None
+
+    def get_cfg(self):
+        row = self.current_row()
+        return {
+            "row": row,
+            "include_group_children": bool(self.chk_include_children.isChecked()),
+            "detach_from_all": bool(self.chk_detach.isChecked()),
+            "room_structure": bool(self.chk_room_structure.isChecked()),
+            "set_circuito_id": bool(self.chk_set_cid.isChecked()),
+            "circuito_id": _safe_text(self.ed_circuito.text()).strip(),
+            "cleanup_empty": bool(self.chk_cleanup_empty.isChecked()),
+            "cleanup_global": bool(self.chk_cleanup_global.isChecked()),
+            "protect_base": bool(self.chk_protect_base.isChecked()),
+        }
+
+
+def _build_destination_rows(doc):
+    roots = _find_circuit_roots(doc)
+    if not roots:
+        return [], {}, {}
+
+    rows_paths, parent_of = _container_paths(doc)
+    roots_by_name = {grp.Name: grp for _, grp in roots}
+
+    rows = []
+    for kind, root in roots:
+        root_name = _safe_text(getattr(root, "Name", "")).strip()
+        seen = set()
+        first_level = list(_iter_child_containers(root))
+        candidates = []
+
+        for child in first_level:
+            if _is_circuit_parent_bucket(child):
+                candidates.extend(list(_iter_child_containers(child)))
+            else:
+                candidates.append(child)
+
+        # Fallback: si no hay candidatos (estructura no estandar), usar directos.
+        if not candidates:
+            candidates = first_level
+
+        for grp in candidates:
+            gname = _safe_text(getattr(grp, "Name", "")).strip()
+            if not gname or gname in seen:
+                continue
+            seen.add(gname)
+            display = f"{_display_name(root)} / {_display_name(grp)}"
+            rows.append(
+                {
+                    "kind": kind,
+                    "group": grp,
+                    "group_name": gname,
+                    "display": display,
+                    "root_name": root_name,
+                }
+            )
+    rows.sort(key=lambda r: (_strip_accents(r.get("display", "")).lower(), r.get("group_name", "")))
+    return rows, parent_of, roots_by_name
+
+
+def main():
+    doc = App.ActiveDocument
+    if doc is None:
+        _err("No hay documento activo.")
+        return
+    if QtWidgets is None:
+        _err("PySide no disponible; esta macro requiere GUI.")
+        return
+
+    try:
+        raw_sel = Gui.Selection.getSelection() or []
+    except Exception:
+        raw_sel = []
+    if not raw_sel:
+        _warn("Seleccione objetos o grupos en el arbol.")
+        return
+
+    rows, parent_of, roots_by_name = _build_destination_rows(doc)
+    if not rows:
+        _err("No se encontraron directorios de circuitos (Iluminacion/Tomacorrientes) en el documento.")
+        return
+
+    parent = None
+    try:
+        parent = Gui.getMainWindow()
+    except Exception:
+        parent = None
+
+    dlg = _CircuitMoveDialog(
+        rows=rows,
+        parent_of=parent_of,
+        roots_by_name=roots_by_name,
+        selected_count=len(raw_sel),
+        parent=parent,
+    )
+    result = dlg.exec() if hasattr(dlg, "exec") else dlg.exec_()
+    if result != QtWidgets.QDialog.Accepted:
+        _warn("Operacion cancelada.")
+        return
+
+    cfg = dlg.get_cfg()
+    row = cfg.get("row")
+    if not row:
+        _err("No selecciono circuito destino.")
+        return
+    selected_destination = row.get("group")
+    if selected_destination is None or (not _is_container(selected_destination)):
+        _err("El circuito destino ya no es valido.")
+        return
+    root_name = _safe_text(row.get("root_name", "")).strip()
+    root_group = roots_by_name.get(root_name)
+    circuit_group = _resolve_circuit_group_from_destination(selected_destination, root_group, parent_of)
+    if circuit_group is None:
+        circuit_group = selected_destination
+
+    selected_objects = _collect_selected_objects(include_group_children=cfg["include_group_children"])
+    if not selected_objects:
+        _warn("No hay objetos movibles en la seleccion.")
+        return
+
+    circuito_id = _safe_text(cfg.get("circuito_id", "")).strip()
+    _info(
+        "Destino='{}' | circuito_base='{}' | objetos={} | por_recinto={} | actualizar_CircuitoID={} | CircuitoID='{}'".format(
+            _display_name(selected_destination),
+            _display_name(circuit_group),
+            len(selected_objects),
+            "SI" if cfg.get("room_structure", True) else "NO",
+            "SI" if cfg["set_circuito_id"] else "NO",
+            circuito_id or "-",
+        )
+    )
+
+    doc.openTransaction("ElectricCR: mover seleccion a circuito")
+    try:
+        _, _, member_of = _scan_relationships(doc)
+        moved = 0
+        already = 0
+        skipped = 0
+        touched = set()
+        placed_recinto = 0
+        placed_huerfanas = 0
+        placed_direct = 0
+
+        cid_updated = 0
+        for obj in selected_objects:
+            if obj is None or _is_container(obj):
+                skipped += 1
+                continue
+
+            target_group = selected_destination
+            target_mode = "directo"
+            if bool(cfg.get("room_structure", True)):
+                target_group, target_mode = _resolve_object_destination_in_circuit(
+                    doc=doc,
+                    obj=obj,
+                    circuit_group=circuit_group,
+                    member_of=member_of,
+                    parent_of=parent_of,
+                    keep_room_structure=True,
+                )
+            if target_group is None:
+                skipped += 1
+                continue
+
+            m, a, s, touched_one = _move_one_object_to_group(
+                obj=obj,
+                destination=target_group,
+                member_of=member_of,
+                detach_from_all=bool(cfg["detach_from_all"]),
+            )
+            moved += int(m)
+            already += int(a)
+            skipped += int(s)
+            touched.update(touched_one)
+
+            placed_now = int(m) + int(a)
+            if target_mode == "recinto":
+                placed_recinto += placed_now
+            elif target_mode == "huerfanas":
+                placed_huerfanas += placed_now
+            else:
+                placed_direct += placed_now
+
+            if bool(cfg["set_circuito_id"]) and circuito_id:
+                if _set_circuito_id(obj, circuito_id):
+                    cid_updated += 1
+
+        removed_empty = 0
+        if bool(cfg["cleanup_empty"]):
+            removed_empty = _cleanup_empty_groups(
+                doc=doc,
+                destination_name=_safe_text(getattr(circuit_group, "Name", "")),
+                touched_group_names=touched,
+                global_mode=bool(cfg["cleanup_global"]),
+                protect_base=bool(cfg["protect_base"]),
+            )
+
+        doc.recompute()
+        doc.commitTransaction()
+    except Exception as ex:
+        try:
+            doc.abortTransaction()
+        except Exception:
+            pass
+        _err(f"Fallo general: {ex}")
+        return
+
+    _info(
+        "Finalizado | movidos={} | ya_en_destino={} | omitidos={} | ubicados_recinto={} | ubicados_huerfanas={} | ubicados_directo={} | CircuitoID_actualizado={} | grupos_vacios_eliminados={}".format(
+            moved,
+            already,
+            skipped,
+            placed_recinto,
+            placed_huerfanas,
+            placed_direct,
+            cid_updated,
+            removed_empty,
+        )
+    )
+
+
+if __name__ == "__main__":
+    main()

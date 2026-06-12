@@ -490,5 +490,38 @@ def register_predefined_macros(base_dir: str):
     if root_cmds:
         groups.append(("Macros", root_cmds))
 
+    # ElectricCR: macros sueltas dentro de Macros-de-Freecad/ElectricCR
+    # (la carpeta se ignora en el escaneo general para evitar registrar
+    #  archivos del paquete Python; aqui solo publicamos .FCMacro)
+    electriccr_cmds = []
+    electriccr_dir = os.path.join(repo_root, "ElectricCR")
+    if os.path.isdir(electriccr_dir):
+        for name in sorted(os.listdir(electriccr_dir)):
+            if name.lower() == "desktop.ini":
+                continue
+            if not name.lower().endswith(".fcmacro"):
+                continue
+            macro_path = os.path.join(electriccr_dir, name)
+            if not os.path.isfile(macro_path):
+                continue
+            per_icon = icon_for_macro("ElectricCR", name) or icon_path("Rayo")
+            label = os.path.splitext(name)[0]
+            header_label = (
+                macro_header_value("ElectricCR", name, "MenuText")
+                or macro_header_value("ElectricCR", name, "Label")
+            )
+            if header_label:
+                label = header_label
+            cmd_id = _cmd_id("ElectricCR", name, macro_path, per_icon)
+            cmd = register_macro_command(cmd_id, macro_path, label, icon=per_icon)
+            if cmd:
+                toolbar_override = _toolbar_for_macro("ElectricCR", name, label)
+                if toolbar_override:
+                    _append_to_group(toolbar_override, cmd)
+                else:
+                    electriccr_cmds.append(cmd)
+    if electriccr_cmds:
+        groups.append(("ElectricCR", electriccr_cmds))
+
     return groups
 

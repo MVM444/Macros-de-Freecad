@@ -1,0 +1,342 @@
+# -*- coding: utf-8 -*-
+# MenuText: Guia Iluminacion
+# ToolTip: Muestra el flujo recomendado de iluminacion
+# Icon: Guia_Iluminacion.svg
+
+# Qt compatibility for FreeCAD 1.x (PySide6) and older builds.
+def _ensure_qt_compat():
+    import sys
+    import types
+
+    QtCore = QtGui = QtWidgets = None
+    binding_name = None
+
+    for candidate in ("PySide6", "PySide2", "PySide"):
+        try:
+            if candidate == "PySide":
+                from PySide import QtCore as _QtCore, QtGui as _QtGui
+                _QtWidgets = _QtGui
+            else:
+                module = __import__(candidate, fromlist=["QtCore", "QtGui", "QtWidgets"])
+                _QtCore = module.QtCore
+                _QtGui = module.QtGui
+                _QtWidgets = module.QtWidgets
+            QtCore, QtGui, QtWidgets = _QtCore, _QtGui, _QtWidgets
+            binding_name = candidate
+            break
+        except Exception:
+            continue
+
+    if QtCore is None:
+        return
+
+    qtgui_compat = types.ModuleType("QtGui")
+    qtgui_compat.__dict__.update(getattr(QtGui, "__dict__", {}))
+    qtgui_compat.__dict__.update(getattr(QtWidgets, "__dict__", {}))
+
+    qtsvg_compat = None
+    for module_name in ("QtSvg", "QtSvgWidgets"):
+        try:
+            module = __import__(binding_name, fromlist=[module_name])
+            qt_module = getattr(module, module_name)
+        except Exception:
+            continue
+        if qtsvg_compat is None:
+            qtsvg_compat = types.ModuleType("QtSvg")
+        qtsvg_compat.__dict__.update(getattr(qt_module, "__dict__", {}))
+
+    qtuitools_compat = None
+    try:
+        module = __import__(binding_name, fromlist=["QtUiTools"])
+        qtuitools_compat = module.QtUiTools
+    except Exception:
+        pass
+
+    for package_name in ("PySide2", "PySide"):
+        package = sys.modules.get(package_name)
+        if package is None:
+            package = types.ModuleType(package_name)
+            sys.modules[package_name] = package
+        package.QtCore = QtCore
+        package.QtGui = qtgui_compat
+        package.QtWidgets = QtWidgets
+        sys.modules[package_name + ".QtCore"] = QtCore
+        sys.modules[package_name + ".QtGui"] = qtgui_compat
+        sys.modules[package_name + ".QtWidgets"] = QtWidgets
+        if qtsvg_compat is not None:
+            package.QtSvg = qtsvg_compat
+            sys.modules[package_name + ".QtSvg"] = qtsvg_compat
+        if qtuitools_compat is not None:
+            package.QtUiTools = qtuitools_compat
+            sys.modules[package_name + ".QtUiTools"] = qtuitools_compat
+
+
+_ensure_qt_compat()
+
+# Toolbar: Iluminación
+
+import os
+from pathlib import Path
+
+import FreeCAD as App
+
+try:
+    from PySide2 import QtCore, QtWidgets
+except Exception:
+    try:
+        from PySide6 import QtCore, QtWidgets
+    except Exception:
+        try:
+            from PySide import QtCore
+            from PySide import QtGui as QtWidgets
+        except Exception:
+            QtCore = None
+            QtWidgets = None
+
+
+TAG = "[ILUM_GUIA]"
+
+
+def _info(msg):
+    App.Console.PrintMessage("{}[INFO] {}\n".format(TAG, msg))
+
+
+def _warn(msg):
+    App.Console.PrintWarning("{}[WARN] {}\n".format(TAG, msg))
+
+
+def _macro_dir():
+    try:
+        return Path(__file__).resolve().parent
+    except Exception:
+        return Path.cwd()
+
+
+def _run_macro(path):
+    path = Path(path)
+    if not path.exists():
+        _warn("No se encontro la macro: {}".format(path))
+        return
+    try:
+        source = path.read_text(encoding="utf-8-sig")
+        code = compile(source, str(path), "exec")
+        env = {
+            "__name__": "__main__",
+            "__file__": str(path),
+            "FreeCAD": App,
+            "App": App,
+        }
+        try:
+            import FreeCADGui as Gui
+            env["FreeCADGui"] = Gui
+            env["Gui"] = Gui
+        except Exception:
+            pass
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(path.parent))
+            exec(code, env, env)
+        finally:
+            os.chdir(old_cwd)
+    except SystemExit:
+        _warn("Macro cancelada por el usuario.")
+    except Exception as exc:
+        App.Console.PrintError("{}[ERROR] {}\n".format(TAG, exc))
+
+
+def _open_readme():
+    path = _macro_dir() / "README.md"
+    if not path.exists():
+        _warn("No se encontro README.md.")
+        return
+    try:
+        os.startfile(str(path))
+    except Exception:
+        _info("README: {}".format(path))
+
+
+def _areas_macro_path():
+    return _macro_dir().parent / "Areas" / "AsignarNombreEstandar.FCMacro"
+
+
+class GuiaIluminacionDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None):
+        super(GuiaIluminacionDialog, self).__init__(parent)
+        self.setWindowTitle("Guia Iluminacion")
+        self.setMinimumWidth(640)
+        if QtCore is not None:
+            try:
+                self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
+            except Exception:
+                pass
+        self._build()
+
+    def _build(self):
+        layout = QtWidgets.QVBoxLayout(self)
+
+        title = QtWidgets.QLabel("Guia rapida de iluminacion en ElectricCR")
+        try:
+            font = title.font()
+            font.setBold(True)
+            font.setPointSize(font.pointSize() + 2)
+            title.setFont(font)
+        except Exception:
+            pass
+        layout.addWidget(title)
+
+        text = QtWidgets.QTextBrowser()
+        try:
+            text.setStyleSheet(
+                "QTextBrowser { background: #ffffff; color: #202124; }"
+            )
+        except Exception:
+            pass
+        text.setOpenExternalLinks(False)
+        text.setHtml(
+            """
+            <style>
+              body { background: #ffffff; color: #202124; font-size: 10pt; }
+              h3 { color: #111827; margin-top: 16px; margin-bottom: 6px; }
+              p { margin-top: 4px; margin-bottom: 8px; }
+              ol, ul { margin-top: 4px; margin-bottom: 8px; }
+              li { margin-bottom: 4px; }
+              table { border-collapse: collapse; margin-top: 6px; margin-bottom: 10px; }
+              td, th { border: 1px solid #c8c8c8; color: #202124; padding: 5px 7px; vertical-align: top; }
+              th { background: #efefef; color: #111827; }
+              pre { background: #f5f5f5; color: #202124; border: 1px solid #c8c8c8; padding: 8px; }
+              .box { background: #f5f5f5; border: 1px solid #c8c8c8; color: #202124; padding: 8px; margin: 8px 0; }
+              .warn { background: #fff4df; border: 1px solid #d7a94a; color: #202124; padding: 8px; margin: 8px 0; }
+              .ok { background: #eef7ee; border: 1px solid #82ad82; color: #202124; padding: 8px; margin: 8px 0; }
+              b { color: #111827; }
+            </style>
+
+            <div class="box">
+              <b>Regla principal:</b> no empiece colocando luminarias. Primero prepare las areas,
+              asigne nombres claros, actualice las hojas y valide las descripciones.
+            </div>
+
+            <h3>Si estoy retomando un proyecto</h3>
+            <ol>
+              <li>Abra o revise el grupo de areas, normalmente llamado <b>Areas</b>.</li>
+              <li>Confirme que cada recinto sea un rectangulo o area cerrada con nombre claro.</li>
+              <li>Use <b>1. Asignar nombres estandar</b> si todavia hay nombres como <b>Rectangle001</b>.</li>
+              <li>Use <b>2. Actualizar iluminacion completa</b> para recalcular hojas y etiquetas.</li>
+              <li>En el panel, revise el grupo de recintos, hojas de calculo y grupo de etiquetas antes de aceptar.</li>
+              <li>Valide la <b>Descripcion</b> de cada recinto. Esta descripcion define el criterio de iluminacion.</li>
+            </ol>
+
+            <h3>Flujo completo</h3>
+            <table>
+              <tr><th>Paso</th><th>Que se hace</th><th>Herramienta</th></tr>
+              <tr><td>1</td><td>Importar o dibujar la base arquitectonica: CAD, imagen, PDF o dibujo base.</td><td>FreeCAD</td></tr>
+              <tr><td>2</td><td>Dibujar rectangulos o areas cerradas para cada recinto.</td><td>Draft / Areas</td></tr>
+              <tr><td>3</td><td>Colocar todos los recintos en un grupo, por ejemplo <b>Areas</b>.</td><td>Arbol del documento</td></tr>
+              <tr><td>4</td><td>Renombrar los recintos con nombres utiles.</td><td><b>AsignarNombreEstandar</b></td></tr>
+              <tr><td>5</td><td>Actualizar datos, tabla legacy y etiquetas.</td><td><b>Actualizar_Iluminacion_Completa</b></td></tr>
+              <tr><td>6</td><td>Colocar luminarias registradas o desde puntos de sketch.</td><td>Macros de luminarias</td></tr>
+              <tr><td>7</td><td>Organizar por circuito/apagador y exportar si corresponde.</td><td>Macros de organizacion/exportacion</td></tr>
+            </table>
+
+            <h3>Como debe verse el grupo de areas</h3>
+            <pre>Areas
+  Oficina
+  Pasillo
+  Sala_Espera
+  Servicio_Sanitario
+  Bodega
+  Comedor</pre>
+            <p>No use nombres genericos para los recintos. Los nombres son la primera pista que usa la macro para proponer la descripcion.</p>
+
+            <h3>Descripcion de recintos</h3>
+            <p>La descripcion no es solo texto: controla el criterio de iluminacion. Revise especialmente nombres ambiguos.</p>
+            <table>
+              <tr><th>Nombre del recinto</th><th>Descripcion correcta esperada</th></tr>
+              <tr><td>Pasillo S.S.</td><td>Pasillo</td></tr>
+              <tr><td>Archivo / Bodega</td><td>Archivo o Bodega, segun el uso real</td></tr>
+              <tr><td>Cuarto Aseo</td><td>Cuarto de Aseo</td></tr>
+              <tr><td>Servidor / Rack</td><td>Servidor</td></tr>
+              <tr><td>Suministros</td><td>Bodega o Suministros, segun la tabla disponible</td></tr>
+            </table>
+            <p>Cuando tenga duda, use la lista desplegable del panel. Es mejor corregir ahi que escribir descripciones manualmente en la hoja.</p>
+
+            <h3>Que actualiza la macro completa</h3>
+            <ul>
+              <li><b>DatosRecintos</b>: se reescribe con areas y descripciones.</li>
+              <li><b>Tabla Iluminacion Legacy</b>: se actualiza sin tener que borrar hojas viejas.</li>
+              <li><b>Etiquetas</b>: se recrean en el grupo indicado para evitar duplicados.</li>
+            </ul>
+
+            <h3>Colocar luminarias</h3>
+            <div class="warn">
+              <b>Importante:</b> <b>ColocarLuminarias_Link</b> y <b>ColocarLuminarias_Objeto</b>
+              usan luminarias registradas en ElectricCR. No convierten cualquier objeto seleccionado en luminaria.
+            </div>
+            <p>Si necesita repetir un objeto base existente, revise <b>Luminaria_Link_Sketch</b> en modo <b>Base object</b>.
+            Ese flujo requiere puntos de sketch para las posiciones.</p>
+
+            <h3>Errores frecuentes</h3>
+            <ul>
+              <li><b>No aparece el grupo de iluminacion:</b> la macro actual puede crearlo cuando falta.</li>
+              <li><b>No detecta luminarias:</b> revise que ya existan luminarias colocadas o registradas.</li>
+              <li><b>Se confundio un pasillo:</b> corrija la descripcion en el panel antes de generar hojas.</li>
+              <li><b>No recuerdo que macro usar:</b> use primero esta guia, luego los botones 1 y 2 de abajo.</li>
+            </ul>
+
+            <div class="ok">
+              Orden corto: <b>Base</b> -> <b>Areas</b> -> <b>Nombres estandar</b> ->
+              <b>Actualizar iluminacion completa</b> -> <b>Luminarias</b> -> <b>Circuitos/exportacion</b>.
+            </div>
+            """
+        )
+        text.setMinimumHeight(560)
+        layout.addWidget(text)
+
+        buttons = QtWidgets.QHBoxLayout()
+        names_btn = QtWidgets.QPushButton("1. Asignar nombres estandar")
+        run_btn = QtWidgets.QPushButton("2. Actualizar iluminacion completa")
+        readme_btn = QtWidgets.QPushButton("Abrir README")
+        close_btn = QtWidgets.QPushButton("Cerrar")
+        buttons.addWidget(names_btn)
+        buttons.addWidget(run_btn)
+        buttons.addWidget(readme_btn)
+        buttons.addStretch(1)
+        buttons.addWidget(close_btn)
+        layout.addLayout(buttons)
+
+        names_btn.clicked.connect(self._run_names)
+        run_btn.clicked.connect(self._run_complete)
+        readme_btn.clicked.connect(_open_readme)
+        close_btn.clicked.connect(self.close)
+
+    def _run_names(self):
+        _run_macro(_areas_macro_path())
+
+    def _run_complete(self):
+        self.close()
+        _run_macro(_macro_dir() / "Actualizar_Iluminacion_Completa.FCMacro")
+
+
+def show_guide():
+    if QtWidgets is None:
+        _info("Qt no esta disponible. Abra README.md en la carpeta Iluminacion.")
+        return
+    try:
+        main = None
+        try:
+            import FreeCADGui as Gui
+            main = Gui.getMainWindow()
+        except Exception:
+            main = None
+        dialog = GuiaIluminacionDialog(main)
+        dialog.show()
+        dialog.raise_()
+        try:
+            dialog.activateWindow()
+        except Exception:
+            pass
+        globals()["_guia_iluminacion_dialog"] = dialog
+    except Exception as exc:
+        App.Console.PrintError("{}[ERROR] {}\n".format(TAG, exc))
+
+
+show_guide()

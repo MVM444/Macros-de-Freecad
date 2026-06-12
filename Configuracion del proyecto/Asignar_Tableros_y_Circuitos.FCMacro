@@ -1,0 +1,1205 @@
+# -*- coding: utf-8 -*-
+# MenuText: Asignar tableros y circuitos (pestanas)
+
+# Qt compatibility for FreeCAD 1.x (PySide6) and older builds.
+def _ensure_qt_compat():
+    import sys
+    import types
+
+    QtCore = QtGui = QtWidgets = None
+    binding_name = None
+
+    for candidate in ("PySide6", "PySide2", "PySide"):
+        try:
+            if candidate == "PySide":
+                from PySide import QtCore as _QtCore, QtGui as _QtGui
+                _QtWidgets = _QtGui
+            else:
+                module = __import__(candidate, fromlist=["QtCore", "QtGui", "QtWidgets"])
+                _QtCore = module.QtCore
+                _QtGui = module.QtGui
+                _QtWidgets = module.QtWidgets
+            QtCore, QtGui, QtWidgets = _QtCore, _QtGui, _QtWidgets
+            binding_name = candidate
+            break
+        except Exception:
+            continue
+
+    if QtCore is None:
+        return
+
+    qtgui_compat = types.ModuleType("QtGui")
+    qtgui_compat.__dict__.update(getattr(QtGui, "__dict__", {}))
+    qtgui_compat.__dict__.update(getattr(QtWidgets, "__dict__", {}))
+
+    qtsvg_compat = None
+    for module_name in ("QtSvg", "QtSvgWidgets"):
+        try:
+            module = __import__(binding_name, fromlist=[module_name])
+            qt_module = getattr(module, module_name)
+        except Exception:
+            continue
+        if qtsvg_compat is None:
+            qtsvg_compat = types.ModuleType("QtSvg")
+        qtsvg_compat.__dict__.update(getattr(qt_module, "__dict__", {}))
+
+    qtuitools_compat = None
+    try:
+        module = __import__(binding_name, fromlist=["QtUiTools"])
+        qtuitools_compat = module.QtUiTools
+    except Exception:
+        pass
+
+    for package_name in ("PySide2", "PySide"):
+        package = sys.modules.get(package_name)
+        if package is None:
+            package = types.ModuleType(package_name)
+            sys.modules[package_name] = package
+        package.QtCore = QtCore
+        package.QtGui = qtgui_compat
+        package.QtWidgets = QtWidgets
+        sys.modules[package_name + ".QtCore"] = QtCore
+        sys.modules[package_name + ".QtGui"] = qtgui_compat
+        sys.modules[package_name + ".QtWidgets"] = QtWidgets
+        if qtsvg_compat is not None:
+            package.QtSvg = qtsvg_compat
+            sys.modules[package_name + ".QtSvg"] = qtsvg_compat
+        if qtuitools_compat is not None:
+            package.QtUiTools = qtuitools_compat
+            sys.modules[package_name + ".QtUiTools"] = qtuitools_compat
+
+
+_ensure_qt_compat()
+
+"""
+Herramienta de asignacion electrica:
+- Pestanas por tablero para seleccionar circuitos y componentes aguas abajo
+- Pestana de origen para definir de donde viene cada tablero/desconector/interruptor
+
+Salida:
+- Hoja "Asignacion_Red"
+- Hoja "Red_Origenes"
+"""
+
+import re
+import unicodedata
+
+import FreeCAD as App
+
+
+TAG = "[ASIG_RED]"
+
+SHEET_ASSIGN = "Asignacion_Red"
+SHEET_ORIGINS = "Red_Origenes"
+SHEETS_GROUP_LABEL = "Hojas de Calculo"
+
+TIPO_CIRCUITO = ("Iluminacion", "Tomas", "Especial")
+PARENT_SPECIAL = ("ACOMETIDA", "TRANSFERENCIA", "UPS")
+
+SKIP_GROUP_TOKENS = (
+    "csv",
+    "puntos",
+    "referencias",
+    "referencia",
+    "conexiones",
+    "conexion",
+    "cajas",
+    "ramales",
+    "alimentadores",
+    "recintos",
+    "huerfanas",
+    "_lib",
+    "lib",
+    "componentes",
+    "etiquetas",
+)
+
+SKIP_OBJECT_TOKENS = (
+    "conexion",
+    "conector",
+    "wire",
+    "cable",
+    "emt",
+    "tuberia",
+    "ruta",
+    "alimentador",
+    "etiqueta",
+)
+
+LOAD_OBJECT_TOKENS = (
+    "toma",
+    "tomacorriente",
+    "receptacle",
+    "enchufe",
+    "lumin",
+    "light",
+    "lampara",
+    "apagador",
+    "hvac",
+    "aire",
+    "equipo",
+    "cascada",
+)
+
+
+def _info(msg):
+    App.Console.PrintMessage("{}[INFO] {}\n".format(TAG, msg))
+
+
+def _warn(msg):
+    App.Console.PrintWarning("{}[WARN] {}\n".format(TAG, msg))
+
+
+def _err(msg):
+    App.Console.PrintError("{}[ERROR] {}\n".format(TAG, msg))
+
+
+def _txt(v):
+    try:
+        return str(v or "")
+    except Exception:
+        return ""
+
+
+def _i(v, d=0):
+    try:
+        return int(v)
+    except Exception:
+        try:
+            return int(float(v))
+        except Exception:
+            return d
+
+
+def _norm_key(v):
+    s = _txt(v).strip().lower()
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    s = re.sub(r"\s+", " ", s)
+    return re.sub(r"[^a-z0-9]+", "", s)
+
+
+def _col(n):
+    out = ""
+    x = int(n)
+    while x > 0:
+        x, r = divmod(x - 1, 26)
+        out = chr(65 + r) + out
+    return out or "A"
+
+
+def _is_group(o):
+    if o is None:
+        return False
+    try:
+        if o.isDerivedFrom("App::DocumentObjectGroup"):
+            return True
+    except Exception:
+        pass
+    try:
+        if o.isDerivedFrom("App::Part"):
+            return True
+    except Exception:
+        pass
+    return hasattr(o, "Group")
+
+
+def _is_spreadsheet(o):
+    try:
+        return _txt(getattr(o, "TypeId", "")) == "Spreadsheet::Sheet"
+    except Exception:
+        return False
+
+
+def _has_prop(o, p):
+    try:
+        return p in (getattr(o, "PropertiesList", []) or [])
+    except Exception:
+        return False
+
+
+def _set(sheet, cell, value):
+    s = _txt(value)
+    if s.startswith("="):
+        s = "'" + s
+    try:
+        sheet.set(cell, s)
+    except Exception:
+        pass
+
+
+def _get(sheet, cell):
+    try:
+        return _txt(sheet.get(cell)).strip()
+    except Exception:
+        return ""
+
+
+def _clear(sheet, max_rows=3000, max_cols=40):
+    ok = False
+    try:
+        sheet.clearAll()
+        ok = True
+    except Exception:
+        ok = False
+    if ok:
+        return
+    for r in range(1, max_rows + 1):
+        for c in range(1, max_cols + 1):
+            _set(sheet, "{}{}".format(_col(c), r), "")
+
+
+def _unique_name(doc, base):
+    token = re.sub(r"[^0-9A-Za-z_]+", "_", _txt(base)).strip("_") or "Obj"
+    if doc.getObject(token) is None:
+        return token
+    i = 2
+    while doc.getObject("{}_{}".format(token, i)) is not None:
+        i += 1
+    return "{}_{}".format(token, i)
+
+
+def _sheet(doc, name):
+    obj = doc.getObject(name)
+    if obj is not None and _is_spreadsheet(obj):
+        return obj
+    return doc.addObject("Spreadsheet::Sheet", _unique_name(doc, name))
+
+
+def _find_group_by_key(doc, key):
+    if not key:
+        return None
+    for obj in (getattr(doc, "Objects", []) or []):
+        if _is_group(obj) and _norm_key(_txt(getattr(obj, "Label", obj.Name))) == key:
+            return obj
+    return None
+
+
+def _create_group(doc, label, parent=None):
+    g = doc.addObject("App::DocumentObjectGroup", _unique_name(doc, label))
+    try:
+        g.Label = label
+    except Exception:
+        pass
+    if parent is not None:
+        try:
+            parent.addObject(g)
+        except Exception:
+            pass
+    return g
+
+
+def _ensure_calculation_sheets_group(doc):
+    for candidate in ("Hojas de Calculo", "Hojas_Calculo"):
+        grp = _find_group_by_key(doc, _norm_key(candidate))
+        if grp is not None:
+            try:
+                grp.Label = SHEETS_GROUP_LABEL
+            except Exception:
+                pass
+            return grp
+    legacy = _find_group_by_key(doc, _norm_key("Calculos"))
+    if legacy is not None:
+        try:
+            legacy.Label = SHEETS_GROUP_LABEL
+        except Exception:
+            pass
+        return legacy
+    return _create_group(doc, SHEETS_GROUP_LABEL, parent=None)
+
+
+def _add_to_group(group, obj):
+    if group is None or obj is None:
+        return
+    try:
+        if obj not in (getattr(group, "Group", []) or []):
+            group.addObject(obj)
+    except Exception:
+        pass
+
+
+def _build_parent_map(doc):
+    parent = {}
+    for g in (getattr(doc, "Objects", []) or []):
+        if not _is_group(g):
+            continue
+        for ch in (getattr(g, "Group", []) or []):
+            if _is_group(ch):
+                n = _txt(getattr(ch, "Name", "")).strip()
+                if n and n not in parent:
+                    parent[n] = g
+    return parent
+
+
+def _group_path(group_obj, parent_map):
+    out = []
+    seen = set()
+    cur = group_obj
+    while cur is not None:
+        n = _txt(getattr(cur, "Name", "")).strip()
+        if not n or n in seen:
+            break
+        seen.add(n)
+        lbl = _txt(getattr(cur, "Label", n)).strip() or n
+        out.append(lbl)
+        cur = parent_map.get(n)
+    out.reverse()
+    return "/".join(out)
+
+
+def _is_aux_group_label(text):
+    key = _norm_key(text)
+    if not key:
+        return False
+    for t in SKIP_GROUP_TOKENS:
+        tk = _norm_key(t)
+        if tk and tk in key:
+            return True
+    return False
+
+
+def _obj_blob(o):
+    return " ".join(
+        [
+            _txt(getattr(o, "Label", "")),
+            _txt(getattr(o, "Name", "")),
+            _txt(getattr(o, "TypeId", "")),
+            _txt(getattr(o, "KeyRegistro", "")),
+            _txt(getattr(o, "Tipo", "")),
+            _txt(getattr(o, "Categoria", "")),
+        ]
+    )
+
+
+def _is_connection_object(o):
+    key = _norm_key(_obj_blob(o))
+    if not key:
+        return False
+    for t in SKIP_OBJECT_TOKENS:
+        tk = _norm_key(t)
+        if tk and tk in key:
+            return True
+    return False
+
+
+def _is_load_object(o):
+    if o is None or _is_group(o) or _is_spreadsheet(o):
+        return False
+    if _is_connection_object(o):
+        return False
+    for p in ("VA", "VA_direct", "VA_each", "PowerVA", "PotenciaVA", "Power", "Potencia", "W"):
+        if _has_prop(o, p):
+            return True
+    key = _norm_key(_obj_blob(o))
+    if not key:
+        return False
+    for t in LOAD_OBJECT_TOKENS:
+        tk = _norm_key(t)
+        if tk and tk in key:
+            return True
+    return False
+
+
+def _count_loads_recursive(group_obj):
+    count = 0
+    stack = [group_obj]
+    while stack:
+        cur = stack.pop()
+        for ch in (getattr(cur, "Group", []) or []):
+            if _is_group(ch):
+                if _is_aux_group_label(_txt(getattr(ch, "Label", ch.Name))):
+                    continue
+                stack.append(ch)
+            else:
+                if _is_load_object(ch):
+                    count += 1
+    return count
+
+
+def _infer_root_type(label):
+    k = _norm_key(label)
+    if any(_norm_key(x) in k for x in ("iluminacion", "luminaria", "light")):
+        return "Iluminacion"
+    if any(_norm_key(x) in k for x in ("tomacorrientes", "tomas", "receptacle", "computo")):
+        return "Tomas"
+    if any(_norm_key(x) in k for x in ("especial", "equipo", "hvac", "aire")):
+        return "Especial"
+    return ""
+
+
+def _is_circuit_bucket_group(label):
+    k = _norm_key(label)
+    return ("circuitos" in k) and ("circuito" not in k[:9])
+
+
+def _is_strong_circuit_label(label):
+    k = _norm_key(label)
+    if k.startswith("tp"):
+        return True
+    if "circuito" in k:
+        return True
+    if "luminarias" in k:
+        return True
+    if "tomasdecomputo" in k:
+        return True
+    return False
+
+
+def _find_electrico_group(doc):
+    for o in (getattr(doc, "Objects", []) or []):
+        if _is_group(o) and _norm_key(_txt(getattr(o, "Label", o.Name))) == "electrico":
+            return o
+    for o in (getattr(doc, "Objects", []) or []):
+        if _is_group(o) and "electrico" in _norm_key(_txt(getattr(o, "Label", o.Name))):
+            return o
+    return None
+
+
+def _discover_circuit_items(doc, parent_map):
+    ge = _find_electrico_group(doc)
+    if ge is None:
+        _warn("No se encontro grupo raiz 'electrico'.")
+        return []
+
+    out = []
+    seen = set()
+    for root in (getattr(ge, "Group", []) or []):
+        if not _is_group(root):
+            continue
+        root_label = _txt(getattr(root, "Label", root.Name))
+        root_type = _infer_root_type(root_label)
+        if not root_type:
+            continue
+        if _is_aux_group_label(root_label):
+            continue
+
+        candidates = []
+        children = [x for x in (getattr(root, "Group", []) or []) if _is_group(x)]
+        for ch in children:
+            ch_label = _txt(getattr(ch, "Label", ch.Name))
+            if _is_aux_group_label(ch_label):
+                continue
+            if _is_circuit_bucket_group(ch_label):
+                for gg in (getattr(ch, "Group", []) or []):
+                    if _is_group(gg) and not _is_aux_group_label(_txt(getattr(gg, "Label", gg.Name))):
+                        candidates.append(gg)
+            else:
+                candidates.append(ch)
+
+        if not candidates and _is_strong_circuit_label(root_label):
+            candidates.append(root)
+
+        for g in candidates:
+            gn = _txt(getattr(g, "Name", "")).strip()
+            if not gn:
+                continue
+            path = _group_path(g, parent_map)
+            if path in seen:
+                continue
+
+            label = _txt(getattr(g, "Label", gn)).strip() or gn
+            loads = _count_loads_recursive(g)
+            if loads <= 0 and not _is_strong_circuit_label(label):
+                continue
+
+            seen.add(path)
+            out.append(
+                {
+                    "key": "CIR::OBJ::{}".format(gn),
+                    "name": re.sub(r"\s+", " ", label),
+                    "item_type": root_type,
+                    "source": path,
+                    "loads": int(max(0, loads)),
+                    "equipo_class": "",
+                    "object_name": gn,
+                }
+            )
+
+    out.sort(key=lambda it: _norm_key(it["source"]))
+    _info("Circuitos detectados: {}".format(len(out)))
+    return out
+
+
+def _find_tableros_group(doc):
+    ge = _find_electrico_group(doc)
+    roots = (getattr(ge, "Group", []) or []) if ge is not None else (getattr(doc, "Objects", []) or [])
+    for o in roots:
+        if _is_group(o) and _norm_key(_txt(getattr(o, "Label", o.Name))).startswith("tableros"):
+            return o
+    for o in roots:
+        if _is_group(o) and "tableros" in _norm_key(_txt(getattr(o, "Label", o.Name))):
+            return o
+    return None
+
+
+def _normalize_equipo_class(raw):
+    k = _norm_key(raw)
+    if "tablero" in k:
+        return "Tablero"
+    if "desconector" in k:
+        return "Desconector"
+    if "interruptor" in k:
+        return "Interruptor"
+    return ""
+
+
+def _equipo_code(obj):
+    code = _txt(getattr(obj, "Codigo", "")).strip()
+    if code:
+        return code
+    name = _txt(getattr(obj, "Label", getattr(obj, "Name", ""))).strip()
+    if " - " in name:
+        left = _txt(name.split(" - ", 1)[0]).strip()
+        if left:
+            return left
+    if "-" in name:
+        left = _txt(name.split("-", 1)[0]).strip()
+        if left and len(left) <= 12:
+            return left
+    return name or _txt(getattr(obj, "Name", "Equipo")).strip() or "Equipo"
+
+
+def _discover_equipo_nodes(doc):
+    g_tab = _find_tableros_group(doc)
+    if g_tab is None:
+        _warn("No se encontro grupo 'Tableros'.")
+        return []
+
+    nodes = []
+    seen_codes = set()
+    for ch in (getattr(g_tab, "Group", []) or []):
+        if _is_group(ch) or _is_spreadsheet(ch):
+            continue
+        raw_class = _txt(getattr(ch, "ClaseEquipo", "")).strip() or _txt(getattr(ch, "Tipo", "")).strip()
+        eq_class = _normalize_equipo_class(raw_class)
+        if not eq_class:
+            continue
+
+        code = _equipo_code(ch).strip()
+        if not code:
+            continue
+        if code in seen_codes:
+            continue
+        seen_codes.add(code)
+
+        nodes.append(
+            {
+                "obj": ch,
+                "code": code,
+                "display": _txt(getattr(ch, "Label", code)).strip() or code,
+                "eq_class": eq_class,
+                "object_name": _txt(getattr(ch, "Name", "")).strip(),
+                "conectado_a": _txt(getattr(ch, "ConectadoA", "")).strip(),
+            }
+        )
+
+    nodes.sort(key=lambda n: (_norm_key(n["eq_class"]), _norm_key(n["code"])))
+    _info("Equipos detectados en Tableros: {}".format(len(nodes)))
+    return nodes
+
+
+def _build_items(circuit_items, nodes):
+    items = list(circuit_items)
+    for n in nodes:
+        stable_obj = _txt(n.get("object_name", "")).strip()
+        eq_key = "EQ::OBJ::{}".format(stable_obj) if stable_obj else "EQ::{}".format(n["code"])
+        items.append(
+            {
+                "key": eq_key,
+                "name": n["code"],
+                "item_type": n["eq_class"],
+                "source": "electrico/Tableros/{}".format(n["display"]),
+                "loads": 0,
+                "equipo_class": n["eq_class"],
+                "object_name": stable_obj,
+            }
+        )
+    items.sort(key=lambda it: (_norm_key(it["item_type"]), _norm_key(it["name"]), _norm_key(it["source"])))
+    return items
+
+
+def _read_existing_assign(sheet):
+    data = {
+        "panel_by_key": {},
+        "tableros": set(),
+        "use_by_key": {},
+        "panel_by_source": {},
+        "use_by_source": {},
+        "order_by_key": {},
+    }
+    if sheet is None:
+        return data
+
+    empty_run = 0
+    for r in range(2, 6000):
+        panel = _get(sheet, "B{}".format(r))
+        source = _get(sheet, "E{}".format(r))
+        key = _get(sheet, "H{}".format(r))
+        order_txt = _get(sheet, "J{}".format(r))
+        use_txt = _get(sheet, "A{}".format(r))
+
+        if not (panel or source or key):
+            empty_run += 1
+            if empty_run >= 80:
+                break
+            continue
+        empty_run = 0
+
+        if not key and source:
+            key = "CIR::{}".format(source)
+        if not key:
+            continue
+
+        use_flag = _norm_key(use_txt) not in ("", "0", "false", "no")
+        data["use_by_key"][key] = use_flag
+        ordv = _i(order_txt, 0) if order_txt else 0
+        if ordv > 0:
+            data["order_by_key"][key] = ordv
+        if source:
+            prev_src_use = bool(data["use_by_source"].get(source, False))
+            data["use_by_source"][source] = bool(prev_src_use or use_flag)
+        if panel:
+            data["tableros"].add(panel)
+            if use_flag:
+                data["panel_by_key"][key] = panel
+                if source and source not in data["panel_by_source"]:
+                    data["panel_by_source"][source] = panel
+    return data
+
+
+def _read_existing_origins(sheet):
+    data = {"origin_by_code": {}, "use_codes": set()}
+    if sheet is None:
+        return data
+
+    empty_run = 0
+    for r in range(2, 4000):
+        code = _get(sheet, "B{}".format(r))
+        up = _get(sheet, "D{}".format(r))
+        use_txt = _get(sheet, "A{}".format(r))
+        if not (code or up):
+            empty_run += 1
+            if empty_run >= 80:
+                break
+            continue
+        empty_run = 0
+        if not code:
+            continue
+        use_flag = _norm_key(use_txt) not in ("", "0", "false", "no")
+        if use_flag:
+            data["use_codes"].add(code)
+        data["origin_by_code"][code] = up
+    return data
+
+
+def _qt_modules():
+    try:
+        from PySide2 import QtWidgets, QtCore
+
+        return QtWidgets, QtCore
+    except Exception:
+        try:
+            from PySide import QtGui as QtWidgets  # type: ignore
+            from PySide import QtCore  # type: ignore
+
+            return QtWidgets, QtCore
+        except Exception:
+            return None, None
+
+
+def _check_item(QtWidgets, Qt, checked):
+    it = QtWidgets.QTableWidgetItem("")
+    flags = it.flags()
+    if Qt is not None:
+        flags = flags | Qt.ItemIsEnabled | Qt.ItemIsUserCheckable
+    it.setFlags(flags)
+    if Qt is not None:
+        it.setCheckState(Qt.Checked if checked else Qt.Unchecked)
+    return it
+
+
+def _is_checked(item, Qt):
+    if item is None:
+        return False
+    if Qt is None:
+        return False
+    try:
+        return item.checkState() == Qt.Checked
+    except Exception:
+        return False
+
+
+def _set_checked(item, Qt, state):
+    if item is None or Qt is None:
+        return
+    try:
+        item.setCheckState(Qt.Checked if state else Qt.Unchecked)
+    except Exception:
+        pass
+
+
+def _set_rows_checked(row_refs, Qt, state):
+    for _key, chk in row_refs:
+        _set_checked(chk, Qt, state)
+
+
+def _build_origin_options(tableros, nodes):
+    out = []
+    seen = set()
+    for v in list(PARENT_SPECIAL) + list(tableros) + [n["code"] for n in nodes]:
+        t = _txt(v).strip()
+        if not t:
+            continue
+        k = _norm_key(t)
+        if not k or k in seen:
+            continue
+        seen.add(k)
+        out.append(t)
+    return out
+
+
+def _panel_title_from_node(node):
+    code = _txt(node.get("code", "")).strip()
+    display = _txt(node.get("display", "")).strip()
+    if not display:
+        return code or "Tablero"
+    if " - " in display:
+        left, right = display.split(" - ", 1)
+        if _norm_key(left) == _norm_key(code):
+            if _txt(right).strip():
+                return _txt(right).strip()
+    return display
+
+
+def _show_dialog(panel_entries, items, nodes, existing_assign, existing_origin):
+    QtWidgets, QtCore = _qt_modules()
+    if QtWidgets is None:
+        _warn("Qt no disponible. Se usara asignacion existente.")
+        return {
+            "ok": True,
+            "assign": dict(existing_assign.get("panel_by_key", {})),
+            "dup_map": {},
+            "origin_by_code": dict(existing_origin.get("origin_by_code", {})),
+            "origin_use_codes": set(existing_origin.get("use_codes", set())),
+        }
+
+    Qt = getattr(QtCore, "Qt", None) if QtCore is not None else None
+    panel_entries = list(panel_entries or [])
+    if not panel_entries:
+        panel_entries = [{"code": "Tablero_Principal", "title": "Tablero Principal"}]
+    tab_codes = [_txt(x.get("code", "")).strip() for x in panel_entries if _txt(x.get("code", "")).strip()]
+    if not tab_codes:
+        tab_codes = ["Tablero_Principal"]
+        panel_entries = [{"code": "Tablero_Principal", "title": "Tablero Principal"}]
+
+    dlg = QtWidgets.QDialog()
+    dlg.setWindowTitle("Asignacion por tablero y origen de equipos")
+    dlg.setMinimumWidth(1200)
+    dlg.setMinimumHeight(760)
+
+    main_lay = QtWidgets.QVBoxLayout(dlg)
+    main_lay.addWidget(QtWidgets.QLabel("Seleccione que circuitos/componentes van a cada tablero."))
+    tabs = QtWidgets.QTabWidget()
+    main_lay.addWidget(tabs)
+
+    tab_rows = {}
+    for panel in panel_entries:
+        tab_name = _txt(panel.get("code", "")).strip()
+        tab_title = _txt(panel.get("title", "")).strip() or tab_name
+        if not tab_name:
+            continue
+        page = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(page)
+        lay.addWidget(QtWidgets.QLabel("Tablero: {}".format(tab_title)))
+
+        candidate_items = []
+        for it in items:
+            if it["key"].startswith("EQ::") and _norm_key(it["name"]) == _norm_key(tab_name):
+                continue
+            candidate_items.append(it)
+
+        table = QtWidgets.QTableWidget(len(candidate_items), 5)
+        table.setHorizontalHeaderLabels(["Use", "Tipo", "Item", "Fuente", "Cargas"])
+        row_refs = []
+        for r, it in enumerate(candidate_items):
+            source = _txt(it.get("source", "")).strip()
+            assigned = _txt(existing_assign.get("panel_by_key", {}).get(it["key"], "")).strip()
+            if not assigned and source:
+                assigned = _txt(existing_assign.get("panel_by_source", {}).get(source, "")).strip()
+            use_prev = bool(existing_assign.get("use_by_key", {}).get(it["key"], False))
+            if not use_prev and source:
+                use_prev = bool(existing_assign.get("use_by_source", {}).get(source, False))
+            checked = bool(use_prev and assigned and (_norm_key(assigned) == _norm_key(tab_name)))
+            chk = _check_item(QtWidgets, Qt, checked)
+            table.setItem(r, 0, chk)
+            row_refs.append((it["key"], chk))
+
+            t0 = QtWidgets.QTableWidgetItem(it["item_type"])
+            t1 = QtWidgets.QTableWidgetItem(it["name"])
+            t2 = QtWidgets.QTableWidgetItem(it["source"])
+            t3 = QtWidgets.QTableWidgetItem(str(int(it.get("loads", 0))))
+            if Qt is not None:
+                for tx in (t0, t1, t2, t3):
+                    tx.setFlags(tx.flags() & ~Qt.ItemIsEditable)
+            table.setItem(r, 1, t0)
+            table.setItem(r, 2, t1)
+            table.setItem(r, 3, t2)
+            table.setItem(r, 4, t3)
+
+        try:
+            table.resizeColumnsToContents()
+        except Exception:
+            pass
+        lay.addWidget(table)
+
+        row_buttons = QtWidgets.QHBoxLayout()
+        btn_all = QtWidgets.QPushButton("Marcar todo")
+        btn_none = QtWidgets.QPushButton("Desmarcar todo")
+        btn_all.clicked.connect(lambda _=False, rr=row_refs: _set_rows_checked(rr, Qt, True))
+        btn_none.clicked.connect(lambda _=False, rr=row_refs: _set_rows_checked(rr, Qt, False))
+        row_buttons.addWidget(btn_all)
+        row_buttons.addWidget(btn_none)
+        row_buttons.addStretch(1)
+        lay.addLayout(row_buttons)
+
+        tab_rows[tab_name] = row_refs
+        tabs.addTab(page, tab_title)
+
+    # Origin tab
+    origin_page = QtWidgets.QWidget()
+    origin_lay = QtWidgets.QVBoxLayout(origin_page)
+    origin_lay.addWidget(QtWidgets.QLabel("Defina de donde viene cada tablero/desconector/interruptor."))
+    origin_table = QtWidgets.QTableWidget(len(nodes), 4)
+    origin_table.setHorizontalHeaderLabels(["Use", "Equipo", "Clase", "VieneDe"])
+    origin_opts = _build_origin_options(tab_codes, nodes)
+    origin_rows = []
+    for r, n in enumerate(nodes):
+        code = n["code"]
+        prev_use = code in set(existing_origin.get("use_codes", set()))
+        if not existing_origin.get("use_codes", set()):
+            prev_use = True
+        prev_up = (
+            _txt(existing_origin.get("origin_by_code", {}).get(code, "")).strip()
+            or _txt(n.get("conectado_a", "")).strip()
+        )
+        chk = _check_item(QtWidgets, Qt, prev_use)
+        origin_table.setItem(r, 0, chk)
+
+        c0 = QtWidgets.QTableWidgetItem(code)
+        c1 = QtWidgets.QTableWidgetItem(n["eq_class"])
+        if Qt is not None:
+            c0.setFlags(c0.flags() & ~Qt.ItemIsEditable)
+            c1.setFlags(c1.flags() & ~Qt.ItemIsEditable)
+        origin_table.setItem(r, 1, c0)
+        origin_table.setItem(r, 2, c1)
+
+        cmb = QtWidgets.QComboBox()
+        cmb.setEditable(True)
+        cmb.addItems(origin_opts)
+        if prev_up and cmb.findText(prev_up) < 0:
+            cmb.addItem(prev_up)
+        if prev_up:
+            cmb.setCurrentText(prev_up)
+        origin_table.setCellWidget(r, 3, cmb)
+        origin_rows.append((n, chk, cmb))
+
+    try:
+        origin_table.resizeColumnsToContents()
+    except Exception:
+        pass
+    origin_lay.addWidget(origin_table)
+    tabs.addTab(origin_page, "Origen Equipos")
+
+    btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+    btns.accepted.connect(dlg.accept)
+    btns.rejected.connect(dlg.reject)
+    main_lay.addWidget(btns)
+
+    item_name_by_key = {}
+    for it in items:
+        item_name_by_key[it["key"]] = "{} ({})".format(it["name"], it["item_type"])
+
+    while True:
+        if hasattr(dlg, "exec"):
+            ok = dlg.exec() == QtWidgets.QDialog.Accepted
+        else:
+            ok = dlg.exec_() == QtWidgets.QDialog.Accepted
+        if not ok:
+            return {"ok": False}
+
+        assign = {}
+        dup_map = {}
+        for tab_name in tab_codes:
+            for key, chk in tab_rows.get(tab_name, []):
+                if not _is_checked(chk, Qt):
+                    continue
+                if key not in assign:
+                    assign[key] = tab_name
+                else:
+                    prev = assign[key]
+                    if prev != tab_name:
+                        dup_map.setdefault(key, [prev])
+                        if tab_name not in dup_map[key]:
+                            dup_map[key].append(tab_name)
+
+        if dup_map:
+            _warn("Items marcados en multiples pestanas: {}".format(len(dup_map)))
+            details = []
+            for k in sorted(dup_map.keys(), key=lambda x: _norm_key(item_name_by_key.get(x, x))):
+                tabs_txt = ", ".join(dup_map.get(k, []))
+                details.append("- {} -> {}".format(item_name_by_key.get(k, k), tabs_txt))
+            msg = "Hay items seleccionados en mas de un tablero.\nCorrija antes de guardar.\n\n{}".format("\n".join(details[:15]))
+            try:
+                QtWidgets.QMessageBox.warning(dlg, "Seleccion duplicada", msg)
+            except Exception:
+                _warn(msg)
+            continue
+
+        origin_by_code = {}
+        origin_use = set()
+        for node, chk, cmb in origin_rows:
+            code = node["code"]
+            use_flag = _is_checked(chk, Qt)
+            if use_flag:
+                origin_use.add(code)
+            origin_by_code[code] = _txt(cmb.currentText()).strip()
+
+        return {
+            "ok": True,
+            "assign": assign,
+            "dup_map": dup_map,
+            "origin_by_code": origin_by_code,
+            "origin_use_codes": origin_use,
+        }
+
+
+def _write_assign_sheet(doc, sheet, items, tableros, assign_map, dup_map, existing_assign=None):
+    _clear(sheet)
+    existing_assign = dict(existing_assign or {})
+    existing_order = dict(existing_assign.get("order_by_key", {}) or {})
+    headers = [
+        "Use",
+        "Tablero",
+        "Item",
+        "TipoItem",
+        "GrupoFuente",
+        "CargasDetectadas",
+        "ClaseEquipo",
+        "ItemKey",
+        "Observaciones",
+        "Orden",
+    ]
+    for i, h in enumerate(headers, 1):
+        _set(sheet, "{}1".format(_col(i)), h)
+
+    rows = list(items)
+    rows.sort(key=lambda it: (_norm_key(assign_map.get(it["key"], "")), _norm_key(it["item_type"]), _norm_key(it["name"])))
+    panel_ord_max = {}
+    for k, ov in existing_order.items():
+        p = _txt(assign_map.get(k, "")).strip()
+        iv = _i(ov, 0)
+        if not p or iv <= 0:
+            continue
+        panel_ord_max[p] = max(panel_ord_max.get(p, 0), iv)
+    r = 2
+    for it in rows:
+        key = it["key"]
+        panel = _txt(assign_map.get(key, "")).strip()
+        use = "1" if panel else "0"
+        obs = ""
+        if key in dup_map:
+            obs = "Duplicado en pestanas: {}".format(", ".join(dup_map[key]))
+        ordv = ""
+        if panel:
+            if key in existing_order and _i(existing_order.get(key, 0), 0) > 0:
+                ordv = _i(existing_order.get(key, 0), 0)
+            else:
+                nxt = panel_ord_max.get(panel, 0) + 1
+                ordv = nxt
+            panel_ord_max[panel] = max(panel_ord_max.get(panel, 0), _i(ordv, 0))
+        vals = [
+            use,
+            panel,
+            it["name"],
+            it["item_type"],
+            it["source"],
+            str(int(it.get("loads", 0))),
+            it.get("equipo_class", ""),
+            key,
+            obs,
+            _txt(ordv),
+        ]
+        for c, v in enumerate(vals, 1):
+            _set(sheet, "{}{}".format(_col(c), r), v)
+        r += 1
+
+    _set(sheet, "L1", "Tableros")
+    for i, p in enumerate(tableros, 0):
+        _set(sheet, "L{}".format(2 + i), p)
+
+    _set(sheet, "N1", "TipoCircuito")
+    for i, t in enumerate(TIPO_CIRCUITO, 0):
+        _set(sheet, "N{}".format(2 + i), t)
+
+    _set(sheet, "P1", "Nota")
+    _set(sheet, "P2", "Editar Use/Tablero/Orden para definir inclusion y orden final.")
+    _set(sheet, "P3", "Esta hoja la usa el exportador de calculo por tablero.")
+
+
+def _write_origins_sheet(sheet, nodes, origin_by_code, origin_use_codes):
+    _clear(sheet)
+    headers = ["Use", "Equipo", "Clase", "VieneDe", "Objeto", "DisplayName"]
+    for i, h in enumerate(headers, 1):
+        _set(sheet, "{}1".format(_col(i)), h)
+
+    r = 2
+    for n in sorted(nodes, key=lambda x: (_norm_key(x["eq_class"]), _norm_key(x["code"]))):
+        code = n["code"]
+        vals = [
+            "1" if code in origin_use_codes else "0",
+            code,
+            n["eq_class"],
+            _txt(origin_by_code.get(code, "")).strip(),
+            n.get("object_name", ""),
+            n.get("display", ""),
+        ]
+        for c, v in enumerate(vals, 1):
+            _set(sheet, "{}{}".format(_col(c), r), v)
+        r += 1
+
+    _set(sheet, "H1", "OpcionesEspeciales")
+    for i, x in enumerate(PARENT_SPECIAL, 0):
+        _set(sheet, "H{}".format(2 + i), x)
+
+
+def _apply_origin_to_model(nodes, origin_by_code, origin_use_codes):
+    changed = 0
+    for n in nodes:
+        code = n["code"]
+        if code not in origin_use_codes:
+            continue
+        obj = n.get("obj")
+        if obj is None:
+            continue
+        val = _txt(origin_by_code.get(code, "")).strip()
+        try:
+            if not _has_prop(obj, "ConectadoA"):
+                obj.addProperty("App::PropertyString", "ConectadoA", "Tablero", "Equipo aguas arriba")
+        except Exception:
+            pass
+        try:
+            obj.ConectadoA = val
+            changed += 1
+        except Exception:
+            pass
+    _info("Propiedad ConectadoA actualizada en {} equipo(s).".format(changed))
+
+
+def _collect_tableros(nodes, existing_assign):
+    panels = []
+    index_by_key = {}
+
+    def push(code_value, title_value=""):
+        code = _txt(code_value).strip()
+        if not code:
+            return
+        k = _norm_key(code)
+        if not k:
+            return
+        title = _txt(title_value).strip() or code
+        idx = index_by_key.get(k)
+        if idx is None:
+            index_by_key[k] = len(panels)
+            panels.append({"code": code, "title": title})
+            return
+        if panels[idx].get("title", "") == panels[idx].get("code", "") and title != code:
+            panels[idx]["title"] = title
+
+    for n in nodes:
+        if n.get("eq_class") == "Tablero":
+            push(n.get("code"), _panel_title_from_node(n))
+    for p in sorted(existing_assign.get("tableros", set()), key=lambda x: _norm_key(x)):
+        push(p, p)
+
+    if not panels:
+        panels = [{"code": "Tablero_Principal", "title": "Tablero Principal"}]
+    return panels
+
+
+def run():
+    doc = App.ActiveDocument
+    if doc is None:
+        _err("No hay documento activo.")
+        return
+
+    parent_map = _build_parent_map(doc)
+    circuit_items = _discover_circuit_items(doc, parent_map)
+    nodes = _discover_equipo_nodes(doc)
+    items = _build_items(circuit_items, nodes)
+
+    s_assign_old = doc.getObject(SHEET_ASSIGN)
+    s_orig_old = doc.getObject(SHEET_ORIGINS)
+    existing_assign = _read_existing_assign(s_assign_old)
+    existing_orig = _read_existing_origins(s_orig_old)
+
+    panel_entries = _collect_tableros(nodes, existing_assign)
+    tableros = [_txt(p.get("code", "")).strip() for p in panel_entries if _txt(p.get("code", "")).strip()]
+    _info(
+        "Tableros para pestanas: {}".format(
+            ", ".join("{} [{}]".format(_txt(p.get("title", "")), _txt(p.get("code", ""))) for p in panel_entries)
+        )
+    )
+
+    result = _show_dialog(panel_entries, items, nodes, existing_assign, existing_orig)
+    if not result.get("ok", False):
+        _warn("Operacion cancelada.")
+        return
+
+    s_assign = _sheet(doc, SHEET_ASSIGN)
+    try:
+        s_assign.Label = "Asignacion Red"
+    except Exception:
+        pass
+    _write_assign_sheet(
+        doc=doc,
+        sheet=s_assign,
+        items=items,
+        tableros=tableros,
+        assign_map=result.get("assign", {}),
+        dup_map=result.get("dup_map", {}),
+        existing_assign=existing_assign,
+    )
+
+    s_orig = _sheet(doc, SHEET_ORIGINS)
+    try:
+        s_orig.Label = "Red Origenes"
+    except Exception:
+        pass
+    _write_origins_sheet(
+        sheet=s_orig,
+        nodes=nodes,
+        origin_by_code=result.get("origin_by_code", {}),
+        origin_use_codes=set(result.get("origin_use_codes", set())),
+    )
+
+    _apply_origin_to_model(
+        nodes=nodes,
+        origin_by_code=result.get("origin_by_code", {}),
+        origin_use_codes=set(result.get("origin_use_codes", set())),
+    )
+
+    g = _ensure_calculation_sheets_group(doc)
+    _add_to_group(g, s_assign)
+    _add_to_group(g, s_orig)
+
+    try:
+        doc.recompute()
+    except Exception:
+        pass
+
+    _info("Hojas actualizadas: '{}' y '{}'.".format(SHEET_ASSIGN, SHEET_ORIGINS))
+    _info("Items listados: {} | circuitos={} | equipos={}".format(len(items), len(circuit_items), len(nodes)))
+
+
+if __name__ == "__main__":
+    run()

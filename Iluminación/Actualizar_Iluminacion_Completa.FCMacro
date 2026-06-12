@@ -1,0 +1,1094 @@
+# -*- coding: utf-8 -*-
+# MenuText: Actualizar Iluminacion Completa
+# ToolTip: Actualiza DatosRecintos, Tabla Iluminacion Legacy y Etiquetas
+# Icon: Actualizar_Iluminacion_Completa.svg
+
+# Qt compatibility for FreeCAD 1.x (PySide6) and older builds.
+def _ensure_qt_compat():
+    import sys
+    import types
+
+    QtCore = QtGui = QtWidgets = None
+    binding_name = None
+
+    for candidate in ("PySide6", "PySide2", "PySide"):
+        try:
+            if candidate == "PySide":
+                from PySide import QtCore as _QtCore, QtGui as _QtGui
+                _QtWidgets = _QtGui
+            else:
+                module = __import__(candidate, fromlist=["QtCore", "QtGui", "QtWidgets"])
+                _QtCore = module.QtCore
+                _QtGui = module.QtGui
+                _QtWidgets = module.QtWidgets
+            QtCore, QtGui, QtWidgets = _QtCore, _QtGui, _QtWidgets
+            binding_name = candidate
+            break
+        except Exception:
+            continue
+
+    if QtCore is None:
+        return
+
+    qtgui_compat = types.ModuleType("QtGui")
+    qtgui_compat.__dict__.update(getattr(QtGui, "__dict__", {}))
+    qtgui_compat.__dict__.update(getattr(QtWidgets, "__dict__", {}))
+
+    qtsvg_compat = None
+    for module_name in ("QtSvg", "QtSvgWidgets"):
+        try:
+            module = __import__(binding_name, fromlist=[module_name])
+            qt_module = getattr(module, module_name)
+        except Exception:
+            continue
+        if qtsvg_compat is None:
+            qtsvg_compat = types.ModuleType("QtSvg")
+        qtsvg_compat.__dict__.update(getattr(qt_module, "__dict__", {}))
+
+    qtuitools_compat = None
+    try:
+        module = __import__(binding_name, fromlist=["QtUiTools"])
+        qtuitools_compat = module.QtUiTools
+    except Exception:
+        pass
+
+    for package_name in ("PySide2", "PySide"):
+        package = sys.modules.get(package_name)
+        if package is None:
+            package = types.ModuleType(package_name)
+            sys.modules[package_name] = package
+        package.QtCore = QtCore
+        package.QtGui = qtgui_compat
+        package.QtWidgets = QtWidgets
+        sys.modules[package_name + ".QtCore"] = QtCore
+        sys.modules[package_name + ".QtGui"] = qtgui_compat
+        sys.modules[package_name + ".QtWidgets"] = QtWidgets
+        if qtsvg_compat is not None:
+            package.QtSvg = qtsvg_compat
+            sys.modules[package_name + ".QtSvg"] = qtsvg_compat
+        if qtuitools_compat is not None:
+            package.QtUiTools = qtuitools_compat
+            sys.modules[package_name + ".QtUiTools"] = qtuitools_compat
+
+
+_ensure_qt_compat()
+
+# Toolbar: Iluminación
+# Transaction: self
+
+import re
+import unicodedata
+
+import FreeCAD
+import FreeCADGui
+import Draft
+
+try:
+    from PySide2 import QtCore, QtWidgets
+except Exception:
+    try:
+        from PySide6 import QtCore, QtWidgets
+    except Exception:
+        try:
+            from PySide import QtCore
+            from PySide import QtGui as QtWidgets
+        except Exception:
+            QtCore = None
+            QtWidgets = None
+
+
+TAG = "[ILUM_ALL]"
+PARAM_GROUP = "User parameter:BaseApp/Preferences/Mod/ElectricCR/IluminacionCompleta"
+DEFAULT_DATOS_SHEET_LABEL = "DatosRecintos"
+DEFAULT_LEGACY_SHEET_LABEL = "Tabla Iluminacion Legacy"
+DEFAULT_LABEL_GROUP_LABEL = "Etiquetas"
+CALC_GROUP_LABEL = "Hojas de Calculo"
+DEFAULT_DESCRIPTION = "Oficina"
+LUMEN_POR_LUMINARIA = 4000.0
+FACTOR_UTILIZACION = 0.8
+FACTOR_MANTENIMIENTO = 0.7
+
+DESCRIPTION_LUX = {
+    "Oficina": 500.0,
+    "Pasillo": 50.0,
+    "Servicio Sanitario": 100.0,
+    "Sala de Reuniones": 300.0,
+    "Bodega": 70.0,
+    "Cocina": 300.0,
+    "Caja": 500.0,
+    "Plataforma": 500.0,
+    "Sala de Espera": 200.0,
+    "Archivo": 400.0,
+    "Cochera": 50.0,
+    "Parqueo": 20.0,
+    "Exteriores": 20.0,
+    "Trabajo Minucioso": 750.0,
+    "Taller": 200.0,
+    "Dormitorio": 200.0,
+}
+
+DESCRIPTION_ALIASES = {
+    "banos": "Servicio Sanitario",
+    "bano": "Servicio Sanitario",
+    "ss": "Servicio Sanitario",
+    "serviciosanitarios": "Servicio Sanitario",
+    "sala reunion": "Sala de Reuniones",
+    "salareunion": "Sala de Reuniones",
+    "sala juntas": "Sala de Reuniones",
+    "salajuntas": "Sala de Reuniones",
+    "sala espera": "Sala de Espera",
+    "salaespera": "Sala de Espera",
+    "almacen": "Bodega",
+    "cuartoaseo": "Bodega",
+    "suministros": "Bodega",
+    "boveda": "Archivo",
+    "comedor": "Cocina",
+    "estacionamiento": "Parqueo",
+    "exterior": "Exteriores",
+}
+
+INFER_RULES = (
+    ("Pasillo", ("pasillo", "corredor", "circulacion")),
+    ("Servicio Sanitario", ("serviciosanitario", "sanitario", "bano", "banos", "ss")),
+    ("Sala de Reuniones", ("reunion", "reuniones", "juntas")),
+    ("Sala de Espera", ("salaespera", "espera", "lobby")),
+    ("Trabajo Minucioso", ("minucioso", "laboratorio")),
+    ("Plataforma", ("plataforma",)),
+    ("Archivo", ("archivo", "boveda")),
+    ("Bodega", ("bodega", "almacen", "cuartoaseo", "aseo", "suministro", "suministros")),
+    ("Cocina", ("cocina", "comedor")),
+    ("Caja", ("caja",)),
+    ("Cochera", ("cochera",)),
+    ("Parqueo", ("parqueo", "estacionamiento")),
+    ("Exteriores", ("exterior", "exteriores")),
+    ("Taller", ("taller",)),
+    ("Dormitorio", ("dormitorio",)),
+    ("Oficina", ("oficina", "jefatura", "inspeccion", "cobros", "egresos", "ingresos", "pensiones", "servidor")),
+)
+
+
+def _info(msg):
+    FreeCAD.Console.PrintMessage("{}[INFO] {}\n".format(TAG, msg))
+
+
+def _warn(msg):
+    FreeCAD.Console.PrintWarning("{}[WARN] {}\n".format(TAG, msg))
+
+
+def _err(msg):
+    FreeCAD.Console.PrintError("{}[ERROR] {}\n".format(TAG, msg))
+
+
+def _params():
+    try:
+        return FreeCAD.ParamGet(PARAM_GROUP)
+    except Exception:
+        return None
+
+
+def _param_get_string(key, default=""):
+    params = _params()
+    if params is None:
+        return default
+    try:
+        return params.GetString(key, default)
+    except Exception:
+        return default
+
+
+def _param_set_string(key, value):
+    params = _params()
+    if params is None:
+        return
+    try:
+        params.SetString(key, _safe_text(value))
+    except Exception:
+        pass
+
+
+def _param_get_bool(key, default=False):
+    params = _params()
+    if params is None:
+        return default
+    try:
+        return bool(params.GetBool(key, bool(default)))
+    except Exception:
+        return default
+
+
+def _param_set_bool(key, value):
+    params = _params()
+    if params is None:
+        return
+    try:
+        params.SetBool(key, bool(value))
+    except Exception:
+        pass
+
+
+def _safe_text(value):
+    try:
+        return str(value or "")
+    except Exception:
+        return ""
+
+
+def _normalize(text):
+    text = _safe_text(text).strip().lower()
+    if not text:
+        return ""
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _norm_key(text):
+    return re.sub(r"[^a-z0-9]+", "", _normalize(text))
+
+
+def _canonical_recinto_key(value):
+    text = _safe_text(value).strip()
+    if text.startswith("'"):
+        text = text[1:].strip()
+    text = re.sub(r"\s+", " ", text).strip()
+    match = re.match(r"^(.*?)(?:[\s_\-]*)(\d{3,})$", text)
+    if match:
+        base = _safe_text(match.group(1)).strip(" _-")
+        if base:
+            text = base
+    return _norm_key(text)
+
+
+def _to_float(value, default=0.0):
+    try:
+        return float(value)
+    except Exception:
+        pass
+    try:
+        return float(getattr(value, "Value", default))
+    except Exception:
+        pass
+    text = _safe_text(value).strip().strip('"').replace(" ", "")
+    if not text:
+        return default
+    if "," in text and "." not in text:
+        text = text.replace(",", ".")
+    elif "," in text and "." in text and text.rfind(",") > text.rfind("."):
+        text = text.replace(".", "").replace(",", ".")
+    elif "," in text and "." in text:
+        text = text.replace(",", "")
+    try:
+        return float(text)
+    except Exception:
+        return default
+
+
+def _col_index(letter):
+    try:
+        return ord(letter.upper()) - 64
+    except Exception:
+        return 0
+
+
+def _ensure_min_cols(sheet, min_cols):
+    try:
+        if hasattr(sheet, "ColumnCount") and sheet.ColumnCount < min_cols:
+            sheet.ColumnCount = min_cols
+    except Exception:
+        pass
+
+
+def _ensure_min_rows(sheet, min_rows):
+    try:
+        if hasattr(sheet, "RowCount") and sheet.RowCount < min_rows:
+            sheet.RowCount = min_rows
+    except Exception:
+        pass
+
+
+def _safe_get(sheet, addr, default=""):
+    try:
+        col = _col_index(addr[:1])
+        row = int(addr[1:])
+        if hasattr(sheet, "ColumnCount") and sheet.ColumnCount < col:
+            return default
+        if hasattr(sheet, "RowCount") and sheet.RowCount < row:
+            return default
+        return sheet.get(addr)
+    except Exception:
+        return default
+
+
+def _safe_set(sheet, addr, value):
+    try:
+        col = _col_index(addr[:1])
+        row = int(addr[1:])
+        _ensure_min_cols(sheet, col)
+        _ensure_min_rows(sheet, row)
+        sheet.set(addr, _safe_text(value))
+        return True
+    except Exception:
+        return False
+
+
+def _sheet_text(sheet, addr):
+    return _safe_text(_safe_get(sheet, addr, "")).strip().strip('"')
+
+
+def _is_group(obj):
+    if obj is None:
+        return False
+    try:
+        if obj.isDerivedFrom("App::DocumentObjectGroup"):
+            return True
+    except Exception:
+        pass
+    try:
+        if obj.isDerivedFrom("App::Part"):
+            return True
+    except Exception:
+        pass
+    return hasattr(obj, "Group")
+
+
+def _doc_name_token(label, fallback="Obj"):
+    raw = _safe_text(label).strip()
+    raw = unicodedata.normalize("NFKD", raw)
+    raw = "".join(ch for ch in raw if not unicodedata.combining(ch))
+    token = re.sub(r"[^A-Za-z0-9_]+", "_", raw).strip("_") or fallback
+    if not re.match(r"^[A-Za-z_]", token):
+        token = "{}_{}".format(fallback, token)
+    return token[:60]
+
+
+def _unique_name(doc, base):
+    base = _doc_name_token(base, "Obj")
+    if doc.getObject(base) is None:
+        return base
+    idx = 2
+    while True:
+        candidate = "{}_{:02d}".format(base, idx)
+        if doc.getObject(candidate) is None:
+            return candidate
+        idx += 1
+
+
+def _find_group_by_alias(doc, aliases):
+    wanted = {_norm_key(alias) for alias in aliases}
+    for obj in getattr(doc, "Objects", []) or []:
+        if not _is_group(obj):
+            continue
+        keys = {_norm_key(getattr(obj, "Name", "")), _norm_key(getattr(obj, "Label", ""))}
+        if any(key in wanted for key in keys if key):
+            return obj
+    return None
+
+
+def _create_group(doc, label, parent=None):
+    group = doc.addObject("App::DocumentObjectGroup", _unique_name(doc, label))
+    try:
+        group.Label = label
+    except Exception:
+        pass
+    if parent is not None:
+        try:
+            parent.addObject(group)
+        except Exception:
+            pass
+    return group
+
+
+def _ensure_calculation_group(doc):
+    group = _find_group_by_alias(doc, (CALC_GROUP_LABEL, "Hojas de Calculo", "Calculos"))
+    if group is not None:
+        try:
+            group.Label = CALC_GROUP_LABEL
+        except Exception:
+            pass
+        return group
+    return _create_group(doc, CALC_GROUP_LABEL)
+
+
+def _add_to_group(group, obj):
+    try:
+        if obj not in (getattr(group, "Group", []) or []):
+            group.addObject(obj)
+    except Exception:
+        pass
+
+
+def _find_sheet(doc, aliases):
+    wanted = {_norm_key(alias) for alias in aliases}
+    first_contains = None
+    for obj in getattr(doc, "Objects", []) or []:
+        if getattr(obj, "TypeId", "") != "Spreadsheet::Sheet":
+            continue
+        keys = {_norm_key(getattr(obj, "Name", "")), _norm_key(getattr(obj, "Label", ""))}
+        if any(key in wanted for key in keys if key):
+            return obj
+        if first_contains is None and any(any(want in key for want in wanted if want) for key in keys if key):
+            first_contains = obj
+    return first_contains
+
+
+def _sheet_labels(doc):
+    labels = []
+    seen = set()
+    for obj in getattr(doc, "Objects", []) or []:
+        if getattr(obj, "TypeId", "") != "Spreadsheet::Sheet":
+            continue
+        label = _safe_text(getattr(obj, "Label", getattr(obj, "Name", ""))).strip()
+        if not label:
+            label = _safe_text(getattr(obj, "Name", "")).strip()
+        key = _norm_key(label)
+        if label and key not in seen:
+            seen.add(key)
+            labels.append(label)
+    return labels
+
+
+def _ensure_sheet(doc, name, label, calc_group, clear=False):
+    sheet = _find_sheet(doc, (name, label))
+    if sheet is None:
+        sheet = doc.addObject("Spreadsheet::Sheet", name)
+    if clear:
+        try:
+            sheet.clearAll()
+        except Exception:
+            pass
+    try:
+        sheet.Label = label
+    except Exception:
+        pass
+    _add_to_group(calc_group, sheet)
+    return sheet
+
+
+def _group_depth_hint(group):
+    depth = 0
+    current = group
+    seen = set()
+    while True:
+        parent = None
+        for item in getattr(current, "InList", []) or []:
+            if _is_group(item):
+                parent = item
+                break
+        if parent is None:
+            break
+        key = getattr(parent, "Name", None) or id(parent)
+        if key in seen:
+            break
+        seen.add(key)
+        depth += 1
+        current = parent
+    return depth
+
+
+def _group_display(group):
+    label = _safe_text(getattr(group, "Label", "")).strip()
+    name = _safe_text(getattr(group, "Name", "")).strip()
+    count = len(getattr(group, "Group", []) or [])
+    if label and name and label != name:
+        base = "{} [{}]".format(label, name)
+    else:
+        base = label or name or "<sin nombre>"
+    return "{}{} - {} obj.".format("  " * _group_depth_hint(group), base, count)
+
+
+def _group_candidates(doc):
+    groups = []
+    for obj in getattr(doc, "Objects", []) or []:
+        if not _is_group(obj):
+            continue
+        label = _safe_text(getattr(obj, "Label", getattr(obj, "Name", "")))
+        name = _safe_text(getattr(obj, "Name", ""))
+        key = _norm_key("{} {}".format(label, name))
+        score = 0
+        if any(token in key for token in ("areas", "area", "recintos", "espacios", "zonas")):
+            score += 100
+        if any(token in key for token in ("iluminacion", "electric", "conexiones", "cajas", "apagadores", "etiquetas")):
+            score -= 25
+        score += min(len(getattr(obj, "Group", []) or []), 20)
+        groups.append((score, _normalize(label), obj))
+    groups.sort(key=lambda item: (-item[0], item[1]))
+    return [item[2] for item in groups]
+
+
+def _select_combo_by_data(combo, value):
+    wanted = _safe_text(value)
+    for index in range(combo.count()):
+        if _safe_text(combo.itemData(index)) == wanted:
+            combo.setCurrentIndex(index)
+            return True
+    return False
+
+
+def _add_unique_combo_items(combo, values, current):
+    seen = set()
+    ordered = []
+    for value in [current] + list(values or []):
+        text = _safe_text(value).strip()
+        key = _norm_key(text)
+        if text and key not in seen:
+            seen.add(key)
+            ordered.append(text)
+    combo.addItems(ordered)
+    combo.setEditable(True)
+    if current:
+        combo.setCurrentText(current)
+
+
+def _show_options_dialog(doc):
+    if QtWidgets is None:
+        return None
+
+    dialog = QtWidgets.QDialog()
+    dialog.setWindowTitle("Actualizar Iluminacion Completa")
+    dialog.setMinimumWidth(560)
+
+    layout = QtWidgets.QVBoxLayout(dialog)
+    form = QtWidgets.QFormLayout()
+    layout.addLayout(form)
+
+    group_combo = QtWidgets.QComboBox()
+    groups = _group_candidates(doc)
+    for group in groups:
+        group_combo.addItem(_group_display(group), getattr(group, "Name", ""))
+    saved_group = _param_get_string("area_group_name", "")
+    if saved_group and not _select_combo_by_data(group_combo, saved_group):
+        _warn("Grupo guardado '{}' no existe en el documento actual.".format(saved_group))
+    form.addRow("Grupo recintos:", group_combo)
+
+    sheet_values = _sheet_labels(doc)
+    datos_combo = QtWidgets.QComboBox()
+    datos_default = _param_get_string("datos_sheet_label", DEFAULT_DATOS_SHEET_LABEL) or DEFAULT_DATOS_SHEET_LABEL
+    _add_unique_combo_items(datos_combo, sheet_values, datos_default)
+    form.addRow("Hoja DatosRecintos:", datos_combo)
+
+    legacy_combo = QtWidgets.QComboBox()
+    legacy_default = _param_get_string("legacy_sheet_label", DEFAULT_LEGACY_SHEET_LABEL) or DEFAULT_LEGACY_SHEET_LABEL
+    _add_unique_combo_items(legacy_combo, sheet_values, legacy_default)
+    form.addRow("Hoja calculo legacy:", legacy_combo)
+
+    label_group_edit = QtWidgets.QLineEdit(_param_get_string("label_group_label", DEFAULT_LABEL_GROUP_LABEL) or DEFAULT_LABEL_GROUP_LABEL)
+    form.addRow("Grupo etiquetas:", label_group_edit)
+
+    review_check = QtWidgets.QCheckBox("Revisar descripciones antes de actualizar")
+    review_check.setChecked(_param_get_bool("review_descriptions", True))
+    layout.addWidget(review_check)
+
+    buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+    try:
+        buttons.button(QtWidgets.QDialogButtonBox.Ok).setText("Actualizar")
+    except Exception:
+        pass
+    layout.addWidget(buttons)
+    buttons.accepted.connect(dialog.accept)
+    buttons.rejected.connect(dialog.reject)
+
+    exec_fn = getattr(dialog, "exec", None)
+    accepted = exec_fn() == QtWidgets.QDialog.Accepted if callable(exec_fn) else dialog.exec_() == QtWidgets.QDialog.Accepted
+    if not accepted:
+        return None
+
+    options = {
+        "area_group_name": _safe_text(group_combo.currentData()).strip(),
+        "datos_sheet_label": _safe_text(datos_combo.currentText()).strip() or DEFAULT_DATOS_SHEET_LABEL,
+        "legacy_sheet_label": _safe_text(legacy_combo.currentText()).strip() or DEFAULT_LEGACY_SHEET_LABEL,
+        "label_group_label": _safe_text(label_group_edit.text()).strip() or DEFAULT_LABEL_GROUP_LABEL,
+        "review_descriptions": bool(review_check.isChecked()),
+    }
+    _param_set_string("area_group_name", options["area_group_name"])
+    _param_set_string("datos_sheet_label", options["datos_sheet_label"])
+    _param_set_string("legacy_sheet_label", options["legacy_sheet_label"])
+    _param_set_string("label_group_label", options["label_group_label"])
+    _param_set_bool("review_descriptions", options["review_descriptions"])
+    return options
+
+
+def _review_descriptions_dialog(rows):
+    if QtWidgets is None or not rows:
+        return True
+
+    dialog = QtWidgets.QDialog()
+    dialog.setWindowTitle("Validar descripciones de recintos")
+    dialog.setMinimumSize(620, 420)
+    layout = QtWidgets.QVBoxLayout(dialog)
+
+    table = QtWidgets.QTableWidget(len(rows), 2)
+    table.setHorizontalHeaderLabels(["Recinto", "Descripcion"])
+    descriptions = sorted(DESCRIPTION_LUX.keys(), key=_normalize)
+    combos = []
+    for row_index, item in enumerate(rows):
+        rec_item = QtWidgets.QTableWidgetItem(_safe_text(item.get("recinto", "")))
+        try:
+            if QtCore is not None:
+                rec_item.setFlags(rec_item.flags() & ~QtCore.Qt.ItemIsEditable)
+        except Exception:
+            pass
+        table.setItem(row_index, 0, rec_item)
+        combo = QtWidgets.QComboBox()
+        combo.addItems(descriptions)
+        desc = _safe_text(item.get("descripcion", "")).strip()
+        index = combo.findText(desc)
+        if index >= 0:
+            combo.setCurrentIndex(index)
+        combos.append(combo)
+        table.setCellWidget(row_index, 1, combo)
+    try:
+        table.horizontalHeader().setStretchLastSection(True)
+        table.resizeColumnToContents(0)
+    except Exception:
+        pass
+    layout.addWidget(table)
+
+    buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+    try:
+        buttons.button(QtWidgets.QDialogButtonBox.Ok).setText("Aplicar")
+    except Exception:
+        pass
+    layout.addWidget(buttons)
+    buttons.accepted.connect(dialog.accept)
+    buttons.rejected.connect(dialog.reject)
+
+    exec_fn = getattr(dialog, "exec", None)
+    accepted = exec_fn() == QtWidgets.QDialog.Accepted if callable(exec_fn) else dialog.exec_() == QtWidgets.QDialog.Accepted
+    if not accepted:
+        return False
+    for row_index, combo in enumerate(combos):
+        rows[row_index]["descripcion"] = _safe_text(combo.currentText()).strip() or DEFAULT_DESCRIPTION
+    return True
+
+
+def _pick_area_group(doc):
+    try:
+        selection = FreeCADGui.Selection.getSelection()
+    except Exception:
+        selection = []
+    for obj in selection or []:
+        if _is_group(obj):
+            return obj
+        for parent in getattr(obj, "InList", []) or []:
+            if _is_group(parent):
+                return parent
+        for candidate in getattr(doc, "Objects", []) or []:
+            if _is_group(candidate) and obj in (getattr(candidate, "Group", []) or []):
+                return candidate
+    return _find_group_by_alias(doc, ("Areas", "Area", "Recintos", "Espacios", "Zonas"))
+
+
+def _valid_area_object(obj):
+    try:
+        shape = getattr(obj, "Shape", None)
+        return bool(shape and (getattr(shape, "Faces", None) or getattr(shape, "Edges", None)))
+    except Exception:
+        return False
+
+
+def _shape_area_m2(obj):
+    shape = getattr(obj, "Shape", None)
+    if shape is None:
+        return 0.0
+    try:
+        if getattr(shape, "Faces", None):
+            return float(shape.Area) / 1000000.0
+    except Exception:
+        pass
+    length = _to_float(getattr(obj, "Length", 0.0), 0.0)
+    height = _to_float(getattr(obj, "Height", 0.0), 0.0)
+    if length > 0.0 and height > 0.0:
+        return (length * height) / 1000000.0
+    try:
+        bounds = shape.BoundBox
+        return (float(bounds.XLength) * float(bounds.YLength)) / 1000000.0
+    except Exception:
+        return 0.0
+
+
+def _read_existing_descriptions(sheet):
+    descriptions = {}
+    if sheet is None:
+        return descriptions
+    max_rows = int(getattr(sheet, "RowCount", 0) or 0) or 300
+    for row in range(2, max_rows + 1):
+        recinto = _sheet_text(sheet, "A{}".format(row))
+        if not recinto:
+            continue
+        descriptions[_canonical_recinto_key(recinto)] = _sheet_text(sheet, "H{}".format(row))
+    return descriptions
+
+
+def _canonical_description(text):
+    key = _norm_key(text)
+    if not key:
+        return ""
+    for desc in DESCRIPTION_LUX:
+        if key == _norm_key(desc):
+            return desc
+    if key in DESCRIPTION_ALIASES:
+        return DESCRIPTION_ALIASES[key]
+    for alias, desc in DESCRIPTION_ALIASES.items():
+        if key == _norm_key(alias):
+            return desc
+    norm = _normalize(text)
+    for alias, desc in DESCRIPTION_ALIASES.items():
+        if _normalize(alias) and _normalize(alias) in norm:
+            return desc
+    return ""
+
+
+def _infer_description(recinto_name):
+    key = _norm_key(recinto_name)
+    for desc, tokens in INFER_RULES:
+        if any(token in key for token in tokens):
+            return desc
+    return ""
+
+
+def _clean_description(existing_text, recinto_name):
+    inferred = _infer_description(recinto_name)
+    if inferred == "Pasillo":
+        return inferred, "inferida"
+    desc = _canonical_description(existing_text)
+    if desc:
+        return desc, "existente"
+    if inferred:
+        return inferred, "inferida"
+    return DEFAULT_DESCRIPTION, "respaldo"
+
+
+def _collect_area_rows(area_group, old_descriptions):
+    rows = []
+    stats = {"existente": 0, "inferida": 0, "respaldo": 0}
+    for obj in getattr(area_group, "Group", []) or []:
+        if _is_group(obj):
+            continue
+        if not _valid_area_object(obj):
+            continue
+        label = _safe_text(getattr(obj, "Label", getattr(obj, "Name", ""))).strip()
+        key = _canonical_recinto_key(label)
+        existing_desc = old_descriptions.get(key, "")
+        desc, source = _clean_description(existing_desc, label)
+        stats[source] = stats.get(source, 0) + 1
+        if source == "respaldo":
+            _warn("Descripcion no inferida para '{}'; se usa '{}'.".format(label, desc))
+        bounds = getattr(getattr(obj, "Shape", None), "BoundBox", None)
+        largo = _to_float(getattr(bounds, "XLength", 0.0), 0.0) / 1000.0 if bounds else 0.0
+        ancho = _to_float(getattr(bounds, "YLength", 0.0), 0.0) / 1000.0 if bounds else 0.0
+        altura = _to_float(getattr(bounds, "ZLength", 0.0), 0.0) / 1000.0 if bounds else 0.0
+        rows.append({
+            "recinto": label,
+            "area": round(_shape_area_m2(obj), 2),
+            "largo": round(largo, 2),
+            "ancho": round(ancho, 2),
+            "altura": round(altura, 2),
+            "filas": _safe_text(getattr(obj, "Rows", 0)),
+            "columnas": _safe_text(getattr(obj, "Columns", 0)),
+            "descripcion": desc,
+            "obj": obj,
+        })
+    return rows, stats
+
+
+def _clear_rows(sheet, first_row, last_row, last_col_letter):
+    if first_row > last_row:
+        return
+    last_col = _col_index(last_col_letter)
+    for row in range(first_row, last_row + 1):
+        for col in range(1, last_col + 1):
+            _safe_set(sheet, "{}{}".format(chr(64 + col), row), "")
+
+
+def update_datos_recintos(doc, area_group, calc_group, datos_sheet_label, review_descriptions=False):
+    sheet = _ensure_sheet(doc, _doc_name_token(datos_sheet_label, "DatosRecintos"), datos_sheet_label, calc_group, clear=False)
+    old_descriptions = _read_existing_descriptions(sheet)
+    rows, stats = _collect_area_rows(area_group, old_descriptions)
+    if not rows:
+        raise Exception("No se encontraron recintos validos en '{}'.".format(getattr(area_group, "Label", area_group.Name)))
+    if review_descriptions:
+        if not _review_descriptions_dialog(rows):
+            raise SystemExit
+        stats = {"manual": len(rows)}
+
+    headers = ["Recinto", "Area (m^2)", "Largo (m)", "Ancho (m)", "Altura (m)", "Filas", "Columnas", "Descripcion"]
+    _ensure_min_cols(sheet, len(headers))
+    _ensure_min_rows(sheet, len(rows) + 1)
+    for col, header in enumerate(headers, start=1):
+        _safe_set(sheet, "{}1".format(chr(64 + col)), header)
+
+    for index, row_data in enumerate(rows, start=2):
+        _safe_set(sheet, "A{}".format(index), row_data["recinto"])
+        _safe_set(sheet, "B{}".format(index), row_data["area"])
+        _safe_set(sheet, "C{}".format(index), row_data["largo"])
+        _safe_set(sheet, "D{}".format(index), row_data["ancho"])
+        _safe_set(sheet, "E{}".format(index), row_data["altura"])
+        _safe_set(sheet, "F{}".format(index), row_data["filas"])
+        _safe_set(sheet, "G{}".format(index), row_data["columnas"])
+        _safe_set(sheet, "H{}".format(index), row_data["descripcion"])
+
+    old_rows = int(getattr(sheet, "RowCount", 0) or 0)
+    _clear_rows(sheet, len(rows) + 2, max(old_rows, len(rows) + 30), "H")
+    try:
+        sheet.recompute()
+    except Exception:
+        pass
+    _info("DatosRecintos actualizado: {} recinto(s). Descripciones: {}.".format(len(rows), stats))
+    return sheet, rows
+
+
+def update_legacy_sheet(doc, datos_sheet, calc_group, legacy_sheet_label):
+    sheet = _ensure_sheet(doc, _doc_name_token(legacy_sheet_label, "Tabla_Iluminacion_Legacy"), legacy_sheet_label, calc_group, clear=True)
+    headers = [
+        "Recinto",
+        "Area (m2)",
+        "Largo (m)",
+        "Ancho (m)",
+        "Altura (m)",
+        "Filas",
+        "Columnas",
+        "Descripcion",
+        "Cantidad Seleccionada",
+        "Luminaria (Lm)",
+        "Iluminancia Media Deseada (Lux)",
+        "Flujo Luminoso Total (Lumens)",
+        "Numero Luminarias",
+        "E Final (Lux)",
+        "% Iluminacion Recomendada",
+    ]
+    for col, header in enumerate(headers, start=1):
+        _safe_set(sheet, "{}1".format(chr(64 + col)), header)
+
+    row = 2
+    while True:
+        recinto = _sheet_text(datos_sheet, "A{}".format(row))
+        if not recinto:
+            break
+        for col in "ABCDEFGH":
+            _safe_set(sheet, "{}{}".format(col, row), _sheet_text(datos_sheet, "{}{}".format(col, row)))
+        desc = _canonical_description(_sheet_text(datos_sheet, "H{}".format(row))) or DEFAULT_DESCRIPTION
+        lux = DESCRIPTION_LUX.get(desc, DESCRIPTION_LUX[DEFAULT_DESCRIPTION])
+        _safe_set(sheet, "H{}".format(row), desc)
+        _safe_set(sheet, "I{}".format(row), "=F{}*G{}".format(row, row))
+        _safe_set(sheet, "J{}".format(row), "{:.0f}".format(LUMEN_POR_LUMINARIA))
+        _safe_set(sheet, "K{}".format(row), "{:.0f}".format(lux))
+        _safe_set(sheet, "L{}".format(row), "=B{}*K{}".format(row, row))
+        _safe_set(sheet, "M{}".format(row), "=L{}/J{}".format(row, row))
+        _safe_set(sheet, "N{}".format(row), "=(I{}*J{}/B{})*{}*{}".format(row, row, row, FACTOR_UTILIZACION, FACTOR_MANTENIMIENTO))
+        _safe_set(sheet, "O{}".format(row), "=(N{}/K{})*100".format(row, row))
+        row += 1
+
+    try:
+        sheet.recompute()
+    except Exception:
+        pass
+    _info("{} actualizado: {} fila(s).".format(legacy_sheet_label, max(0, row - 2)))
+    return sheet
+
+
+def _remove_leading_apostrophe(text):
+    text = _safe_text(text).strip()
+    return text[1:].strip() if text.startswith("'") else text
+
+
+def _label_match_key(text):
+    return _canonical_recinto_key(_remove_leading_apostrophe(text))
+
+
+def _format_area(value):
+    return "{:.2f} m2".format(_to_float(value, 0.0))
+
+
+def _computed_percent(sheet, row):
+    value = _sheet_text(sheet, "O{}".format(row))
+    if value and not value.startswith("="):
+        num = _to_float(value, None)
+        if num is not None:
+            return "{:.0f}%".format(num)
+    area = _to_float(_sheet_text(sheet, "B{}".format(row)), 0.0)
+    filas = _to_float(_sheet_text(sheet, "F{}".format(row)), 0.0)
+    cols = _to_float(_sheet_text(sheet, "G{}".format(row)), 0.0)
+    lumens = _to_float(_sheet_text(sheet, "J{}".format(row)), LUMEN_POR_LUMINARIA)
+    lux = _to_float(_sheet_text(sheet, "K{}".format(row)), DESCRIPTION_LUX[DEFAULT_DESCRIPTION])
+    if area <= 0.0 or lux <= 0.0:
+        return ""
+    e_final = ((filas * cols) * lumens / area) * FACTOR_UTILIZACION * FACTOR_MANTENIMIENTO
+    return "{:.0f}%".format((e_final / lux) * 100.0)
+
+
+def _label_data_from_legacy(sheet):
+    data = {}
+    max_rows = int(getattr(sheet, "RowCount", 0) or 0) or 300
+    for row in range(2, max_rows + 1):
+        recinto = _sheet_text(sheet, "A{}".format(row))
+        if not recinto:
+            continue
+        data[_label_match_key(recinto)] = {
+            "recinto": _remove_leading_apostrophe(recinto),
+            "area": _format_area(_sheet_text(sheet, "B{}".format(row))),
+            "descripcion": _sheet_text(sheet, "H{}".format(row)),
+            "porcentaje": _computed_percent(sheet, row),
+        }
+    return data
+
+
+def _ensure_label_group(doc, area_group, label_group_name):
+    for child in getattr(area_group, "Group", []) or []:
+        if _is_group(child) and _norm_key(getattr(child, "Label", "")) == _norm_key(label_group_name):
+            return child
+    return _create_group(doc, label_group_name, area_group)
+
+
+def _clear_group_objects(doc, group):
+    removed = 0
+    for child in list(getattr(group, "Group", []) or []):
+        try:
+            doc.removeObject(child.Name)
+            removed += 1
+        except Exception:
+            pass
+    return removed
+
+
+def update_labels(doc, area_group, legacy_sheet, label_group_name):
+    data = _label_data_from_legacy(legacy_sheet)
+    label_group = _ensure_label_group(doc, area_group, label_group_name)
+    removed = _clear_group_objects(doc, label_group)
+    created = 0
+    for obj in getattr(area_group, "Group", []) or []:
+        if obj == label_group or _is_group(obj):
+            continue
+        if not _valid_area_object(obj):
+            continue
+        key = _label_match_key(getattr(obj, "Label", getattr(obj, "Name", "")))
+        item = data.get(key)
+        if not item:
+            _warn("Sin datos para etiqueta de '{}'.".format(getattr(obj, "Label", obj.Name)))
+            continue
+        lines = [
+            _remove_leading_apostrophe(getattr(obj, "Label", obj.Name)),
+            item["area"],
+            item["descripcion"],
+            item["porcentaje"],
+        ]
+        try:
+            center = obj.Shape.BoundBox.Center
+        except Exception:
+            center = obj.Placement.Base
+        text_obj = Draft.make_text(lines)
+        try:
+            text_obj.Label = "Etiqueta_" + _doc_name_token(lines[0], "Recinto")
+        except Exception:
+            pass
+        try:
+            text_obj.Placement.Base = center
+        except Exception:
+            pass
+        try:
+            if hasattr(text_obj.ViewObject, "DrawStyle"):
+                text_obj.ViewObject.DrawStyle = "3D"
+        except Exception:
+            pass
+        try:
+            if hasattr(text_obj.ViewObject, "FontSize"):
+                text_obj.ViewObject.FontSize = "200 mm"
+        except Exception:
+            pass
+        try:
+            label_group.addObject(text_obj)
+        except Exception:
+            pass
+        created += 1
+    _info("Etiquetas actualizadas: {} eliminada(s), {} creada(s).".format(removed, created))
+    return created
+
+
+def run():
+    doc = FreeCAD.ActiveDocument
+    if doc is None:
+        raise Exception("No hay documento activo.")
+
+    if QtWidgets is not None:
+        options = _show_options_dialog(doc)
+        if options is None:
+            raise SystemExit
+    else:
+        options = {
+            "area_group_name": _param_get_string("area_group_name", ""),
+            "datos_sheet_label": _param_get_string("datos_sheet_label", DEFAULT_DATOS_SHEET_LABEL) or DEFAULT_DATOS_SHEET_LABEL,
+            "legacy_sheet_label": _param_get_string("legacy_sheet_label", DEFAULT_LEGACY_SHEET_LABEL) or DEFAULT_LEGACY_SHEET_LABEL,
+            "label_group_label": _param_get_string("label_group_label", DEFAULT_LABEL_GROUP_LABEL) or DEFAULT_LABEL_GROUP_LABEL,
+            "review_descriptions": False,
+        }
+
+    area_group = None
+    if options.get("area_group_name"):
+        area_group = doc.getObject(options.get("area_group_name"))
+        if area_group is not None and not _is_group(area_group):
+            area_group = None
+    if area_group is None:
+        area_group = _pick_area_group(doc)
+    if area_group is None:
+        raise Exception("Seleccione el grupo de Areas/Recintos o un objeto dentro de ese grupo.")
+
+    _info("Grupo de recintos: '{}'.".format(getattr(area_group, "Label", area_group.Name)))
+    calc_group = _ensure_calculation_group(doc)
+    try:
+        doc.openTransaction("ElectricCR: Actualizar iluminacion completa")
+    except Exception:
+        pass
+
+    datos_sheet, _rows = update_datos_recintos(
+        doc,
+        area_group,
+        calc_group,
+        options.get("datos_sheet_label", DEFAULT_DATOS_SHEET_LABEL),
+        options.get("review_descriptions", False),
+    )
+    legacy_sheet = update_legacy_sheet(
+        doc,
+        datos_sheet,
+        calc_group,
+        options.get("legacy_sheet_label", DEFAULT_LEGACY_SHEET_LABEL),
+    )
+    update_labels(
+        doc,
+        area_group,
+        legacy_sheet,
+        options.get("label_group_label", DEFAULT_LABEL_GROUP_LABEL),
+    )
+
+    try:
+        datos_sheet.recompute()
+        legacy_sheet.recompute()
+        doc.recompute()
+    except Exception as exc:
+        _warn("Recompute con advertencia: {}".format(exc))
+
+    try:
+        doc.commitTransaction()
+    except Exception:
+        pass
+    _info("Proceso completo finalizado.")
+
+
+try:
+    run()
+except SystemExit:
+    try:
+        doc = FreeCAD.ActiveDocument
+        if doc is not None:
+            doc.abortTransaction()
+    except Exception:
+        pass
+    _warn("Proceso cancelado por el usuario.")
+except Exception as exc:
+    try:
+        doc = FreeCAD.ActiveDocument
+        if doc is not None:
+            doc.abortTransaction()
+    except Exception:
+        pass
+    _err(str(exc))
+    raise

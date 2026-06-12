@@ -65,3 +65,26 @@ Regla canonica para `L`/`L invertida`:
 Actualizacion aplicada 2026-04-15:
 1. Para reemplazo, inferir cara por endpoint geometrico real (punto inicio/fin de la ruta vieja) y centro de cara mas cercano.
 2. No forzar eje por metadata previa cuando contradice la geometria real.
+3. Extender la misma logica a `snake` (preview y ejecucion), incluyendo puertos cardinales y corte en centro de cara.
+
+## Recurrente 2026-04-15: preview difiere de ejecucion en L invertida
+
+Sintoma reportado:
+- La vista previa de `L invertida` muestra un trazo distinto al resultado final aplicado.
+
+Regla canonica:
+1. La vista previa debe calcularse con la misma funcion de jobs usada en ejecucion (`_strategy_jobs`).
+2. Mantener `_preview_paths_for_strategy` solo como fallback de resiliencia.
+
+## Recurrente 2026-04-15: puertos L cambian entre ejecuciones (efecto ping-pong)
+
+Sintoma reportado:
+- En reemplazo repetido, `L/L invertida` alterna puertos (`S/E` <-> `W/N`) aunque la seleccion no cambia.
+
+Regla canonica:
+1. Para `L`, `L invertida` y `snake`, el puerto base debe salir de la guia COM->COM (centro de masa a centro de masa).
+2. En modo reemplazo, no heredar puertos de la ruta anterior para `L`, `L invertida` y `snake`; usar solo guia COM->COM.
+3. `L` vs `L invertida` cambia el orden del codo, no el criterio de cara de salida.
+4. En modo reemplazo, normalizar orden de endpoints (`A/B`) de forma canonica para evitar alternancia por ruta invertida.
+5. En objetos rotados, no depender de nombres `PuertosJSON` para cardinales; resolver salida por cara local (`face center`) usando ejes del objeto.
+6. Para robustez en piezas rotadas/no ortogonales, calcular endpoint cardinal con muestra de borde real de `Shape` en direccion mundial (no solo bounding box).

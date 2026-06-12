@@ -1,0 +1,639 @@
+# -*- coding: utf-8 -*-
+# MenuText: Insertar Tablero
+# Icon: Insertar_Tablero.svg
+
+# Qt compatibility for FreeCAD 1.x (PySide6) and older builds.
+def _ensure_qt_compat():
+    import sys
+    import types
+
+    QtCore = QtGui = QtWidgets = None
+    binding_name = None
+
+    for candidate in ("PySide6", "PySide2", "PySide"):
+        try:
+            if candidate == "PySide":
+                from PySide import QtCore as _QtCore, QtGui as _QtGui
+                _QtWidgets = _QtGui
+            else:
+                module = __import__(candidate, fromlist=["QtCore", "QtGui", "QtWidgets"])
+                _QtCore = module.QtCore
+                _QtGui = module.QtGui
+                _QtWidgets = module.QtWidgets
+            QtCore, QtGui, QtWidgets = _QtCore, _QtGui, _QtWidgets
+            binding_name = candidate
+            break
+        except Exception:
+            continue
+
+    if QtCore is None:
+        return
+
+    qtgui_compat = types.ModuleType("QtGui")
+    qtgui_compat.__dict__.update(getattr(QtGui, "__dict__", {}))
+    qtgui_compat.__dict__.update(getattr(QtWidgets, "__dict__", {}))
+
+    qtsvg_compat = None
+    for module_name in ("QtSvg", "QtSvgWidgets"):
+        try:
+            module = __import__(binding_name, fromlist=[module_name])
+            qt_module = getattr(module, module_name)
+        except Exception:
+            continue
+        if qtsvg_compat is None:
+            qtsvg_compat = types.ModuleType("QtSvg")
+        qtsvg_compat.__dict__.update(getattr(qt_module, "__dict__", {}))
+
+    qtuitools_compat = None
+    try:
+        module = __import__(binding_name, fromlist=["QtUiTools"])
+        qtuitools_compat = module.QtUiTools
+    except Exception:
+        pass
+
+    for package_name in ("PySide2", "PySide"):
+        package = sys.modules.get(package_name)
+        if package is None:
+            package = types.ModuleType(package_name)
+            sys.modules[package_name] = package
+        package.QtCore = QtCore
+        package.QtGui = qtgui_compat
+        package.QtWidgets = QtWidgets
+        sys.modules[package_name + ".QtCore"] = QtCore
+        sys.modules[package_name + ".QtGui"] = qtgui_compat
+        sys.modules[package_name + ".QtWidgets"] = QtWidgets
+        if qtsvg_compat is not None:
+            package.QtSvg = qtsvg_compat
+            sys.modules[package_name + ".QtSvg"] = qtsvg_compat
+        if qtuitools_compat is not None:
+            package.QtUiTools = qtuitools_compat
+            sys.modules[package_name + ".QtUiTools"] = qtuitools_compat
+
+
+_ensure_qt_compat()
+
+"""
+Insertar_Tablero.FCMacro
+
+UI ligera para insertar tableros como App::Link usando
+electriccr.features.tablero_electrico.
+"""
+
+import importlib
+import inspect
+import sys
+from pathlib import Path
+
+import FreeCAD as App
+
+try:
+    import FreeCADGui as Gui
+    GUI_UP = True
+except Exception:
+    Gui = None
+    GUI_UP = False
+
+try:
+    from PySide2 import QtCore, QtWidgets
+except Exception:
+    try:
+        from PySide import QtCore  # type: ignore
+        from PySide import QtGui as QtWidgets  # type: ignore
+    except Exception:
+        QtCore = None
+        QtWidgets = None
+
+
+UI_REF = None
+
+
+def _log(msg):
+    App.Console.PrintMessage("[TABLERO_UI][INFO] {}\n".format(msg))
+
+
+def _warn(msg):
+    App.Console.PrintWarning("[TABLERO_UI][WARN] {}\n".format(msg))
+
+
+def _err(msg):
+    App.Console.PrintError("[TABLERO_UI][ERROR] {}\n".format(msg))
+
+
+def _candidate_electriccr_dirs():
+    found = []
+    seen = set()
+
+    def push(path_obj):
+        if not path_obj:
+            return
+        try:
+            real = path_obj.resolve()
+        except Exception:
+            real = path_obj
+        key = str(real).lower()
+        if key in seen:
+            return
+        seen.add(key)
+        found.append(real)
+
+    def check_base(base):
+        if not base:
+            return
+        try:
+            base_resolved = base.resolve()
+        except Exception:
+            base_resolved = base
+        direct = base_resolved / "electriccr" / "features" / "tablero_electrico.py"
+        if direct.is_file():
+            push(base_resolved)
+        pkg = base_resolved / "ElectricCR"
+        if (pkg / "electriccr" / "features" / "tablero_electrico.py").is_file():
+            push(pkg)
+
+    try:
+        here = Path(__file__).resolve()
+        lineage = [here.parent, *here.parents]
+    except Exception:
+        lineage = []
+    for parent in lineage:
+        check_base(parent)
+
+    try:
+        user_dir = Path(App.getUserAppDataDir())
+    except Exception:
+        user_dir = Path.home() / "AppData" / "Roaming" / "FreeCAD"
+
+    for folder_name in ("Macro", "Macros"):
+        check_base(user_dir / folder_name)
+
+    return found
+
+
+def _ensure_electriccr_on_path():
+    import importlib as _importlib
+
+    def _try_import():
+        for name in ("ElectricCR", "electriccr"):
+            try:
+                _importlib.import_module(name)
+                return True
+            except ImportError:
+                continue
+        return False
+
+    if _try_import():
+        return True
+
+    for directory in _candidate_electriccr_dirs():
+        for candidate in (directory.parent, directory):
+            sp = str(candidate)
+            if sp and sp not in sys.path:
+                sys.path.insert(0, sp)
+
+    _importlib.invalidate_caches()
+    return _try_import()
+
+
+def _import_tablero_feature():
+    _ensure_electriccr_on_path()
+    importlib.invalidate_caches()
+
+    last_error = None
+    candidates = (
+        "ElectricCR.electriccr.features.tablero_electrico",
+        "electriccr.features.tablero_electrico",
+    )
+    for mod_name in candidates:
+        try:
+            if mod_name in sys.modules:
+                mod = importlib.reload(sys.modules[mod_name])
+            else:
+                mod = importlib.import_module(mod_name)
+            insert_fn = getattr(mod, "insertar_tablero", None)
+            pick_fn = getattr(mod, "pick_insertion_context_from_gui", None) or getattr(mod, "pick_insertion_point_from_gui", None)
+            if callable(insert_fn):
+                try:
+                    sig = inspect.signature(insert_fn)
+                    _log(
+                        "Backend tablero cargado por paquete {} desde {} | firma={}".format(
+                            mod_name,
+                            getattr(mod, "__file__", mod_name),
+                            sig,
+                        )
+                    )
+                except Exception:
+                    _log(
+                        "Backend tablero cargado por paquete {} desde {}".format(
+                            mod_name,
+                            getattr(mod, "__file__", mod_name),
+                        )
+                    )
+                return mod, insert_fn, pick_fn
+        except Exception as ex:
+            last_error = ex
+    raise RuntimeError("No se pudo importar tablero_electrico: {}".format(last_error))
+
+
+class InsertarTableroDialog(QtWidgets.QDialog):
+    def __init__(self, insert_fn, pick_fn=None, parent=None):
+        super().__init__(parent)
+        self._insert_fn = insert_fn
+        self._pick_fn = pick_fn
+        self._inserting = False
+
+        self.setWindowTitle("Insertar Tablero / Desconector / Interruptor")
+        self.setMinimumWidth(420)
+        self.setModal(False)
+
+        self.sp_espacios = QtWidgets.QSpinBox()
+        self.sp_espacios.setRange(2, 999)
+        self.sp_espacios.setValue(42)
+        self._tablero_espacios = int(self.sp_espacios.value())
+
+        self.chk_main_breaker = QtWidgets.QCheckBox("Main Breaker")
+        self.chk_main_breaker.setChecked(True)
+        self._tablero_main_breaker = bool(self.chk_main_breaker.isChecked())
+
+        self.cmb_montaje = QtWidgets.QComboBox()
+        self.cmb_montaje.addItems(["Empotrado", "Sobrepuesto"])
+        self.cmb_montaje.setCurrentText("Sobrepuesto")
+
+        self.cmb_clase = QtWidgets.QComboBox()
+        self.cmb_clase.addItems(["Tablero", "Desconector", "Interruptor"])
+        self.cmb_clase.setCurrentText("Tablero")
+
+        self.cmb_perfil_dimensiones = QtWidgets.QComboBox()
+        self.cmb_perfil_dimensiones.addItems(["Generico", "Eaton CH Plug-on Neutral"])
+        self.cmb_perfil_dimensiones.setCurrentText("Generico")
+
+        self.cmb_config_catalogo = QtWidgets.QComboBox()
+        self.cmb_config_catalogo.addItems(["Auto", "Convertible"])
+        self.cmb_config_catalogo.setCurrentText("Auto")
+
+        self.cmb_amperaje = QtWidgets.QComboBox()
+        self.cmb_amperaje.addItems(["100", "125", "150", "200", "225"])
+        self.cmb_amperaje.setCurrentText("225")
+
+        self.cmb_caja_eaton = QtWidgets.QComboBox()
+        self.cmb_caja_eaton.addItems(["Auto", "X0", "X1", "X2", "X3", "X4", "X5", "X6", "X7", "X8", "X9"])
+        self.cmb_caja_eaton.setCurrentText("Auto")
+
+        self.txt_codigo = QtWidgets.QLineEdit("")
+        try:
+            self.txt_codigo.setPlaceholderText("Ej. TP")
+        except Exception:
+            pass
+        self.txt_nombre = QtWidgets.QLineEdit("")
+        self.cmb_conectado_a = QtWidgets.QComboBox()
+        self.cmb_conectado_a.setEditable(True)
+
+        self.sp_altura_superior = QtWidgets.QDoubleSpinBox()
+        self.sp_altura_superior.setSuffix(" mm")
+        self.sp_altura_superior.setRange(0.0, 10000.0)
+        self.sp_altura_superior.setSingleStep(50.0)
+        self.sp_altura_superior.setValue(1800.0)
+
+        self.cmb_modo = QtWidgets.QComboBox()
+        self.cmb_modo.addItems(["Ambos", "2D", "3D"])
+        self.cmb_modo.setCurrentText("Ambos")
+
+        self.chk_area_trabajo = QtWidgets.QCheckBox("Mostrar area de trabajo")
+        self.chk_area_trabajo.setChecked(False)
+
+        hint = QtWidgets.QLabel(
+            "Ingrese el codigo/TP manual sin consecutivo. El perfil Eaton CH puede calcular la caja por espacios, principal, configuracion y amperaje; si lo necesita, tambien puede forzar la caja X manualmente."
+        )
+        hint.setWordWrap(True)
+
+        self.btn_insertar = QtWidgets.QPushButton("Insertar")
+        self.btn_cerrar = QtWidgets.QPushButton("Cerrar")
+        try:
+            self.btn_insertar.setDefault(True)
+            self.btn_insertar.setAutoDefault(True)
+            self.btn_cerrar.setAutoDefault(False)
+        except Exception:
+            pass
+        self.btn_insertar.clicked.connect(self._on_insertar)
+        self.btn_cerrar.clicked.connect(self.close)
+        try:
+            self.cmb_clase.currentTextChanged.connect(self._on_clase_changed)
+        except Exception:
+            pass
+        try:
+            self.cmb_perfil_dimensiones.currentTextChanged.connect(self._on_perfil_dimensiones_changed)
+        except Exception:
+            pass
+
+        form = QtWidgets.QFormLayout()
+        try:
+            form.setFieldGrowthPolicy(QtWidgets.QFormLayout.AllNonFixedFieldsGrow)
+        except Exception:
+            pass
+        form.addRow("Espacios:", self.sp_espacios)
+        form.addRow("MainBreaker:", self.chk_main_breaker)
+        form.addRow("Montaje:", self.cmb_montaje)
+        form.addRow("Clase:", self.cmb_clase)
+        form.addRow("Perfil dims.:", self.cmb_perfil_dimensiones)
+        form.addRow("Variante Eaton:", self.cmb_config_catalogo)
+        form.addRow("Amp Eaton:", self.cmb_amperaje)
+        form.addRow("Caja Eaton:", self.cmb_caja_eaton)
+        form.addRow("Codigo/TP:", self.txt_codigo)
+        form.addRow("Nombre:", self.txt_nombre)
+        form.addRow("Conectado a:", self.cmb_conectado_a)
+        form.addRow("Altura sup.:", self.sp_altura_superior)
+        form.addRow("Modo:", self.cmb_modo)
+        form.addRow("", self.chk_area_trabajo)
+
+        btns = QtWidgets.QHBoxLayout()
+        btns.addStretch(1)
+        btns.addWidget(self.btn_cerrar)
+        btns.addWidget(self.btn_insertar)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addWidget(hint)
+        layout.addLayout(form)
+        layout.addStretch(1)
+        layout.addLayout(btns)
+        self._refresh_conectado_a_options()
+        self._apply_class_defaults(str(self.cmb_clase.currentText() or "Tablero"))
+        self._refresh_dimension_profile_fields()
+        self._refresh_insert_button()
+        if QtCore is not None:
+            try:
+                QtCore.QTimer.singleShot(0, self._focus_codigo)
+            except Exception:
+                pass
+
+    def _on_clase_changed(self, clase):
+        self._apply_class_defaults(clase)
+        self._refresh_dimension_profile_fields()
+        self._refresh_insert_button()
+
+    def _on_perfil_dimensiones_changed(self, *_args):
+        self._refresh_dimension_profile_fields()
+
+    def _apply_class_defaults(self, clase):
+        clase_txt = str(clase or "Tablero").strip()
+        is_tablero = clase_txt == "Tablero"
+        try:
+            if is_tablero:
+                self.sp_espacios.setEnabled(True)
+                self.chk_main_breaker.setEnabled(True)
+                self.sp_espacios.setValue(int(self._tablero_espacios))
+                self.chk_main_breaker.setChecked(bool(self._tablero_main_breaker))
+            else:
+                self._tablero_espacios = int(self.sp_espacios.value())
+                self._tablero_main_breaker = bool(self.chk_main_breaker.isChecked())
+                self.sp_espacios.setValue(2)
+                self.chk_main_breaker.setChecked(False)
+                self.sp_espacios.setEnabled(False)
+                self.chk_main_breaker.setEnabled(False)
+        except Exception:
+            pass
+
+    def _dimension_profile_value(self):
+        txt = str(self.cmb_perfil_dimensiones.currentText() or "").strip().lower()
+        if txt.startswith("eaton"):
+            return "Eaton_CH_PlugOnNeutral"
+        return "Generico"
+
+    def _refresh_dimension_profile_fields(self):
+        is_eaton = self._dimension_profile_value() == "Eaton_CH_PlugOnNeutral"
+        for widget in (self.cmb_config_catalogo, self.cmb_amperaje, self.cmb_caja_eaton):
+            try:
+                widget.setEnabled(is_eaton)
+            except Exception:
+                pass
+        clase_txt = str(self.cmb_clase.currentText() or "Tablero").strip()
+        if is_eaton and clase_txt in ("Desconector", "Interruptor"):
+            try:
+                if str(self.cmb_caja_eaton.currentText() or "Auto").strip() == "Auto":
+                    self.cmb_caja_eaton.setCurrentText("X1")
+            except Exception:
+                pass
+
+    def _refresh_insert_button(self, *_args):
+        clase = str(self.cmb_clase.currentText() or "Tablero").strip()
+        try:
+            self.btn_insertar.setText("Insertar {}".format(clase))
+        except Exception:
+            pass
+
+    def _focus_codigo(self):
+        try:
+            self.txt_codigo.setFocus()
+            self.txt_codigo.selectAll()
+        except Exception:
+            pass
+
+    def _refresh_conectado_a_options(self):
+        current_text = ""
+        try:
+            current_text = str(self.cmb_conectado_a.currentText() or "").strip()
+        except Exception:
+            current_text = ""
+
+        options = []
+        for item in ("Acometida", "Tablero_Principal"):
+            options.append(item)
+
+        doc = App.ActiveDocument
+        for obj in (getattr(doc, "Objects", []) or []):
+            props = set(getattr(obj, "PropertiesList", []) or [])
+            if not props:
+                continue
+            clase = ""
+            if "ClaseEquipo" in props:
+                clase = str(getattr(obj, "ClaseEquipo", "") or "").strip()
+            elif "Tipo" in props:
+                clase = str(getattr(obj, "Tipo", "") or "").strip()
+            if clase not in ("Tablero", "Desconector", "Interruptor"):
+                continue
+            if "ConectadoA" not in props:
+                try:
+                    obj.addProperty("App::PropertyString", "ConectadoA", "Tablero", "Tablero o fuente aguas arriba")
+                    props = set(getattr(obj, "PropertiesList", []) or [])
+                except Exception:
+                    pass
+
+            for value in (
+                getattr(obj, "Codigo", ""),
+                getattr(obj, "NombreTablero", ""),
+                getattr(obj, "Label", ""),
+                getattr(obj, "ConectadoA", ""),
+            ):
+                text = str(value or "").strip()
+                if text:
+                    options.append(text)
+
+        unique = []
+        seen = set()
+        for item in options:
+            key = str(item).strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            unique.append(str(item).strip())
+
+        try:
+            self.cmb_conectado_a.blockSignals(True)
+            self.cmb_conectado_a.clear()
+            self.cmb_conectado_a.addItems(unique)
+            target = current_text or "Acometida"
+            idx = self.cmb_conectado_a.findText(target)
+            if idx < 0 and target:
+                self.cmb_conectado_a.addItem(target)
+                idx = self.cmb_conectado_a.findText(target)
+            if idx >= 0:
+                self.cmb_conectado_a.setCurrentIndex(idx)
+            elif self.cmb_conectado_a.count() > 0:
+                self.cmb_conectado_a.setCurrentIndex(0)
+        except Exception:
+            pass
+        finally:
+            try:
+                self.cmb_conectado_a.blockSignals(False)
+            except Exception:
+                pass
+
+    def _pick_position(self):
+        if callable(self._pick_fn):
+            try:
+                return self._pick_fn(Gui)
+            except Exception as ex:
+                _warn("No se pudo leer punto de insercion: {}".format(ex))
+        return App.Vector(0.0, 0.0, 0.0)
+
+    def _on_insertar(self):
+        if self._inserting:
+            return
+        self._inserting = True
+        doc = App.ActiveDocument or App.newDocument("Electrico")
+        transaction_open = False
+        try:
+            try:
+                if hasattr(doc, "openTransaction"):
+                    doc.openTransaction("Insertar Tablero")
+                    transaction_open = True
+            except Exception:
+                transaction_open = False
+            pick_result = self._pick_position()
+            codigo = str(self.txt_codigo.text() or "").strip()
+            if not codigo:
+                _err("Debe ingresar el codigo/TP del tablero sin consecutivo.")
+                try:
+                    self.txt_codigo.setFocus()
+                except Exception:
+                    pass
+                try:
+                    if transaction_open and hasattr(doc, "abortTransaction"):
+                        doc.abortTransaction()
+                        transaction_open = False
+                except Exception:
+                    pass
+                return
+            insert_kwargs = dict(
+                doc=doc,
+                espacios=int(self.sp_espacios.value()),
+                main_breaker=bool(self.chk_main_breaker.isChecked()),
+                montaje=str(self.cmb_montaje.currentText() or "Sobrepuesto"),
+                clase_equipo=str(self.cmb_clase.currentText() or "Tablero"),
+                perfil_dimensiones=self._dimension_profile_value(),
+                configuracion_catalogo=str(self.cmb_config_catalogo.currentText() or "Auto"),
+                amperaje_nominal=int(str(self.cmb_amperaje.currentText() or "225")),
+                caja_eaton=str(self.cmb_caja_eaton.currentText() or "Auto"),
+                codigo=codigo,
+                nombre_tablero=str(self.txt_nombre.text() or ""),
+                conectado_a=str(self.cmb_conectado_a.currentText() or ""),
+                altura_superior_mm=float(self.sp_altura_superior.value()),
+                mostrar_area_trabajo=bool(self.chk_area_trabajo.isChecked()),
+                modo=str(self.cmb_modo.currentText() or "Ambos"),
+                recompute=True,
+            )
+            if isinstance(pick_result, dict):
+                insert_kwargs["insertion_context"] = pick_result
+            else:
+                insert_kwargs["position"] = pick_result
+            tablero = self._insert_fn(**insert_kwargs)
+            try:
+                if transaction_open and hasattr(doc, "commitTransaction"):
+                    doc.commitTransaction()
+                    transaction_open = False
+            except Exception:
+                transaction_open = False
+        except Exception as ex:
+            try:
+                if transaction_open and hasattr(doc, "abortTransaction"):
+                    doc.abortTransaction()
+                    transaction_open = False
+            except Exception:
+                pass
+            _err("No se pudo insertar tablero: {}".format(ex))
+            return
+        finally:
+            self._inserting = False
+
+        _log(
+            "Tablero insertado: {} ({})".format(
+                getattr(tablero, "Name", "Tablero"),
+                getattr(tablero, "TypeId", "Unknown"),
+            )
+        )
+        self._refresh_conectado_a_options()
+
+
+def main():
+    if QtWidgets is None or not GUI_UP:
+        _err("Se requiere FreeCAD GUI y PySide para abrir la ventana.")
+        return
+
+    try:
+        _mod, insert_fn, pick_fn = _import_tablero_feature()
+    except Exception as ex:
+        _err("No se pudo cargar modulo de tableros: {}".format(ex))
+        return
+    try:
+        ensure_observer = getattr(_mod, "_ensure_tablero_observer", None)
+        if callable(ensure_observer):
+            ensure_observer()
+    except Exception as ex:
+        _warn("No se pudo refrescar observer de tableros: {}".format(ex))
+    try:
+        refresh_all = getattr(_mod, "refresh_tablero_geometry", None)
+        if callable(refresh_all):
+            result = refresh_all(App.ActiveDocument)
+            masters = int((result or {}).get("masters", 0))
+            texts = int((result or {}).get("texts", 0))
+            links = int((result or {}).get("links", 0))
+            if masters > 0 or texts > 0 or links > 0:
+                _log("Tableros refrescados: links={} masters={} etiquetas={}".format(links, masters, texts))
+        else:
+            sync_all = getattr(_mod, "sync_tablero_texts", None)
+            if callable(sync_all):
+                synced = int(sync_all(App.ActiveDocument))
+                if synced > 0:
+                    _log("Etiquetas resincronizadas: {}".format(synced))
+    except Exception as ex:
+        _warn("No se pudieron refrescar tableros existentes: {}".format(ex))
+
+    parent = None
+    try:
+        parent = Gui.getMainWindow()
+    except Exception:
+        parent = None
+
+    dialog = InsertarTableroDialog(insert_fn=insert_fn, pick_fn=pick_fn, parent=parent)
+    if QtCore is not None:
+        try:
+            dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose, True)
+        except Exception:
+            pass
+
+    global UI_REF
+    UI_REF = dialog
+    dialog.show()
+    _log("Dialogo de Insertar Tablero abierto.")
+
+
+if __name__ == "__main__":
+    main()

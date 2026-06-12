@@ -1,7 +1,0 @@
-﻿# -*- coding: utf-8 -*-
-# MenuText: Asistente CSV 2 Pasos (WIP)
-# ToolTip: En construccion
-# Icon: ColocarLuminarias.svg
-# Toolbar: Importar y Exportar
-import FreeCAD as App
-App.Console.PrintMessage('[INFO] Asistente CSV 2 Pasos: en construccion.\n')

@@ -1,0 +1,342 @@
+# -*- coding: utf-8 -*-
+# MenuText: Guia Areas
+# ToolTip: Muestra el flujo recomendado para crear y nombrar areas
+# Icon: Guia_Areas.svg
+
+# Qt compatibility for FreeCAD 1.x (PySide6) and older builds.
+def _ensure_qt_compat():
+    import sys
+    import types
+
+    QtCore = QtGui = QtWidgets = None
+    binding_name = None
+
+    for candidate in ("PySide6", "PySide2", "PySide"):
+        try:
+            if candidate == "PySide":
+                from PySide import QtCore as _QtCore, QtGui as _QtGui
+                _QtWidgets = _QtGui
+            else:
+                module = __import__(candidate, fromlist=["QtCore", "QtGui", "QtWidgets"])
+                _QtCore = module.QtCore
+                _QtGui = module.QtGui
+                _QtWidgets = module.QtWidgets
+            QtCore, QtGui, QtWidgets = _QtCore, _QtGui, _QtWidgets
+            binding_name = candidate
+            break
+        except Exception:
+            continue
+
+    if QtCore is None:
+        return
+
+    qtgui_compat = types.ModuleType("QtGui")
+    qtgui_compat.__dict__.update(getattr(QtGui, "__dict__", {}))
+    qtgui_compat.__dict__.update(getattr(QtWidgets, "__dict__", {}))
+
+    qtsvg_compat = None
+    for module_name in ("QtSvg", "QtSvgWidgets"):
+        try:
+            module = __import__(binding_name, fromlist=[module_name])
+            qt_module = getattr(module, module_name)
+        except Exception:
+            continue
+        if qtsvg_compat is None:
+            qtsvg_compat = types.ModuleType("QtSvg")
+        qtsvg_compat.__dict__.update(getattr(qt_module, "__dict__", {}))
+
+    qtuitools_compat = None
+    try:
+        module = __import__(binding_name, fromlist=["QtUiTools"])
+        qtuitools_compat = module.QtUiTools
+    except Exception:
+        pass
+
+    for package_name in ("PySide2", "PySide"):
+        package = sys.modules.get(package_name)
+        if package is None:
+            package = types.ModuleType(package_name)
+            sys.modules[package_name] = package
+        package.QtCore = QtCore
+        package.QtGui = qtgui_compat
+        package.QtWidgets = QtWidgets
+        sys.modules[package_name + ".QtCore"] = QtCore
+        sys.modules[package_name + ".QtGui"] = qtgui_compat
+        sys.modules[package_name + ".QtWidgets"] = QtWidgets
+        if qtsvg_compat is not None:
+            package.QtSvg = qtsvg_compat
+            sys.modules[package_name + ".QtSvg"] = qtsvg_compat
+        if qtuitools_compat is not None:
+            package.QtUiTools = qtuitools_compat
+            sys.modules[package_name + ".QtUiTools"] = qtuitools_compat
+
+
+_ensure_qt_compat()
+
+# Toolbar: Areas
+
+import os
+from pathlib import Path
+
+import FreeCAD as App
+
+try:
+    from PySide2 import QtCore, QtWidgets
+except Exception:
+    try:
+        from PySide6 import QtCore, QtWidgets
+    except Exception:
+        try:
+            from PySide import QtCore
+            from PySide import QtGui as QtWidgets
+        except Exception:
+            QtCore = None
+            QtWidgets = None
+
+
+TAG = "[AREAS_GUIA]"
+
+
+def _info(msg):
+    App.Console.PrintMessage("{}[INFO] {}\n".format(TAG, msg))
+
+
+def _warn(msg):
+    App.Console.PrintWarning("{}[WARN] {}\n".format(TAG, msg))
+
+
+def _macro_dir():
+    try:
+        return Path(__file__).resolve().parent
+    except Exception:
+        return Path.cwd()
+
+
+def _run_macro(path):
+    path = Path(path)
+    if not path.exists():
+        _warn("No se encontro la macro: {}".format(path))
+        return
+    try:
+        source = path.read_text(encoding="utf-8-sig")
+        code = compile(source, str(path), "exec")
+        env = {
+            "__name__": "__main__",
+            "__file__": str(path),
+            "FreeCAD": App,
+            "App": App,
+        }
+        try:
+            import FreeCADGui as Gui
+            env["FreeCADGui"] = Gui
+            env["Gui"] = Gui
+        except Exception:
+            pass
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(path.parent))
+            exec(code, env, env)
+        finally:
+            os.chdir(old_cwd)
+    except SystemExit:
+        _warn("Macro cancelada por el usuario.")
+    except Exception as exc:
+        App.Console.PrintError("{}[ERROR] {}\n".format(TAG, exc))
+
+
+def _open_readme():
+    path = _macro_dir() / "README.md"
+    if not path.exists():
+        _warn("No se encontro README.md.")
+        return
+    try:
+        os.startfile(str(path))
+    except Exception:
+        _info("README: {}".format(path))
+
+
+def _macro_path(name):
+    return _macro_dir() / name
+
+
+class GuiaAreasDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None):
+        super(GuiaAreasDialog, self).__init__(parent)
+        self.setWindowTitle("Guia Areas")
+        self.setMinimumWidth(660)
+        if QtCore is not None:
+            try:
+                self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
+            except Exception:
+                pass
+        self._build()
+
+    def _build(self):
+        layout = QtWidgets.QVBoxLayout(self)
+
+        title = QtWidgets.QLabel("Guia rapida de Areas en ElectricCR")
+        try:
+            font = title.font()
+            font.setBold(True)
+            font.setPointSize(font.pointSize() + 2)
+            title.setFont(font)
+        except Exception:
+            pass
+        layout.addWidget(title)
+
+        text = QtWidgets.QTextBrowser()
+        try:
+            text.setStyleSheet("QTextBrowser { background: #ffffff; color: #202124; }")
+        except Exception:
+            pass
+        text.setOpenExternalLinks(False)
+        text.setHtml(
+            """
+            <style>
+              body { background: #ffffff; color: #202124; font-size: 10pt; }
+              h3 { color: #111827; margin-top: 16px; margin-bottom: 6px; }
+              p { margin-top: 4px; margin-bottom: 8px; }
+              ol, ul { margin-top: 4px; margin-bottom: 8px; }
+              li { margin-bottom: 4px; }
+              table { border-collapse: collapse; margin-top: 6px; margin-bottom: 10px; }
+              td, th { border: 1px solid #c8c8c8; color: #202124; padding: 5px 7px; vertical-align: top; }
+              th { background: #efefef; color: #111827; }
+              pre { background: #f5f5f5; color: #202124; border: 1px solid #c8c8c8; padding: 8px; }
+              .box { background: #f5f5f5; border: 1px solid #c8c8c8; color: #202124; padding: 8px; margin: 8px 0; }
+              .warn { background: #fff4df; border: 1px solid #d7a94a; color: #202124; padding: 8px; margin: 8px 0; }
+              .ok { background: #eef7ee; border: 1px solid #82ad82; color: #202124; padding: 8px; margin: 8px 0; }
+              b { color: #111827; }
+            </style>
+
+            <div class="box">
+              <b>Regla principal:</b> las areas son la base comun para iluminacion,
+              MEP y organizacion. Primero delimite recintos, luego nombrelos bien.
+            </div>
+
+            <h3>Si estoy retomando un proyecto</h3>
+            <ol>
+              <li>Revise que exista un grupo llamado <b>Areas</b>, <b>Recintos</b>, <b>Espacios</b> o <b>Zonas</b>.</li>
+              <li>Verifique que cada recinto tenga una cara cerrada y visible.</li>
+              <li>Busque nombres genericos como <b>Rectangle001</b>, <b>Wire023</b> o <b>Area_004</b> sin descripcion.</li>
+              <li>Si faltan recintos, use <b>AreaPorClick</b>: botones <b>Iniciar clicks</b> o <b>Iniciar rectangulos</b>.</li>
+              <li>Si tiene lineas limite seleccionadas, use <b>Poligono desde lineas</b>.</li>
+              <li>Al final use <b>Asignar nombres estandar</b> para dejar nombres legibles.</li>
+            </ol>
+
+            <h3>Flujo recomendado</h3>
+            <table>
+              <tr><th>Paso</th><th>Que se hace</th><th>Herramienta</th></tr>
+              <tr><td>1</td><td>Preparar base arquitectonica: CAD, PDF convertido, imagen o dibujo base.</td><td>FreeCAD / Draft</td></tr>
+              <tr><td>2</td><td>Limpiar u ocultar trazos que confunden: puertas, textos, mobiliario, equipos pequenos.</td><td>Arbol / capas</td></tr>
+              <tr><td>3</td><td>Reconstruir red de muros y hacer click dentro de recintos.</td><td><b>AreaPorClick</b></td></tr>
+              <tr><td>4</td><td>Crear rectangulos automaticos cuando el recinto es rectangular.</td><td><b>Iniciar rectangulos</b></td></tr>
+              <tr><td>5</td><td>Crear poligonos desde lineas limite seleccionadas.</td><td><b>PoligonoFromBoundaryLines</b></td></tr>
+              <tr><td>6</td><td>Renombrar recintos con nombres claros y repetibles.</td><td><b>AsignarNombreEstandar</b></td></tr>
+              <tr><td>7</td><td>Usar las areas como entrada para iluminacion, HVAC/MEP u otras herramientas.</td><td>Macros consumidoras</td></tr>
+            </table>
+
+            <h3>Como debe verse el grupo de areas</h3>
+            <pre>Areas
+  Oficina
+  Pasillo
+  Sala_Espera
+  Servicio_Sanitario
+  Bodega
+  Comedor</pre>
+            <p>Cada objeto debe ser una geometria plana cerrada. Puede ser rectangulo o poligono.</p>
+
+            <h3>Herramientas principales</h3>
+            <table>
+              <tr><th>Macro</th><th>Uso recomendado</th></tr>
+              <tr><td><b>AreaPorClick.FCMacro</b></td><td>Panel principal. Reconstruye red y permite crear areas haciendo click dentro del recinto.</td></tr>
+              <tr><td><b>Iniciar rectangulos</b></td><td>Dentro de AreaPorClick. Usa el click, radar y limites alrededor del punto para crear rectangulos estables.</td></tr>
+              <tr><td><b>PoligonoFromBoundaryLines.FCMacro</b></td><td>Cuando ya selecciono lineas/aristas limite y quiere inferir un poligono cerrado.</td></tr>
+              <tr><td><b>RectFromBoundaryLines.FCMacro</b></td><td>Herramienta base/manual para rectangulos desde aristas seleccionadas.</td></tr>
+              <tr><td><b>AsignarNombreEstandar.FCMacro</b></td><td>Renombrar recintos desde la hoja <b>NombresEstandar</b>; use <b>Actualizar</b> si cambia la tabla.</td></tr>
+            </table>
+
+            <h3>AreaPorClick: criterio practico</h3>
+            <ul>
+              <li><b>Iniciar clicks:</b> para recintos irregulares o cuando interesa calcar la forma del recinto.</li>
+              <li><b>Iniciar rectangulos:</b> para recintos rectangulares; evita que recovecos pequenos deformen el resultado.</li>
+              <li><b>Debug visual:</b> activelo si un click no detecta recinto o toma limites incorrectos.</li>
+              <li><b>Lineas auxiliares:</b> puede dibujar una linea de cierre y seleccionarla antes de reconstruir.</li>
+            </ul>
+
+            <h3>Errores frecuentes</h3>
+            <ul>
+              <li><b>No detecta el recinto:</b> revise que los muros fuente esten visibles y que el origen sea Auto, Visible o Grupo correcto.</li>
+              <li><b>El rectangulo sale muy grande:</b> hay lineas largas o limites de otro recinto cerca; active debug y revise familias de limites.</li>
+              <li><b>El poligono sale con diagonales:</b> use el modo rectangulo si el recinto es rectangular, o seleccione limites y use PoligonoFromBoundaryLines.</li>
+              <li><b>Quedaron nombres genericos:</b> ejecute AsignarNombreEstandar antes de usar las areas en iluminacion.</li>
+              <li><b>Icono o macro no aparece:</b> recargue el workbench ElectricCR.</li>
+            </ul>
+
+            <div class="warn">
+              <b>No mezclar salida con fuente:</b> evite usar areas ya generadas como muros fuente.
+              Las macros intentan ignorarlas, pero es mejor mantener claro el grupo de origen y el grupo destino.
+            </div>
+
+            <div class="ok">
+              Orden corto: <b>Base</b> -> <b>Red/limites</b> -> <b>Areas</b> ->
+              <b>Nombres estandar</b> -> <b>Consumir en iluminacion/MEP</b>.
+            </div>
+            """
+        )
+        text.setMinimumHeight(560)
+        layout.addWidget(text)
+
+        buttons = QtWidgets.QHBoxLayout()
+        area_btn = QtWidgets.QPushButton("1. Crear areas por click")
+        names_btn = QtWidgets.QPushButton("2. Asignar nombres estandar")
+        poly_btn = QtWidgets.QPushButton("3. Poligono desde lineas")
+        readme_btn = QtWidgets.QPushButton("Abrir README")
+        close_btn = QtWidgets.QPushButton("Cerrar")
+        buttons.addWidget(area_btn)
+        buttons.addWidget(names_btn)
+        buttons.addWidget(poly_btn)
+        buttons.addWidget(readme_btn)
+        buttons.addStretch(1)
+        buttons.addWidget(close_btn)
+        layout.addLayout(buttons)
+
+        area_btn.clicked.connect(self._run_area_por_click)
+        names_btn.clicked.connect(self._run_names)
+        poly_btn.clicked.connect(self._run_poly)
+        readme_btn.clicked.connect(_open_readme)
+        close_btn.clicked.connect(self.close)
+
+    def _run_area_por_click(self):
+        _run_macro(_macro_path("AreaPorClick.FCMacro"))
+
+    def _run_names(self):
+        _run_macro(_macro_path("AsignarNombreEstandar.FCMacro"))
+
+    def _run_poly(self):
+        _run_macro(_macro_path("PoligonoFromBoundaryLines.FCMacro"))
+
+
+def show_guide():
+    if QtWidgets is None:
+        _info("Qt no esta disponible. Abra README.md en la carpeta Areas.")
+        return
+    try:
+        main = None
+        try:
+            import FreeCADGui as Gui
+            main = Gui.getMainWindow()
+        except Exception:
+            main = None
+        dialog = GuiaAreasDialog(main)
+        dialog.show()
+        dialog.raise_()
+        try:
+            dialog.activateWindow()
+        except Exception:
+            pass
+        globals()["_guia_areas_dialog"] = dialog
+    except Exception as exc:
+        App.Console.PrintError("{}[ERROR] {}\n".format(TAG, exc))
+
+
+show_guide()

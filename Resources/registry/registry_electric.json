@@ -71,6 +71,10 @@
       "categoria": "Cielo",
       "symbol2D": "Luminaria 60x60.step",
       "model3D": "Luminaria 60x60.step",
+      "electrical": {
+        "power_w": 40.0,
+        "lumens": 4000.0
+      },
       "defaults": {
         "altura": 3000.0,
         "modo": "Both",

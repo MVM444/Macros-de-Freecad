@@ -1,0 +1,806 @@
+# -*- coding: utf-8 -*-
+# Macro: PoligonoFromBoundaryLines
+# MenuText: Poligono desde lineas limite
+# ToolTip: Crea un poligono de Area desde aristas seleccionadas.
+# Icon: PoligonoFromBoundaryLines.svg
+# Transaction: self
+
+import math
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Draft
+
+
+MACRO = "PoligonoFromBoundaryLines"
+PREF_AREA_CLICK = "User parameter:BaseApp/Preferences/Macros/ElectricCR/AreaPorClickSimple"
+EPS = 1.0e-7
+
+
+def log(msg):
+    App.Console.PrintMessage("[PoligonoFromBoundaryLines] {}\n".format(msg))
+
+
+def warn(msg):
+    App.Console.PrintWarning("[PoligonoFromBoundaryLines] {}\n".format(msg))
+
+
+def err(msg):
+    App.Console.PrintError("[PoligonoFromBoundaryLines] {}\n".format(msg))
+
+
+def pf(name, default):
+    try:
+        return float(App.ParamGet(PREF_AREA_CLICK).GetFloat(name, float(default)))
+    except Exception:
+        return float(default)
+
+
+def cfg():
+    return {
+        "snap": max(pf("snap", 20.0), 0.5),
+        "door_gap": max(pf("door", 1100.0), 0.0),
+        "min_area": max(pf("min_area", 0.25), 0.001),
+    }
+
+
+def xy(v):
+    return (float(v.x), float(v.y))
+
+
+def vec(p):
+    return App.Vector(float(p[0]), float(p[1]), 0.0)
+
+
+def add(a, b):
+    return (a[0] + b[0], a[1] + b[1])
+
+
+def sub(a, b):
+    return (a[0] - b[0], a[1] - b[1])
+
+
+def mul(a, k):
+    return (a[0] * k, a[1] * k)
+
+
+def dot(a, b):
+    return a[0] * b[0] + a[1] * b[1]
+
+
+def cross(a, b):
+    return a[0] * b[1] - a[1] * b[0]
+
+
+def length(a):
+    return math.hypot(a[0], a[1])
+
+
+def dist(a, b):
+    return math.hypot(a[0] - b[0], a[1] - b[1])
+
+
+def unit(a):
+    ln = length(a)
+    if ln <= EPS:
+        return (0.0, 0.0)
+    return (a[0] / ln, a[1] / ln)
+
+
+def seg_point_dist(p, a, b):
+    ab = sub(b, a)
+    d = dot(ab, ab)
+    if d <= EPS:
+        return dist(p, a)
+    t = max(0.0, min(1.0, dot(sub(p, a), ab) / d))
+    return dist(p, add(a, mul(ab, t)))
+
+
+def polygon_area(points):
+    s = 0.0
+    for i, p in enumerate(points):
+        q = points[(i + 1) % len(points)]
+        s += p[0] * q[1] - q[0] * p[1]
+    return 0.5 * s
+
+
+def bbox(points):
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
+def simplify(points, tol=0.5):
+    pts = []
+    for p in points:
+        if not pts or dist(pts[-1], p) > tol:
+            pts.append(p)
+    if len(pts) > 1 and dist(pts[0], pts[-1]) <= tol:
+        pts.pop()
+    changed = True
+    while changed and len(pts) >= 3:
+        changed = False
+        out = []
+        for i, b in enumerate(pts):
+            a = pts[(i - 1) % len(pts)]
+            c = pts[(i + 1) % len(pts)]
+            if seg_point_dist(b, a, c) <= tol:
+                changed = True
+                continue
+            out.append(b)
+        pts = out
+    return pts
+
+
+class Segment:
+    def __init__(self, a, b, kind="real"):
+        self.a = a
+        self.b = b
+        self.kind = kind
+
+    def len(self):
+        return dist(self.a, self.b)
+
+    def dir(self):
+        return unit(sub(self.b, self.a))
+
+
+class Face:
+    def __init__(self, points, virtuals=0):
+        self.points = simplify(points)
+        self.area = abs(polygon_area(self.points))
+        self.bbox = bbox(self.points)
+        self.virtuals = int(virtuals)
+        self.confidence = max(0.1, 1.0 - 0.12 * self.virtuals)
+
+
+class Snapper:
+    def __init__(self, tol):
+        self.tol = max(float(tol), 0.001)
+        self.points = []
+        self.cells = {}
+
+    def key(self, p):
+        return (int(math.floor(p[0] / self.tol)), int(math.floor(p[1] / self.tol)))
+
+    def snap(self, p):
+        ck = self.key(p)
+        best = None
+        best_d = None
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for idx in self.cells.get((ck[0] + dx, ck[1] + dy), []):
+                    d = dist(p, self.points[idx])
+                    if d <= self.tol and (best_d is None or d < best_d):
+                        best = idx
+                        best_d = d
+        if best is None:
+            idx = len(self.points)
+            self.points.append(p)
+            self.cells.setdefault(ck, []).append(idx)
+            return p
+        old = self.points[best]
+        newp = ((old[0] + p[0]) * 0.5, (old[1] + p[1]) * 0.5)
+        self.points[best] = newp
+        return newp
+
+
+def has_shape(obj):
+    return hasattr(obj, "Shape") and getattr(obj, "Shape", None) is not None
+
+
+def label(obj):
+    return str(getattr(obj, "Label", "") or getattr(obj, "Name", "") or "")
+
+
+def name(obj):
+    return str(getattr(obj, "Name", "") or "")
+
+
+def is_group(obj):
+    return hasattr(obj, "Group")
+
+
+def generated_area(obj):
+    try:
+        if str(getattr(obj, "GeneratedBy", "")) in (MACRO, "AreaPorClick"):
+            return True
+    except Exception:
+        pass
+    try:
+        return str(getattr(obj, "ElectricCRTipo", "")).lower() == "area"
+    except Exception:
+        return False
+
+
+def groups(doc):
+    res = [o for o in doc.Objects if is_group(o)]
+    res.sort(key=lambda o: label(o).lower())
+    return res
+
+
+def find_group(doc, wanted):
+    key = str(wanted or "").strip().lower()
+    for g in groups(doc):
+        if label(g).strip().lower() == key:
+            return g
+    return None
+
+
+def find_area_group(doc):
+    for wanted in ("Areas", "Recintos", "Espacios", "Zonas"):
+        g = find_group(doc, wanted)
+        if g:
+            return g
+    g = doc.addObject("App::DocumentObjectGroup", "Areas")
+    g.Label = "Areas"
+    return g
+
+
+def edge_straight(edge, tol=1.0):
+    try:
+        vs = edge.Vertexes
+        if len(vs) < 2:
+            return False
+        chord = dist(xy(vs[0].Point), xy(vs[-1].Point))
+        return chord > EPS and abs(float(edge.Length) - chord) <= max(tol, chord * 0.002)
+    except Exception:
+        return False
+
+
+def get_selected_edges():
+    edges = []
+    seen = set()
+    try:
+        sel_ex = list(Gui.Selection.getSelectionEx() or [])
+    except Exception:
+        sel_ex = []
+
+    for entry in sel_ex:
+        obj = getattr(entry, "Object", None)
+        if obj is None or not has_shape(obj) or generated_area(obj):
+            continue
+        subs = list(getattr(entry, "SubElementNames", []) or [])
+        edge_subs = [s for s in subs if str(s).startswith("Edge")]
+        if edge_subs:
+            for sub in edge_subs:
+                key = "{}:{}".format(name(obj), sub)
+                if key in seen:
+                    continue
+                try:
+                    edges.append(obj.Shape.getElement(sub))
+                    seen.add(key)
+                except Exception:
+                    pass
+        elif not subs:
+            try:
+                for idx, edge in enumerate(list(obj.Shape.Edges)):
+                    key = "{}:Edge{}".format(name(obj), idx + 1)
+                    if key not in seen:
+                        edges.append(edge)
+                        seen.add(key)
+            except Exception:
+                pass
+    return edges
+
+
+def selected_segments(c):
+    segs = []
+    ignored = 0
+    for edge in get_selected_edges():
+        if not edge_straight(edge, c["snap"] * 0.25):
+            ignored += 1
+            continue
+        try:
+            vs = edge.Vertexes
+            s = Segment(xy(vs[0].Point), xy(vs[-1].Point), "real")
+            if s.len() > max(10.0, c["snap"]):
+                segs.append(s)
+            else:
+                ignored += 1
+        except Exception:
+            ignored += 1
+    return segs, ignored
+
+
+def line_angle(d):
+    a = math.atan2(d[1], d[0])
+    while a < 0.0:
+        a += math.pi
+    while a >= math.pi:
+        a -= math.pi
+    return a
+
+
+def angle_diff_pi(a, b):
+    d = abs(a - b)
+    while d > math.pi:
+        d -= math.pi
+    if d > math.pi * 0.5:
+        d = math.pi - d
+    return abs(d)
+
+
+def make_support_line(seg):
+    d = seg.dir()
+    if d[0] < 0.0 or (abs(d[0]) <= EPS and d[1] < 0.0):
+        d = (-d[0], -d[1])
+    n = (-d[1], d[0])
+    c = dot(n, seg.a)
+    t1 = dot(seg.a, d)
+    t2 = dot(seg.b, d)
+    return {
+        "d": d,
+        "n": n,
+        "c": c,
+        "angle": line_angle(d),
+        "intervals": [(min(t1, t2), max(t1, t2))],
+        "hits": [],
+    }
+
+
+def cluster_support_lines(segs, c):
+    angle_tol = math.radians(2.0)
+    offset_tol = max(float(c["snap"]), 10.0)
+    lines = []
+    for seg in segs:
+        line = make_support_line(seg)
+        found = None
+        for idx, old in enumerate(lines):
+            if angle_diff_pi(line["angle"], old["angle"]) <= angle_tol and abs(line["c"] - old["c"]) <= offset_tol:
+                found = idx
+                break
+        if found is None:
+            lines.append(line)
+            continue
+        old = lines[found]
+        total = len(old["intervals"]) + 1
+        old["c"] = (old["c"] * len(old["intervals"]) + line["c"]) / float(total)
+        old["intervals"].extend(line["intervals"])
+    return lines
+
+
+def interval_gap(t, intervals):
+    best = None
+    for a, b in intervals:
+        if a <= t <= b:
+            return 0.0
+        d = min(abs(t - a), abs(t - b))
+        if best is None or d < best:
+            best = d
+    return best if best is not None else 1.0e30
+
+
+def interval_overlap(a, b, intervals, tol):
+    lo = min(a, b)
+    hi = max(a, b)
+    for x0, x1 in intervals:
+        if min(hi, x1) - max(lo, x0) > tol:
+            return True
+    return False
+
+
+def support_intersection(l1, l2):
+    n1 = l1["n"]
+    n2 = l2["n"]
+    det = cross(n1, n2)
+    if abs(det) <= 1.0e-9:
+        return None
+    c1 = l1["c"]
+    c2 = l2["c"]
+    x = (c1 * n2[1] - n1[1] * c2) / det
+    y = (n1[0] * c2 - c1 * n2[0]) / det
+    return (x, y)
+
+
+def dedupe_hits(hits, tol):
+    out = []
+    for hit in sorted(hits, key=lambda h: h["t"]):
+        if out and abs(hit["t"] - out[-1]["t"]) <= tol:
+            old = out[-1]
+            old["p"] = ((old["p"][0] + hit["p"][0]) * 0.5, (old["p"][1] + hit["p"][1]) * 0.5)
+            old["t"] = (old["t"] + hit["t"]) * 0.5
+        else:
+            out.append(dict(hit))
+    return out
+
+
+def inferred_boundary_segments(base, c):
+    lines = cluster_support_lines(base, c)
+    if len(lines) < 3:
+        return base, {"lines": len(lines), "hits": 0, "segments": len(base), "extended": False}
+
+    # Esta distancia equivale al buque/gap operativo: permite cerrar puertas,
+    # pero evita que una linea soporte se proyecte hasta otro recinto lejano.
+    max_extend = max(float(c["door_gap"]) * 1.50, float(c["snap"]) * 30.0, 800.0)
+    angle_parallel = math.radians(3.0)
+    hit_count = 0
+    for i in range(len(lines)):
+        for j in range(i + 1, len(lines)):
+            l1 = lines[i]
+            l2 = lines[j]
+            if angle_diff_pi(l1["angle"], l2["angle"]) <= angle_parallel:
+                continue
+            p = support_intersection(l1, l2)
+            if p is None:
+                continue
+            t1 = dot(p, l1["d"])
+            t2 = dot(p, l2["d"])
+            if interval_gap(t1, l1["intervals"]) > max_extend:
+                continue
+            if interval_gap(t2, l2["intervals"]) > max_extend:
+                continue
+            l1["hits"].append({"t": t1, "p": p})
+            l2["hits"].append({"t": t2, "p": p})
+            hit_count += 1
+
+    out = []
+    tol = max(float(c["snap"]) * 0.25, 0.5)
+    for line in lines:
+        hits = dedupe_hits(line["hits"], max(float(c["snap"]), 1.0))
+        if len(hits) < 2:
+            continue
+        for h1, h2 in zip(hits, hits[1:]):
+            if dist(h1["p"], h2["p"]) <= tol:
+                continue
+            kind = "real" if interval_overlap(h1["t"], h2["t"], line["intervals"], tol) else "virtual"
+            out.append(Segment(h1["p"], h2["p"], kind))
+
+    if len(out) >= 3:
+        log("Lineas soporte: {}, intersecciones: {}, tramos inferidos: {}, extension max: {:.0f} mm.".format(len(lines), hit_count, len(out), max_extend))
+        return out, {"lines": len(lines), "hits": hit_count, "segments": len(out), "extended": True}
+
+    return base, {"lines": len(lines), "hits": hit_count, "segments": len(base), "extended": False}
+
+
+def snap_segments(segs, tol):
+    sn = Snapper(tol)
+    out = []
+    for s in segs:
+        a = sn.snap(s.a)
+        b = sn.snap(s.b)
+        if dist(a, b) > EPS:
+            out.append(Segment(a, b, s.kind))
+    return out
+
+
+def node_key(p, tol):
+    tol = max(float(tol), 0.001)
+    return (int(round(p[0] / tol)), int(round(p[1] / tol)))
+
+
+def endpoint_degrees(segs, tol):
+    deg = {}
+    refs = {}
+    for i, s in enumerate(segs):
+        for p, other in ((s.a, s.b), (s.b, s.a)):
+            k = node_key(p, tol)
+            deg[k] = deg.get(k, 0) + 1
+            refs.setdefault(k, []).append((i, p, other))
+    return deg, refs
+
+
+def intersection(a, b, tol):
+    p = a.a
+    r = sub(a.b, a.a)
+    q = b.a
+    s = sub(b.b, b.a)
+    den = cross(r, s)
+    if abs(den) <= 1.0e-9:
+        return None
+    qp = sub(q, p)
+    t = cross(qp, s) / den
+    u = cross(qp, r) / den
+    at = max(tol / max(length(r), 1.0), 1.0e-6)
+    bt = max(tol / max(length(s), 1.0), 1.0e-6)
+    if -at <= t <= 1.0 + at and -bt <= u <= 1.0 + bt:
+        return add(p, mul(r, max(0.0, min(1.0, t))))
+    return None
+
+
+def line_crosses_existing(a, b, segs, tol):
+    test = Segment(a, b, "virtual")
+    for s in segs:
+        hit = intersection(test, s, tol)
+        if not hit:
+            continue
+        near_candidate_end = dist(hit, a) <= tol * 2.0 or dist(hit, b) <= tol * 2.0
+        near_existing_end = dist(hit, s.a) <= tol * 2.0 or dist(hit, s.b) <= tol * 2.0
+        if not (near_candidate_end or near_existing_end):
+            return True
+    return False
+
+
+def close_facing_endpoint_gaps(segs, c):
+    max_gap = max(float(c["door_gap"]) * 1.35, float(c["snap"]) * 8.0)
+    if max_gap <= EPS:
+        return segs
+    tol = max(float(c["snap"]), 1.0)
+    deg, refs = endpoint_degrees(segs, tol)
+    free = []
+    for k, items in refs.items():
+        if deg.get(k, 0) == 1:
+            for idx, p, other in items:
+                free.append({"seg": idx, "p": p, "out": unit(sub(p, other))})
+
+    candidates = []
+    for i in range(len(free)):
+        a = free[i]
+        for j in range(i + 1, len(free)):
+            b = free[j]
+            if a["seg"] == b["seg"]:
+                continue
+            d = dist(a["p"], b["p"])
+            if d <= EPS or d > max_gap:
+                continue
+            ab = unit(sub(b["p"], a["p"]))
+            if dot(a["out"], ab) < 0.25:
+                continue
+            if dot(b["out"], mul(ab, -1.0)) < 0.25:
+                continue
+            if line_crosses_existing(a["p"], b["p"], segs, tol):
+                continue
+            candidates.append((d, i, j))
+
+    used = set()
+    added = []
+    for _d, i, j in sorted(candidates):
+        if i in used or j in used:
+            continue
+        used.add(i)
+        used.add(j)
+        added.append(Segment(free[i]["p"], free[j]["p"], "virtual"))
+    if added:
+        log("Cierres virtuales agregados: {}.".format(len(added)))
+    return segs + added
+
+
+def split_intersections(segs, c):
+    pts = [[s.a, s.b] for s in segs]
+    tol = max(c["snap"] * 0.25, 0.5)
+    for i in range(len(segs)):
+        for j in range(i + 1, len(segs)):
+            p = intersection(segs[i], segs[j], tol)
+            if p:
+                pts[i].append(p)
+                pts[j].append(p)
+    out = []
+    for i, s in enumerate(segs):
+        u = s.dir()
+        clean = {}
+        for p in pts[i]:
+            clean[node_key(p, tol)] = p
+        ordered = sorted(clean.values(), key=lambda p: dot(p, u))
+        for a, b in zip(ordered, ordered[1:]):
+            if dist(a, b) > tol:
+                out.append(Segment(a, b, s.kind))
+    return out
+
+
+def dedupe(segs, c):
+    tol = max(c["snap"] * 0.25, 0.5)
+    by_key = {}
+    for s in segs:
+        if s.len() <= tol:
+            continue
+        a = node_key(s.a, tol)
+        b = node_key(s.b, tol)
+        if a == b:
+            continue
+        k = tuple(sorted((a, b)))
+        old = by_key.get(k)
+        if old is None or (old.kind == "virtual" and s.kind == "real"):
+            by_key[k] = s
+    return list(by_key.values())
+
+
+def canonical_ring(ring):
+    opts = []
+    for seq in (list(ring), list(reversed(ring))):
+        pos = min(range(len(seq)), key=lambda i: seq[i])
+        opts.append(tuple(seq[pos:] + seq[:pos]))
+    return min(opts)
+
+
+def valid_face(face, c):
+    if face.area < c["min_area"] * 1000000.0:
+        return False
+    w = face.bbox[2] - face.bbox[0]
+    h = face.bbox[3] - face.bbox[1]
+    if min(w, h) < 450.0:
+        return False
+    return True
+
+
+def build_faces(segs, c):
+    tol = max(c["snap"] * 0.25, 0.5)
+    node_ids = {}
+    nodes = {}
+
+    def nid(p):
+        k = node_key(p, tol)
+        if k not in node_ids:
+            n = len(node_ids)
+            node_ids[k] = n
+            nodes[n] = p
+        return node_ids[k]
+
+    edge_kind = {}
+    adj = {}
+    for s in segs:
+        a = nid(s.a)
+        b = nid(s.b)
+        if a == b:
+            continue
+        k = tuple(sorted((a, b)))
+        if k not in edge_kind or edge_kind[k] == "virtual":
+            edge_kind[k] = s.kind
+        adj.setdefault(a, set()).add(b)
+        adj.setdefault(b, set()).add(a)
+
+    for a in list(adj.keys()):
+        adj[a] = sorted(adj[a], key=lambda b: math.atan2(nodes[b][1] - nodes[a][1], nodes[b][0] - nodes[a][0]))
+
+    visited = set()
+    seen_faces = set()
+    faces = []
+    max_steps = max(20, len(edge_kind) * 4 + 20)
+
+    for start_a in sorted(adj.keys()):
+        for start_b in list(adj[start_a]):
+            start = (start_a, start_b)
+            if start in visited:
+                continue
+            a, b = start
+            ring = []
+            ok = True
+            for _ in range(max_steps):
+                if (a, b) in visited and (a, b) != start:
+                    ok = False
+                    break
+                visited.add((a, b))
+                ring.append(a)
+                nb = adj.get(b, [])
+                if not nb or a not in nb:
+                    ok = False
+                    break
+                rev = nb.index(a)
+                nxt = nb[(rev - 1) % len(nb)]
+                a, b = b, nxt
+                if (a, b) == start:
+                    break
+            else:
+                ok = False
+            if not ok or len(ring) < 3:
+                continue
+            key = canonical_ring(ring)
+            if key in seen_faces:
+                continue
+            seen_faces.add(key)
+            pts = [nodes[n] for n in ring]
+            if abs(polygon_area(pts)) <= EPS:
+                continue
+            virtuals = 0
+            for i, n1 in enumerate(ring):
+                n2 = ring[(i + 1) % len(ring)]
+                if edge_kind.get(tuple(sorted((n1, n2)))) == "virtual":
+                    virtuals += 1
+            face = Face(pts, virtuals)
+            if valid_face(face, c):
+                faces.append(face)
+    return faces
+
+
+def solve_selected_polygon():
+    c = cfg()
+    base, ignored = selected_segments(c)
+    if len(base) < 3:
+        err("Seleccione al menos 3 aristas lineales o un objeto con aristas.")
+        return None, base, [], ignored, {"lines": 0, "hits": 0, "segments": 0, "extended": False}
+    inferred, info = inferred_boundary_segments(base, c)
+    segs = snap_segments(inferred, c["snap"])
+    segs = close_facing_endpoint_gaps(segs, c)
+    segs = split_intersections(segs, c)
+    segs = snap_segments(segs, max(c["snap"] * 0.25, 0.5))
+    segs = dedupe(segs, c)
+    faces = build_faces(segs, c)
+    if not faces:
+        err("No se encontro un poligono cerrado. Revise que las lineas seleccionadas delimiten un contorno.")
+        return None, base, segs, ignored, info
+    faces.sort(key=lambda f: f.area, reverse=True)
+    if len(faces) > 1:
+        warn("Se encontraron {} poligonos cerrados; se crea el de mayor area.".format(len(faces)))
+    return faces[0], base, segs, ignored, info
+
+
+def add_prop(obj, typ, name_, group, desc):
+    try:
+        if not hasattr(obj, name_):
+            obj.addProperty(typ, name_, group, desc)
+    except Exception:
+        pass
+
+
+def next_label(doc, prefix="Area"):
+    existing = set(label(o) for o in doc.Objects)
+    idx = 1
+    while True:
+        candidate = "{}_{:03d}".format(prefix, idx)
+        if candidate not in existing:
+            return candidate
+        idx += 1
+
+
+def create_area(doc, face):
+    pts = list(face.points)
+    if len(pts) < 3:
+        raise ValueError("El poligono tiene menos de 3 vertices.")
+    if polygon_area(pts) < 0:
+        pts.reverse()
+    label_ = next_label(doc)
+    vpts = [vec(p) for p in pts] + [vec(pts[0])]
+    dest_group = find_area_group(doc)
+    doc.openTransaction("ElectricCR: crear poligono de area")
+    try:
+        try:
+            obj = Draft.makeWire(vpts, closed=True, face=True)
+        except TypeError:
+            obj = Draft.makeWire(vpts, closed=True)
+        obj.Label = label_
+        try:
+            if hasattr(obj, "MakeFace"):
+                obj.MakeFace = True
+        except Exception:
+            pass
+        add_prop(obj, "App::PropertyString", "ElectricCRTipo", "ElectricCR", "Tipo logico")
+        add_prop(obj, "App::PropertyString", "GeneratedBy", "ElectricCR", "Macro generadora")
+        add_prop(obj, "App::PropertyFloat", "AreaM2", "ElectricCR", "Area en m2")
+        add_prop(obj, "App::PropertyInteger", "VirtualClosures", "ElectricCR", "Cierres virtuales")
+        add_prop(obj, "App::PropertyFloat", "Confidence", "ElectricCR", "Confianza")
+        try:
+            obj.ElectricCRTipo = "Area"
+            obj.GeneratedBy = MACRO
+            obj.AreaM2 = face.area / 1000000.0
+            obj.VirtualClosures = face.virtuals
+            obj.Confidence = face.confidence
+        except Exception:
+            pass
+        try:
+            dest_group.addObject(obj)
+        except Exception:
+            pass
+        try:
+            obj.ViewObject.LineColor = (0.0, 0.55, 0.20)
+            obj.ViewObject.ShapeColor = (0.25, 0.85, 0.35)
+            obj.ViewObject.Transparency = 75
+        except Exception:
+            pass
+        doc.commitTransaction()
+        return obj
+    except Exception:
+        try:
+            doc.abortTransaction()
+        except Exception:
+            pass
+        raise
+
+
+def PoligonoFromBoundaryLines():
+    doc = App.ActiveDocument
+    if not doc:
+        err("No hay documento activo.")
+        return
+    face, base, segs, ignored, info = solve_selected_polygon()
+    if face is None:
+        log("Seleccion: {} segmentos base, {} red, {} ignorados, {} lineas soporte, {} intersecciones.".format(len(base), len(segs), ignored, info.get("lines", 0), info.get("hits", 0)))
+        return
+    try:
+        obj = create_area(doc, face)
+        doc.recompute()
+        log("Creada {}: {:.2f} m2, lados={}, virtual={}.".format(label(obj), face.area / 1000000.0, len(face.points), face.virtuals))
+        log("Seleccion: {} segmentos base, {} red, {} ignorados, {} lineas soporte, {} intersecciones.".format(len(base), len(segs), ignored, info.get("lines", 0), info.get("hits", 0)))
+    except Exception as ex:
+        err("No se pudo crear el poligono: {}".format(ex))
+
+
+PoligonoFromBoundaryLines()

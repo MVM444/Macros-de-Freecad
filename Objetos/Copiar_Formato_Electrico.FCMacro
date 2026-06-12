@@ -1,0 +1,876 @@
+# -*- coding: utf-8 -*-
+# MenuText: Copiar Formato Electrico
+# ToolTip: Copia circuito/grupo/tipo electrico desde un objeto origen y lo aplica a la seleccion.
+# Icon: Conectar/Conectar_Alimentadores_a_Tablero_Auto.svg
+
+# Qt compatibility for FreeCAD 1.x (PySide6) and older builds.
+def _ensure_qt_compat():
+    import sys
+    import types
+
+    QtCore = QtGui = QtWidgets = None
+    binding_name = None
+
+    for candidate in ("PySide6", "PySide2", "PySide"):
+        try:
+            if candidate == "PySide":
+                from PySide import QtCore as _QtCore, QtGui as _QtGui
+                _QtWidgets = _QtGui
+            else:
+                module = __import__(candidate, fromlist=["QtCore", "QtGui", "QtWidgets"])
+                _QtCore = module.QtCore
+                _QtGui = module.QtGui
+                _QtWidgets = module.QtWidgets
+            QtCore, QtGui, QtWidgets = _QtCore, _QtGui, _QtWidgets
+            binding_name = candidate
+            break
+        except Exception:
+            continue
+
+    if QtCore is None:
+        return
+
+    qtgui_compat = types.ModuleType("QtGui")
+    qtgui_compat.__dict__.update(getattr(QtGui, "__dict__", {}))
+    qtgui_compat.__dict__.update(getattr(QtWidgets, "__dict__", {}))
+
+    qtsvg_compat = None
+    for module_name in ("QtSvg", "QtSvgWidgets"):
+        try:
+            module = __import__(binding_name, fromlist=[module_name])
+            qt_module = getattr(module, module_name)
+        except Exception:
+            continue
+        if qtsvg_compat is None:
+            qtsvg_compat = types.ModuleType("QtSvg")
+        qtsvg_compat.__dict__.update(getattr(qt_module, "__dict__", {}))
+
+    qtuitools_compat = None
+    try:
+        module = __import__(binding_name, fromlist=["QtUiTools"])
+        qtuitools_compat = module.QtUiTools
+    except Exception:
+        pass
+
+    for package_name in ("PySide2", "PySide"):
+        package = sys.modules.get(package_name)
+        if package is None:
+            package = types.ModuleType(package_name)
+            sys.modules[package_name] = package
+        package.QtCore = QtCore
+        package.QtGui = qtgui_compat
+        package.QtWidgets = QtWidgets
+        sys.modules[package_name + ".QtCore"] = QtCore
+        sys.modules[package_name + ".QtGui"] = qtgui_compat
+        sys.modules[package_name + ".QtWidgets"] = QtWidgets
+        if qtsvg_compat is not None:
+            package.QtSvg = qtsvg_compat
+            sys.modules[package_name + ".QtSvg"] = qtsvg_compat
+        if qtuitools_compat is not None:
+            package.QtUiTools = qtuitools_compat
+            sys.modules[package_name + ".QtUiTools"] = qtuitools_compat
+
+
+_ensure_qt_compat()
+
+# Transaction: self
+"""
+Copiar Formato Electrico (tipo Match Properties)
+
+Uso:
+1) Seleccione 2 o mas objetos.
+2) Ejecute la macro.
+3) Elija el objeto plantilla (origen).
+4) La macro copia metadata electrica del origen y la aplica a los demas.
+
+Que copia:
+- Circuito (CircuitoID y equivalentes)
+- Tipo de canalizacion y radio/diametro
+- LinkKind (feeder/branch cuando aplique)
+- Propiedades electricas comunes detectadas por nombre
+- Estilo visual de la linea/objeto (color, grosor, estilo de dibujo, transparencia)
+
+Que organiza:
+- Detecta si el origen es Alimentador o Ramal.
+- Mueve los destinos al subgrupo correcto del circuito.
+- Si el subgrupo no existe y se puede inferir el circuito, lo crea.
+"""
+
+import re
+
+import FreeCAD as App
+import FreeCADGui as Gui
+
+try:
+    from PySide2 import QtWidgets
+except Exception:
+    try:
+        from PySide import QtGui as QtWidgets  # type: ignore
+    except Exception:
+        QtWidgets = None
+
+
+TAG = "FMT_ELEC"
+
+SKIP_PROPS = {
+    "Shape",
+    "Placement",
+    "Proxy",
+    "ExpressionEngine",
+    "AttachmentSupport",
+    "AttacherType",
+    "AttacherEngine",
+    "MapMode",
+    "MapPathParameter",
+    "MapReversed",
+    "AttachmentOffset",
+    "Label",
+    "Label2",
+    "Name",
+    "TypeId",
+    "LongitudMM",
+    "Length",
+    "Start",
+    "End",
+    "Points",
+    "OrigenName",
+    "DestinoName",
+    "PuertoOrigen",
+    "PuertoDestino",
+    "AutoRouteKey",
+    "IndiceEnlace",
+}
+
+EXACT_ELECTRIC_PROPS = {
+    "CircuitoID",
+    "Circuito",
+    "CircuitID",
+    "Circuito_Grupo",
+    "CircuitoGrupo",
+    "GrupoID",
+    "ConduitType",
+    "DiametroConduit",
+    "RadioCurvatura",
+    "LinkKind",
+    "TipoConexion",
+    "TipoRuta",
+    "Tipo",
+    "TipoLogico",
+    "Categoria",
+    "ClaseCircuito",
+    "Subtipo",
+}
+
+EXACT_STYLE_PROPS = {
+    "LineColor",
+    "PointColor",
+    "ShapeColor",
+    "LineWidth",
+    "DrawStyle",
+    "Transparency",
+    "DisplayMode",
+    "Layer",
+    "LinePattern",
+    "LinePatternScale",
+}
+
+TOKEN_HINTS = (
+    "circuit",
+    "circuito",
+    "conduit",
+    "canaliz",
+    "diametro",
+    "radio",
+    "ramal",
+    "alimentador",
+    "linkkind",
+)
+
+VIEW_STYLE_ATTRS = (
+    "LineColor",
+    "PointColor",
+    "ShapeColor",
+    "LineWidth",
+    "DrawStyle",
+    "Transparency",
+    "DisplayMode",
+)
+
+
+def _safe_text(value):
+    try:
+        return str(value or "")
+    except Exception:
+        return ""
+
+
+def _norm(text):
+    return re.sub(r"[^a-z0-9]+", "", _safe_text(text).strip().lower())
+
+
+def _display_name(obj):
+    label = _safe_text(getattr(obj, "Label", "")).strip()
+    if label:
+        return label
+    return _safe_text(getattr(obj, "Name", "<?>")).strip() or "<?>"
+
+
+def _info(msg):
+    App.Console.PrintMessage(f"[{TAG}][INFO] {msg}\n")
+
+
+def _warn(msg):
+    App.Console.PrintWarning(f"[{TAG}][WARN] {msg}\n")
+
+
+def _err(msg):
+    App.Console.PrintError(f"[{TAG}][ERROR] {msg}\n")
+
+
+def _is_group_container(obj):
+    type_id = _safe_text(getattr(obj, "TypeId", "")).strip()
+    return type_id.startswith("App::DocumentObjectGroup")
+
+
+def _selection_objects_ordered():
+    out = []
+    seen = set()
+    try:
+        sel_ex = Gui.Selection.getSelectionEx() or []
+    except Exception:
+        sel_ex = []
+
+    def _push(obj):
+        if obj is None:
+            return
+        key = _safe_text(getattr(obj, "Name", "")).strip() or str(id(obj))
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(obj)
+
+    for sx in sel_ex:
+        _push(getattr(sx, "Object", None))
+
+    if out:
+        return out
+
+    try:
+        for obj in (Gui.Selection.getSelection() or []):
+            _push(obj)
+    except Exception:
+        pass
+    return out
+
+
+def _scan_group_relationships(doc):
+    containers = []
+    for obj in (getattr(doc, "Objects", []) or []):
+        if _is_group_container(obj):
+            containers.append(obj)
+
+    parent_of = {}  # child_group_name -> parent_group_obj
+    member_of = {}  # child_obj_name -> [parent_groups]
+    for grp in containers:
+        for child in (getattr(grp, "Group", []) or []):
+            if child is None:
+                continue
+            cname = _safe_text(getattr(child, "Name", "")).strip()
+            if not cname:
+                continue
+            member_of.setdefault(cname, []).append(grp)
+            if _is_group_container(child) and cname not in parent_of:
+                parent_of[cname] = grp
+    return containers, parent_of, member_of
+
+
+def _property_is_readonly(obj, pname):
+    try:
+        st = obj.getPropertyStatus(pname)
+    except Exception:
+        st = None
+    if st is None:
+        return False
+    try:
+        if isinstance(st, str):
+            txt = st.lower()
+            return ("readonly" in txt) or ("immutable" in txt)
+        for item in list(st):
+            txt = _safe_text(item).lower()
+            if ("readonly" in txt) or ("immutable" in txt):
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _is_copy_candidate_property(prop_name):
+    pname = _safe_text(prop_name).strip()
+    if not pname:
+        return False
+    if pname in SKIP_PROPS or pname.startswith("_"):
+        return False
+    if pname in EXACT_ELECTRIC_PROPS:
+        return True
+    if pname in EXACT_STYLE_PROPS:
+        return True
+    pnorm = _norm(pname)
+    for token in TOKEN_HINTS:
+        if token in pnorm:
+            return True
+    return False
+
+
+def _collect_property_bundle(source_obj):
+    bundle = []
+    for pname in (getattr(source_obj, "PropertiesList", []) or []):
+        if not _is_copy_candidate_property(pname):
+            continue
+        try:
+            value = getattr(source_obj, pname)
+        except Exception:
+            continue
+        try:
+            ptype = _safe_text(source_obj.getTypeIdOfProperty(pname)).strip()
+        except Exception:
+            ptype = ""
+        try:
+            pgroup = _safe_text(source_obj.getGroupOfProperty(pname)).strip()
+        except Exception:
+            pgroup = ""
+        try:
+            pdesc = _safe_text(source_obj.getDocumentationOfProperty(pname)).strip()
+        except Exception:
+            pdesc = ""
+        bundle.append(
+            {
+                "name": pname,
+                "value": value,
+                "type": ptype,
+                "group": pgroup or "ElectricCR",
+                "desc": pdesc,
+            }
+        )
+    return bundle
+
+
+def _first_property_value(obj, prop_names):
+    for pname in list(prop_names or []):
+        try:
+            if pname in (getattr(obj, "PropertiesList", []) or []):
+                value = _safe_text(getattr(obj, pname)).strip()
+                if value:
+                    return value
+        except Exception:
+            continue
+    return ""
+
+
+def _contains_any(text, tokens):
+    probe = _safe_text(text).lower()
+    return any(tok in probe for tok in (tokens or []))
+
+
+def _classify_route_kind(source_obj, source_groups):
+    chunks = []
+    for pname in ("LinkKind", "TipoConexion", "TipoRuta", "Tipo", "TipoLogico", "Categoria", "Label", "Name"):
+        try:
+            chunks.append(_safe_text(getattr(source_obj, pname)))
+        except Exception:
+            pass
+    for grp in list(source_groups or []):
+        chunks.append(_safe_text(getattr(grp, "Label", "")))
+        chunks.append(_safe_text(getattr(grp, "Name", "")))
+    merged = " ".join(chunks).lower()
+    if _contains_any(merged, ("alimentador", "feeder")):
+        return "alimentador"
+    if _contains_any(merged, ("ramal", "branch")):
+        return "ramal"
+    return ""
+
+
+def _extract_conduit_type(source_obj, source_groups):
+    for pname in ("ConduitType", "TipoConduit", "Canalizacion"):
+        value = _first_property_value(source_obj, (pname,))
+        if value:
+            return value
+    for grp in list(source_groups or []):
+        txt = (
+            f"{_safe_text(getattr(grp, 'Label', ''))} "
+            f"{_safe_text(getattr(grp, 'Name', ''))}"
+        ).lower()
+        for tag in ("emt", "pvc", "imc", "rigid"):
+            if tag in txt:
+                return tag.upper()
+    return ""
+
+
+def _looks_like_circuit_label(label_txt, expected_circuit=""):
+    txt = _safe_text(label_txt).strip()
+    if not txt:
+        return False
+    n = _norm(txt)
+    if not n:
+        return False
+    expected = _norm(expected_circuit)
+    if expected and (expected == n or expected in n or n in expected):
+        return True
+    plain = _safe_text(label_txt).lower()
+    if ("circuito" in plain) and ("circuitos" not in plain):
+        return True
+    if re.match(r"^(c|ckt|circuito)[\s_\-]*\d+$", plain):
+        return True
+    if re.match(r"^tp[\s_\-]*\d+$", plain):
+        return True
+    return False
+
+
+def _looks_like_circuit_group(group_obj, expected_circuit=""):
+    if group_obj is None:
+        return False
+    label = _safe_text(getattr(group_obj, "Label", "")).strip()
+    name = _safe_text(getattr(group_obj, "Name", "")).strip()
+    return _looks_like_circuit_label(label, expected_circuit) or _looks_like_circuit_label(name, expected_circuit)
+
+
+def _find_first_circuit_ancestor(source_groups, parent_of, expected_circuit=""):
+    for grp in list(source_groups or []):
+        cur = grp
+        visited = set()
+        while cur is not None:
+            gname = _safe_text(getattr(cur, "Name", "")).strip() or str(id(cur))
+            if gname in visited:
+                break
+            visited.add(gname)
+            if _looks_like_circuit_group(cur, expected_circuit):
+                return cur
+            cur = parent_of.get(gname)
+    return None
+
+
+def _group_kind_score(group_obj, kind, conduit_type=""):
+    if group_obj is None:
+        return -1
+    text = (
+        f"{_safe_text(getattr(group_obj, 'Label', ''))} "
+        f"{_safe_text(getattr(group_obj, 'Name', ''))}"
+    ).lower()
+    if not text.strip():
+        return -1
+    score = 0
+    if kind == "alimentador":
+        if ("alimentador" in text) or ("feeder" in text):
+            score += 10
+    elif kind == "ramal":
+        if ("ramal" in text) or ("branch" in text):
+            score += 10
+    if conduit_type:
+        conduit_n = _norm(conduit_type)
+        if conduit_n and conduit_n in _norm(text):
+            score += 4
+    return score
+
+
+def _pick_best_group(groups, kind, conduit_type=""):
+    best_group = None
+    best_score = -1
+    for grp in list(groups or []):
+        score = _group_kind_score(grp, kind, conduit_type)
+        if score > best_score:
+            best_score = score
+            best_group = grp
+    if best_score < 0:
+        return None
+    return best_group
+
+
+def _iter_child_groups(parent_group):
+    for child in (getattr(parent_group, "Group", []) or []):
+        if _is_group_container(child):
+            yield child
+
+
+def _find_kind_child_group(circuit_group, kind, conduit_type=""):
+    if circuit_group is None or not kind:
+        return None
+
+    direct = list(_iter_child_groups(circuit_group))
+    best = _pick_best_group(direct, kind, conduit_type)
+    if best is not None and _group_kind_score(best, kind, conduit_type) >= 10:
+        return best
+
+    queue = list(direct)
+    seen = set()
+    while queue:
+        grp = queue.pop(0)
+        gkey = _safe_text(getattr(grp, "Name", "")).strip() or str(id(grp))
+        if gkey in seen:
+            continue
+        seen.add(gkey)
+        if _group_kind_score(grp, kind, conduit_type) >= 10:
+            return grp
+        queue.extend(list(_iter_child_groups(grp)))
+    return None
+
+
+def _unique_internal_name(doc, base_label):
+    token = re.sub(r"[^0-9A-Za-z_]+", "_", _safe_text(base_label).strip()).strip("_")
+    token = token or "Grupo"
+    if doc.getObject(token) is None:
+        return token
+    idx = 2
+    while True:
+        cand = f"{token}_{idx:02d}"
+        if doc.getObject(cand) is None:
+            return cand
+        idx += 1
+
+
+def _ensure_child_group(doc, parent_group, label):
+    if parent_group is None:
+        return None
+    wanted = _norm(label)
+    for child in _iter_child_groups(parent_group):
+        if _norm(getattr(child, "Label", "")) == wanted or _norm(getattr(child, "Name", "")) == wanted:
+            return child
+
+    name = _unique_internal_name(doc, label)
+    grp = doc.addObject("App::DocumentObjectGroup", name)
+    try:
+        grp.Label = _safe_text(label).strip() or label
+    except Exception:
+        pass
+    try:
+        parent_group.addObject(grp)
+    except Exception:
+        pass
+    return grp
+
+
+def _resolve_destination_group(doc, source_groups, parent_of, circuit_id, kind, conduit_type):
+    if not source_groups:
+        return None, "sin_grupo_origen"
+
+    if kind:
+        best_direct = _pick_best_group(source_groups, kind, conduit_type)
+        if best_direct is not None and _group_kind_score(best_direct, kind, conduit_type) >= 10:
+            return best_direct, "grupo_origen_por_tipo"
+
+    circuit_group = _find_first_circuit_ancestor(source_groups, parent_of, expected_circuit=circuit_id)
+    if circuit_group is not None and kind:
+        child = _find_kind_child_group(circuit_group, kind, conduit_type)
+        if child is not None:
+            return child, "subgrupo_circuito_existente"
+
+        if kind == "alimentador":
+            label = "Alimentadores"
+        else:
+            label = "Ramales"
+        if conduit_type:
+            label = f"{label}_{conduit_type}"
+        created = _ensure_child_group(doc, circuit_group, label)
+        if created is not None:
+            return created, "subgrupo_circuito_creado"
+
+    return source_groups[0], "primer_grupo_origen"
+
+
+def _ensure_property(dst_obj, pname, ptype, pgroup, pdesc):
+    props = set(getattr(dst_obj, "PropertiesList", []) or [])
+    already = (pname in props) or hasattr(dst_obj, pname)
+    if already:
+        return True, False
+    if not _safe_text(ptype).startswith("App::Property"):
+        return False, False
+    try:
+        dst_obj.addProperty(ptype, pname, pgroup or "ElectricCR", pdesc or "")
+        return True, True
+    except Exception:
+        return False, False
+
+
+def _apply_properties_to_target(dst_obj, bundle, circuit_id="", kind=""):
+    copied = 0
+    created = 0
+    skipped = 0
+    for meta in list(bundle or []):
+        pname = _safe_text(meta.get("name", "")).strip()
+        if not pname:
+            continue
+        ok, was_created = _ensure_property(
+            dst_obj,
+            pname=pname,
+            ptype=_safe_text(meta.get("type", "")),
+            pgroup=_safe_text(meta.get("group", "")),
+            pdesc=_safe_text(meta.get("desc", "")),
+        )
+        if was_created:
+            created += 1
+        if not ok:
+            skipped += 1
+            continue
+        if _property_is_readonly(dst_obj, pname):
+            skipped += 1
+            continue
+        try:
+            setattr(dst_obj, pname, meta.get("value"))
+            copied += 1
+        except Exception:
+            skipped += 1
+
+    if circuit_id:
+        ok, was_created = _ensure_property(
+            dst_obj,
+            pname="CircuitoID",
+            ptype="App::PropertyString",
+            pgroup="Circuito",
+            pdesc="Identificador de circuito",
+        )
+        if was_created:
+            created += 1
+        if ok and (not _property_is_readonly(dst_obj, "CircuitoID")):
+            try:
+                dst_obj.CircuitoID = _safe_text(circuit_id).strip()
+                copied += 1
+            except Exception:
+                skipped += 1
+
+    if kind in ("alimentador", "ramal"):
+        link_kind = "feeder" if kind == "alimentador" else "branch"
+        ok, was_created = _ensure_property(
+            dst_obj,
+            pname="LinkKind",
+            ptype="App::PropertyString",
+            pgroup="Vinculo",
+            pdesc="Tipo de enlace generado",
+        )
+        if was_created:
+            created += 1
+        if ok and (not _property_is_readonly(dst_obj, "LinkKind")):
+            try:
+                dst_obj.LinkKind = link_kind
+                copied += 1
+            except Exception:
+                skipped += 1
+
+    return copied, created, skipped
+
+
+def _move_target_to_group(target_obj, destination_group, member_of):
+    removed = 0
+    added = 0
+    tname = _safe_text(getattr(target_obj, "Name", "")).strip()
+    src_groups = list((member_of or {}).get(tname, []) or [])
+    for grp in src_groups:
+        if grp is None or grp == destination_group:
+            continue
+        try:
+            if target_obj in (getattr(grp, "Group", []) or []):
+                grp.removeObject(target_obj)
+                removed += 1
+        except Exception:
+            continue
+
+    try:
+        if target_obj not in (getattr(destination_group, "Group", []) or []):
+            destination_group.addObject(target_obj)
+            added = 1
+    except Exception as ex:
+        _warn(f"No se pudo mover '{_display_name(target_obj)}' a '{_display_name(destination_group)}': {ex}")
+    return removed, added
+
+
+def _copy_view_style(target_obj, source_obj):
+    vo_src = getattr(source_obj, "ViewObject", None)
+    vo_dst = getattr(target_obj, "ViewObject", None)
+    if vo_src is None or vo_dst is None:
+        return 0, 0
+
+    copied = 0
+    skipped = 0
+    for attr in VIEW_STYLE_ATTRS:
+        if (not hasattr(vo_src, attr)) or (not hasattr(vo_dst, attr)):
+            continue
+        try:
+            setattr(vo_dst, attr, getattr(vo_src, attr))
+            copied += 1
+        except Exception:
+            skipped += 1
+    return copied, skipped
+
+
+def _choose_source_dialog(selected_objs):
+    if not selected_objs:
+        return None
+    if QtWidgets is None:
+        return selected_objs[0]
+
+    parent = None
+    try:
+        parent = Gui.getMainWindow()
+    except Exception:
+        parent = None
+
+    dlg = QtWidgets.QDialog(parent)
+    dlg.setWindowTitle("Copiar Formato Electrico")
+    dlg.setMinimumWidth(520)
+    layout = QtWidgets.QVBoxLayout(dlg)
+
+    lbl = QtWidgets.QLabel(
+        "Seleccione el objeto ORIGEN (plantilla).\n"
+        "La macro aplicara su formato electrico al resto de la seleccion."
+    )
+    lbl.setWordWrap(True)
+    layout.addWidget(lbl)
+
+    combo = QtWidgets.QComboBox()
+    for obj in selected_objs:
+        combo.addItem(_display_name(obj), _safe_text(getattr(obj, "Name", "")))
+    layout.addWidget(combo)
+
+    buttons = QtWidgets.QDialogButtonBox(
+        QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+    )
+    layout.addWidget(buttons)
+    buttons.accepted.connect(dlg.accept)
+    buttons.rejected.connect(dlg.reject)
+
+    result = dlg.exec() if hasattr(dlg, "exec") else dlg.exec_()
+    if result != QtWidgets.QDialog.Accepted:
+        return None
+    idx = int(combo.currentIndex())
+    if idx < 0 or idx >= len(selected_objs):
+        return None
+    return selected_objs[idx]
+
+
+def main():
+    doc = App.ActiveDocument
+    if doc is None:
+        _err("No hay documento activo.")
+        return
+
+    selected = _selection_objects_ordered()
+    if len(selected) < 2:
+        _warn(
+            "Seleccione al menos 2 objetos. "
+            "Luego elija el objeto origen para copiar formato electrico."
+        )
+        return
+
+    source = _choose_source_dialog(selected)
+    if source is None:
+        _warn("Operacion cancelada.")
+        return
+
+    if _is_group_container(source):
+        _warn("El objeto origen debe ser un objeto electrico, no un grupo contenedor.")
+        return
+
+    source_name = _safe_text(getattr(source, "Name", "")).strip()
+    targets = [obj for obj in selected if _safe_text(getattr(obj, "Name", "")).strip() != source_name]
+    if not targets:
+        _warn("No hay objetos destino para aplicar formato.")
+        return
+
+    _, parent_of, member_of = _scan_group_relationships(doc)
+    source_groups = list((member_of or {}).get(source_name, []) or [])
+
+    bundle = _collect_property_bundle(source)
+    circuit_id = _first_property_value(source, ("CircuitoID", "Circuito", "CircuitID", "Circuito_Grupo", "CircuitoGrupo"))
+    kind = _classify_route_kind(source, source_groups)
+    conduit_type = _extract_conduit_type(source, source_groups)
+    destination_group, destination_reason = _resolve_destination_group(
+        doc=doc,
+        source_groups=source_groups,
+        parent_of=parent_of,
+        circuit_id=circuit_id,
+        kind=kind,
+        conduit_type=conduit_type,
+    )
+
+    _info(
+        "Origen='{}' | circuito='{}' | tipo='{}' | conduit='{}' | props={}".format(
+            _display_name(source),
+            circuit_id or "-",
+            kind or "-",
+            conduit_type or "-",
+            len(bundle),
+        )
+    )
+    if destination_group is not None:
+        _info(
+            "Grupo destino='{}' ({}).".format(
+                _display_name(destination_group),
+                destination_reason,
+            )
+        )
+    else:
+        _warn("No se pudo resolver grupo destino. Se copiaran propiedades sin mover de grupo.")
+
+    moved = 0
+    removed_links = 0
+    copied_props = 0
+    created_props = 0
+    skipped_props = 0
+    copied_view = 0
+    skipped_view = 0
+    skipped_objs = 0
+
+    doc.openTransaction("ElectricCR: Copiar formato electrico")
+    try:
+        for obj in targets:
+            if obj is None:
+                skipped_objs += 1
+                continue
+            if _is_group_container(obj):
+                skipped_objs += 1
+                _warn(f"Se omite contenedor: '{_display_name(obj)}'")
+                continue
+
+            copied, created, skipped = _apply_properties_to_target(
+                dst_obj=obj,
+                bundle=bundle,
+                circuit_id=circuit_id,
+                kind=kind,
+            )
+            copied_props += int(copied)
+            created_props += int(created)
+            skipped_props += int(skipped)
+
+            vc, vs = _copy_view_style(obj, source)
+            copied_view += int(vc)
+            skipped_view += int(vs)
+
+            if destination_group is not None:
+                rem, add = _move_target_to_group(obj, destination_group, member_of)
+                removed_links += int(rem)
+                moved += int(add)
+
+        doc.recompute()
+        doc.commitTransaction()
+    except Exception as ex:
+        try:
+            doc.abortTransaction()
+        except Exception:
+            pass
+        _err(f"Fallo general: {ex}")
+        return
+
+    _info(
+        "Finalizado | destinos={} | movidos={} | desvinculados={} | props_copiadas={} | props_creadas={} | props_omitidas={} | estilo_view_copiado={} | estilo_view_omitido={} | objs_omitidos={}".format(
+            len(targets),
+            moved,
+            removed_links,
+            copied_props,
+            created_props,
+            skipped_props,
+            copied_view,
+            skipped_view,
+            skipped_objs,
+        )
+    )
+
+
+if __name__ == "__main__":
+    main()

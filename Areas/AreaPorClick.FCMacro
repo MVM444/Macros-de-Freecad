@@ -1,0 +1,2178 @@
+# -*- coding: utf-8 -*-
+# MenuText: Areas por click
+# ToolTip: Crea poligonos de recintos haciendo click dentro de cada area.
+# Icon: AreaPorClick.svg
+
+# Qt compatibility for FreeCAD 1.x (PySide6) and older builds.
+def _ensure_qt_compat():
+    import sys
+    import types
+
+    QtCore = QtGui = QtWidgets = None
+    binding_name = None
+
+    for candidate in ("PySide6", "PySide2", "PySide"):
+        try:
+            if candidate == "PySide":
+                from PySide import QtCore as _QtCore, QtGui as _QtGui
+                _QtWidgets = _QtGui
+            else:
+                module = __import__(candidate, fromlist=["QtCore", "QtGui", "QtWidgets"])
+                _QtCore = module.QtCore
+                _QtGui = module.QtGui
+                _QtWidgets = module.QtWidgets
+            QtCore, QtGui, QtWidgets = _QtCore, _QtGui, _QtWidgets
+            binding_name = candidate
+            break
+        except Exception:
+            continue
+
+    if QtCore is None:
+        return
+
+    qtgui_compat = types.ModuleType("QtGui")
+    qtgui_compat.__dict__.update(getattr(QtGui, "__dict__", {}))
+    qtgui_compat.__dict__.update(getattr(QtWidgets, "__dict__", {}))
+
+    qtsvg_compat = None
+    for module_name in ("QtSvg", "QtSvgWidgets"):
+        try:
+            module = __import__(binding_name, fromlist=[module_name])
+            qt_module = getattr(module, module_name)
+        except Exception:
+            continue
+        if qtsvg_compat is None:
+            qtsvg_compat = types.ModuleType("QtSvg")
+        qtsvg_compat.__dict__.update(getattr(qt_module, "__dict__", {}))
+
+    qtuitools_compat = None
+    try:
+        module = __import__(binding_name, fromlist=["QtUiTools"])
+        qtuitools_compat = module.QtUiTools
+    except Exception:
+        pass
+
+    for package_name in ("PySide2", "PySide"):
+        package = sys.modules.get(package_name)
+        if package is None:
+            package = types.ModuleType(package_name)
+            sys.modules[package_name] = package
+        package.QtCore = QtCore
+        package.QtGui = qtgui_compat
+        package.QtWidgets = QtWidgets
+        sys.modules[package_name + ".QtCore"] = QtCore
+        sys.modules[package_name + ".QtGui"] = qtgui_compat
+        sys.modules[package_name + ".QtWidgets"] = QtWidgets
+        if qtsvg_compat is not None:
+            package.QtSvg = qtsvg_compat
+            sys.modules[package_name + ".QtSvg"] = qtsvg_compat
+        if qtuitools_compat is not None:
+            package.QtUiTools = qtuitools_compat
+            sys.modules[package_name + ".QtUiTools"] = qtuitools_compat
+
+
+_ensure_qt_compat()
+
+# Macro: AreaPorClick
+# Transaction: self
+
+import math
+from collections import deque
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Draft
+
+try:
+    from PySide2 import QtCore, QtWidgets
+except Exception:
+    try:
+        from PySide import QtCore, QtGui
+        QtWidgets = QtGui
+    except Exception:
+        QtCore = None
+        QtWidgets = None
+
+
+MACRO = "AreaPorClick"
+TITLE = "Areas por click"
+DOCK_NAME = "ElectricCR_AreaPorClickDock"
+PREF = "User parameter:BaseApp/Preferences/Macros/ElectricCR/AreaPorClickSimple"
+DEBUG_GROUP = "_AreaPorClick_Debug"
+
+EPS = 1.0e-7
+
+
+def log(msg):
+    App.Console.PrintMessage("[AreaPorClick] {}\n".format(msg))
+
+
+def warn(msg):
+    App.Console.PrintWarning("[AreaPorClick] {}\n".format(msg))
+
+
+def err(msg):
+    App.Console.PrintError("[AreaPorClick] {}\n".format(msg))
+
+
+def pref():
+    return App.ParamGet(PREF)
+
+
+def pf(name, default):
+    try:
+        return float(pref().GetFloat(name, float(default)))
+    except Exception:
+        return float(default)
+
+
+def ps(name, value):
+    try:
+        pref().SetFloat(name, float(value))
+    except Exception:
+        pass
+
+
+def pi(name, default):
+    try:
+        return int(pref().GetInt(name, int(default)))
+    except Exception:
+        return int(default)
+
+
+def pis(name, value):
+    try:
+        pref().SetInt(name, int(value))
+    except Exception:
+        pass
+
+
+def pstr(name, default):
+    try:
+        return str(pref().GetString(name, str(default)))
+    except Exception:
+        return str(default)
+
+
+def pstrs(name, value):
+    try:
+        pref().SetString(name, str(value))
+    except Exception:
+        pass
+
+
+def pbool(name, default):
+    try:
+        return bool(pref().GetBool(name, bool(default)))
+    except Exception:
+        return bool(default)
+
+
+def pbools(name, value):
+    try:
+        pref().SetBool(name, bool(value))
+    except Exception:
+        pass
+
+
+def xy(v):
+    return (float(v.x), float(v.y))
+
+
+def vec(p):
+    return App.Vector(float(p[0]), float(p[1]), 0.0)
+
+
+def add(a, b):
+    return (a[0] + b[0], a[1] + b[1])
+
+
+def sub(a, b):
+    return (a[0] - b[0], a[1] - b[1])
+
+
+def mul(a, k):
+    return (a[0] * k, a[1] * k)
+
+
+def dot(a, b):
+    return a[0] * b[0] + a[1] * b[1]
+
+
+def cross(a, b):
+    return a[0] * b[1] - a[1] * b[0]
+
+
+def length(a):
+    return math.hypot(a[0], a[1])
+
+
+def dist(a, b):
+    return math.hypot(a[0] - b[0], a[1] - b[1])
+
+
+def unit(a):
+    ln = length(a)
+    if ln <= EPS:
+        return (0.0, 0.0)
+    return (a[0] / ln, a[1] / ln)
+
+
+def seg_point_dist(p, a, b):
+    ab = sub(b, a)
+    d = dot(ab, ab)
+    if d <= EPS:
+        return dist(p, a)
+    t = max(0.0, min(1.0, dot(sub(p, a), ab) / d))
+    return dist(p, add(a, mul(ab, t)))
+
+
+def polygon_area(points):
+    s = 0.0
+    for i, p in enumerate(points):
+        q = points[(i + 1) % len(points)]
+        s += p[0] * q[1] - q[0] * p[1]
+    return 0.5 * s
+
+
+def point_in_poly(p, poly, tol=1.0):
+    if len(poly) < 3:
+        return False
+    for i, a in enumerate(poly):
+        if seg_point_dist(p, a, poly[(i + 1) % len(poly)]) <= tol:
+            return True
+    inside = False
+    x, y = p
+    j = len(poly) - 1
+    for i in range(len(poly)):
+        xi, yi = poly[i]
+        xj, yj = poly[j]
+        if (yi > y) != (yj > y):
+            x_hit = (xj - xi) * (y - yi) / (yj - yi) + xi
+            if x < x_hit:
+                inside = not inside
+        j = i
+    return inside
+
+
+def bbox(points):
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
+def bbox_has(bb, p, m=0.0):
+    return bb[0] - m <= p[0] <= bb[2] + m and bb[1] - m <= p[1] <= bb[3] + m
+
+
+def angle_mod_pi(u):
+    a = math.atan2(u[1], u[0])
+    while a < 0.0:
+        a += math.pi
+    while a >= math.pi:
+        a -= math.pi
+    return a
+
+
+def angle_diff_pi(a, b):
+    d = abs(a - b)
+    while d > math.pi:
+        d -= math.pi
+    if d > math.pi * 0.5:
+        d = math.pi - d
+    return abs(d)
+
+
+class Segment:
+    def __init__(self, a, b, kind="real"):
+        self.a = a
+        self.b = b
+        self.kind = kind
+
+    def len(self):
+        return dist(self.a, self.b)
+
+    def dir(self):
+        return unit(sub(self.b, self.a))
+
+
+class Face:
+    def __init__(self, points, virtuals):
+        self.points = simplify(points)
+        self.area = abs(polygon_area(self.points))
+        self.bbox = bbox(self.points)
+        self.virtuals = int(virtuals)
+        self.confidence = max(0.1, 1.0 - 0.12 * self.virtuals)
+
+
+class Snapper:
+    def __init__(self, tol):
+        self.tol = max(float(tol), 0.001)
+        self.points = []
+        self.cells = {}
+
+    def key(self, p):
+        return (int(math.floor(p[0] / self.tol)), int(math.floor(p[1] / self.tol)))
+
+    def snap(self, p):
+        ck = self.key(p)
+        best = None
+        best_d = None
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for idx in self.cells.get((ck[0] + dx, ck[1] + dy), []):
+                    d = dist(p, self.points[idx])
+                    if d <= self.tol and (best_d is None or d < best_d):
+                        best = idx
+                        best_d = d
+        if best is None:
+            idx = len(self.points)
+            self.points.append(p)
+            self.cells.setdefault(ck, []).append(idx)
+            return p
+        old = self.points[best]
+        newp = ((old[0] + p[0]) * 0.5, (old[1] + p[1]) * 0.5)
+        self.points[best] = newp
+        return newp
+
+
+def simplify(points, tol=0.5):
+    pts = []
+    for p in points:
+        if not pts or dist(pts[-1], p) > tol:
+            pts.append(p)
+    if len(pts) > 1 and dist(pts[0], pts[-1]) <= tol:
+        pts.pop()
+    changed = True
+    while changed and len(pts) >= 3:
+        changed = False
+        out = []
+        for i, b in enumerate(pts):
+            a = pts[(i - 1) % len(pts)]
+            c = pts[(i + 1) % len(pts)]
+            if seg_point_dist(b, a, c) <= tol:
+                changed = True
+                continue
+            out.append(b)
+        pts = out
+    return pts
+
+
+def has_shape(obj):
+    return hasattr(obj, "Shape") and getattr(obj, "Shape", None) is not None
+
+
+def label(obj):
+    return str(getattr(obj, "Label", "") or getattr(obj, "Name", "") or "")
+
+
+def name(obj):
+    return str(getattr(obj, "Name", "") or "")
+
+
+def is_group(obj):
+    return hasattr(obj, "Group")
+
+
+def is_visible(obj):
+    try:
+        return bool(obj.ViewObject.Visibility)
+    except Exception:
+        return True
+
+
+def generated_area(obj):
+    try:
+        if str(getattr(obj, "GeneratedBy", "")) == MACRO:
+            return True
+    except Exception:
+        pass
+    try:
+        return str(getattr(obj, "ElectricCRTipo", "")).lower() == "area"
+    except Exception:
+        return False
+
+
+def skip_label(obj, explicit=False):
+    txt = label(obj).lower()
+    if txt.startswith("dbg_") or DEBUG_GROUP.lower() in txt:
+        return True
+    if explicit:
+        return False
+    bad = (
+        "toma", "apagador", "luminaria", "sensor", "humo", "caja",
+        "tablero", "circuito", "conexion", "etiqueta", "texto",
+    )
+    return any(t in txt for t in bad)
+
+
+def small_detail(obj, max_size=900.0):
+    txt = label(obj).lower()
+    if any(t in txt for t in ("columna", "column", "puerta", "door", "ventana", "window")):
+        return True
+    try:
+        bb = obj.Shape.BoundBox
+        w = abs(float(bb.XMax - bb.XMin))
+        h = abs(float(bb.YMax - bb.YMin))
+        return len(obj.Shape.Edges) >= 4 and 0.0 < w <= max_size and 0.0 < h <= max_size
+    except Exception:
+        return False
+
+
+def flatten(obj, out, seen):
+    if obj is None:
+        return
+    nm = name(obj)
+    if nm in seen:
+        return
+    seen.add(nm)
+    if is_group(obj):
+        for child in list(getattr(obj, "Group", []) or []):
+            flatten(child, out, seen)
+        return
+    if has_shape(obj):
+        out.append(obj)
+
+
+def flattened_selection():
+    out = []
+    seen = set()
+    try:
+        sel = list(Gui.Selection.getSelection() or [])
+    except Exception:
+        sel = []
+    for obj in sel:
+        flatten(obj, out, seen)
+    return out
+
+
+def visible_shape_objects(doc):
+    return [o for o in doc.Objects if has_shape(o) and not is_group(o) and is_visible(o)]
+
+
+def groups(doc):
+    res = [o for o in doc.Objects if is_group(o)]
+    res.sort(key=lambda o: label(o).lower())
+    return res
+
+
+def find_group(doc, wanted):
+    key = str(wanted or "").strip().lower()
+    for g in groups(doc):
+        if label(g).strip().lower() == key:
+            return g
+    return None
+
+
+def ensure_group(doc, wanted):
+    g = find_group(doc, wanted)
+    if g:
+        return g
+    g = doc.addObject("App::DocumentObjectGroup", wanted)
+    g.Label = wanted
+    return g
+
+
+def in_group(obj, group):
+    if obj is None or group is None:
+        return False
+    target = name(obj)
+    stack = list(getattr(group, "Group", []) or [])
+    seen = set()
+    while stack:
+        cur = stack.pop()
+        nm = name(cur)
+        if nm in seen:
+            continue
+        seen.add(nm)
+        if nm == target:
+            return True
+        stack.extend(list(getattr(cur, "Group", []) or []))
+    return False
+
+
+def edge_straight(edge, tol=1.0):
+    try:
+        vs = edge.Vertexes
+        if len(vs) < 2:
+            return False
+        chord = dist(xy(vs[0].Point), xy(vs[-1].Point))
+        return chord > EPS and abs(float(edge.Length) - chord) <= max(tol, chord * 0.002)
+    except Exception:
+        return False
+
+
+def simple_boundary_helper(obj, cfg):
+    try:
+        edges = list(obj.Shape.Edges)
+    except Exception:
+        return False
+    if not edges or len(edges) > 3:
+        return False
+    tol = cfg["snap"] * 0.25
+    return all(edge_straight(edge, tol) for edge in edges)
+
+
+def collect_segments(objects, cfg, explicit=False, dest_group=None):
+    segs = []
+    ignored = 0
+    min_len = max(10.0, cfg["snap"]) if explicit else cfg["min_wall"]
+    for obj in objects:
+        if generated_area(obj) or skip_label(obj, explicit):
+            continue
+        if not explicit and in_group(obj, dest_group) and not simple_boundary_helper(obj, cfg):
+            continue
+        if small_detail(obj):
+            ignored += 1
+            continue
+        try:
+            edges = list(obj.Shape.Edges)
+        except Exception:
+            continue
+        for edge in edges:
+            if not edge_straight(edge, cfg["snap"] * 0.25):
+                ignored += 1
+                continue
+            vs = edge.Vertexes
+            s = Segment(xy(vs[0].Point), xy(vs[-1].Point))
+            if s.len() >= min_len:
+                segs.append(s)
+            else:
+                ignored += 1
+    return segs, ignored
+
+
+def collect_selected_area_helpers(cfg, dest_group=None):
+    selected = flattened_selection()
+    if not selected:
+        return []
+    segs, _ignored = collect_segments(selected, cfg, explicit=True, dest_group=None)
+    return segs
+
+
+def snap_segments(segs, tol):
+    sn = Snapper(tol)
+    out = []
+    for s in segs:
+        a = sn.snap(s.a)
+        b = sn.snap(s.b)
+        if dist(a, b) > EPS:
+            out.append(Segment(a, b, s.kind))
+    return out
+
+
+def node_key(p, tol):
+    tol = max(float(tol), 0.001)
+    return (int(round(p[0] / tol)), int(round(p[1] / tol)))
+
+
+def endpoint_degrees(segs, tol):
+    deg = {}
+    refs = {}
+    for i, s in enumerate(segs):
+        for p, other in ((s.a, s.b), (s.b, s.a)):
+            k = node_key(p, tol)
+            deg[k] = deg.get(k, 0) + 1
+            refs.setdefault(k, []).append((i, p, other))
+    return deg, refs
+
+
+def close_collinear_gaps(segs, cfg):
+    tol = max(cfg["snap"], 1.0)
+    max_gap = cfg["door_gap"]
+    if max_gap <= 0:
+        return segs
+    deg, refs = endpoint_degrees(segs, tol)
+    free = []
+    for k, items in refs.items():
+        if deg.get(k, 0) == 1:
+            free.extend(items)
+    added = []
+    for i in range(len(free)):
+        si, p, pi_other = free[i]
+        ui = unit(sub(p, pi_other))
+        for j in range(i + 1, len(free)):
+            sj, q, q_other = free[j]
+            if si == sj:
+                continue
+            d = dist(p, q)
+            if d <= EPS or d > max_gap:
+                continue
+            uj = unit(sub(q, q_other))
+            pq = unit(sub(q, p))
+            if abs(dot(ui, uj)) < 0.92:
+                continue
+            if abs(dot(pq, ui)) < 0.88:
+                continue
+            if abs(cross(sub(q, p), ui)) > tol * 2.0:
+                continue
+            added.append(Segment(p, q, "virtual"))
+    return segs + added
+
+
+def line_crosses_existing(a, b, segs, tol):
+    test = Segment(a, b, "virtual")
+    for s in segs:
+        hit = intersection(test, s, tol)
+        if not hit:
+            continue
+        near_candidate_end = dist(hit, a) <= tol * 2.0 or dist(hit, b) <= tol * 2.0
+        near_existing_end = dist(hit, s.a) <= tol * 2.0 or dist(hit, s.b) <= tol * 2.0
+        if not (near_candidate_end or near_existing_end):
+            return True
+    return False
+
+
+def close_facing_endpoint_gaps(segs, cfg):
+    max_gap = max(float(cfg["door_gap"]) * 1.35, float(cfg["snap"]) * 8.0)
+    if max_gap <= EPS:
+        return segs
+    tol = max(float(cfg["snap"]), 1.0)
+    deg, refs = endpoint_degrees(segs, tol)
+    free = []
+    for k, items in refs.items():
+        if deg.get(k, 0) == 1:
+            for idx, p, other in items:
+                free.append({"seg": idx, "p": p, "out": unit(sub(p, other))})
+
+    candidates = []
+    for i in range(len(free)):
+        a = free[i]
+        for j in range(i + 1, len(free)):
+            b = free[j]
+            if a["seg"] == b["seg"]:
+                continue
+            d = dist(a["p"], b["p"])
+            if d <= EPS or d > max_gap:
+                continue
+            ab = unit(sub(b["p"], a["p"]))
+            if dot(a["out"], ab) < 0.25:
+                continue
+            if dot(b["out"], mul(ab, -1.0)) < 0.25:
+                continue
+            if line_crosses_existing(a["p"], b["p"], segs, tol):
+                continue
+            candidates.append((d, i, j))
+
+    used = set()
+    added = []
+    for _d, i, j in sorted(candidates):
+        if i in used or j in used:
+            continue
+        used.add(i)
+        used.add(j)
+        added.append(Segment(free[i]["p"], free[j]["p"], "virtual"))
+    return segs + added
+
+
+def projection(p, a, b):
+    ab = sub(b, a)
+    d = dot(ab, ab)
+    if d <= EPS:
+        return None, 0.0, dist(p, a)
+    t = dot(sub(p, a), ab) / d
+    q = add(a, mul(ab, t))
+    return q, t, dist(p, q)
+
+
+def extend_t_junctions(segs, cfg):
+    tol = max(cfg["snap"] * 5.0, 150.0)
+    deg, refs = endpoint_degrees(segs, max(cfg["snap"], 1.0))
+    free = []
+    for k, items in refs.items():
+        if deg.get(k, 0) == 1:
+            free.extend(items)
+    added = []
+    for idx, p, other in free:
+        outward = unit(sub(p, other))
+        best = None
+        for j, s in enumerate(segs):
+            if idx == j:
+                continue
+            q, t, d = projection(p, s.a, s.b)
+            if q is None or t < 0.0 or t > 1.0 or d <= EPS or d > tol:
+                continue
+            if dot(unit(sub(q, p)), outward) < 0.80:
+                continue
+            if best is None or d < best[0]:
+                best = (d, q)
+        if best:
+            added.append(Segment(p, best[1], "virtual"))
+    return segs + added
+
+
+def intersection(a, b, tol):
+    p = a.a
+    r = sub(a.b, a.a)
+    q = b.a
+    s = sub(b.b, b.a)
+    den = cross(r, s)
+    if abs(den) <= 1.0e-9:
+        return None
+    qp = sub(q, p)
+    t = cross(qp, s) / den
+    u = cross(qp, r) / den
+    at = max(tol / max(length(r), 1.0), 1.0e-6)
+    bt = max(tol / max(length(s), 1.0), 1.0e-6)
+    if -at <= t <= 1.0 + at and -bt <= u <= 1.0 + bt:
+        return add(p, mul(r, max(0.0, min(1.0, t))))
+    return None
+
+
+def split_intersections(segs, cfg):
+    pts = [[s.a, s.b] for s in segs]
+    tol = max(cfg["snap"] * 0.25, 0.5)
+    for i in range(len(segs)):
+        for j in range(i + 1, len(segs)):
+            p = intersection(segs[i], segs[j], tol)
+            if p:
+                pts[i].append(p)
+                pts[j].append(p)
+    out = []
+    for i, s in enumerate(segs):
+        u = s.dir()
+        clean = {}
+        for p in pts[i]:
+            clean[node_key(p, tol)] = p
+        ordered = sorted(clean.values(), key=lambda p: dot(p, u))
+        for a, b in zip(ordered, ordered[1:]):
+            if dist(a, b) > tol:
+                out.append(Segment(a, b, s.kind))
+    return out
+
+
+def dedupe(segs, cfg):
+    tol = max(cfg["snap"] * 0.25, 0.5)
+    by_key = {}
+    for s in segs:
+        if s.len() <= tol:
+            continue
+        a = node_key(s.a, tol)
+        b = node_key(s.b, tol)
+        if a == b:
+            continue
+        k = tuple(sorted((a, b)))
+        old = by_key.get(k)
+        if old is None or (old.kind == "virtual" and s.kind == "real"):
+            by_key[k] = s
+    return list(by_key.values())
+
+
+def build_faces(segs, cfg):
+    tol = max(cfg["snap"] * 0.25, 0.5)
+    node_ids = {}
+    nodes = {}
+
+    def nid(p):
+        k = node_key(p, tol)
+        if k not in node_ids:
+            n = len(node_ids)
+            node_ids[k] = n
+            nodes[n] = p
+        return node_ids[k]
+
+    edge_kind = {}
+    adj = {}
+    for s in segs:
+        a = nid(s.a)
+        b = nid(s.b)
+        if a == b:
+            continue
+        k = tuple(sorted((a, b)))
+        if k not in edge_kind or edge_kind[k] == "virtual":
+            edge_kind[k] = s.kind
+        adj.setdefault(a, set()).add(b)
+        adj.setdefault(b, set()).add(a)
+
+    for a in list(adj.keys()):
+        adj[a] = sorted(adj[a], key=lambda b: math.atan2(nodes[b][1] - nodes[a][1], nodes[b][0] - nodes[a][0]))
+
+    visited = set()
+    seen_faces = set()
+    faces = []
+    max_steps = max(20, len(edge_kind) * 4 + 20)
+
+    for start_a in sorted(adj.keys()):
+        for start_b in list(adj[start_a]):
+            start = (start_a, start_b)
+            if start in visited:
+                continue
+            a, b = start
+            ring = []
+            ok = True
+            for _ in range(max_steps):
+                if (a, b) in visited and (a, b) != start:
+                    ok = False
+                    break
+                visited.add((a, b))
+                ring.append(a)
+                nb = adj.get(b, [])
+                if not nb or a not in nb:
+                    ok = False
+                    break
+                rev = nb.index(a)
+                nxt = nb[(rev - 1) % len(nb)]
+                a, b = b, nxt
+                if (a, b) == start:
+                    break
+            else:
+                ok = False
+            if not ok or len(ring) < 3:
+                continue
+            key = canonical_ring(ring)
+            if key in seen_faces:
+                continue
+            seen_faces.add(key)
+            pts = [nodes[n] for n in ring]
+            if abs(polygon_area(pts)) <= EPS:
+                continue
+            virtuals = 0
+            for i, n1 in enumerate(ring):
+                n2 = ring[(i + 1) % len(ring)]
+                if edge_kind.get(tuple(sorted((n1, n2)))) == "virtual":
+                    virtuals += 1
+            f = Face(pts, virtuals)
+            if valid_face(f, cfg):
+                faces.append(f)
+    return faces
+
+
+def canonical_ring(ring):
+    opts = []
+    for seq in (list(ring), list(reversed(ring))):
+        pos = min(range(len(seq)), key=lambda i: seq[i])
+        opts.append(tuple(seq[pos:] + seq[:pos]))
+    return min(opts)
+
+
+def valid_face(face, cfg):
+    if face.area < cfg["min_area"] * 1000000.0:
+        return False
+    w = face.bbox[2] - face.bbox[0]
+    h = face.bbox[3] - face.bbox[1]
+    if min(w, h) < 450.0:
+        return False
+    return True
+
+
+def solve_faces(objects, cfg, explicit=False, dest_group=None):
+    base, ignored = collect_segments(objects, cfg, explicit, dest_group)
+    helpers = [] if explicit else collect_selected_area_helpers(cfg, dest_group)
+    if helpers:
+        base.extend(helpers)
+        log("Seleccion auxiliar agregada a la red: {} segmentos.".format(len(helpers)))
+    segs = snap_segments(base, cfg["snap"])
+    segs = close_collinear_gaps(segs, cfg)
+    segs = close_facing_endpoint_gaps(segs, cfg)
+    segs = extend_t_junctions(segs, cfg)
+    segs = split_intersections(segs, cfg)
+    segs = snap_segments(segs, max(cfg["snap"] * 0.25, 0.5))
+    segs = dedupe(segs, cfg)
+    faces = build_faces(segs, cfg)
+    return faces, segs, base, len(base), len(segs), ignored
+
+
+def add_prop(obj, typ, name_, group, desc):
+    try:
+        if not hasattr(obj, name_):
+            obj.addProperty(typ, name_, group, desc)
+    except Exception:
+        pass
+
+
+def clear_debug(doc):
+    g = find_group(doc, DEBUG_GROUP)
+    if not g:
+        return
+    for child in list(getattr(g, "Group", []) or []):
+        try:
+            doc.removeObject(child.Name)
+        except Exception:
+            pass
+    try:
+        doc.removeObject(g.Name)
+    except Exception:
+        pass
+
+
+def debug_line(doc, group, a, b, label_, color, width=2.0):
+    try:
+        obj = Draft.makeLine(vec(a), vec(b))
+        obj.Label = label_
+        try:
+            obj.ViewObject.LineColor = color
+            obj.ViewObject.LineWidth = width
+        except Exception:
+            pass
+        try:
+            group.addObject(obj)
+        except Exception:
+            pass
+        return obj
+    except Exception:
+        return None
+
+
+def draw_debug(doc, segs, faces, max_faces=250, max_segs=2500):
+    clear_debug(doc)
+    group = ensure_group(doc, DEBUG_GROUP)
+    for i, s in enumerate(segs[:max_segs]):
+        color = (0.0, 0.75, 0.20) if s.kind == "real" else (1.0, 0.0, 0.65)
+        debug_line(doc, group, s.a, s.b, "DBG_real" if s.kind == "real" else "DBG_virtual", color)
+
+    for idx, face in enumerate(faces[:max_faces]):
+        pts = list(face.points) + [face.points[0]]
+        try:
+            obj = Draft.makeWire([vec(p) for p in pts], closed=True, face=False)
+            obj.Label = "DBG_face_{:03d}_{:.2f}m2".format(idx + 1, face.area / 1000000.0)
+            try:
+                obj.ViewObject.LineColor = (0.05, 0.35, 1.0)
+                obj.ViewObject.LineWidth = 1.0
+            except Exception:
+                pass
+            try:
+                group.addObject(obj)
+            except Exception:
+                pass
+        except Exception:
+            pass
+    try:
+        doc.recompute()
+    except Exception:
+        pass
+
+
+def mark_debug_click(doc, seed):
+    g = ensure_group(doc, DEBUG_GROUP)
+    r = 120.0
+    debug_line(doc, g, (seed[0] - r, seed[1] - r), (seed[0] + r, seed[1] + r), "DBG_click_fallido", (1.0, 0.0, 0.0), 3.0)
+    debug_line(doc, g, (seed[0] - r, seed[1] + r), (seed[0] + r, seed[1] - r), "DBG_click_fallido", (1.0, 0.0, 0.0), 3.0)
+    try:
+        doc.recompute()
+    except Exception:
+        pass
+
+
+def raster_face_from_seed(seed, segs, cfg):
+    if not segs:
+        return None
+
+    cell = max(25.0, float(cfg.get("raster_cell", 100.0)))
+    margin = max(float(cfg["door_gap"]) * 1.5, cell * 6.0)
+    pts = []
+    for s in segs:
+        pts.append(s.a)
+        pts.append(s.b)
+    bb = bbox(pts)
+    xmin = min(bb[0], seed[0]) - margin
+    ymin = min(bb[1], seed[1]) - margin
+    xmax = max(bb[2], seed[0]) + margin
+    ymax = max(bb[3], seed[1]) + margin
+    w = int(math.ceil((xmax - xmin) / cell)) + 2
+    h = int(math.ceil((ymax - ymin) / cell)) + 2
+    if w <= 4 or h <= 4 or w * h > 1800000:
+        return None
+
+    blocked = set()
+
+    def to_cell(p):
+        return (int(math.floor((p[0] - xmin) / cell)), int(math.floor((p[1] - ymin) / cell)))
+
+    def in_bounds(c):
+        return 0 <= c[0] < w and 0 <= c[1] < h
+
+    def block_cell(ix, iy, r):
+        for dx in range(-r, r + 1):
+            for dy in range(-r, r + 1):
+                if dx * dx + dy * dy > r * r + 1:
+                    continue
+                c = (ix + dx, iy + dy)
+                if in_bounds(c):
+                    blocked.add(c)
+
+    burn_radius = 1
+    for s in segs:
+        steps = max(int(math.ceil(s.len() / max(cell * 0.35, 1.0))), 1)
+        for i in range(steps + 1):
+            t = float(i) / float(steps)
+            p = add(s.a, mul(sub(s.b, s.a), t))
+            ix, iy = to_cell(p)
+            block_cell(ix, iy, burn_radius)
+
+    for ix in range(w):
+        blocked.add((ix, 0))
+        blocked.add((ix, h - 1))
+    for iy in range(h):
+        blocked.add((0, iy))
+        blocked.add((w - 1, iy))
+
+    start = to_cell(seed)
+    if not in_bounds(start):
+        return None
+    if start in blocked:
+        found = None
+        for r in range(1, 8):
+            for dx in range(-r, r + 1):
+                for dy in range(-r, r + 1):
+                    c = (start[0] + dx, start[1] + dy)
+                    if in_bounds(c) and c not in blocked:
+                        found = c
+                        break
+                if found:
+                    break
+            if found:
+                start = found
+                break
+        if start in blocked:
+            return None
+
+    filled = set([start])
+    q = deque([start])
+    while q:
+        c = q.popleft()
+        for nb in ((c[0] + 1, c[1]), (c[0] - 1, c[1]), (c[0], c[1] + 1), (c[0], c[1] - 1)):
+            if not in_bounds(nb) or nb in blocked or nb in filled:
+                continue
+            filled.add(nb)
+            q.append(nb)
+
+    if len(filled) < 4:
+        return None
+
+    loops = raster_boundary_loops(filled)
+    if not loops:
+        return raster_bbox_face(filled, xmin, ymin, cell, cfg)
+
+    world_loops = []
+    for loop in loops:
+        pts_world = [(xmin + p[0] * cell, ymin + p[1] * cell) for p in loop]
+        pts_world = simplify(pts_world, cell * 1.25)
+        if len(pts_world) >= 3:
+            area = abs(polygon_area(pts_world))
+            if area >= float(cfg["min_area"]) * 1000000.0:
+                world_loops.append((area, pts_world))
+    if not world_loops:
+        return raster_bbox_face(filled, xmin, ymin, cell, cfg)
+
+    world_loops.sort(key=lambda item: item[0], reverse=True)
+    face = Face(world_loops[0][1], 0)
+    face.confidence = 0.30
+    return face
+
+
+def raster_bbox_face(filled, xmin, ymin, cell, cfg):
+    if not filled:
+        return None
+    xs = [c[0] for c in filled]
+    ys = [c[1] for c in filled]
+    x0 = min(xs) - 1
+    x1 = max(xs) + 2
+    y0 = min(ys) - 1
+    y1 = max(ys) + 2
+    pts = [
+        (xmin + x0 * cell, ymin + y0 * cell),
+        (xmin + x1 * cell, ymin + y0 * cell),
+        (xmin + x1 * cell, ymin + y1 * cell),
+        (xmin + x0 * cell, ymin + y1 * cell),
+    ]
+    face = Face(pts, 0)
+    if face.area < float(cfg["min_area"]) * 1000000.0:
+        return None
+    face.confidence = 0.18
+    return face
+
+
+def raster_boundary_loops(filled):
+    edges = {}
+
+    def add_edge(a, b):
+        edges.setdefault(a, []).append(b)
+
+    for x, y in filled:
+        if (x, y - 1) not in filled:
+            add_edge((x, y), (x + 1, y))
+        if (x + 1, y) not in filled:
+            add_edge((x + 1, y), (x + 1, y + 1))
+        if (x, y + 1) not in filled:
+            add_edge((x + 1, y + 1), (x, y + 1))
+        if (x - 1, y) not in filled:
+            add_edge((x, y + 1), (x, y))
+
+    loops = []
+    while edges:
+        start = next(iter(edges))
+        cur = start
+        loop = []
+        for _ in range(len(filled) * 8 + 100):
+            loop.append(cur)
+            nexts = edges.get(cur)
+            if not nexts:
+                break
+            nxt = nexts.pop()
+            if not nexts:
+                edges.pop(cur, None)
+            cur = nxt
+            if cur == start:
+                break
+        if len(loop) >= 3 and cur == start:
+            loops.append(loop)
+    return loops
+
+
+def ray_segment_hit(origin, direction, seg):
+    a = seg.a
+    b = seg.b
+    s = sub(b, a)
+    den = cross(direction, s)
+    if abs(den) <= 1.0e-9:
+        return None
+    ao = sub(a, origin)
+    t = cross(ao, s) / den
+    u = cross(ao, direction) / den
+    if t <= 1.0e-6 or u < -1.0e-6 or u > 1.0 + 1.0e-6:
+        return None
+    return t, add(origin, mul(direction, t)), seg
+
+
+def radar_face_from_seed(seed, segs, cfg):
+    if not segs:
+        return None
+    n = max(36, min(720, int(cfg.get("radar_rays", 180))))
+    all_pts = []
+    for s in segs:
+        all_pts.append(s.a)
+        all_pts.append(s.b)
+    bb = bbox(all_pts + [seed])
+    max_range = max(math.hypot(bb[2] - bb[0], bb[3] - bb[1]) * 1.25, float(cfg["door_gap"]) * 3.0)
+
+    rays = []
+    for i in range(n):
+        ang = 2.0 * math.pi * float(i) / float(n)
+        d = (math.cos(ang), math.sin(ang))
+        best = None
+        for s in segs:
+            hit = ray_segment_hit(seed, d, s)
+            if hit is None:
+                continue
+            if hit[0] > max_range:
+                continue
+            if best is None or hit[0] < best[0]:
+                best = hit
+        if best is None:
+            rays.append({"valid": False, "dist": max_range, "dir": d, "point": add(seed, mul(d, max_range)), "seg": None, "spike": True, "filled": False})
+        else:
+            rays.append({"valid": True, "dist": best[0], "dir": d, "point": best[1], "seg": best[2], "spike": False, "filled": False})
+
+    if sum(1 for r in rays if r["valid"]) < max(12, n // 8):
+        return None
+
+    detect_radar_spikes(rays, cfg)
+    fill_radar_spikes(seed, rays, cfg)
+    pts = [r["point"] for r in rays if r.get("valid") and ((not r.get("spike")) or r.get("filled"))]
+    if len(pts) < 3:
+        return None
+    face = Face(pts, sum(1 for r in rays if r.get("filled")))
+    if face.area < float(cfg["min_area"]) * 1000000.0:
+        return None
+    face.confidence = max(0.22, 0.70 - min(0.40, 0.015 * face.virtuals))
+    face.radar_rays = rays
+    return face
+
+
+def detect_radar_spikes(rays, cfg):
+    n = len(rays)
+    threshold = max(float(cfg["door_gap"]) * 0.60, float(cfg["snap"]) * 10.0, 500.0)
+    outer_window = max(6, int(round(n * 18.0 / 360.0)))
+    for i, ray in enumerate(rays):
+        if not ray["valid"]:
+            ray["spike"] = True
+            continue
+        neigh = []
+        for off in (-4, -3, -2, -1, 1, 2, 3, 4):
+            r = rays[(i + off) % n]
+            if r["valid"]:
+                neigh.append(r["dist"])
+        if len(neigh) < 4:
+            continue
+        neigh.sort()
+        med = neigh[len(neigh) // 2]
+        if ray["dist"] > med + threshold and ray["dist"] > med * 1.25:
+            ray["spike"] = True
+
+    for i, ray in enumerate(rays):
+        if not ray["valid"] or ray["spike"]:
+            continue
+        left = rays[(i - outer_window) % n]
+        right = rays[(i + outer_window) % n]
+        bases = [r["dist"] for r in (left, right) if r["valid"]]
+        if not bases:
+            continue
+        base = min(bases)
+        if ray["dist"] > base + threshold and ray["dist"] > base * 1.20:
+            ray["spike"] = True
+
+
+def fill_radar_spikes(seed, rays, cfg):
+    n = len(rays)
+    max_run = max(3, int(round(n * 28.0 / 360.0)))
+    i = 0
+    visited = 0
+    while visited < n:
+        if not rays[i]["spike"]:
+            i = (i + 1) % n
+            visited += 1
+            continue
+        start = i
+        run = []
+        while rays[i]["spike"] and len(run) < n:
+            run.append(i)
+            i = (i + 1) % n
+            visited += 1
+        if len(run) > max_run:
+            continue
+        left = (start - 1) % n
+        right = i % n
+        if rays[left]["spike"] or rays[right]["spike"]:
+            continue
+        d0 = rays[left]["dist"]
+        d1 = rays[right]["dist"]
+        for pos, idx in enumerate(run):
+            t = float(pos + 1) / float(len(run) + 1)
+            d = d0 * (1.0 - t) + d1 * t
+            rays[idx]["dist"] = d
+            rays[idx]["point"] = add(seed, mul(rays[idx]["dir"], d))
+            rays[idx]["valid"] = True
+            rays[idx]["filled"] = True
+
+
+def line_from_segment(seg):
+    u = seg.dir()
+    if length(u) <= EPS:
+        return None
+    if u[0] < 0.0 or (abs(u[0]) <= EPS and u[1] < 0.0):
+        u = mul(u, -1.0)
+    n = (-u[1], u[0])
+    c = dot(seg.a, n)
+    return {"u": u, "n": n, "c": c, "angle": angle_mod_pi(u)}
+
+
+def line_intersection(l1, l2):
+    n1 = l1["n"]
+    n2 = l2["n"]
+    det = n1[0] * n2[1] - n1[1] * n2[0]
+    if abs(det) <= 1.0e-9:
+        return None
+    c1 = l1["c"]
+    c2 = l2["c"]
+    x = (c1 * n2[1] - n1[1] * c2) / det
+    y = (n1[0] * c2 - c1 * n2[0]) / det
+    return (x, y)
+
+
+def trace_face_to_walls(seed, face, cfg):
+    rays = list(getattr(face, "radar_rays", []) or [])
+    if len(face.points) < 3 or not rays:
+        return None
+
+    support_tol = max(float(cfg["snap"]) * 6.0, 150.0)
+    angle_tol = math.radians(5.0)
+    clusters = []
+    seen = set()
+
+    for ray in rays:
+        if not ray.get("valid") or ray.get("spike") or ray.get("filled"):
+            continue
+        seg = ray.get("seg")
+        if seg is None or getattr(seg, "kind", "real") != "real" or seg.len() <= max(float(cfg["min_wall"]) * 0.5, 100.0):
+            continue
+        sid = id(seg)
+        if sid in seen:
+            continue
+        seen.add(sid)
+        line = line_from_segment(seg)
+        if line is None:
+            continue
+        placed = False
+        for cl in clusters:
+            if angle_diff_pi(line["angle"], cl["angle"]) <= angle_tol and abs(line["c"] - cl["c"]) <= support_tol:
+                w0 = cl["weight"]
+                w1 = max(seg.len(), 1.0)
+                total = w0 + w1
+                cl["c"] = (cl["c"] * w0 + line["c"] * w1) / total
+                cl["weight"] = total
+                cl["hits"] += 1
+                cl["segments"].append(seg)
+                placed = True
+                break
+        if not placed:
+            line["weight"] = max(seg.len(), 1.0)
+            line["hits"] = 1
+            line["segments"] = [seg]
+            clusters.append(line)
+
+    if len(clusters) < 3:
+        return None
+
+    trace_tol = max(float(cfg["door_gap"]) * 0.35, float(cfg["snap"]) * 12.0, 350.0)
+    edge_lines = []
+    pts = face.points
+    for i, a in enumerate(pts):
+        b = pts[(i + 1) % len(pts)]
+        e = sub(b, a)
+        if length(e) <= max(float(cfg["snap"]), 10.0):
+            continue
+        eu = unit(e)
+        ea = angle_mod_pi(eu)
+        mid = mul(add(a, b), 0.5)
+        best = None
+        for idx, cl in enumerate(clusters):
+            ad = angle_diff_pi(ea, cl["angle"])
+            if ad > math.radians(12.0):
+                continue
+            ld = abs(dot(mid, cl["n"]) - cl["c"])
+            if ld > trace_tol:
+                continue
+            score = ld + ad * 1000.0 - cl["hits"] * 15.0
+            if best is None or score < best[0]:
+                best = (score, idx)
+        if best is not None:
+            edge_lines.append(best[1])
+
+    line_ids = []
+    for idx in edge_lines:
+        if not line_ids or line_ids[-1] != idx:
+            line_ids.append(idx)
+    if len(line_ids) > 1 and line_ids[0] == line_ids[-1]:
+        line_ids.pop()
+    if len(set(line_ids)) < 3:
+        return None
+
+    vertices = []
+    for i, idx1 in enumerate(line_ids):
+        idx2 = line_ids[(i + 1) % len(line_ids)]
+        if idx1 == idx2:
+            continue
+        p = line_intersection(clusters[idx1], clusters[idx2])
+        if p is None:
+            continue
+        if not bbox_has(face.bbox, p, trace_tol * 2.0):
+            continue
+        vertices.append(p)
+
+    vertices = simplify(vertices, max(float(cfg["snap"]) * 2.0, 20.0))
+    if len(vertices) < 3:
+        return None
+    traced = Face(vertices, face.virtuals)
+    if traced.area < float(cfg["min_area"]) * 1000000.0:
+        return None
+    ratio = traced.area / max(face.area, 1.0)
+    if ratio < 0.35 or ratio > 2.50:
+        return None
+    if not point_in_poly(seed, traced.points, max(float(cfg["snap"]) * 2.0, 50.0)):
+        return None
+    traced.confidence = min(0.92, max(face.confidence + 0.18, 0.62))
+    traced.traced_from_walls = True
+    return traced
+
+
+def dominant_rect_angle(points):
+    clusters = []
+    tol = math.radians(10.0)
+    for i, a in enumerate(points):
+        b = points[(i + 1) % len(points)]
+        e = sub(b, a)
+        w = length(e)
+        if w <= EPS:
+            continue
+        ang = angle_mod_pi(unit(e))
+        placed = False
+        for cl in clusters:
+            if angle_diff_pi(ang, cl["angle"]) <= tol:
+                cl["items"].append((ang, w))
+                cl["weight"] += w
+                sx = sum(math.cos(2.0 * x) * wt for x, wt in cl["items"])
+                sy = sum(math.sin(2.0 * x) * wt for x, wt in cl["items"])
+                new_ang = 0.5 * math.atan2(sy, sx)
+                if new_ang < 0.0:
+                    new_ang += math.pi
+                cl["angle"] = new_ang
+                placed = True
+                break
+        if not placed:
+            clusters.append({"angle": ang, "weight": w, "items": [(ang, w)]})
+    if not clusters:
+        return 0.0
+    clusters.sort(key=lambda cl: cl["weight"], reverse=True)
+    return clusters[0]["angle"]
+
+
+def rectangle_face_from_face(face, cfg):
+    pts = list(face.points)
+    if len(pts) < 3:
+        return None
+    angle = dominant_rect_angle(pts)
+    axis = (math.cos(angle), math.sin(angle))
+    perp = (-axis[1], axis[0])
+    xs = [dot(p, axis) for p in pts]
+    ys = [dot(p, perp) for p in pts]
+    x0, x1 = min(xs), max(xs)
+    y0, y1 = min(ys), max(ys)
+    width = x1 - x0
+    height = y1 - y0
+    if width <= max(float(cfg["snap"]), 1.0) or height <= max(float(cfg["snap"]), 1.0):
+        return None
+    rect_pts = [
+        add(mul(axis, x0), mul(perp, y0)),
+        add(mul(axis, x1), mul(perp, y0)),
+        add(mul(axis, x1), mul(perp, y1)),
+        add(mul(axis, x0), mul(perp, y1)),
+    ]
+    rect = Face(rect_pts, face.virtuals)
+    if rect.area < float(cfg["min_area"]) * 1000000.0:
+        return None
+    rect.confidence = min(face.confidence, 0.90)
+    rect.rect_origin = rect_pts[0]
+    rect.rect_width = width
+    rect.rect_height = height
+    rect.rect_angle = math.degrees(angle)
+    return rect
+
+
+def rect_ray_segments(face, cfg):
+    rays = list(getattr(face, "radar_rays", []) or [])
+    picked = {}
+    for ray in rays:
+        if not ray.get("valid") or ray.get("spike") or ray.get("filled"):
+            continue
+        seg = ray.get("seg")
+        if seg is None or getattr(seg, "kind", "real") != "real":
+            continue
+        if seg.len() <= max(float(cfg["min_wall"]) * 0.5, 100.0):
+            continue
+        key = id(seg)
+        if key not in picked:
+            picked[key] = {"seg": seg, "hits": 0}
+        picked[key]["hits"] += 1
+    return list(picked.values())
+
+
+def rect_fallback_segments_near_face(seed, face, segs, cfg):
+    if face is None or not segs:
+        return []
+    margin = max(float(cfg["door_gap"]) * 1.25, float(cfg["snap"]) * 20.0, 600.0)
+    bb = face.bbox
+    out = []
+    for seg in segs:
+        if getattr(seg, "kind", "real") != "real" or seg.len() <= max(float(cfg["min_wall"]) * 0.5, 100.0):
+            continue
+        sbb = bbox([seg.a, seg.b])
+        if sbb[2] < bb[0] - margin or sbb[0] > bb[2] + margin or sbb[3] < bb[1] - margin or sbb[1] > bb[3] + margin:
+            continue
+        out.append({"seg": seg, "hits": 1})
+    return out
+
+
+def rect_direction_clusters(items, cfg):
+    angle_tol = math.radians(8.0)
+    clusters = []
+    for item in items:
+        seg = item["seg"]
+        line = line_from_segment(seg)
+        if line is None:
+            continue
+        hits = max(int(item.get("hits", 1)), 1)
+        weight = float(hits) * max(seg.len(), 1.0)
+        placed = False
+        for cl in clusters:
+            if angle_diff_pi(line["angle"], cl["seed_angle"]) <= angle_tol:
+                cl["items"].append((seg, line["angle"], weight, hits))
+                cl["hits"] += hits
+                placed = True
+                break
+        if not placed:
+            clusters.append({"seed_angle": line["angle"], "items": [(seg, line["angle"], weight, hits)], "hits": hits})
+
+    out = []
+    for cl in clusters:
+        sx = sum(math.cos(2.0 * ang) * weight for _seg, ang, weight, _hits in cl["items"])
+        sy = sum(math.sin(2.0 * ang) * weight for _seg, ang, weight, _hits in cl["items"])
+        angle = 0.5 * math.atan2(sy, sx)
+        if angle < 0.0:
+            angle += math.pi
+        u = (math.cos(angle), math.sin(angle))
+        n = (-u[1], u[0])
+        cs = []
+        support = 0.0
+        for seg, _ang, weight, hits in cl["items"]:
+            c = dot(seg.a, n)
+            cs.append({"c": c, "seg": seg, "weight": weight, "hits": hits})
+            support += weight
+        out.append({"angle": angle, "u": u, "n": n, "cs": cs, "support": support, "hits": cl["hits"]})
+    out.sort(key=lambda cl: (cl["hits"], cl["support"]), reverse=True)
+    return out
+
+
+def rect_cluster_boundaries(cluster, seed, cfg):
+    cseed = dot(seed, cluster["n"])
+    min_sep = max(float(cfg["snap"]) * 2.0, 30.0)
+    lower = [item["c"] for item in cluster["cs"] if item["c"] < cseed - min_sep]
+    upper = [item["c"] for item in cluster["cs"] if item["c"] > cseed + min_sep]
+    if lower and upper:
+        c0 = max(lower)
+        c1 = min(upper)
+    else:
+        vals = [item["c"] for item in cluster["cs"]]
+        if len(vals) < 2:
+            return None
+        c0 = min(vals)
+        c1 = max(vals)
+        if not (c0 < cseed < c1):
+            return None
+    if c1 - c0 < 450.0:
+        return None
+    return (c0, c1)
+
+
+def intersect_support_normals(n1, c1, n2, c2):
+    det = n1[0] * n2[1] - n1[1] * n2[0]
+    if abs(det) <= 1.0e-9:
+        return None
+    x = (c1 * n2[1] - n1[1] * c2) / det
+    y = (n1[0] * c2 - c1 * n2[0]) / det
+    return (x, y)
+
+
+def order_rect_vertices(points):
+    center = (sum(p[0] for p in points) / float(len(points)), sum(p[1] for p in points) / float(len(points)))
+    pts = sorted(points, key=lambda p: math.atan2(p[1] - center[1], p[0] - center[0]))
+    if polygon_area(pts) < 0:
+        pts.reverse()
+    return pts
+
+
+def rectangle_face_from_boundary_lines(seed, face, segs, cfg):
+    items = rect_ray_segments(face, cfg)
+    source = "rayos"
+    if len(items) < 2:
+        items = rect_fallback_segments_near_face(seed, face, segs, cfg)
+        source = "red"
+    clusters = rect_direction_clusters(items, cfg)
+    usable = []
+    for cl in clusters:
+        bounds = rect_cluster_boundaries(cl, seed, cfg)
+        if bounds is not None:
+            cl["bounds"] = bounds
+            usable.append(cl)
+
+    best = None
+    for i, c1 in enumerate(usable):
+        for c2 in usable[i + 1:]:
+            diff = angle_diff_pi(c1["angle"], c2["angle"])
+            if diff < math.radians(35.0) or diff > math.radians(145.0):
+                continue
+            score = c1["hits"] + c2["hits"] - abs(diff - math.pi * 0.5) * 8.0
+            if best is None or score > best[0]:
+                best = (score, c1, c2, diff)
+    if best is None:
+        log("Rectangulo: no hay dos familias de limites alrededor del click (fuente {}).".format(source))
+        return None
+
+    _score, c1, c2, diff = best
+    a0, a1 = c1["bounds"]
+    b0, b1 = c2["bounds"]
+    pts = [
+        intersect_support_normals(c1["n"], a0, c2["n"], b0),
+        intersect_support_normals(c1["n"], a1, c2["n"], b0),
+        intersect_support_normals(c1["n"], a1, c2["n"], b1),
+        intersect_support_normals(c1["n"], a0, c2["n"], b1),
+    ]
+    if any(p is None for p in pts):
+        return None
+    pts = order_rect_vertices(pts)
+    if not point_in_poly(seed, pts, max(float(cfg["snap"]) * 2.0, 50.0)):
+        log("Rectangulo: limites calculados no contienen el click.")
+        return None
+    rect = Face(pts, 0)
+    if rect.area < float(cfg["min_area"]) * 1000000.0:
+        return None
+    if face is not None and face.area > EPS:
+        ratio = rect.area / max(face.area, 1.0)
+        if ratio > 4.0:
+            log("Rectangulo: descartado por area excesiva respecto al recinto detectado ({:.2f}x).".format(ratio))
+            return None
+    rect.confidence = 0.88
+    rect.rect_origin = pts[0]
+    rect.rect_width = dist(pts[0], pts[1])
+    rect.rect_height = dist(pts[1], pts[2])
+    rect.rect_angle = math.degrees(math.atan2(pts[1][1] - pts[0][1], pts[1][0] - pts[0][0]))
+    log("Rectangulo por limites: fuente={}, segmentos={}, familias={}, angulo={:.1f}, {:.2f} m2.".format(source, len(items), len(usable), math.degrees(diff), rect.area / 1000000.0))
+    return rect
+
+
+def create_area(doc, face, seed, label_, dest_group):
+    pts = list(face.points)
+    if polygon_area(pts) < 0:
+        pts.reverse()
+    vpts = [vec(p) for p in pts] + [vec(pts[0])]
+    doc.openTransaction("ElectricCR: crear area por click")
+    try:
+        try:
+            obj = Draft.makeWire(vpts, closed=True, face=True)
+        except TypeError:
+            obj = Draft.makeWire(vpts, closed=True)
+        obj.Label = label_
+        try:
+            if hasattr(obj, "MakeFace"):
+                obj.MakeFace = True
+        except Exception:
+            pass
+        add_prop(obj, "App::PropertyString", "ElectricCRTipo", "ElectricCR", "Tipo logico")
+        add_prop(obj, "App::PropertyString", "GeneratedBy", "ElectricCR", "Macro generadora")
+        add_prop(obj, "App::PropertyFloat", "AreaM2", "ElectricCR", "Area en m2")
+        add_prop(obj, "App::PropertyInteger", "VirtualClosures", "ElectricCR", "Cierres virtuales")
+        add_prop(obj, "App::PropertyFloat", "Confidence", "ElectricCR", "Confianza")
+        try:
+            obj.ElectricCRTipo = "Area"
+            obj.GeneratedBy = MACRO
+            obj.AreaM2 = face.area / 1000000.0
+            obj.VirtualClosures = face.virtuals
+            obj.Confidence = face.confidence
+        except Exception:
+            pass
+        try:
+            dest_group.addObject(obj)
+        except Exception:
+            pass
+        try:
+            obj.ViewObject.LineColor = (0.0, 0.55, 0.20)
+            obj.ViewObject.ShapeColor = (0.25, 0.85, 0.35)
+            obj.ViewObject.Transparency = 75
+        except Exception:
+            pass
+        doc.commitTransaction()
+        return obj
+    except Exception:
+        try:
+            doc.abortTransaction()
+        except Exception:
+            pass
+        raise
+
+
+def create_rectangle_area(doc, face, seed, label_, dest_group):
+    pts = list(face.points)
+    if polygon_area(pts) < 0:
+        pts.reverse()
+    vpts = [vec(p) for p in pts] + [vec(pts[0])]
+    doc.openTransaction("ElectricCR: crear rectangulo por click")
+    try:
+        obj = None
+        try:
+            origin = getattr(face, "rect_origin", pts[0])
+            width = float(getattr(face, "rect_width", dist(pts[0], pts[1])))
+            height = float(getattr(face, "rect_height", dist(pts[1], pts[2])))
+            angle = float(getattr(face, "rect_angle", 0.0))
+            placement = App.Placement(vec(origin), App.Rotation(App.Vector(0, 0, 1), angle))
+            obj = Draft.makeRectangle(width, height, placement)
+            if obj is None:
+                raise RuntimeError("Draft.makeRectangle no devolvio objeto")
+        except Exception:
+            try:
+                obj = Draft.makeWire(vpts, closed=True, face=True)
+            except TypeError:
+                obj = Draft.makeWire(vpts, closed=True)
+        obj.Label = label_
+        try:
+            if hasattr(obj, "MakeFace"):
+                obj.MakeFace = True
+        except Exception:
+            pass
+        add_prop(obj, "App::PropertyString", "ElectricCRTipo", "ElectricCR", "Tipo logico")
+        add_prop(obj, "App::PropertyString", "GeneratedBy", "ElectricCR", "Macro generadora")
+        add_prop(obj, "App::PropertyFloat", "AreaM2", "ElectricCR", "Area en m2")
+        add_prop(obj, "App::PropertyInteger", "VirtualClosures", "ElectricCR", "Cierres virtuales")
+        add_prop(obj, "App::PropertyFloat", "Confidence", "ElectricCR", "Confianza")
+        try:
+            obj.ElectricCRTipo = "Area"
+            obj.GeneratedBy = MACRO
+            obj.AreaM2 = face.area / 1000000.0
+            obj.VirtualClosures = face.virtuals
+            obj.Confidence = face.confidence
+        except Exception:
+            pass
+        try:
+            dest_group.addObject(obj)
+        except Exception:
+            pass
+        try:
+            obj.ViewObject.LineColor = (0.0, 0.55, 0.20)
+            obj.ViewObject.ShapeColor = (0.25, 0.85, 0.35)
+            obj.ViewObject.Transparency = 75
+        except Exception:
+            pass
+        doc.commitTransaction()
+        return obj
+    except Exception:
+        try:
+            doc.abortTransaction()
+        except Exception:
+            pass
+        raise
+
+
+class Dock(QtWidgets.QDockWidget if QtWidgets else object):
+    def closeEvent(self, ev):
+        panel = getattr(self, "_panel", None)
+        if panel:
+            panel.stop()
+            panel.save()
+        try:
+            super(Dock, self).closeEvent(ev)
+        except Exception:
+            pass
+
+
+class Panel(QtWidgets.QWidget if QtWidgets else object):
+    def __init__(self, dock):
+        super(Panel, self).__init__()
+        self.dock = dock
+        self.faces = []
+        self.segs = []
+        self.base_segs = []
+        self.generated = []
+        self.active = False
+        self.capture_mode = "area"
+        self.snapper_busy = False
+        self.build_ui()
+        self.refresh_groups()
+        self.load()
+
+    def build_ui(self):
+        lay = QtWidgets.QVBoxLayout(self)
+        self.status = QtWidgets.QLabel("Reconstruya la red y luego inicie clicks.")
+        self.status.setWordWrap(True)
+        lay.addWidget(self.status)
+
+        form = QtWidgets.QFormLayout()
+        try:
+            form.setFieldGrowthPolicy(QtWidgets.QFormLayout.AllNonFixedFieldsGrow)
+        except Exception:
+            pass
+        self.scope = QtWidgets.QComboBox()
+        self.scope.addItem("Auto", "auto")
+        self.scope.addItem("Seleccion", "selection")
+        self.scope.addItem("Visible", "visible")
+        self.scope.addItem("Grupo", "group")
+        self.source = QtWidgets.QComboBox()
+        self.dest = QtWidgets.QComboBox()
+        self.prefix = QtWidgets.QLineEdit("Area")
+        self.counter = QtWidgets.QSpinBox()
+        self.counter.setRange(1, 999999)
+        form.addRow("Origen:", self.scope)
+        form.addRow("Grupo fuente:", self.source)
+        form.addRow("Destino:", self.dest)
+        form.addRow("Prefijo:", self.prefix)
+        form.addRow("Contador:", self.counter)
+        lay.addLayout(form)
+
+        tol = QtWidgets.QFormLayout()
+        self.snap = self.spin(0.5, 1000, 20, " mm")
+        self.door = self.spin(0, 3000, 1100, " mm")
+        self.min_wall = self.spin(1, 5000, 200, " mm")
+        self.min_area = self.spin(0.001, 1000, 0.25, " m2", 3)
+        self.radar_rays = self.spin(36, 720, 180, "", 0)
+        tol.addRow("Snap:", self.snap)
+        tol.addRow("Buque:", self.door)
+        tol.addRow("Muro minimo:", self.min_wall)
+        tol.addRow("Area minima:", self.min_area)
+        tol.addRow("Rayos:", self.radar_rays)
+        lay.addLayout(tol)
+
+        row = QtWidgets.QHBoxLayout()
+        self.rebuild = QtWidgets.QPushButton("Reconstruir")
+        self.capture = QtWidgets.QPushButton("Iniciar clicks")
+        self.capture_rect = QtWidgets.QPushButton("Iniciar rectangulos")
+        row.addWidget(self.rebuild)
+        row.addWidget(self.capture)
+        row.addWidget(self.capture_rect)
+        lay.addLayout(row)
+
+        row2 = QtWidgets.QHBoxLayout()
+        self.refresh = QtWidgets.QPushButton("Actualizar grupos")
+        self.undo = QtWidgets.QPushButton("Deshacer ultimo")
+        self.close_btn = QtWidgets.QPushButton("Cerrar")
+        row2.addWidget(self.refresh)
+        row2.addWidget(self.undo)
+        row2.addWidget(self.close_btn)
+        lay.addLayout(row2)
+
+        debug_row = QtWidgets.QHBoxLayout()
+        self.debug = QtWidgets.QCheckBox("Debug visual")
+        self.radar = QtWidgets.QCheckBox("Radar por click")
+        self.trace = QtWidgets.QCheckBox("Calcar muros")
+        self.clear_dbg = QtWidgets.QPushButton("Limpiar debug")
+        debug_row.addWidget(self.debug)
+        debug_row.addWidget(self.radar)
+        debug_row.addWidget(self.trace)
+        debug_row.addWidget(self.clear_dbg)
+        lay.addLayout(debug_row)
+
+        self.table = QtWidgets.QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(["Area", "m2", "Virtual", "Conf"])
+        try:
+            self.table.horizontalHeader().setStretchLastSection(True)
+            self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        except Exception:
+            pass
+        lay.addWidget(self.table, 1)
+
+        self.refresh.clicked.connect(self.refresh_groups)
+        self.rebuild.clicked.connect(self.rebuild_faces)
+        self.capture.clicked.connect(self.toggle)
+        self.capture_rect.clicked.connect(self.toggle_rect)
+        self.undo.clicked.connect(self.undo_last)
+        self.close_btn.clicked.connect(self.close_panel)
+        self.clear_dbg.clicked.connect(lambda: clear_debug(App.ActiveDocument) if App.ActiveDocument else None)
+
+    def spin(self, lo, hi, val, suffix, decimals=1):
+        sp = QtWidgets.QDoubleSpinBox()
+        sp.setRange(float(lo), float(hi))
+        sp.setDecimals(decimals)
+        sp.setValue(float(val))
+        sp.setSuffix(suffix)
+        return sp
+
+    def cfg(self):
+        return {
+            "snap": float(self.snap.value()),
+            "door_gap": float(self.door.value()),
+            "min_wall": float(self.min_wall.value()),
+            "min_area": float(self.min_area.value()),
+            "radar_rays": float(self.radar_rays.value()),
+        }
+
+    def load(self):
+        self.snap.setValue(pf("snap", 20.0))
+        self.door.setValue(pf("door", 1100.0))
+        self.min_wall.setValue(pf("min_wall", 200.0))
+        self.min_area.setValue(pf("min_area", 0.25))
+        self.radar_rays.setValue(pf("radar_rays", 180.0))
+        self.prefix.setText(pstr("prefix", "Area"))
+        self.counter.setValue(pi("counter", 1))
+        self.debug.setChecked(pbool("debug", False))
+        self.radar.setChecked(pbool("radar", True))
+        self.trace.setChecked(pbool("trace", True))
+        self.select_data(self.scope, pstr("scope", "auto"))
+        self.select_data(self.source, pstr("source", "__DOC__"))
+        self.select_data(self.dest, pstr("dest", "__AREAS__"))
+
+    def save(self):
+        pstrs("scope", self.scope.currentData())
+        pstrs("source", self.source.currentData())
+        pstrs("dest", self.dest.currentData())
+        pstrs("prefix", self.prefix.text())
+        pis("counter", int(self.counter.value()))
+        ps("snap", self.snap.value())
+        ps("door", self.door.value())
+        ps("min_wall", self.min_wall.value())
+        ps("min_area", self.min_area.value())
+        ps("radar_rays", self.radar_rays.value())
+        pbools("debug", bool(self.debug.isChecked()))
+        pbools("radar", bool(self.radar.isChecked()))
+        pbools("trace", bool(self.trace.isChecked()))
+        try:
+            pbools("floating", bool(self.dock.isFloating()))
+        except Exception:
+            pass
+
+    def select_data(self, combo, data):
+        data = str(data or "")
+        for i in range(combo.count()):
+            if str(combo.itemData(i) or "") == data:
+                combo.setCurrentIndex(i)
+                return
+
+    def refresh_groups(self):
+        doc = App.ActiveDocument
+        s_old = self.source.currentData() if self.source.count() else "__DOC__"
+        d_old = self.dest.currentData() if self.dest.count() else "__AREAS__"
+        self.source.clear()
+        self.source.addItem("Documento", "__DOC__")
+        self.dest.clear()
+        self.dest.addItem("Crear/usar Areas", "__AREAS__")
+        if doc:
+            for g in groups(doc):
+                self.source.addItem(label(g), name(g))
+                if any(t in label(g).lower() for t in ("area", "recinto", "espacio", "zona")):
+                    self.dest.addItem(label(g), name(g))
+        self.select_data(self.source, s_old)
+        self.select_data(self.dest, d_old)
+
+    def dest_group(self):
+        doc = App.ActiveDocument
+        data = str(self.dest.currentData() or "__AREAS__")
+        if data == "__AREAS__":
+            return ensure_group(doc, "Areas")
+        return doc.getObject(data) or ensure_group(doc, "Areas")
+
+    def source_objects(self):
+        doc = App.ActiveDocument
+        scope = str(self.scope.currentData() or "auto")
+        sel = flattened_selection()
+        if scope == "selection":
+            return sel, True
+        if scope == "group":
+            data = str(self.source.currentData() or "__DOC__")
+            if data != "__DOC__":
+                g = doc.getObject(data)
+                out = []
+                flatten(g, out, set())
+                return out, False
+        out = visible_shape_objects(doc)
+        if scope == "auto" and sel:
+            seen = set(name(o) for o in out)
+            for obj in sel:
+                nm = name(obj)
+                if nm not in seen:
+                    out.append(obj)
+                    seen.add(nm)
+        return out, False
+
+    def rebuild_faces(self):
+        doc = App.ActiveDocument
+        if not doc:
+            err("No hay documento activo.")
+            return
+        self.save()
+        objs, explicit = self.source_objects()
+        dest = self.dest_group()
+        self.status.setText("Reconstruyendo desde {} objetos...".format(len(objs)))
+        try:
+            self.faces, self.segs, self.base_segs, raw, clean, ignored = solve_faces(objs, self.cfg(), explicit, dest)
+        except Exception as ex:
+            self.faces = []
+            self.segs = []
+            self.base_segs = []
+            err("Error reconstruyendo red: {}".format(ex))
+            return
+        if self.debug.isChecked():
+            draw_debug(doc, self.segs, self.faces)
+        virtuals = sum(1 for s in self.segs if s.kind == "virtual")
+        msg = "Red lista: {} segmentos, {} red, {} virtuales, {} recintos candidatos, {} ignorados.".format(raw, clean, virtuals, len(self.faces), ignored)
+        self.status.setText(msg)
+        log(msg)
+
+    def toggle(self):
+        if self.active and self.capture_mode == "area":
+            self.stop()
+        else:
+            if self.active:
+                self.stop()
+            self.start("area")
+
+    def toggle_rect(self):
+        if self.active and self.capture_mode == "rect":
+            self.stop()
+        else:
+            if self.active:
+                self.stop()
+            self.start("rect")
+
+    def start(self, mode="area"):
+        if not self.faces and not self.segs:
+            self.rebuild_faces()
+        can_radar = (self.radar.isChecked() or mode == "rect") and bool(self.segs or self.base_segs)
+        if not self.faces and not can_radar:
+            warn("No hay recintos candidatos ni red para radar.")
+            return
+        self.active = True
+        self.capture_mode = mode
+        if mode == "rect":
+            self.capture.setText("Iniciar clicks")
+            self.capture_rect.setText("Detener rectangulos")
+        else:
+            self.capture.setText("Detener clicks")
+            self.capture_rect.setText("Iniciar rectangulos")
+        self.arm()
+
+    def stop(self):
+        self.active = False
+        self.snapper_busy = False
+        try:
+            self.capture.setText("Iniciar clicks")
+            self.capture_rect.setText("Iniciar rectangulos")
+        except Exception:
+            pass
+        log("Captura detenida.")
+
+    def close_panel(self):
+        self.stop()
+        self.save()
+        try:
+            self.dock.close()
+        except Exception:
+            pass
+
+    def arm(self):
+        if not self.active or self.snapper_busy:
+            return
+        try:
+            self.snapper_busy = True
+            title = "Click dentro de un recinto"
+            if self.capture_mode == "rect":
+                title = "Click dentro de un recinto para rectangulo"
+            Gui.Snapper.getPoint(callback=self.clicked, title=title)
+            if self.capture_mode == "rect":
+                log("Captura de rectangulos activa. Haga click dentro de cada recinto.")
+            else:
+                log("Captura activa. Haga click dentro de cada recinto.")
+        except Exception as ex:
+            self.snapper_busy = False
+            self.active = False
+            err("No se pudo iniciar Snapper: {}".format(ex))
+
+    def clicked(self, point=None, *args):
+        self.snapper_busy = False
+        if not self.active:
+            return
+        if point is None:
+            self.stop()
+            return
+        seed = xy(point)
+        tol = max(self.cfg()["snap"] * 0.25, 1.0)
+        hits = [f for f in self.faces if bbox_has(f.bbox, seed, tol) and point_in_poly(seed, f.points, tol)]
+        used_radar = False
+        used_trace = False
+        radar_face = None
+        face = None
+
+        if self.radar.isChecked() or self.capture_mode == "rect":
+            radar_face = radar_face_from_seed(seed, self.segs or self.base_segs, self.cfg())
+            face = radar_face
+            used_radar = radar_face is not None
+            if face is not None and self.trace.isChecked() and self.capture_mode != "rect":
+                traced = trace_face_to_walls(seed, face, self.cfg())
+                if traced is not None:
+                    face = traced
+                    used_trace = True
+
+        if face is None and hits:
+            hits.sort(key=lambda f: (f.area, f.virtuals))
+            face = hits[0]
+
+        used_rect = False
+        if self.capture_mode == "rect":
+            rect_face = rectangle_face_from_boundary_lines(seed, radar_face or face, self.segs or self.base_segs, self.cfg())
+            if rect_face is None:
+                log("No se pudo calcular rectangulo por limites para el click ({:.1f}, {:.1f}).".format(seed[0], seed[1]))
+                face = None
+            else:
+                face = rect_face
+                used_rect = True
+
+        if face:
+            label_ = self.next_label()
+            try:
+                if used_rect:
+                    obj = create_rectangle_area(App.ActiveDocument, face, seed, label_, self.dest_group())
+                else:
+                    obj = create_area(App.ActiveDocument, face, seed, label_, self.dest_group())
+                self.generated.append(obj)
+                App.ActiveDocument.recompute()
+                self.counter.setValue(int(self.counter.value()) + 1)
+                self.save()
+                self.add_row(label_, face)
+                src = " radar+calco" if used_trace else (" radar" if used_radar else "")
+                if used_rect:
+                    src = " rectangulo" + src
+                log("Creada{} {}: {:.2f} m2, lados={}, virtual={}.".format(src, label_, face.area / 1000000.0, len(face.points), face.virtuals))
+            except Exception as ex:
+                err("No se pudo crear area: {}".format(ex))
+        else:
+            log("No se encontro recinto cerrado para el click ({:.1f}, {:.1f}).".format(seed[0], seed[1]))
+            if self.debug.isChecked():
+                mark_debug_click(App.ActiveDocument, seed)
+        if self.active and QtCore:
+            QtCore.QTimer.singleShot(0, self.arm)
+
+    def next_label(self):
+        prefix = str(self.prefix.text() or "Area").strip() or "Area"
+        idx = int(self.counter.value())
+        existing = set(label(o) for o in App.ActiveDocument.Objects)
+        while True:
+            candidate = "{}_{:03d}".format(prefix, idx)
+            if candidate not in existing:
+                return candidate
+            idx += 1
+
+    def add_row(self, label_, face):
+        row = self.table.rowCount()
+        self.table.insertRow(row)
+        vals = [label_, "{:.2f}".format(face.area / 1000000.0), str(face.virtuals), "{:.2f}".format(face.confidence)]
+        for col, val in enumerate(vals):
+            self.table.setItem(row, col, QtWidgets.QTableWidgetItem(val))
+
+    def undo_last(self):
+        doc = App.ActiveDocument
+        if not doc or not self.generated:
+            return
+        obj = self.generated.pop()
+        doc.openTransaction("ElectricCR: borrar ultima area por click")
+        try:
+            doc.removeObject(obj.Name)
+            doc.commitTransaction()
+            doc.recompute()
+            log("Eliminada la ultima area.")
+        except Exception:
+            try:
+                doc.abortTransaction()
+            except Exception:
+                pass
+
+
+def show_panel():
+    if QtWidgets is None or QtCore is None:
+        err("Qt/PySide no esta disponible.")
+        return
+    if App.ActiveDocument is None:
+        err("Abra un documento activo.")
+        return
+    parent = Gui.getMainWindow()
+    if parent is None:
+        err("No se encontro ventana principal.")
+        return
+    try:
+        old = parent.findChild(QtWidgets.QDockWidget, DOCK_NAME)
+        if old:
+            old.close()
+            old.deleteLater()
+    except Exception:
+        pass
+    dock = Dock(TITLE, parent)
+    dock.setObjectName(DOCK_NAME)
+    dock.setMinimumWidth(340)
+    try:
+        dock.setAllowedAreas(
+            QtCore.Qt.LeftDockWidgetArea
+            | QtCore.Qt.RightDockWidgetArea
+            | QtCore.Qt.TopDockWidgetArea
+            | QtCore.Qt.BottomDockWidgetArea
+        )
+        dock.setFeatures(
+            QtWidgets.QDockWidget.DockWidgetClosable
+            | QtWidgets.QDockWidget.DockWidgetMovable
+            | QtWidgets.QDockWidget.DockWidgetFloatable
+        )
+        dock.setFloating(pbool("floating", False))
+    except Exception:
+        pass
+    panel = Panel(dock)
+    dock._panel = panel
+    dock.setWidget(panel)
+    parent.addDockWidget(QtCore.Qt.RightDockWidgetArea, dock)
+    parent._ElectricCR_AreaPorClick_panel = panel
+    dock.show()
+
+
+if __name__ == "__main__":
+    show_panel()

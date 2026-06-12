@@ -1,5 +1,75 @@
 """HVAC evaporator equipment object."""
 
+# Qt compatibility for FreeCAD 1.x (PySide6) and older builds.
+def _ensure_qt_compat():
+    import sys
+    import types
+
+    QtCore = QtGui = QtWidgets = None
+    binding_name = None
+
+    for candidate in ("PySide6", "PySide2", "PySide"):
+        try:
+            if candidate == "PySide":
+                from PySide import QtCore as _QtCore, QtGui as _QtGui
+                _QtWidgets = _QtGui
+            else:
+                module = __import__(candidate, fromlist=["QtCore", "QtGui", "QtWidgets"])
+                _QtCore = module.QtCore
+                _QtGui = module.QtGui
+                _QtWidgets = module.QtWidgets
+            QtCore, QtGui, QtWidgets = _QtCore, _QtGui, _QtWidgets
+            binding_name = candidate
+            break
+        except Exception:
+            continue
+
+    if QtCore is None:
+        return
+
+    qtgui_compat = types.ModuleType("QtGui")
+    qtgui_compat.__dict__.update(getattr(QtGui, "__dict__", {}))
+    qtgui_compat.__dict__.update(getattr(QtWidgets, "__dict__", {}))
+
+    qtsvg_compat = None
+    for module_name in ("QtSvg", "QtSvgWidgets"):
+        try:
+            module = __import__(binding_name, fromlist=[module_name])
+            qt_module = getattr(module, module_name)
+        except Exception:
+            continue
+        if qtsvg_compat is None:
+            qtsvg_compat = types.ModuleType("QtSvg")
+        qtsvg_compat.__dict__.update(getattr(qt_module, "__dict__", {}))
+
+    qtuitools_compat = None
+    try:
+        module = __import__(binding_name, fromlist=["QtUiTools"])
+        qtuitools_compat = module.QtUiTools
+    except Exception:
+        pass
+
+    for package_name in ("PySide2", "PySide"):
+        package = sys.modules.get(package_name)
+        if package is None:
+            package = types.ModuleType(package_name)
+            sys.modules[package_name] = package
+        package.QtCore = QtCore
+        package.QtGui = qtgui_compat
+        package.QtWidgets = QtWidgets
+        sys.modules[package_name + ".QtCore"] = QtCore
+        sys.modules[package_name + ".QtGui"] = qtgui_compat
+        sys.modules[package_name + ".QtWidgets"] = QtWidgets
+        if qtsvg_compat is not None:
+            package.QtSvg = qtsvg_compat
+            sys.modules[package_name + ".QtSvg"] = qtsvg_compat
+        if qtuitools_compat is not None:
+            package.QtUiTools = qtuitools_compat
+            sys.modules[package_name + ".QtUiTools"] = qtuitools_compat
+
+
+_ensure_qt_compat()
+
 import os
 import re
 import unicodedata
@@ -1819,6 +1889,72 @@ def _space_center_point(space_obj):
         return None
 
 
+def _fallback_space_for_insert(doc=None):
+    """Pick a deterministic visible HVAC space when insertion has no selection."""
+    if doc is None:
+        doc = App.ActiveDocument
+    if doc is None:
+        return None
+    spaces = list(hvac_space.find_spaces(doc) or [])
+    rows = []
+    for space_obj in spaces:
+        center = _space_center_point(space_obj)
+        if center is None:
+            continue
+        area = _to_float(getattr(space_obj, "Area", 0.0), 0.0)
+        if area <= 0.0:
+            try:
+                area = _to_float(hvac_space.detect_area_from_base(getattr(space_obj, "BaseSpace", None)), 0.0)
+            except Exception:
+                area = 0.0
+        rows.append((float(area), str(getattr(space_obj, "Name", "") or ""), space_obj))
+    if not rows:
+        return None
+    rows.sort(key=lambda row: (-row[0], row[1]))
+    return rows[0][2]
+
+
+def _equipment_needs_plan_fallback(equipment_obj):
+    if equipment_obj is None:
+        return False
+    try:
+        if getattr(equipment_obj, "Space", None) is not None:
+            return False
+    except Exception:
+        pass
+    try:
+        base = _get_equipment_base(equipment_obj)
+    except Exception:
+        return False
+    return abs(float(base.x)) <= 0.01 and abs(float(base.y)) <= 0.01
+
+
+def _place_equipment_on_fallback_space(equipment_obj, reason=""):
+    doc = getattr(equipment_obj, "Document", None)
+    fallback_space = _fallback_space_for_insert(doc)
+    if fallback_space is None:
+        return False
+    placed = _apply_insert_mount_logic(
+        equipment_obj,
+        selected_space=fallback_space,
+        selected_point=_space_center_point(fallback_space),
+    )
+    if placed is None:
+        return False
+    try:
+        equipment_obj.Space = fallback_space
+    except Exception:
+        pass
+    suffix = " ({0})".format(reason) if reason else ""
+    log(
+        "Evaporadora ubicada en recinto fallback{0}: {1}".format(
+            suffix,
+            str(getattr(fallback_space, "Name", "") or getattr(fallback_space, "Label", "") or "?"),
+        )
+    )
+    return True
+
+
 def _space_bbox(space_obj):
     if space_obj is None:
         return None
@@ -3367,6 +3503,84 @@ def _sync_equipment_geometry(equipment_obj):
         update_equipment_ports(equipment_obj)
 
 
+def _finalize_insert_visuals(equipment_obj):
+    """Force freshly inserted equipment and plan objects into a visible state."""
+    if equipment_obj is None:
+        return
+    mode = _visual_mode_value(equipment_obj)
+    show_3d = mode in {"Ambos", "Solo3D"}
+    show_2d = mode in {"Ambos", "Solo2D"}
+    if mode == "Ninguno":
+        show_3d = False
+        show_2d = False
+
+    try:
+        vobj = getattr(equipment_obj, "ViewObject", None)
+        if vobj is not None:
+            vobj.Visibility = bool(show_3d)
+            if hasattr(vobj, "ShowInTree"):
+                vobj.ShowInTree = True
+            if hasattr(vobj, "Selectable"):
+                vobj.Selectable = True
+            if hasattr(vobj, "Pickable"):
+                vobj.Pickable = True
+    except Exception:
+        pass
+
+    symbol_obj = None
+    try:
+        if "Symbol2D" in getattr(equipment_obj, "PropertiesList", []):
+            symbol_obj = getattr(equipment_obj, "Symbol2D", None)
+    except Exception:
+        symbol_obj = None
+    if symbol_obj is not None:
+        try:
+            vobj = getattr(symbol_obj, "ViewObject", None)
+            if vobj is not None:
+                vobj.Visibility = bool(show_2d)
+                if hasattr(vobj, "ShowInTree"):
+                    vobj.ShowInTree = True
+                if hasattr(vobj, "Selectable"):
+                    vobj.Selectable = True
+        except Exception:
+            pass
+
+    info_obj = None
+    try:
+        if "Info2D" in getattr(equipment_obj, "PropertiesList", []):
+            info_obj = getattr(equipment_obj, "Info2D", None)
+    except Exception:
+        info_obj = None
+    _set_text_visibility(info_obj, bool(show_2d) and bool(getattr(equipment_obj, "ShowInfo2D", True)))
+
+    try:
+        linked = getattr(equipment_obj, "LinkedObject", None)
+        linked_name = str(getattr(linked, "Name", "") or "-") if linked is not None else "-"
+    except Exception:
+        linked_name = "-"
+    try:
+        shape_obj = getattr(equipment_obj, "Shape", None)
+        has_shape = shape_obj is not None and not shape_obj.isNull()
+    except Exception:
+        has_shape = False
+    try:
+        symbol_shape = getattr(symbol_obj, "Shape", None) if symbol_obj is not None else None
+        has_symbol_shape = symbol_shape is not None and not symbol_shape.isNull()
+    except Exception:
+        has_symbol_shape = False
+    log(
+        "InsertVisual resumen: equipo={0}, modo={1}, link={2}, shape3d={3}, simbolo2d={4}, visible3d={5}, visible2d={6}".format(
+            _safe_obj_name(equipment_obj) or "?",
+            mode,
+            linked_name,
+            int(bool(has_shape)),
+            int(bool(has_symbol_shape)),
+            int(bool(show_3d)),
+            int(bool(show_2d)),
+        )
+    )
+
+
 def _pick_model_for_insert(doc=None):
     log(
         "PickerDebug enter rev={0} gui={1} module={2}".format(
@@ -3852,6 +4066,180 @@ def _auto_assign_space(equipment_obj, warn_if_not_found=False):
     return False
 
 
+def _fmt_point(point):
+    try:
+        vec = App.Vector(point)
+        return "({0:.1f},{1:.1f},{2:.1f})".format(float(vec.x), float(vec.y), float(vec.z))
+    except Exception:
+        return "(?, ?, ?)"
+
+
+def _coerce_point(point):
+    if point is None:
+        return None
+    try:
+        return App.Vector(point)
+    except Exception:
+        return None
+
+
+def _selected_insert_point():
+    try:
+        points = list(selection.get_selected_points() or [])
+    except Exception as exc:
+        log("Diagnostico seleccion: no se pudieron leer puntos seleccionados: {0}".format(exc))
+        return None
+    if not points:
+        return None
+    point = _coerce_point(points[0])
+    if point is None:
+        log("Diagnostico seleccion: punto seleccionado invalido")
+        return None
+    return point
+
+
+def _selected_object_count():
+    try:
+        return len(list(selection.get_selected_objects(resolve_links=True) or []))
+    except Exception:
+        return 0
+
+
+def _has_hvac_root(doc):
+    if doc is None:
+        return False
+    try:
+        return bool(hvac_project.find_root_groups(doc))
+    except Exception:
+        return False
+
+
+def _has_hvac_project(doc):
+    if doc is None:
+        return False
+    try:
+        return bool(hvac_project.find_projects(doc))
+    except Exception:
+        return False
+
+
+def _ensure_hvac_insert_structure(doc):
+    if doc is None:
+        return None
+    had_root = _has_hvac_root(doc)
+    had_project = _has_hvac_project(doc)
+    if not had_root or not had_project:
+        log("Creando estructura HVAC...")
+    try:
+        root = hvac_project.ensure_hvac_root_group(doc)
+        try:
+            hvac_project.ensure_hvac_equipment_group(doc)
+        except Exception as group_exc:
+            log("No se pudo crear grupo HVAC de equipos: {0}".format(group_exc))
+        if not had_project:
+            log("Proyecto HVAC no existente; se omite creacion pesada durante insercion")
+        return root
+    except Exception as exc:
+        log("No se pudo crear estructura HVAC minima: {0}".format(exc))
+    return None
+
+
+def diagnose_evaporator_insert_context(doc=None, point=None, space=None):
+    """Return and print the minimum context used by robust evaporator insertion."""
+    if doc is None:
+        doc = App.ActiveDocument
+
+    explicit_point = _coerce_point(point) is not None
+    selected_point = None
+
+    report = {
+        "ok": False,
+        "has_document": doc is not None,
+        "has_hvac_root": False,
+        "has_hvac_project": False,
+        "space_count": 0,
+        "has_space": False,
+        "has_point": explicit_point,
+        "selected_objects": 0,
+        "free_mode": False,
+    }
+
+    if doc is None:
+        log("Diagnostico insercion evaporadora: no hay documento activo")
+        return report
+
+    spaces = []
+    try:
+        spaces = list(hvac_space.find_spaces(doc) or [])
+    except Exception as exc:
+        log("Diagnostico HVAC Space: no se pudo consultar recintos: {0}".format(exc))
+
+    report["has_hvac_root"] = _has_hvac_root(doc)
+    report["has_hvac_project"] = _has_hvac_project(doc)
+    report["space_count"] = len(spaces)
+    report["has_space"] = bool(space is not None or spaces)
+    report["selected_objects"] = _selected_object_count()
+    if not explicit_point:
+        selected_point = _selected_insert_point()
+    report["has_point"] = bool(explicit_point or selected_point is not None)
+    report["free_mode"] = not bool(report["has_space"])
+    report["ok"] = True
+
+    log(
+        "Diagnostico insercion evaporadora: root={0}, proyecto={1}, spaces={2}, punto={3}, seleccion={4}".format(
+            int(bool(report["has_hvac_root"])),
+            int(bool(report["has_hvac_project"])),
+            int(report["space_count"]),
+            int(bool(report["has_point"])),
+            int(report["selected_objects"]),
+        )
+    )
+    if not report["has_hvac_root"] or not report["has_hvac_project"]:
+        log("Contexto HVAC incompleto, se intentara crear automaticamente")
+    if not spaces and space is None:
+        log("No HVAC Space detectado, insertando en modo libre")
+    if not report["has_point"] and space is None:
+        log("No seleccion detectada, usando origen")
+    return report
+
+
+def _resolve_insert_space_and_point(doc, point=None, space=None):
+    seed_point = _coerce_point(point)
+    if seed_point is None:
+        seed_point = _selected_insert_point()
+
+    selected_space = space
+    if selected_space is None and seed_point is not None:
+        selected_space = _space_from_position(doc, seed_point)
+    if selected_space is None:
+        selected_space = _space_from_selection(doc)
+    if seed_point is None and selected_space is None:
+        selected_space = _fallback_space_for_insert(doc)
+        if selected_space is not None:
+            seed_point = _space_center_point(selected_space)
+            log("Insercion sin seleccion: se usa recinto HVAC fallback para ubicar la evaporadora")
+
+    if seed_point is None and selected_space is not None:
+        seed_point = _space_center_point(selected_space)
+
+    if seed_point is None:
+        seed_point = App.Vector(0.0, 0.0, 0.0)
+        log("No seleccion detectada, usando origen")
+
+    return selected_space, seed_point
+
+
+def _log_insert_geometry_source(model_name):
+    model = str(model_name or DEFAULT_MODEL)
+    if _is_group_model_name(model):
+        log("Geometria desde grupo externo para modelo {0}".format(model))
+        return
+    if _resolve_step_file_for_model(model):
+        log("Geometria STEP detectada para modelo {0}".format(model))
+        return
+    log("Geometria STEP no encontrada, usando primitivo")
+
+
 def assign_selected_equipments_to_selected_space(doc=None, lock_manual=True):
     if doc is None:
         doc = App.ActiveDocument
@@ -3933,7 +4321,8 @@ def _create_evaporator_link(doc, model_name):
         log("InsertDebug fallback a Part::FeaturePython (App::Link no disponible): {0}".format(exc))
         obj = doc.addObject("Part::FeaturePython", "HVAC_Evaporator")
         HVACEquipmentProxy(obj)
-        HVACEquipmentViewProvider(obj.ViewObject)
+        if getattr(obj, "ViewObject", None) is not None:
+            HVACEquipmentViewProvider(obj.ViewObject)
     ensure_equipment_properties(obj)
     _initialize_equipment_defaults(obj)
     set_equipment_model(obj, model_name, force=True)
@@ -3946,6 +4335,103 @@ def _create_evaporator_link(doc, model_name):
     _configure_link_for_transform(obj, reset_link_placement=True)
     _set_link_selectable(obj)
     return obj
+
+
+def insert_evaporator_safe(doc=None, point=None, space=None, model_name=None):
+    """Insert an evaporator with minimum HVAC context, even in empty documents."""
+    if doc is None:
+        doc = App.ActiveDocument
+    if doc is None:
+        log("No hay documento activo")
+        return None
+
+    diagnose_evaporator_insert_context(doc=doc, point=point, space=space)
+    _ensure_hvac_insert_structure(doc)
+
+    selected_model = str(model_name or DEFAULT_MODEL)
+    model_options = available_models(doc)
+    if selected_model not in model_options:
+        log("Modelo evaporadora no disponible: {0}. Usando {1}".format(selected_model, DEFAULT_MODEL))
+        selected_model = DEFAULT_MODEL
+
+    log(
+        "InsertSafe rev={0} gui={1} module={2} model={3}".format(
+            EQUIP_DEBUG_REV,
+            bool(getattr(App, "GuiUp", False)),
+            __file__,
+            str(selected_model),
+        )
+    )
+
+    transaction_open = False
+    try:
+        doc.openTransaction("HVAC: Insertar Evaporadora")
+        transaction_open = True
+    except Exception:
+        transaction_open = False
+
+    try:
+        obj = _create_evaporator_link(doc, selected_model)
+        obj.Label = "EVAP_{0}".format(str(getattr(obj, "Model", selected_model)))
+        log(
+            "Evaporadora concreta seleccionada: {0} ({1} BTU/h) fuente={2}".format(
+                obj.Model,
+                int(_to_float(obj.CapacityBTU, 0.0)),
+                _model_source_tag(obj.Model),
+            )
+        )
+
+        _log_insert_geometry_source(obj.Model)
+
+        selected_space, seed_point = _resolve_insert_space_and_point(
+            doc,
+            point=point,
+            space=space,
+        )
+        log("Insertando evaporadora en {0}".format(_fmt_point(seed_point)))
+
+        placed = _apply_insert_mount_logic(
+            obj,
+            selected_space=selected_space,
+            selected_point=seed_point,
+        )
+        if placed is None:
+            obj.BaseLevel = float(seed_point.z)
+            _set_equipment_base(obj, seed_point)
+            log("Insercion libre aplicada sin recinto HVAC")
+        elif selected_space is None:
+            log("Insercion libre aplicada sin recinto HVAC")
+        if placed is not None and selected_space is not None and str(getattr(obj, "Type", "")) == "Wall":
+            log("Evaporadora de pared ajustada al muro para identificar recinto")
+
+        if selected_space is not None:
+            obj.Space = selected_space
+            log("Evaporadora asociada a recinto: {0}".format(selected_space.Name))
+        else:
+            _auto_assign_space(obj, warn_if_not_found=True)
+
+        _sync_equipment_geometry(obj)
+        update_equipment_coverage(obj)
+        hvac_project.add_object_to_hvac_group(doc, obj)
+        _finalize_insert_visuals(obj)
+        try:
+            doc.recompute()
+        except Exception as exc:
+            log("Recompute omitido tras insertar evaporadora: {0}".format(exc))
+        if transaction_open:
+            try:
+                doc.commitTransaction()
+            except Exception:
+                pass
+        return obj
+    except Exception as exc:
+        log("Error insertando evaporadora segura: {0}".format(exc))
+        if transaction_open:
+            try:
+                doc.abortTransaction()
+            except Exception:
+                pass
+        raise
 
 
 def insert_evaporator_from_selection(doc=None, model_name=None):
@@ -3968,43 +4454,7 @@ def insert_evaporator_from_selection(doc=None, model_name=None):
     if not selected_model:
         log("Insercion evaporadora cancelada")
         return None
-    selected_model = str(selected_model)
-    obj = _create_evaporator_link(doc, selected_model)
-    obj.Label = "EVAP_{0}".format(str(getattr(obj, "Model", selected_model)))
-    log(
-        "Evaporadora concreta seleccionada: {0} ({1} BTU/h) fuente={2}".format(
-            obj.Model,
-            int(_to_float(obj.CapacityBTU, 0.0)),
-            _model_source_tag(obj.Model),
-        )
-    )
-
-    points = selection.get_selected_points()
-    seed_point = App.Vector(points[0]) if points else None
-    space = _space_from_position(doc, seed_point) if seed_point is not None else None
-    if space is None:
-        space = _space_from_selection(doc)
-    if seed_point is not None:
-        log("Evaporadora ubicada en punto seleccionado")
-
-    placed = _apply_insert_mount_logic(
-        obj,
-        selected_space=space,
-        selected_point=seed_point,
-    )
-    if placed is not None and space is not None and str(getattr(obj, "Type", "")) == "Wall":
-        log("Evaporadora de pared ajustada al muro para identificar recinto")
-
-    if space is not None:
-        obj.Space = space
-        log("Evaporadora asociada a recinto: {0}".format(space.Name))
-    else:
-        _auto_assign_space(obj, warn_if_not_found=True)
-
-    _sync_equipment_geometry(obj)
-    update_equipment_coverage(obj)
-    hvac_project.add_object_to_hvac_group(doc, obj)
-    return obj
+    return insert_evaporator_safe(doc=doc, model_name=str(selected_model))
 
 
 def refresh_equipment(equipment_obj):
@@ -4045,9 +4495,12 @@ def refresh_step_models(doc=None):
         try:
             ensure_equipment_properties(equipment_obj)
             _initialize_equipment_defaults(equipment_obj)
+            if _equipment_needs_plan_fallback(equipment_obj):
+                _place_equipment_on_fallback_space(equipment_obj, reason="refresh")
             _sync_equipment_geometry(equipment_obj)
             _auto_assign_space(equipment_obj)
             update_equipment_coverage(equipment_obj)
+            _finalize_insert_visuals(equipment_obj)
             refreshed += 1
         except Exception as exc:
             log("Refresh evaporadora omitida: {0} -> {1}".format(getattr(equipment_obj, "Name", "?"), exc))
