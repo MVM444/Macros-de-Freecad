@@ -1,0 +1,1114 @@
+# -*- coding: utf-8 -*-
+"""
+GameEngineExport.FCMacro
+Version: 2025-10-09 16:10 (America/Costa_Rica)
+Author: Marco + GPT
+
+Descripcion / Description (ES/EN sin acentos en codigo):
+  Macro unificada para exportar escenas desde FreeCAD hacia motores de juego (X3D para Castle Game Engine).
+  GUI con 4 pestañas: Escena, Materiales (provisional), Config & Perfiles, Informacion.
+
+  Incluye:
+  - GameStart (cono + base) con Yaw/Pitch/Roll/HeightOffset/FOV; genera Viewpoint inicial correcto en X3D.
+  - Wrapper Transform mm->m con rotacion -90deg X para que la geometria quede de pie en CGE.
+  - Luz Global (DirectionalLight) y lista de Luces CGE (PointLight por objeto marcado).
+    * Boton "Agregar seleccion como luz" para marcar objetos como luces y ajustar props.
+  - Export via FreeCADGui.export con post-proceso del X3D.
+  - Config por archivo (sidecar <DocStem>.gee.json) y ParamGet global.
+  - Opcion para ejecutar Castle Game Engine tras exportar.
+
+Notas importantes (ES):
+  - FreeCAD trabaja en mm. El X3D en CGE usa metros. Se aplica factor 0.001 en wrapper.
+  - Evitar nombres con acentos y caracteres especiales en nombres de archivos.
+  - Auto-baseline Z=0 permanece OFF por defecto para evitar mover objetos Arch (puertas/ventanas).
+
+Important notes (EN):
+  - FreeCAD units are millimeters; engine expects meters. A 0.001 scale wrapper is applied.
+  - Avoid special characters in file names.
+  - Auto-baseline Z=0 is OFF by default to avoid moving Arch objects.
+
+"""
+
+# Qt compatibility for FreeCAD 1.x (PySide6) and older builds.
+def _ensure_qt_compat():
+    import sys
+    import types
+
+    QtCore = QtGui = QtWidgets = None
+    binding_name = None
+
+    for candidate in ("PySide6", "PySide2", "PySide"):
+        try:
+            if candidate == "PySide":
+                from PySide import QtCore as _QtCore, QtGui as _QtGui
+                _QtWidgets = _QtGui
+            else:
+                module = __import__(candidate, fromlist=["QtCore", "QtGui", "QtWidgets"])
+                _QtCore = module.QtCore
+                _QtGui = module.QtGui
+                _QtWidgets = module.QtWidgets
+            QtCore, QtGui, QtWidgets = _QtCore, _QtGui, _QtWidgets
+            binding_name = candidate
+            break
+        except Exception:
+            continue
+
+    if QtCore is None:
+        return
+
+    qtgui_compat = types.ModuleType("QtGui")
+    qtgui_compat.__dict__.update(getattr(QtGui, "__dict__", {}))
+    qtgui_compat.__dict__.update(getattr(QtWidgets, "__dict__", {}))
+
+    qtsvg_compat = None
+    for module_name in ("QtSvg", "QtSvgWidgets"):
+        try:
+            module = __import__(binding_name, fromlist=[module_name])
+            qt_module = getattr(module, module_name)
+        except Exception:
+            continue
+        if qtsvg_compat is None:
+            qtsvg_compat = types.ModuleType("QtSvg")
+        qtsvg_compat.__dict__.update(getattr(qt_module, "__dict__", {}))
+
+    qtuitools_compat = None
+    try:
+        module = __import__(binding_name, fromlist=["QtUiTools"])
+        qtuitools_compat = module.QtUiTools
+    except Exception:
+        pass
+
+    for package_name in ("PySide2", "PySide"):
+        package = sys.modules.get(package_name)
+        if package is None:
+            package = types.ModuleType(package_name)
+            sys.modules[package_name] = package
+        package.QtCore = QtCore
+        package.QtGui = qtgui_compat
+        package.QtWidgets = QtWidgets
+        sys.modules[package_name + ".QtCore"] = QtCore
+        sys.modules[package_name + ".QtGui"] = qtgui_compat
+        sys.modules[package_name + ".QtWidgets"] = QtWidgets
+        if qtsvg_compat is not None:
+            package.QtSvg = qtsvg_compat
+            sys.modules[package_name + ".QtSvg"] = qtsvg_compat
+        if qtuitools_compat is not None:
+            package.QtUiTools = qtuitools_compat
+            sys.modules[package_name + ".QtUiTools"] = qtuitools_compat
+
+
+_ensure_qt_compat()
+
+import os, json, math, re, subprocess
+from pathlib import Path
+from datetime import datetime
+
+try:
+    import FreeCAD as App
+    import FreeCADGui as Gui
+except ImportError:
+    App = None
+    Gui = None
+
+try:
+    import FreeCADGui  # for export
+except Exception:
+    FreeCADGui = None
+
+import Part
+
+from PySide2 import QtWidgets, QtCore, QtGui
+
+# -------------------------------
+# Constantes y ParamGet
+# -------------------------------
+APP_PREFIX = "[GAMEEXPORT]"
+PARAM_ROOT = "User parameter:BaseApp/Preferences/GameEngineExport"
+PRESETS_DIR_NAME = "presets"
+SIDE_EXT = ".gee.json"
+SCALE_TO_METERS = 0.001  # mm -> m
+ROT_X_MINUS90 = -1.57079632679  # rad
+
+def param_get(group=PARAM_ROOT):
+    return App.ParamGet(group)
+
+def get_param_str(k, d=""):
+    return param_get().GetString(k, d)
+
+def set_param_str(k, v):
+    param_get().SetString(k, v)
+
+def get_param_bool(k, d=False):
+    return param_get().GetBool(k, d)
+
+def set_param_bool(k, v):
+    param_get().SetBool(k, v)
+
+def ensure_dir(p):
+    Path(p).mkdir(parents=True, exist_ok=True)
+
+def log_info(msg):
+    App.Console.PrintMessage(f"{APP_PREFIX}[INFO] {msg}\n")
+
+def log_warn(msg):
+    App.Console.PrintWarning(f"{APP_PREFIX}[WARN] {msg}\n")
+
+def log_err(msg):
+    App.Console.PrintError(f"{APP_PREFIX}[ERROR] {msg}\n")
+
+def log_dbg(msg):
+    App.Console.PrintMessage(f"{APP_PREFIX}[DEBUG] {msg}\n")
+
+# -------------------------------
+# Helpers basicos
+# -------------------------------
+def get_active_doc():
+    doc = App.ActiveDocument
+    if not doc:
+        raise RuntimeError("No active document")
+    return doc
+
+def find_object_by_label(doc, label):
+    for o in doc.Objects:
+        if getattr(o, "Label", "") == label:
+            return o
+    return None
+
+def collect_children_recursive(obj):
+    out = []
+    if hasattr(obj, "OutList"):
+        for c in obj.OutList:
+            out.extend(collect_children_recursive(c))
+        return out or [obj]
+    return [obj]
+
+def get_doc_paths():
+    doc = get_active_doc()
+    fp = Path(doc.FileName) if getattr(doc, "FileName", "") else Path.cwd() / (doc.Label or "Scene.FCStd")
+    workdir = fp.parent
+    stem = fp.stem
+    return workdir, stem
+
+def sidecar_path_for_doc():
+    workdir, stem = get_doc_paths()
+    return workdir / f"{stem}{SIDE_EXT}"
+
+def presets_dir():
+    base_dir = get_param_str("export_dir_default", str(Path(App.getUserAppDataDir()) / "tmp"))
+    pdir = Path(base_dir) / PRESETS_DIR_NAME
+    ensure_dir(pdir)
+    return pdir
+
+def save_preset(name, data):
+    p = presets_dir() / f"{name}.json"
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    log_info(f"Preset saved: {p}")
+
+def load_preset(name):
+    p = presets_dir() / f"{name}.json"
+    if not p.exists():
+        raise RuntimeError("Preset not found")
+    with open(p, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+# -------------------------------
+# GameStart (cono + base)
+# -------------------------------
+def create_gamestart(doc, name="GameStart"):
+    """
+    Crea marcador simple con props: Yaw/Pitch/Roll (deg), HeightOffset (m), FOV (deg)
+    """
+    if doc.getObject(name):
+        log_info("GameStart already exists")
+        return doc.getObject(name)
+
+    cone = Part.makeCone(0, 100, 200)  # mm
+    base = Part.makeCylinder(80, 10)   # mm
+    shape = Part.makeCompound([base, cone])
+    obj = doc.addObject("Part::Feature", name)
+    obj.Shape = shape
+    obj.Label = name
+    obj.Placement.Base = App.Vector(0, 0, 1000)  # 1000 mm over origin
+
+    obj.addProperty("App::PropertyFloat", "Yaw", "GameEngine", "yaw deg").Yaw = 0.0
+    obj.addProperty("App::PropertyFloat", "Pitch", "GameEngine", "pitch deg").Pitch = 0.0
+    obj.addProperty("App::PropertyFloat", "Roll", "GameEngine", "roll deg").Roll = 0.0
+    obj.addProperty("App::PropertyFloat", "HeightOffset", "GameEngine", "height m").HeightOffset = 1.6
+    obj.addProperty("App::PropertyFloat", "FOV", "GameEngine", "fov deg").FOV = 60.0
+
+    if hasattr(obj, "ViewObject"):
+        obj.ViewObject.ShapeColor = (1.0, 0.2, 0.2)
+        obj.ViewObject.DisplayMode = "Flat Lines"
+
+    doc.recompute()
+    log_info("GameStart created")
+    return obj
+
+# -------------------------------
+# Luces CGE en objetos (PointLight)
+# -------------------------------
+def ensure_light_props(o):
+    if not hasattr(o, "IsLight"):
+        o.addProperty("App::PropertyBool", "IsLight", "GameEngine", "mark as PointLight").IsLight = True
+    if not hasattr(o, "LightIntensity"):
+        o.addProperty("App::PropertyFloat", "LightIntensity", "GameEngine", "0..5").LightIntensity = 1.0
+    if not hasattr(o, "LightRange"):
+        o.addProperty("App::PropertyFloat", "LightRange", "GameEngine", "range meters").LightRange = 10.0
+    if not hasattr(o, "LightR"):
+        o.addProperty("App::PropertyFloat", "LightR", "GameEngine", "color R 0..1").LightR = 1.0
+    if not hasattr(o, "LightG"):
+        o.addProperty("App::PropertyFloat", "LightG", "GameEngine", "color G 0..1").LightG = 1.0
+    if not hasattr(o, "LightB"):
+        o.addProperty("App::PropertyFloat", "LightB", "GameEngine", "color B 0..1").LightB = 1.0
+
+def collect_point_lights(doc):
+    lights = []
+    for o in doc.Objects:
+        if getattr(o, "IsLight", False):
+            try:
+                plc = o.Placement
+                px = plc.Base.x * SCALE_TO_METERS
+                py = plc.Base.y * SCALE_TO_METERS
+                pz = plc.Base.z * SCALE_TO_METERS
+                lights.append({
+                    "name": o.Label,
+                    "pos": (px, py, pz),
+                    "intensity": float(getattr(o, "LightIntensity", 1.0)),
+                    "range": float(getattr(o, "LightRange", 10.0)),
+                    "color": (
+                        float(getattr(o, "LightR", 1.0)),
+                        float(getattr(o, "LightG", 1.0)),
+                        float(getattr(o, "LightB", 1.0)),
+                    )
+                })
+            except Exception as ex:
+                log_warn(f"collect_point_lights failed on {getattr(o,'Label','?')}: {ex}")
+    return lights
+
+# -------------------------------
+# Angulos helpers para Viewpoint
+# -------------------------------
+def _deg_to_rad(x):
+    return x * math.pi / 180.0
+
+def _ypr_to_axis_angle(yaw_deg, pitch_deg, roll_deg):
+    """
+    Yaw(Z) - Pitch(X) - Roll(Y) en grados -> eje angulo X3D
+    R = Rz(yaw) * Rx(pitch) * Ry(roll)
+    """
+    yz = _deg_to_rad(yaw_deg)
+    px = _deg_to_rad(pitch_deg)
+    ry = _deg_to_rad(roll_deg)
+
+    def q_from_axis_angle(ax, ay, az, a):
+        s = math.sin(a/2.0)
+        return (math.cos(a/2.0), ax*s, ay*s, az*s)  # w,x,y,z
+
+    def q_mul(q1, q2):
+        w1,x1,y1,z1 = q1
+        w2,x2,y2,z2 = q2
+        return (
+            w1*w2 - x1*x2 - y1*y2 - z1*z2,
+            w1*x2 + x1*w2 + y1*z2 - z1*y2,
+            w1*y2 - x1*z2 + y1*w2 + z1*x2,
+            w1*z2 + x1*y2 - y1*x2 + z1*w2
+        )
+
+    q_yaw   = q_from_axis_angle(0,0,1,yz)
+    q_pitch = q_from_axis_angle(1,0,0,px)
+    q_roll  = q_from_axis_angle(0,1,0,ry)
+    q = q_mul(q_mul(q_yaw, q_pitch), q_roll)
+
+    w,x,y,z = q
+    n = math.sqrt(w*w + x*x + y*y + z*z)
+    if n > 1e-12:
+        w,x,y,z = w/n, x/n, y/n, z/n
+    angle = 2.0*math.acos(max(-1.0, min(1.0, w)))
+    s = math.sqrt(max(0.0, 1.0 - w*w))
+    if s < 1e-8:
+        return (1.0, 0.0, 0.0, 0.0)
+    ax, ay, az = x/s, y/s, z/s
+    return (ax, ay, az, angle)
+
+# -------------------------------
+# Export helpers (via FreeCADGui.export)
+# -------------------------------
+def fcgui_export(objs, out_path):
+    if FreeCADGui is None:
+        raise RuntimeError("FreeCADGui not available")
+    if not objs:
+        raise RuntimeError("No objects to export")
+    # export tries X3D by extension
+    FreeCADGui.export(objs, out_path)
+    if not Path(out_path).exists():
+        log_warn(f"FreeCADGui.export did not create file: {out_path}")
+
+def launch_cge(executable_path, exported_file):
+    p = Path(executable_path)
+    if not (p.exists() and p.is_file()):
+        log_warn("CGE executable path invalid.")
+        return False
+    if not Path(exported_file).exists():
+        log_warn("Exported file not found for CGE.")
+        return False
+    try:
+        if os.name == "nt":
+            subprocess.Popen([str(p), str(exported_file)])
+        else:
+            subprocess.Popen([str(p), str(exported_file)])
+        return True
+    except Exception as ex:
+        log_err(f"Launch CGE failed: {ex}")
+        return False
+
+# -------------------------------
+# Decorar X3D (wrapper, BG, Nav, luz global, Viewpoint, PointLights)
+# -------------------------------
+def decorate_x3d(x3d_path, gs_name, gl_enabled, gl_cfg, add_point_lights, doc):
+    if not os.path.isfile(x3d_path):
+        log_warn("X3D not found to decorate.")
+        return
+    try:
+        with open(x3d_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        si = content.find("<Scene")
+        if si == -1:
+            log_warn("No <Scene> tag found.")
+            return
+        open_end = content.find(">", si)
+        if open_end == -1:
+            log_warn("Scene open tag incomplete.")
+            return
+        ci = content.find("</Scene>")
+        if ci == -1:
+            log_warn("No </Scene> tag found.")
+            return
+
+        scene_open = content[:open_end+1]
+        scene_body = content[open_end+1:ci]
+        scene_close = content[ci:]
+        indent = "  "
+
+        # strip previous BG/Nav/Viewpoint(GameStart) from body
+        scene_body = re.sub(r'\s*<\s*Background\b[^>]*>\s*', '\n', scene_body, count=1, flags=re.IGNORECASE)
+        scene_body = re.sub(r'\s*<\s*NavigationInfo\b[^>]*>\s*', '\n', scene_body, count=1, flags=re.IGNORECASE)
+        if gs_name:
+            vp_pat = rf'\s*<\s*Viewpoint\b[^>]*\bDEF\s*=\s*"{re.escape(gs_name)}_VP"[^>]*>\s*'
+            scene_body = re.sub(vp_pat, '\n', scene_body, count=10, flags=re.IGNORECASE)
+
+        # ensure wrapper mm->m with rotation -90deg X
+        def ensure_mm_wrapper_with_rotation(body_text):
+            scale_attr = 'scale="0.001 0.001 0.001"'
+            rot_attr   = f'rotation="1 0 0 {ROT_X_MINUS90}"'
+            pattern = re.compile(r'<\s*Transform\b([^>]*)\bDEF\s*=\s*"FreeCAD_mm_to_m"([^>]*)>', re.IGNORECASE)
+            m = pattern.search(body_text)
+            if not m:
+                return f'{indent}<Transform DEF="FreeCAD_mm_to_m" {scale_attr} {rot_attr}>\n' + body_text + f'\n{indent}</Transform>\n'
+            start, end = m.span()
+            open_tag = body_text[start:end]
+            rest = body_text[end:]
+            attrs = open_tag[len("<Transform"): -1].strip()
+            attrs = re.sub(r'\bscale\s*=\s*"[^\"]*"', '', attrs, flags=re.IGNORECASE)
+            attrs = re.sub(r'\brotation\s*=\s*"[^\"]*"', '', attrs, flags=re.IGNORECASE)
+            attrs = re.sub(r'\s+', ' ', attrs).strip()
+            new_open = f'<Transform {attrs} {scale_attr} {rot_attr}>' if attrs else f'<Transform {scale_attr} {rot_attr}>'
+            return body_text[:start] + new_open + rest
+
+        scene_body = ensure_mm_wrapper_with_rotation(scene_body)
+
+        # BG and Nav (avatarSize order: collision, eye, step)
+        avatar_collision = 0.25
+        avatar_eye = 1.6
+        avatar_step = 0.75
+        nav_speed = 2.0
+        background = f'{indent}<Background skyColor="0.2 0.4 1.0" groundColor="0.4 0.2 0.1"/>'
+        navigation = (f'{indent}<NavigationInfo avatarSize="{avatar_collision} {avatar_eye} {avatar_step}" '
+                      f'speed="{nav_speed}" headlight="false" type=\'"WALK" "ANY"\'/>')
+
+        # Global directional light
+        dir_line = ""
+        if gl_enabled and gl_cfg:
+            yaw = math.radians(gl_cfg.get("yaw_deg", 45.0))
+            pitch = math.radians(gl_cfg.get("pitch_deg", 45.0))
+            dx = math.sin(yaw) * math.cos(pitch)
+            dy = -math.cos(yaw) * math.cos(pitch)
+            dz = -math.sin(pitch)
+            inten = float(gl_cfg.get("intensity", 1.0))
+            r, g, b = gl_cfg.get("color_rgb", (1.0, 1.0, 1.0))
+            dir_line = (f'{indent}<DirectionalLight intensity="{inten:.3f}" '
+                        f'color="{r:.3f} {g:.3f} {b:.3f}" '
+                        f'direction="{dx:.6f} {dy:.6f} {dz:.6f}"/>')
+
+        # GameStart Viewpoint (meters), put before wrapper, set_bind true
+        vp_line = ""
+        if gs_name and (gs_name in doc.Objects):
+            obj = doc.getObject(gs_name)
+            plc = obj.Placement
+            tx_m = plc.Base.x * SCALE_TO_METERS
+            ty_m = plc.Base.y * SCALE_TO_METERS
+            tz_m = plc.Base.z * SCALE_TO_METERS
+            eye_h = getattr(obj, "HeightOffset", 1.6)
+            try:
+                tz_m += float(eye_h)
+            except:
+                tz_m += 1.6
+            yaw_d  = getattr(obj, "Yaw", 0.0)
+            pitch_d= getattr(obj, "Pitch", 0.0)
+            roll_d = getattr(obj, "Roll", 0.0)
+            try:
+                ax, ay, az, ang = _ypr_to_axis_angle(float(yaw_d), float(pitch_d), float(roll_d))
+                rot_attr = f' orientation="{ax:.6f} {ay:.6f} {az:.6f} {ang:.6f}"'
+            except Exception:
+                axis = plc.Rotation.Axis
+                ang  = plc.Rotation.Angle
+                rot_attr = f' orientation="{axis.x:.6f} {axis.y:.6f} {axis.z:.6f} {ang:.6f}"' if abs(ang) > 1e-6 else ""
+            fov_deg = getattr(obj, "FOV", 60.0)
+            try:
+                fov_rad = _deg_to_rad(float(fov_deg))
+            except:
+                fov_rad = 1.047197551
+            vp_line = (f'{indent}<Viewpoint DEF="{gs_name}_VP" '
+                       f'position="{tx_m:.3f} {ty_m:.3f} {tz_m:.3f}"{rot_attr} '
+                       f'fieldOfView="{fov_rad:.6f}" description="GameStart" set_bind="true"/>')
+
+        # PointLights from marked objects
+        point_light_block = ""
+        if add_point_lights:
+            plist = collect_point_lights(doc)
+            lines = []
+            for pl in plist:
+                px, py, pz = pl["pos"]
+                inten = pl["intensity"]
+                r, g, b = pl["color"]
+                # Note: X3D PointLight uses attenuation parameters; usamos range como referencia en comentario
+                lines.append(
+                    f'{indent}<Transform translation="{px:.3f} {py:.3f} {pz:.3f}">'
+                    f'\n{indent}  <PointLight intensity="{inten:.3f}" color="{r:.3f} {g:.3f} {b:.3f}" radius="{pl["range"]:.3f}"/>'
+                    f'\n{indent}</Transform>'
+                )
+            if lines:
+                point_light_block = "\n" + "\n".join(lines) + "\n"
+
+        head_lines = [background, navigation]
+        if dir_line: head_lines.append(dir_line)
+        if vp_line:  head_lines.append(vp_line)
+        if point_light_block: head_lines.append(point_light_block.rstrip("\n"))
+        head_block = "\n" + "\n".join(head_lines) + "\n"
+
+        new_content = scene_open + head_block + scene_body + scene_close
+        with open(x3d_path, "w", encoding="utf-8") as f:
+            f.write(new_content)
+
+        log_info("X3D decorated: BG, Nav, wrapper mm->m + rotX-90, global light, GameStart VP, point lights.")
+    except Exception as ex:
+        log_warn(f"decorate_x3d failed: {ex}")
+
+# -------------------------------
+# GUI
+# -------------------------------
+class GameEngineExportDialog(QtWidgets.QDialog):
+    
+    # dentro de class GameEngineExportDialog:
+
+ def _on_export(self):
+    """Exporta a X3D, decora el archivo y (opcional) lanza CGE."""
+    try:
+        # guardar preferencias globales
+        self._save_params()
+
+        # construir lista de objetos a exportar
+        objs = self._prepare_export_objects()
+
+        # ruta de salida
+        out_dir = Path(self.ed_export_dir.text().strip() or Path.cwd())
+        ensure_dir(out_dir)
+        base = self.ed_base_name.text().strip() or "Scene"
+        out_file = str(out_dir / f"{base}.x3d")
+
+        # export
+        fcgui_export(objs, out_file)
+        self._set_status(f"Scene exported: {out_file}")
+
+        # decorar X3D (wrapper mm->m + rotX -90, luz global, viewpoint GameStart, point lights)
+        gs_name = self.ed_gs.text().strip() or "GameStart"
+        gl_cfg = {
+            "yaw_deg": float(self.spn_gl_yaw.value()),
+            "pitch_deg": float(self.spn_gl_pitch.value()),
+            "intensity": float(self.spn_gl_int.value()),
+            "color_rgb": (self._gl_color.red()/255.0,
+                          self._gl_color.green()/255.0,
+                          self._gl_color.blue()/255.0),
+        }
+        decorate_x3d(
+            out_file,
+            gs_name,
+            self.chk_gl.isChecked(),
+            gl_cfg,
+            self.chk_export_pointlights.isChecked(),
+            self.doc
+        )
+
+        # guardar sidecar del proyecto
+        self._save_sidecar()
+
+        # lanzar CGE si procede
+        if self.chk_launch_cge.isChecked():
+            exe = self.ed_cge_path.text().strip()
+            if not launch_cge(exe, out_file):
+                self._set_status("CGE no pudo arrancar. Verifique la ruta en Config.")
+        else:
+            self._set_status("Export done.")
+    except Exception as ex:
+        self._set_status(f"Export failed: {ex}")
+        log_err(ex)
+    
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        log_dbg("macro build: gui-redesign-v2.3")
+        self.setWindowTitle("GameEngineExport - FreeCAD to Castle (X3D)")
+        self.resize(980, 680)
+        self.doc = get_active_doc()
+
+        self.tabs = QtWidgets.QTabWidget()
+        self.tab_scene = self._build_tab_scene()
+        self.tab_materials = self._build_tab_materials()
+        self.tab_cfg = self._build_tab_config()
+        self.tab_info = self._build_tab_info()
+
+        self.tabs.addTab(self.tab_scene, "Escena / Scene")
+        self.tabs.addTab(self.tab_materials, "Materiales (prov.)")
+        self.tabs.addTab(self.tab_cfg, "Config & Perfiles")
+        self.tabs.addTab(self.tab_info, "Informacion")
+
+        self.status = QtWidgets.QLabel("Ready.")
+        main = QtWidgets.QVBoxLayout(self)
+        main.addWidget(self.tabs)
+        main.addWidget(self.status)
+
+        self._restore_params()
+        self._load_sidecar_if_exists()
+
+    # ---- Scene tab ----
+    def _build_tab_scene(self):
+        w = QtWidgets.QWidget()
+        v = QtWidgets.QVBoxLayout(w)
+
+        tip = QtWidgets.QLabel(
+            "This macro exports scenes to X3D for Castle Game Engine.\n"
+            "Esta macro exporta escenas a X3D para Castle Game Engine.\n\n"
+            "- Select a specific scene root or manually pick objects to export.\n"
+            "- Seleccione una raiz de escena o escoja manualmente objetos a exportar.\n"
+            "- Units: mm in FreeCAD -> meters in X3D (wrapper applied).\n"
+            "- Mantenga Auto-baseline Z=0 desactivado para Arch."
+        )
+        tip.setWordWrap(True)
+        v.addWidget(tip)
+
+        # Root selector
+        self.ed_root = QtWidgets.QLineEdit()
+        self.btn_pick_root = QtWidgets.QPushButton("Tomar seleccion como Raiz / Pick selection as Root")
+        self.btn_pick_root.clicked.connect(self._on_pick_root)
+
+        form0 = QtWidgets.QFormLayout()
+        form0.addRow("Raiz (Label):", self.ed_root)
+        form0.addRow("", self.btn_pick_root)
+        v.addLayout(form0)
+
+        # Object lists
+        hl = QtWidgets.QHBoxLayout()
+        self.lst_available = QtWidgets.QListWidget()
+        self.lst_selected = QtWidgets.QListWidget()
+        self.lst_available.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+        self.lst_selected.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+        hl.addWidget(self.lst_available, 1)
+        btns = QtWidgets.QVBoxLayout()
+        self.btn_add = QtWidgets.QPushButton(">>")
+        self.btn_remove = QtWidgets.QPushButton("<<")
+        self.btn_clear_sel = QtWidgets.QPushButton("Limpiar lista seleccionada")
+        self.btn_refresh = QtWidgets.QPushButton("Actualizar listas")
+        self.btn_add.clicked.connect(self._on_add_objs)
+        self.btn_remove.clicked.connect(self._on_remove_objs)
+        self.btn_clear_sel.clicked.connect(self._on_clear_selected_list)
+        self.btn_refresh.clicked.connect(self._refresh_object_lists)
+        btns.addWidget(self.btn_add)
+        btns.addWidget(self.btn_remove)
+        btns.addWidget(self.btn_clear_sel)
+        btns.addWidget(self.btn_refresh)
+        btns.addStretch(1)
+        hl.addLayout(btns)
+        hl.addWidget(self.lst_selected, 1)
+        v.addLayout(hl)
+
+        # CGE lights panel (add selected as lights)
+        grp_lights = QtWidgets.QGroupBox("Luces CGE / Castle lights")
+        fl = QtWidgets.QFormLayout(grp_lights)
+        self.btn_add_lights = QtWidgets.QPushButton("Agregar seleccion como luz (PointLight)")
+        self.btn_add_lights.clicked.connect(self._on_add_selection_as_lights)
+        self.chk_export_pointlights = QtWidgets.QCheckBox("Exportar PointLights marcados")
+        self.chk_export_pointlights.setChecked(True)
+        fl.addRow(self.btn_add_lights, self.chk_export_pointlights)
+        v.addWidget(grp_lights)
+
+        # Global light
+        grp_gl = QtWidgets.QGroupBox("Luz Global / Global sun-like light")
+        gl = QtWidgets.QGridLayout(grp_gl)
+        self.chk_gl = QtWidgets.QCheckBox("Activar luz global")
+        self.chk_gl.setChecked(True)
+        self.spn_gl_yaw = QtWidgets.QDoubleSpinBox(); self._conf_deg(self.spn_gl_yaw, 0.0)
+        self.spn_gl_pitch = QtWidgets.QDoubleSpinBox(); self._conf_deg(self.spn_gl_pitch, -45.0)
+        self.spn_gl_int = QtWidgets.QDoubleSpinBox(); self._conf_float(self.spn_gl_int, 0, 5, 1.2, 0.05)
+        self.btn_gl_color = QtWidgets.QPushButton("Color...")
+        self._gl_color = QtGui.QColor(255, 255, 230)
+        self.btn_gl_color.clicked.connect(self._on_pick_gl_color)
+        gl.addWidget(self.chk_gl, 0, 0, 1, 2)
+        gl.addWidget(QtWidgets.QLabel("Yaw (deg):"), 1, 0); gl.addWidget(self.spn_gl_yaw, 1, 1)
+        gl.addWidget(QtWidgets.QLabel("Pitch (deg):"), 2, 0); gl.addWidget(self.spn_gl_pitch, 2, 1)
+        gl.addWidget(QtWidgets.QLabel("Intensidad:"), 3, 0); gl.addWidget(self.spn_gl_int, 3, 1)
+        gl.addWidget(QtWidgets.QLabel("Color:"), 4, 0); gl.addWidget(self.btn_gl_color, 4, 1)
+        v.addWidget(grp_gl)
+
+        # GameStart
+        grp_gs = QtWidgets.QGroupBox("GameStart (spawn / viewpoint)")
+        fg = QtWidgets.QFormLayout(grp_gs)
+        self.ed_gs = QtWidgets.QLineEdit("GameStart")
+        self.btn_create_gs = QtWidgets.QPushButton("Crear GameStart")
+        self.btn_create_gs.clicked.connect(self._on_create_gamestart)
+        fg.addRow("Nombre:", self.ed_gs)
+        fg.addRow("", self.btn_create_gs)
+        v.addWidget(grp_gs)
+
+        # Output
+        grp_out = QtWidgets.QGroupBox("Salida / Output")
+        fo = QtWidgets.QFormLayout(grp_out)
+        workdir, stem = get_doc_paths()
+        self.ed_export_dir = QtWidgets.QLineEdit(str(workdir))
+        self.ed_base_name = QtWidgets.QLineEdit(stem)
+        self.chk_launch_cge = QtWidgets.QCheckBox("Run Castle after export")
+        self.chk_launch_cge.setChecked(get_param_bool("auto_launch_cge", False))
+        fo.addRow("Folder:", self.ed_export_dir)
+        fo.addRow("Base name:", self.ed_base_name)
+        fo.addRow("", self.chk_launch_cge)
+        v.addWidget(grp_out)
+
+        # Export button
+        self.btn_export = QtWidgets.QPushButton("Exportar X3D / Export X3D")
+        self.btn_export.clicked.connect(self._on_export)
+        v.addWidget(self.btn_export)
+
+        v.addStretch(1)
+        return w
+
+    # ---- Materials tab (provisional) ----
+    def _build_tab_materials(self):
+        w = QtWidgets.QWidget()
+        v = QtWidgets.QVBoxLayout(w)
+        lab = QtWidgets.QLabel(
+            "Material tools are provisional. Use FreeCAD native materials.\n"
+            "Herramientas de materiales provisionales. Use materiales nativos de FreeCAD."
+        )
+        lab.setWordWrap(True)
+        v.addWidget(lab)
+        v.addStretch(1)
+        return w
+
+    # ---- Config & Presets ----
+    def _build_tab_config(self):
+        w = QtWidgets.QWidget()
+        f = QtWidgets.QFormLayout(w)
+
+        self.ed_cge_path = QtWidgets.QLineEdit(get_param_str("cge_executable_path", ""))
+        self.btn_cge_browse = QtWidgets.QPushButton("Buscar ejecutable CGE")
+        self.btn_cge_browse.clicked.connect(self._on_browse_cge)
+
+        self.chk_restore = QtWidgets.QCheckBox("Restaurar ultima sesion")
+        self.chk_restore.setChecked(get_param_bool("restore_last", True))
+
+        # Presets
+        self.ed_preset_name = QtWidgets.QLineEdit("default")
+        self.btn_save_preset = QtWidgets.QPushButton("Guardar perfil")
+        self.btn_load_preset = QtWidgets.QPushButton("Cargar perfil")
+        self.btn_save_preset.clicked.connect(self._do_save_preset)  # handlers actuales
+        self.btn_load_preset.clicked.connect(self._do_load_preset)
+
+        f.addRow("CGE path:", self._h(self.ed_cge_path, self.btn_cge_browse))
+        f.addRow("", self.chk_restore)
+        f.addRow("Nombre de preset:", self.ed_preset_name)
+        f.addRow(self._h(self.btn_save_preset, self.btn_load_preset))
+        return w
+
+    # ---- Informacion ----
+    def _build_tab_info(self):
+        w = QtWidgets.QWidget()
+        v = QtWidgets.QVBoxLayout(w)
+        txt = (
+            "GameEngineExport.FCMacro\n"
+            "Version: 2025-10-09\n"
+            "Author: Ing. Marco Vinicio Mora Fallas + ChatGPT (99.9%)\n\n"
+            "ES: Macro unificada para exportar escenas X3D hacia Castle Game Engine.\n"
+            "EN: Unified macro to export X3D scenes to Castle Game Engine.\n\n"
+            "- Units: mm->m wrapper; rotation -90deg X to stand upright in CGE.\n"
+            "- GameStart creates initial Viewpoint; set_bind=true ensures start here.\n"
+            "- Global light (sun-like) + per-object PointLights.\n"
+            "- Sidecar <DocStem>.gee.json stores per-file config.\n"
+        )
+        self.info = QtWidgets.QPlainTextEdit()
+        self.info.setReadOnly(True)
+        self.info.setPlainText(txt)
+        v.addWidget(self.info)
+        return w
+
+    # ---- UI helpers ----
+    def _h(self, *widgets):
+        w = QtWidgets.QWidget()
+        h = QtWidgets.QHBoxLayout(w)
+        h.setContentsMargins(0,0,0,0)
+        for ww in widgets:
+            h.addWidget(ww)
+        h.addStretch(1)
+        return w
+
+    def _conf_deg(self, spn, val):
+        spn.setRange(-360.0, 360.0)
+        spn.setDecimals(2)
+        spn.setSingleStep(5.0)
+        spn.setValue(val)
+
+    def _conf_float(self, spn, a, b, val, step=0.1):
+        spn.setRange(a, b)
+        spn.setDecimals(3)
+        spn.setSingleStep(step)
+        spn.setValue(val)
+
+    def _set_status(self, msg):
+        self.status.setText(msg)
+        log_info(msg)
+
+    # ---- Compat handlers (evita AttributeError de versiones previas) ----
+    def _on_preset_save(self):
+        if hasattr(self, "_do_save_preset"):
+            return self._do_save_preset()
+        log_warn("Legacy _on_preset_save not implemented")
+
+    def _on_preset_load(self):
+        if hasattr(self, "_do_load_preset"):
+            return self._do_load_preset()
+        log_warn("Legacy _on_preset_load not implemented")
+
+    # ---- Param restore/save ----
+    def _restore_params(self):
+        self.ed_root.setText(get_param_str("root_label", ""))
+        self._refresh_object_lists()
+        self.chk_gl.setChecked(get_param_bool("gl_enabled", True))
+        self.spn_gl_yaw.setValue(float(get_param_str("gl_yaw_deg", "45.0")))
+        self.spn_gl_pitch.setValue(float(get_param_str("gl_pitch_deg", "-45.0")))
+        self.spn_gl_int.setValue(float(get_param_str("gl_intensity", "1.2")))
+        # color
+        try:
+            r = float(get_param_str("gl_r","1.0"))
+            g = float(get_param_str("gl_g","1.0"))
+            b = float(get_param_str("gl_b","0.9"))
+            self._gl_color = QtGui.QColor(int(max(0,min(255,r*255))), int(max(0,min(255,g*255))), int(max(0,min(255,b*255))))
+        except:
+            self._gl_color = QtGui.QColor(255,255,230)
+
+        workdir, stem = get_doc_paths()
+        self.ed_export_dir.setText(get_param_str("export_dir", str(workdir)))
+        self.ed_base_name.setText(get_param_str("base_name", stem))
+        self.ed_cge_path.setText(get_param_str("cge_executable_path", ""))
+        self.chk_launch_cge.setChecked(get_param_bool("auto_launch_cge", False))
+        self.chk_restore.setChecked(get_param_bool("restore_last", True))
+
+    def _save_params(self):
+        set_param_str("root_label", self.ed_root.text().strip())
+        set_param_bool("gl_enabled", self.chk_gl.isChecked())
+        set_param_str("gl_yaw_deg", str(self.spn_gl_yaw.value()))
+        set_param_str("gl_pitch_deg", str(self.spn_gl_pitch.value()))
+        set_param_str("gl_intensity", str(self.spn_gl_int.value()))
+        r,g,b = self._get_color_tuple()
+        set_param_str("gl_r", str(r)); set_param_str("gl_g", str(g)); set_param_str("gl_b", str(b))
+        set_param_str("export_dir", self.ed_export_dir.text().strip())
+        set_param_str("base_name", self.ed_base_name.text().strip())
+        set_param_str("cge_executable_path", self.ed_cge_path.text().strip())
+        set_param_bool("auto_launch_cge", self.chk_launch_cge.isChecked())
+        set_param_bool("restore_last", self.chk_restore.isChecked())
+
+    # ---- Sidecar por archivo ----
+    def _load_sidecar_if_exists(self):
+        try:
+            p = sidecar_path_for_doc()
+            if p.exists():
+                with open(p, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                # aplicar
+                self.ed_root.setText(data.get("root_label",""))
+                self.ed_export_dir.setText(data.get("export_dir", self.ed_export_dir.text()))
+                self.ed_base_name.setText(data.get("base_name", self.ed_base_name.text()))
+                gl = data.get("global_light", {})
+                self.chk_gl.setChecked(bool(gl.get("enabled", True)))
+                self.spn_gl_yaw.setValue(float(gl.get("yaw_deg", 45.0)))
+                self.spn_gl_pitch.setValue(float(gl.get("pitch_deg", -45.0)))
+                self.spn_gl_int.setValue(float(gl.get("intensity", 1.2)))
+                crgb = gl.get("color_rgb", [1.0, 1.0, 0.9])
+                self._gl_color = QtGui.QColor(int(crgb[0]*255), int(crgb[1]*255), int(crgb[2]*255))
+                log_info("Config del archivo cargada desde sidecar (.gee.json)")
+        except Exception as ex:
+            log_warn(f"No se pudo cargar sidecar: {ex}")
+
+    def _save_sidecar(self):
+        try:
+            p = sidecar_path_for_doc()
+            data = {
+                "root_label": self.ed_root.text().strip(),
+                "export_dir": self.ed_export_dir.text().strip(),
+                "base_name": self.ed_base_name.text().strip(),
+                "global_light": {
+                    "enabled": self.chk_gl.isChecked(),
+                    "yaw_deg": float(self.spn_gl_yaw.value()),
+                    "pitch_deg": float(self.spn_gl_pitch.value()),
+                    "intensity": float(self.spn_gl_int.value()),
+                    "color_rgb": self._get_color_tuple(),
+                },
+                "export_pointlights": self.chk_export_pointlights.isChecked(),
+            }
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+            log_info(f"Project sidecar saved: {p}")
+        except Exception as ex:
+            log_warn(f"No se pudo guardar sidecar: {ex}")
+
+    # ---- Scene actions ----
+    def _on_pick_root(self):
+        sel = Gui.Selection.getSelection()
+        if not sel:
+            self._set_status("Sin seleccion.")
+            return
+        self.ed_root.setText(sel[0].Label)
+        self._refresh_object_lists()
+        self._set_status(f"Root set to: {sel[0].Label}")
+
+    def _refresh_object_lists(self):
+        self.lst_available.clear()
+        self.lst_selected.clear()
+        label = self.ed_root.text().strip()
+        objs = []
+        if label:
+            o = find_object_by_label(self.doc, label)
+            if o:
+                objs = collect_children_recursive(o)
+        else:
+            # if no root, list top-level objects
+            objs = list(self.doc.Objects)
+        # Fill available list (labels only)
+        names = sorted({getattr(o, "Label", o.Name) for o in objs})
+        for n in names:
+            self.lst_available.addItem(n)
+
+    def _on_add_objs(self):
+        for it in self.lst_available.selectedItems():
+            self.lst_selected.addItem(it.text())
+
+    def _on_remove_objs(self):
+        for it in self.lst_selected.selectedItems():
+            row = self.lst_selected.row(it)
+            self.lst_selected.takeItem(row)
+
+    def _on_clear_selected_list(self):
+        self.lst_selected.clear()
+
+    def _on_pick_gl_color(self):
+        col = QtWidgets.QColorDialog.getColor(self._gl_color, self, "Color de Luz Global")
+        if col.isValid():
+            self._gl_color = col
+
+    def _get_color_tuple(self):
+        return (self._gl_color.red()/255.0, self._gl_color.green()/255.0, self._gl_color.blue()/255.0)
+
+    def _on_create_gamestart(self):
+        name = self.ed_gs.text().strip() or "GameStart"
+        create_gamestart(self.doc, name)
+        self._set_status(f"GameStart ready: {name}")
+
+    def _on_add_selection_as_lights(self):
+        sel = Gui.Selection.getSelection()
+        if not sel:
+            self._set_status("Sin seleccion para marcar como luz.")
+            return
+        for o in sel:
+            try:
+                ensure_light_props(o)
+            except Exception as ex:
+                log_warn(f"mark light failed on {getattr(o,'Label','?')}: {ex}")
+        self.doc.recompute()
+        self._set_status(f"Marcadas {len(sel)} luces (PointLight).")
+
+    def _on_browse_cge(self):
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select Castle Game Engine executable", self.ed_cge_path.text())
+        if path:
+            self.ed_cge_path.setText(path)
+
+def _prepare_export_objects(self):
+    """
+    Construye la lista de objetos a exportar, con estas reglas:
+    1) Si hay lista manual (lst_selected) -> usa esas etiquetas (y sus hijos).
+    2) Si no hay lista manual pero hay Raiz -> exporta todo el subarbol de la raiz.
+    3) Si no hay Raiz, usa la seleccion actual del arbol de FreeCAD (Selection).
+    4) Excluye el GameStart (se usa solo para Viewpoint, no como geometria).
+    5) Mantiene solo objetos exportables (con Shape) y deduplica.
+    """
+    # 1) lista manual
+    labels = [self.lst_selected.item(i).text() for i in range(self.lst_selected.count())]
+    objs = []
+    if labels:
+        for lab in labels:
+            o = find_object_by_label(self.doc, lab)
+            if o:
+                objs.extend(collect_children_recursive(o))
+    else:
+        # 2) raiz
+        label = self.ed_root.text().strip()
+        if label:
+            o = find_object_by_label(self.doc, label)
+            if o:
+                objs = collect_children_recursive(o)
+        else:
+            # 3) fallback: seleccion en FreeCAD
+            sel = Gui.Selection.getSelection()
+            if sel:
+                for s in sel:
+                    objs.extend(collect_children_recursive(s))
+
+    # si aun no hay nada, como ultimo recurso toma objetos top-level exportables
+    if not objs:
+        objs = [o for o in self.doc.Objects]
+
+    # 4) excluir GameStart (solo viewpoint)
+    gs_name = (self.ed_gs.text().strip() or "GameStart").lower()
+    filtered = []
+    for o in objs:
+        lab = (getattr(o, "Label", "") or "").lower()
+        nam = (getattr(o, "Name", "") or "").lower()
+        if lab == gs_name or nam == gs_name:
+            continue
+        filtered.append(o)
+
+    # 5) exportables (tienen Shape) + dedupe
+    final = []
+    seen = set()
+    for o in filtered:
+        if id(o) in seen:
+            continue
+        seen.add(id(o))
+        if hasattr(o, "Shape"):
+            final.append(o)
+
+    if not final:
+        raise RuntimeError("No hay objetos exportables. Defina una raiz o agregue objetos a la lista manual.")
+    log_dbg(f"Export count: {len(final)}")
+    return final
+
+    def _on_export(self):
+        try:
+            self._save_params()
+            objs = self._prepare_export_objects()
+            out_dir = Path(self.ed_export_dir.text().strip() or Path.cwd())
+            ensure_dir(out_dir)
+            base = self.ed_base_name.text().strip() or "Scene"
+            out_file = str(out_dir / f"{base}.x3d")
+            fcgui_export(objs, out_file)
+            self._set_status(f"Scene exported: {out_file}")
+            # decorate
+            gs_name = self.ed_gs.text().strip() or "GameStart"
+            gl_cfg = {
+                "yaw_deg": float(self.spn_gl_yaw.value()),
+                "pitch_deg": float(self.spn_gl_pitch.value()),
+                "intensity": float(self.spn_gl_int.value()),
+                "color_rgb": self._get_color_tuple(),
+            }
+            decorate_x3d(out_file, gs_name, self.chk_gl.isChecked(), gl_cfg, self.chk_export_pointlights.isChecked(), self.doc)
+            # sidecar + launch
+            self._save_sidecar()
+            if self.chk_launch_cge.isChecked():
+                exe = self.ed_cge_path.text().strip()
+                if not launch_cge(exe, out_file):
+                    self._set_status("CGE no pudo arrancar. Verifique la ruta en Config.")
+            else:
+                self._set_status("Export done.")
+        except Exception as ex:
+            self._set_status(f"Export failed: {ex}")
+            log_err(ex)
+
+    # ---- Presets ----
+    def _do_save_preset(self):
+        try:
+            name = self.ed_preset_name.text().strip() or "default"
+            data = {
+                "root_label": self.ed_root.text().strip(),
+                "selected_labels": [self.lst_selected.item(i).text() for i in range(self.lst_selected.count())],
+                "export_dir": self.ed_export_dir.text().strip(),
+                "base_name": self.ed_base_name.text().strip(),
+                "gl": {
+                    "enabled": self.chk_gl.isChecked(),
+                    "yaw_deg": float(self.spn_gl_yaw.value()),
+                    "pitch_deg": float(self.spn_gl_pitch.value()),
+                    "intensity": float(self.spn_gl_int.value()),
+                    "color_rgb": self._get_color_tuple(),
+                },
+                "export_pointlights": self.chk_export_pointlights.isChecked(),
+                "cge_path": self.ed_cge_path.text().strip(),
+                "launch_cge": self.chk_launch_cge.isChecked(),
+                "restore_last": self.chk_restore.isChecked(),
+            }
+            save_preset(name, data)
+            self._set_status(f"Preset saved: {name}")
+        except Exception as ex:
+            self._set_status(f"Save preset failed: {ex}")
+            log_err(ex)
+
+    def _do_load_preset(self):
+        try:
+            name = self.ed_preset_name.text().strip() or "default"
+            data = load_preset(name)
+            self.ed_root.setText(data.get("root_label",""))
+            self.lst_selected.clear()
+            for lab in data.get("selected_labels", []):
+                self.lst_selected.addItem(lab)
+            self.ed_export_dir.setText(data.get("export_dir", self.ed_export_dir.text()))
+            self.ed_base_name.setText(data.get("base_name", self.ed_base_name.text()))
+            gl = data.get("gl", {})
+            self.chk_gl.setChecked(bool(gl.get("enabled", True)))
+            self.spn_gl_yaw.setValue(float(gl.get("yaw_deg", 45.0)))
+            self.spn_gl_pitch.setValue(float(gl.get("pitch_deg", -45.0)))
+            self.spn_gl_int.setValue(float(gl.get("intensity", 1.2)))
+            col = gl.get("color_rgb", [1.0,1.0,0.9])
+            self._gl_color = QtGui.QColor(int(col[0]*255), int(col[1]*255), int(col[2]*255))
+            self.chk_export_pointlights.setChecked(bool(data.get("export_pointlights", True)))
+            self.ed_cge_path.setText(data.get("cge_path", self.ed_cge_path.text()))
+            self.chk_launch_cge.setChecked(bool(data.get("launch_cge", self.chk_launch_cge.isChecked())))
+            self.chk_restore.setChecked(bool(data.get("restore_last", self.chk_restore.isChecked())))
+            self._refresh_object_lists()
+            self._set_status(f"Preset loaded: {name}")
+        except Exception as ex:
+            self._set_status(f"Load preset failed: {ex}")
+            log_err(ex)
+
+    def accept(self):
+        self._save_params()
+        super().accept()
+
+# -------------------------------
+# Run dialog
+# -------------------------------
+def run():
+    try:
+        dlg = GameEngineExportDialog(Gui.getMainWindow())
+        dlg.exec_()
+    except Exception as ex:
+        log_err("Dialog crashed:")
+        log_err(ex)
+
+if __name__ == "__main__":
+    log_info("Starting GameEngineExport...")
+    run()

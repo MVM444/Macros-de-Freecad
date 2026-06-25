@@ -97,6 +97,59 @@ if doc is None:
     doc = FreeCAD.newDocument("Proyecto")
 
 nombre_hoja = "NombresEstandar"
+grupo_hojas_nombre = "Hojas_de_Calculo"
+grupo_hojas_label = "Hojas de Calculo"
+grupo_hojas_aliases = ("Hojas de Calculo", "Hojas de Cálculo", "Hojas_Calculo")
+
+
+def texto_objeto(obj):
+    try:
+        return str(obj or "").strip()
+    except Exception:
+        return ""
+
+
+def objeto_es_grupo(obj):
+    return hasattr(obj, "Group")
+
+
+def nombre_visible(obj):
+    label = texto_objeto(getattr(obj, "Label", ""))
+    if label:
+        return label
+    return texto_objeto(getattr(obj, "Name", ""))
+
+
+def buscar_grupo_hojas():
+    aliases = set(alias.lower() for alias in grupo_hojas_aliases)
+    for obj in doc.Objects:
+        if objeto_es_grupo(obj) and nombre_visible(obj).lower() in aliases:
+            return obj
+    return None
+
+
+def asegurar_grupo_hojas():
+    grupo = buscar_grupo_hojas()
+    if grupo is not None:
+        return grupo
+    grupo = doc.addObject("App::DocumentObjectGroup", grupo_hojas_nombre)
+    grupo.Label = grupo_hojas_label
+    FreeCAD.Console.PrintMessage("Se creo el grupo 'Hojas de Calculo'.\n")
+    return grupo
+
+
+def asegurar_hoja_en_grupo(hoja):
+    grupo = asegurar_grupo_hojas()
+    try:
+        if hoja not in list(getattr(grupo, "Group", [])):
+            grupo.addObject(hoja)
+            FreeCAD.Console.PrintMessage("La hoja 'NombresEstandar' se ubico en el grupo 'Hojas de Calculo'.\n")
+    except Exception:
+        try:
+            grupo.addObject(hoja)
+        except Exception:
+            FreeCAD.Console.PrintMessage("No se pudo mover 'NombresEstandar' al grupo 'Hojas de Calculo'.\n")
+    return hoja
 
 
 def obtener_hoja():
@@ -110,8 +163,8 @@ def obtener_hoja():
         hoja.set("A5", "Pasillo")
         doc.recompute()
         FreeCAD.Console.PrintMessage("Se creo la hoja 'NombresEstandar' con nombres iniciales.\n")
-        return hoja
-    return getattr(doc, nombre_hoja)
+        return asegurar_hoja_en_grupo(hoja)
+    return asegurar_hoja_en_grupo(getattr(doc, nombre_hoja))
 
 
 def celda_marcada(hoja, celda):

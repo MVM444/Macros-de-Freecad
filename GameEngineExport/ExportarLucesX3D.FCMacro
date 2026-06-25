@@ -1,0 +1,210 @@
+# Qt compatibility for FreeCAD 1.x (PySide6) and older builds.
+def _ensure_qt_compat():
+    import sys
+    import types
+
+    QtCore = QtGui = QtWidgets = None
+    binding_name = None
+
+    for candidate in ("PySide6", "PySide2", "PySide"):
+        try:
+            if candidate == "PySide":
+                from PySide import QtCore as _QtCore, QtGui as _QtGui
+                _QtWidgets = _QtGui
+            else:
+                module = __import__(candidate, fromlist=["QtCore", "QtGui", "QtWidgets"])
+                _QtCore = module.QtCore
+                _QtGui = module.QtGui
+                _QtWidgets = module.QtWidgets
+            QtCore, QtGui, QtWidgets = _QtCore, _QtGui, _QtWidgets
+            binding_name = candidate
+            break
+        except Exception:
+            continue
+
+    if QtCore is None:
+        return
+
+    qtgui_compat = types.ModuleType("QtGui")
+    qtgui_compat.__dict__.update(getattr(QtGui, "__dict__", {}))
+    qtgui_compat.__dict__.update(getattr(QtWidgets, "__dict__", {}))
+
+    qtsvg_compat = None
+    for module_name in ("QtSvg", "QtSvgWidgets"):
+        try:
+            module = __import__(binding_name, fromlist=[module_name])
+            qt_module = getattr(module, module_name)
+        except Exception:
+            continue
+        if qtsvg_compat is None:
+            qtsvg_compat = types.ModuleType("QtSvg")
+        qtsvg_compat.__dict__.update(getattr(qt_module, "__dict__", {}))
+
+    qtuitools_compat = None
+    try:
+        module = __import__(binding_name, fromlist=["QtUiTools"])
+        qtuitools_compat = module.QtUiTools
+    except Exception:
+        pass
+
+    for package_name in ("PySide2", "PySide"):
+        package = sys.modules.get(package_name)
+        if package is None:
+            package = types.ModuleType(package_name)
+            sys.modules[package_name] = package
+        package.QtCore = QtCore
+        package.QtGui = qtgui_compat
+        package.QtWidgets = QtWidgets
+        sys.modules[package_name + ".QtCore"] = QtCore
+        sys.modules[package_name + ".QtGui"] = qtgui_compat
+        sys.modules[package_name + ".QtWidgets"] = QtWidgets
+        if qtsvg_compat is not None:
+            package.QtSvg = qtsvg_compat
+            sys.modules[package_name + ".QtSvg"] = qtsvg_compat
+        if qtuitools_compat is not None:
+            package.QtUiTools = qtuitools_compat
+            sys.modules[package_name + ".QtUiTools"] = qtuitools_compat
+
+
+_ensure_qt_compat()
+
+# Macro: ExportarLucesX3D.FCMacro
+# Descripcion:
+# Selecciona múltiples grupos de objetos en FreeCAD,
+# para cada grupo abre un diálogo con opciones de tipo de luz (checkboxes) y luminosidad,
+# y exporta un archivo X3D con todas las luces generadas.
+# Fecha: 2025-07-12
+
+import FreeCAD, FreeCADGui, os
+from PySide import QtCore, QtWidgets
+
+# Funciones auxiliares
+def obtener_posicion_objeto(obj):
+    try:
+        return obj.Shape.BoundBox.Center
+    except Exception:
+        return obj.Placement.Base
+
+from math import sqrt
+
+def obtener_cara_inferior(obj):
+    cara_sel, max_area = None, 0
+    for cara in obj.Shape.Faces:
+        normal = cara.normalAt(0.5, 0.5)
+        # cara mirando hacia abajo (eje Z negativo)
+        if normal.z < -0.7 and cara.Area > max_area:
+            max_area, cara_sel = cara.Area, cara
+    if cara_sel:
+        return cara_sel.CenterOfMass, cara_sel.normalAt(0.5, 0.5)
+    return (None, None)
+
+class LightConfigDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None):
+        super(LightConfigDialog, self).__init__(parent)
+        self.setWindowTitle("Configurar grupo de luces")
+        self.resize(300, 150)
+        layout = QtWidgets.QVBoxLayout(self)
+        # Tipo de luz
+        type_box = QtWidgets.QGroupBox("Tipo de luz")
+        type_layout = QtWidgets.QHBoxLayout(type_box)
+        self.rad_point = QtWidgets.QRadioButton("PointLight")
+        self.rad_spot = QtWidgets.QRadioButton("SpotLight")
+        self.rad_dir = QtWidgets.QRadioButton("DirectionalLight")
+        self.rad_point.setChecked(True)
+        type_layout.addWidget(self.rad_point)
+        type_layout.addWidget(self.rad_spot)
+        type_layout.addWidget(self.rad_dir)
+        layout.addWidget(type_box)
+        # Lumens
+        lum_layout = QtWidgets.QHBoxLayout()
+        lum_label = QtWidgets.QLabel("Lumens:")
+        self.spin_lum = QtWidgets.QDoubleSpinBox()
+        self.spin_lum.setRange(0, 1000000)
+        self.spin_lum.setValue(4000)
+        self.spin_lum.setSingleStep(100)
+        lum_layout.addWidget(lum_label)
+        lum_layout.addWidget(self.spin_lum)
+        layout.addLayout(lum_layout)
+        # Botones OK/Cancel
+        btn_box = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        btn_box.accepted.connect(self.accept)
+        btn_box.rejected.connect(self.reject)
+        layout.addWidget(btn_box)
+
+    def getValues(self):
+        if self.rad_spot.isChecked():
+            tipo = 'SpotLight'
+        elif self.rad_dir.isChecked():
+            tipo = 'DirectionalLight'
+        else:
+            tipo = 'PointLight'
+        return tipo, self.spin_lum.value()
+
+class SeleccionGrupoDialog(QtWidgets.QWidget):
+    def __init__(self):
+        super(SeleccionGrupoDialog, self).__init__()
+        self.setWindowTitle("Seleccionar grupo de luces")
+        self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
+        layout = QtWidgets.QVBoxLayout(self)
+        self.label = QtWidgets.QLabel("Seleccione objetos en FreeCAD y luego presione 'Agregar Grupo'.")
+        layout.addWidget(self.label)
+        self.boton_agregar = QtWidgets.QPushButton("Agregar Grupo")
+        self.boton_terminar = QtWidgets.QPushButton("Terminar y Exportar")
+        layout.addWidget(self.boton_agregar)
+        layout.addWidget(self.boton_terminar)
+        self.boton_agregar.clicked.connect(self.agregar_grupo)
+        self.boton_terminar.clicked.connect(self.terminar)
+        self.grupos = []
+
+    def agregar_grupo(self):
+        seleccion = list(FreeCADGui.Selection.getSelection())
+        if not seleccion:
+            QtWidgets.QMessageBox.warning(self, "Sin selección", "No se seleccionaron objetos.")
+            return
+        dlg = LightConfigDialog()
+        if dlg.exec_() != QtWidgets.QDialog.Accepted:
+            return
+        tipo, lumenes = dlg.getValues()
+        self.grupos.append((seleccion, tipo, lumenes))
+        FreeCADGui.Selection.clearSelection()
+        FreeCAD.Console.PrintMessage(f"Grupo agregado con {len(seleccion)} objetos. Tipo: {tipo}, Lumenes: {lumenes}\n")
+
+    def terminar(self):
+        if not self.grupos:
+            QtWidgets.QMessageBox.information(self, "Nada que exportar", "No se agregaron grupos.")
+            return
+        ruta_salida, _ = QtWidgets.QFileDialog.getSaveFileName(None,
+            "Guardar X3D de luces", "luces_varios.x3d", "X3D Files (*.x3d)")
+        if not ruta_salida:
+            return
+        self.exportar_luces(ruta_salida)
+        self.close()
+
+    def exportar_luces(self, ruta):
+        nodes = []
+        for seleccion, tipo, lumenes in self.grupos:
+            intens = min(1.0, lumenes/4000.0)
+            for obj in seleccion:
+                if tipo == 'SpotLight':
+                    pos, norm = obtener_cara_inferior(obj)
+                    if pos and norm:
+                        #pos.z -= 10  # desplazar hacia abajo 10mm
+                        nodes.append(f"    <SpotLight location='{pos.x:.2f} {pos.y:.2f} {pos.z:.2f}' direction='{norm.x:.3f} {norm.y:.3f} {norm.z:.3f}' color='1 1 1' intensity='{intens:.3f}' beamWidth='0.7' cutOffAngle='1.0' radius='5000'/>")
+                elif tipo == 'DirectionalLight':
+                    _, norm = obtener_cara_inferior(obj)
+                    if norm:
+                        nodes.append(f"    <DirectionalLight direction='{norm.x:.3f} {norm.y:.3f} {norm.z:.3f}' color='1 1 1' intensity='{intens:.3f}'/>")
+                else:
+                    pos = obtener_posicion_objeto(obj)
+                    #pos.z -= 10  # desplazar hacia abajo 10mm
+                    nodes.append(f"    <PointLight location='{pos.x:.2f} {pos.y:.2f} {pos.z:.2f}' color='1 1 1' intensity='{intens:.3f}' radius='5000'/>")
+        content = ['<?xml version="1.0" encoding="UTF-8"?>', '<X3D profile="Interchange" version="3.3">', '  <Scene>']
+        content += nodes
+        content += ['  </Scene>', '</X3D>']
+        with open(ruta, 'w', encoding='utf-8') as f:
+            f.write("\n".join(content))
+        FreeCAD.Console.PrintMessage(f"Archivo de luces exportado en: {ruta}\n")
+
+# Ejecutar macro
+ventana_luces = SeleccionGrupoDialog()
+ventana_luces.show()

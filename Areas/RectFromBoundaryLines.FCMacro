@@ -16,6 +16,76 @@ def debug(msg):
     FreeCAD.Console.PrintMessage(f"DEBUG: {msg}\n")
 
 
+def add_prop(obj, typ, name_, group, desc):
+    try:
+        if not hasattr(obj, name_):
+            obj.addProperty(typ, name_, group, desc)
+    except Exception:
+        pass
+
+
+def label(obj):
+    return str(getattr(obj, "Label", "") or getattr(obj, "Name", "") or "")
+
+
+def is_group(obj):
+    return hasattr(obj, "Group")
+
+
+def ensure_areas_group(doc):
+    for obj in doc.Objects:
+        if is_group(obj) and label(obj).strip().lower() == "areas":
+            return obj
+    group = doc.addObject("App::DocumentObjectGroup", "Areas")
+    group.Label = "Areas"
+    return group
+
+
+def next_area_label(doc):
+    existing = set(label(obj) for obj in doc.Objects)
+    idx = 1
+    while True:
+        candidate = "Area_{:03d}".format(idx)
+        if candidate not in existing:
+            return candidate
+        idx += 1
+
+
+def configure_area_rectangle(obj, width, height, group):
+    area_m2 = (float(width) * float(height)) / 1000000.0
+    obj.Label = next_area_label(FreeCAD.ActiveDocument)
+    add_prop(obj, "App::PropertyString", "ElectricCRTipo", "ElectricCR", "Tipo logico")
+    add_prop(obj, "App::PropertyString", "GeneratedBy", "ElectricCR", "Macro generadora")
+    add_prop(obj, "App::PropertyFloat", "AreaM2", "ElectricCR", "Area en m2")
+    add_prop(obj, "App::PropertyInteger", "VirtualClosures", "ElectricCR", "Cierres virtuales")
+    add_prop(obj, "App::PropertyFloat", "Confidence", "ElectricCR", "Confianza")
+    try:
+        obj.ElectricCRTipo = "Area"
+        obj.GeneratedBy = "RectFromBoundaryLines"
+        obj.AreaM2 = area_m2
+        obj.VirtualClosures = 0
+        obj.Confidence = 0.95
+    except Exception:
+        pass
+    try:
+        if hasattr(obj, "MakeFace"):
+            obj.MakeFace = True
+    except Exception:
+        pass
+    try:
+        group.addObject(obj)
+    except Exception:
+        pass
+    try:
+        # Tono parecido al de AreaPorClick, pero mas verde-azulado para distinguir origen manual.
+        obj.ViewObject.LineColor = (0.0, 0.48, 0.42)
+        obj.ViewObject.ShapeColor = (0.35, 0.80, 0.70)
+        obj.ViewObject.Transparency = 72
+    except Exception:
+        pass
+    return area_m2
+
+
 def get_selected_edges():
     sel = FreeCADGui.Selection.getSelectionEx()
     edges = []
@@ -80,6 +150,10 @@ def compute_boundaries(cluster):
 
 
 def RectFromBoundaryLines():
+    doc = FreeCAD.ActiveDocument
+    if doc is None:
+        FreeCAD.Console.PrintError("No hay documento activo.\n")
+        return
     edges = get_selected_edges()
     if len(edges) < 2:
         FreeCAD.Console.PrintError("Seleccione al menos dos aristas lineales.\n")
@@ -136,7 +210,23 @@ def RectFromBoundaryLines():
     debug(f"Origin={tuple(origin)}, width={width:.3f}, height={height:.3f}, angle={angle:.3f}")
 
     placement = Placement(origin, Rotation(Vector(0,0,1), angle))
-    Draft.makeRectangle(width, height, placement)
-    FreeCAD.ActiveDocument.recompute()
+    group = ensure_areas_group(doc)
+    doc.openTransaction("ElectricCR: crear rectangulo desde limites")
+    try:
+        obj = Draft.makeRectangle(width, height, placement)
+        if obj is None:
+            raise RuntimeError("Draft.makeRectangle no devolvio objeto")
+        area_m2 = configure_area_rectangle(obj, width, height, group)
+        doc.commitTransaction()
+    except Exception:
+        try:
+            doc.abortTransaction()
+        except Exception:
+            pass
+        raise
+    doc.recompute()
+    FreeCAD.Console.PrintMessage(
+        "[RectFromBoundaryLines] Creada {}: {:.2f} m2 en grupo Areas.\n".format(obj.Label, area_m2)
+    )
 
 RectFromBoundaryLines()

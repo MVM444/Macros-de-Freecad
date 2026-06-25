@@ -1,0 +1,92 @@
+# -*- coding: utf-8 -*-
+"""
+Macro: AbrirDirectorioElectricCR
+Descripcion: Abre la carpeta ElectricCR/Electric-Cr en el explorador del sistema.
+"""
+
+import os
+import subprocess
+
+import FreeCAD as App
+
+_FIXED_ELECTRICCR_DIR = (
+    r"C:\Users\marco\OneDrive - Caja Costarricense de Seguro Social"
+    r"\Documentos\FreeCAD\Macros\Macros-de-Freecad\ElectricCR"
+)
+
+
+def _macro_path_entries():
+    entries = []
+    try:
+        param = App.ParamGet("User parameter:BaseApp/Preferences/Macro").GetString("MacroPath", "")
+    except Exception:
+        param = ""
+    if param:
+        sep = ";" if os.name == "nt" else ":"
+        for part in param.split(sep):
+            part = part.strip()
+            if not part:
+                continue
+            full = os.path.normpath(os.path.abspath(part))
+            if full not in entries:
+                entries.append(full)
+    try:
+        user_macro = App.getUserMacroDir()
+    except Exception:
+        user_macro = ""
+    if user_macro:
+        full = os.path.normpath(os.path.abspath(user_macro))
+        if full not in entries:
+            entries.append(full)
+    here = os.path.normpath(os.path.abspath(os.path.dirname(__file__)))
+    if here not in entries:
+        entries.insert(0, here)
+    return entries
+
+
+def _find_electriccr_dir():
+    if os.path.isdir(_FIXED_ELECTRICCR_DIR):
+        return _FIXED_ELECTRICCR_DIR
+
+    folder_names = ("ElectricCR", "Electric-Cr", "Electric-CR", "electriccr")
+    extras = ("", "Macros-de-Freecad", os.path.join("Macros-de-Freecad", "Resources"))
+    seen = set()
+
+    for base in _macro_path_entries():
+        for extra in extras:
+            root = os.path.join(base, extra) if extra else base
+            root = os.path.normpath(root)
+            if root in seen or not os.path.isdir(root):
+                continue
+            seen.add(root)
+            for folder in folder_names:
+                candidate = os.path.join(root, folder)
+                if os.path.isdir(candidate):
+                    return candidate
+    return ""
+
+
+def _open_folder(path):
+    if os.name == "nt":
+        os.startfile(path)  # type: ignore[attr-defined]
+    elif os.name == "posix":
+        subprocess.Popen(["xdg-open", path])
+    else:
+        subprocess.Popen(["open", path])
+
+
+def main():
+    target = _find_electriccr_dir()
+    if not target:
+        App.Console.PrintError(
+            "No se encontro la carpeta ElectricCR/Electric-Cr en las rutas de macros.\n"
+        )
+        return
+    try:
+        _open_folder(target)
+        App.Console.PrintMessage(f"Carpeta abierta: {target}\n")
+    except Exception as err:
+        App.Console.PrintError(f"No se pudo abrir la carpeta: {err}\n")
+
+
+main()

@@ -1,0 +1,36 @@
+import FreeCAD as App
+import FreeCADGui as Gui
+import os
+
+def export_selection_via_gui_x3d(filepath):
+    """Exporta la selección actual a X3D utilizando la API del documento."""
+    doc = App.ActiveDocument
+    if doc is None:
+        raise RuntimeError("No hay documento activo")
+
+    selection = Gui.Selection.getSelection()
+    if not selection:
+        raise RuntimeError("No hay selección para exportar")
+
+    try:
+        doc.exportObjects(selection, filepath)
+        App.Console.PrintMessage(f"[TEST] exportObjects a X3D: {filepath}\n")
+    except Exception as e:
+        App.Console.PrintError(f"[TEST] exportObjects falló: {e}\n")
+
+def run_test_export():
+    if not Gui.Selection.getSelection():
+        App.Console.PrintError("[TEST] No hay seleccion\n")
+        return
+
+    tmp = r"C:\Temp"
+    os.makedirs(tmp, exist_ok=True)
+    out = os.path.join(tmp, "test_gui_export.x3d")
+    export_selection_via_gui_x3d(out)
+
+    if os.path.exists(out):
+        App.Console.PrintMessage(f"[TEST] Exito: generado {out}\n")
+    else:
+        App.Console.PrintError(f"[TEST] No se generó {out}\n")
+
+run_test_export()

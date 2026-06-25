@@ -1,0 +1,31 @@
+# Macro: AplicarEstiloDifusor.FCMacro
+# Descripcion: Aplica propiedades visuales para simular un difusor opalino
+# Fecha: 2025-07-18
+
+import FreeCADGui
+
+seleccion = FreeCADGui.Selection.getSelection()
+
+if not seleccion:
+    FreeCAD.Console.PrintError("⚠️ No hay objetos seleccionados.\n")
+else:
+    for obj in seleccion:
+        try:
+            vo = obj.ViewObject
+
+            # Agregar propiedad EmissiveColor si no existe
+            if not hasattr(vo, "EmissiveColor"):
+                vo.addProperty("App::PropertyColor", "EmissiveColor", "Base", "Color que emite luz")
+                FreeCAD.Console.PrintMessage(f"➕ EmissiveColor agregado a: {obj.Name}\n")
+
+            # Aplicar propiedades visuales
+            vo.EmissiveColor = (1.0, 1.0, 1.0)         # Brillo blanco
+            vo.ShapeColor = (1.0, 1.0, 1.0)            # Apariencia blanca
+            vo.DiffuseColor = [(0.8, 0.8, 0.9)] * len(obj.Shape.Faces)  # Color claro azulado
+            vo.LineColor = (0.8, 0.8, 0.8)             # Bordes suaves
+            vo.Transparency = 50                       # Translúcido
+
+            FreeCAD.Console.PrintMessage(f"✅ Difusor aplicado a: {obj.Name}\n")
+
+        except Exception as e:
+            FreeCAD.Console.PrintError(f"❌ Error en {obj.Name}: {e}\n")

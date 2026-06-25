@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-06-12T11:29:10",
+  "updated": "2026-06-23T12:22:22",
   "tools": {
     "Draft_Line": {
       "count": 224,
@@ -61,18 +61,18 @@
       }
     },
     "Draft_AddToGroup": {
-      "count": 200,
-      "last_ts": "2026-06-09T11:58:21",
+      "count": 204,
+      "last_ts": "2026-06-22T14:41:35",
       "last_meta": {
         "source": "toolbar_action",
         "text": "A\u00f1adir a grupo"
       }
     },
     "macro:C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Areas\\AsignarNombreEstandar.FCMacro": {
-      "count": 18,
-      "last_ts": "2026-06-08T17:33:46",
+      "count": 20,
+      "last_ts": "2026-06-22T15:17:23",
       "last_meta": {
-        "cmd": "ElectricCR_Areas_AsignarNombreEstandar_1780950200",
+        "cmd": "ElectricCR_Areas_AsignarNombreEstandar_1781299828",
         "macro": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Areas\\AsignarNombreEstandar.FCMacro",
         "label": "AsignarNombreEstandar"
       }
@@ -339,10 +339,10 @@
       }
     },
     "macro:C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Areas\\RectFromBoundaryLines.FCMacro": {
-      "count": 87,
-      "last_ts": "2026-06-08T15:43:52",
+      "count": 100,
+      "last_ts": "2026-06-22T16:10:10",
       "last_meta": {
-        "cmd": "ElectricCR_Areas_RectFromBoundaryLines_1770645917",
+        "cmd": "ElectricCR_Areas_RectFromBoundaryLines_1782162483",
         "macro": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Areas\\RectFromBoundaryLines.FCMacro",
         "label": "RectFromBoundaryLines"
       }
@@ -438,17 +438,17 @@
       }
     },
     "macro:C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Tomacorrientes\\InsertarTomacorrientesenPoligonos_objeto_toma.FCMacro": {
-      "count": 11,
-      "last_ts": "2026-06-10T10:59:20",
+      "count": 13,
+      "last_ts": "2026-06-22T10:46:23",
       "last_meta": {
-        "cmd": "ElectricCR_Tomacorrientes_InsertarTomacorrientesenPoligonos_objeto_toma_1773244332",
+        "cmd": "ElectricCR_Tomacorrientes_InsertarTomacorrientesenPoligonos_objeto_toma_1781299828",
         "macro": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Tomacorrientes\\InsertarTomacorrientesenPoligonos_objeto_toma.FCMacro",
         "label": "InsertarTomacorrientesenPoligonos_objeto_toma"
       }
     },
     "Draft_Rectangle": {
-      "count": 81,
-      "last_ts": "2026-06-12T10:37:40",
+      "count": 85,
+      "last_ts": "2026-06-22T10:45:48",
       "last_meta": {
         "source": "toolbar_action",
         "text": "Rect\u00e1ngulo"
@@ -887,10 +887,10 @@
       }
     },
     "macro:C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Iluminaci\u00f3n\\ColocarLuminarias_Link.FCMacro": {
-      "count": 34,
-      "last_ts": "2026-06-09T11:38:16",
+      "count": 38,
+      "last_ts": "2026-06-22T16:55:40",
       "last_meta": {
-        "cmd": "ElectricCR_Iluminaci\u00f3n_ColocarLuminarias_Link_1774389640",
+        "cmd": "ElectricCR_Iluminaci\u00f3n_ColocarLuminarias_Link_1781299828",
         "macro": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Iluminaci\u00f3n\\ColocarLuminarias_Link.FCMacro",
         "label": "Colocar Luminarias Link"
       }
@@ -1043,10 +1043,10 @@
       }
     },
     "macro:C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Objetos\\Alinear.FCMacro": {
-      "count": 14,
-      "last_ts": "2026-03-25T23:12:34",
+      "count": 16,
+      "last_ts": "2026-06-15T14:21:59",
       "last_meta": {
-        "cmd": "ElectricCR_Objetos_Alinear_1722528990",
+        "cmd": "ElectricCR_Objetos_Alinear_1781299828",
         "macro": "C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Objetos\\Alinear.FCMacro",
         "label": "Alinear"
       }
@@ -1390,10 +1390,10 @@
       }
     },
     "macro:C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Areas\\AreaPorClick.FCMacro": {
-      "count": 19,
-      "last_ts": "2026-06-08T14:02:04",
+      "count": 22,
+      "last_ts": "2026-06-22T14:52:12",
       "last_meta": {
-        "cmd": "ElectricCR_Areas_AreaPorClick_1780942445",
+        "cmd": "ElectricCR_Areas_AreaPorClick_1781299828",
         "macro": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Areas\\AreaPorClick.FCMacro",
         "label": "Areas por click"
       }
@@ -1461,10 +1461,10 @@
       }
     },
     "macro:C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Iluminaci\u00f3n\\ColocarLuminarias_Link.FCMacro": {
-      "count": 7,
-      "last_ts": "2026-06-09T10:56:32",
+      "count": 10,
+      "last_ts": "2026-06-23T12:22:22",
       "last_meta": {
-        "cmd": "ElectricCR_Iluminaci\u00f3n_ColocarLuminarias_Link_1774389640",
+        "cmd": "ElectricCR_Iluminaci\u00f3n_ColocarLuminarias_Link_1781299828",
         "macro": "C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Iluminaci\u00f3n\\ColocarLuminarias_Link.FCMacro",
         "label": "Colocar Luminarias Link"
       }
@@ -1524,19 +1524,19 @@
       }
     },
     "macro:C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Iluminaci\u00f3n\\Actualizar_Iluminacion_Completa.FCMacro": {
-      "count": 6,
-      "last_ts": "2026-06-10T09:16:54",
+      "count": 9,
+      "last_ts": "2026-06-22T15:29:24",
       "last_meta": {
-        "cmd": "ElectricCR_Iluminaci\u00f3n_Actualizar_Iluminacion_Completa_1781103776",
+        "cmd": "ElectricCR_Iluminaci\u00f3n_Actualizar_Iluminacion_Completa_1781299828",
         "macro": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Iluminaci\u00f3n\\Actualizar_Iluminacion_Completa.FCMacro",
         "label": "Actualizar Iluminacion Completa"
       }
     },
     "macro:C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Iluminaci\u00f3n\\Guia_Iluminacion.FCMacro": {
-      "count": 7,
-      "last_ts": "2026-06-10T10:52:35",
+      "count": 9,
+      "last_ts": "2026-06-22T15:21:39",
       "last_meta": {
-        "cmd": "ElectricCR_Iluminaci\u00f3n_Guia_Iluminacion_1781106776",
+        "cmd": "ElectricCR_Iluminaci\u00f3n_Guia_Iluminacion_1781299828",
         "macro": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Iluminaci\u00f3n\\Guia_Iluminacion.FCMacro",
         "label": "Guia Iluminacion"
       }
@@ -1548,6 +1548,60 @@
         "cmd": "ElectricCR_Areas_Guia_Areas_1781110698",
         "macro": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Areas\\Guia_Areas.FCMacro",
         "label": "Guia Areas"
+      }
+    },
+    "macro:C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Organizacion del proyecto\\AbrirDirectorioElectricCR.FCMacro": {
+      "count": 1,
+      "last_ts": "2026-06-22T15:17:13",
+      "last_meta": {
+        "cmd": "ElectricCR_Organizacion del proyecto_AbrirDirectorioElectricCR_1772115191",
+        "macro": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Organizacion del proyecto\\AbrirDirectorioElectricCR.FCMacro",
+        "label": "AbrirDirectorioElectricCR"
+      }
+    },
+    "macro:C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Tableros\\Electrical_Schedule_Base.FCMacro": {
+      "count": 1,
+      "last_ts": "2026-06-22T15:17:17",
+      "last_meta": {
+        "cmd": "ElectricCR_Tableros_Electrical_Schedule_Base_1781111300",
+        "macro": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Tableros\\Electrical_Schedule_Base.FCMacro",
+        "label": "Electrical_Schedule_Base"
+      }
+    },
+    "macro:C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Objetos\\cuenta_cu\u00e1ntos_objetos_est\u00e1n_seleccionados.FCMacro": {
+      "count": 1,
+      "last_ts": "2026-06-22T15:41:03",
+      "last_meta": {
+        "cmd": "ElectricCR_Objetos_cuenta_cu_ntos_objetos_est_n_seleccionados_1750712603",
+        "macro": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Objetos\\cuenta_cu\u00e1ntos_objetos_est\u00e1n_seleccionados.FCMacro",
+        "label": "cuenta_cu\u00e1ntos_objetos_est\u00e1n_seleccionados"
+      }
+    },
+    "macro:C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Objetos\\RenombrarDi\u00e1logo.FCMacro": {
+      "count": 1,
+      "last_ts": "2026-06-23T11:56:22",
+      "last_meta": {
+        "cmd": "ElectricCR_Objetos_RenombrarDi_logo_1781299828",
+        "macro": "C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Objetos\\RenombrarDi\u00e1logo.FCMacro",
+        "label": "RenombrarDi\u00e1logo"
+      }
+    },
+    "macro:C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Objetos\\cambiar_altura_y_rotacion_objetos.FCMacro": {
+      "count": 1,
+      "last_ts": "2026-06-23T11:56:46",
+      "last_meta": {
+        "cmd": "ElectricCR_Objetos_cambiar_altura_y_rotacion_objetos_1781299828",
+        "macro": "C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Objetos\\cambiar_altura_y_rotacion_objetos.FCMacro",
+        "label": "cambiar_altura_y_rotacion_objetos"
+      }
+    },
+    "macro:C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Iluminaci\u00f3n\\Actualizar_Iluminacion_Completa.FCMacro": {
+      "count": 1,
+      "last_ts": "2026-06-23T12:20:09",
+      "last_meta": {
+        "cmd": "ElectricCR_Iluminaci\u00f3n_Actualizar_Iluminacion_Completa_1781299828",
+        "macro": "C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Iluminaci\u00f3n\\Actualizar_Iluminacion_Completa.FCMacro",
+        "label": "Actualizar Iluminacion Completa"
       }
     }
   }

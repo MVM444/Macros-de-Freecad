@@ -1,6 +1,6 @@
 ﻿from pathlib import Path
 
-path = Path("Insertar_Dispositivo.FCMacro")
+path = Path("Objetos") / "Insertar_Dispositivo.FCMacro"
 text = path.read_text(encoding="utf-8")
 start = text.index("def _candidate_electriccr_dirs()")
 end = text.index("class InsertarDispositivoDialog", start)

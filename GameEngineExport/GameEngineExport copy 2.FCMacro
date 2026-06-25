@@ -1,0 +1,2066 @@
+# -*- coding: utf-8 -*-
+"""
+GameEngineExport.FCMacro
+Version: 2025-10-04 20:00 (America/Costa_Rica)
+Author: Marco + GPT
+
+Descripcion / Description:
+  Macro unificada para exportar escenas desde FreeCAD hacia motores de juego (X3D para Castle Game Engine).
+  Unifica tres funciones base: materiales (emissive), luces, y export de escena.
+  Agrega un objeto marcador de inicio "GameStart" que se exporta como X3D Viewpoint.
+  GUI con pestanas y microcopy bilingue (ES/EN). Guarda configuraciones con ParamGet y soporta presets JSON.
+
+Notas importantes (ES):
+  - FreeCAD trabaja en mm. El X3D objetivo es en metros. Se aplica factor 0.001.
+  - Seleccione un grupo raiz especifico (no el documento completo).
+  - Debe existir al menos un "piso" para la navegacion del personaje.
+  - Evitar nombres con acentos, espacios raros o caracteres especiales en archivos/salidas.
+
+Important notes (EN):
+  - FreeCAD units are millimeters; X3D targets meters. Scale factor 0.001 is applied.
+  - Select a specific scene root group (not the whole document).
+  - At least one floor surface is required for player navigation.
+  - Avoid special characters in file names/paths.
+
+References:
+  - FreeCAD X3D export (selection + Mesh WB): forum threads and docs. [see citations in chat]
+  - ParamGet for preferences. [see citations in chat]
+  - X3D Material.emissiveColor; CGE lights and Viewpoint. [see citations in chat]
+"""
+
+# Qt compatibility for FreeCAD 1.x (PySide6) and older builds.
+def _ensure_qt_compat():
+    import sys
+    import types
+
+    QtCore = QtGui = QtWidgets = None
+    binding_name = None
+
+    for candidate in ("PySide6", "PySide2", "PySide"):
+        try:
+            if candidate == "PySide":
+                from PySide import QtCore as _QtCore, QtGui as _QtGui
+                _QtWidgets = _QtGui
+            else:
+                module = __import__(candidate, fromlist=["QtCore", "QtGui", "QtWidgets"])
+                _QtCore = module.QtCore
+                _QtGui = module.QtGui
+                _QtWidgets = module.QtWidgets
+            QtCore, QtGui, QtWidgets = _QtCore, _QtGui, _QtWidgets
+            binding_name = candidate
+            break
+        except Exception:
+            continue
+
+    if QtCore is None:
+        return
+
+    qtgui_compat = types.ModuleType("QtGui")
+    qtgui_compat.__dict__.update(getattr(QtGui, "__dict__", {}))
+    qtgui_compat.__dict__.update(getattr(QtWidgets, "__dict__", {}))
+
+    qtsvg_compat = None
+    for module_name in ("QtSvg", "QtSvgWidgets"):
+        try:
+            module = __import__(binding_name, fromlist=[module_name])
+            qt_module = getattr(module, module_name)
+        except Exception:
+            continue
+        if qtsvg_compat is None:
+            qtsvg_compat = types.ModuleType("QtSvg")
+        qtsvg_compat.__dict__.update(getattr(qt_module, "__dict__", {}))
+
+    qtuitools_compat = None
+    try:
+        module = __import__(binding_name, fromlist=["QtUiTools"])
+        qtuitools_compat = module.QtUiTools
+    except Exception:
+        pass
+
+    for package_name in ("PySide2", "PySide"):
+        package = sys.modules.get(package_name)
+        if package is None:
+            package = types.ModuleType(package_name)
+            sys.modules[package_name] = package
+        package.QtCore = QtCore
+        package.QtGui = qtgui_compat
+        package.QtWidgets = QtWidgets
+        sys.modules[package_name + ".QtCore"] = QtCore
+        sys.modules[package_name + ".QtGui"] = qtgui_compat
+        sys.modules[package_name + ".QtWidgets"] = QtWidgets
+        if qtsvg_compat is not None:
+            package.QtSvg = qtsvg_compat
+            sys.modules[package_name + ".QtSvg"] = qtsvg_compat
+        if qtuitools_compat is not None:
+            package.QtUiTools = qtuitools_compat
+            sys.modules[package_name + ".QtUiTools"] = qtuitools_compat
+
+
+_ensure_qt_compat()
+
+import os
+import json
+import math
+import re
+import copy
+import unicodedata
+from pathlib import Path
+from datetime import datetime
+import subprocess
+import textwrap
+
+try:
+    import FreeCAD as App  # type: ignore
+    import FreeCADGui as Gui  # type: ignore
+except ImportError:  # running outside FreeCAD (e.g. linting)
+    App = None  # type: ignore[assignment]
+    Gui = None  # type: ignore[assignment]
+
+# ImportGui is used for export
+try:
+    import ImportGui
+except Exception:
+    ImportGui = None
+
+# Part used to create simple GameStart marker (cone + base)
+import Part
+
+# PySide2 for GUI
+from PySide2 import QtWidgets, QtCore
+
+
+# -------------------------------
+# Constants and parameters
+# -------------------------------
+
+PARAM_ROOT = "User parameter:BaseApp/Preferences/GameEngineExport"
+if App is not None:
+    _USER_APP_DIR = Path(App.getUserAppDataDir())
+else:
+    _USER_APP_DIR = Path.home()
+DEFAULT_EXPORT_DIR = str(_USER_APP_DIR.joinpath("tmp"))
+PRESETS_DIR_NAME = "presets"
+APP_PREFIX = "[GAMEEXPORT]"
+
+SCALE_TO_METERS = 0.001  # FreeCAD mm -> meters for X3D engines
+
+# -------------------------------
+# Utilities and logging
+# -------------------------------
+
+def log_info(msg):
+    App.Console.PrintMessage(f"{APP_PREFIX}[INFO] {msg}\n")
+
+def log_warn(msg):
+    App.Console.PrintWarning(f"{APP_PREFIX}[WARN] {msg}\n")
+
+def log_err(msg):
+    App.Console.PrintError(f"{APP_PREFIX}[ERROR] {msg}\n")
+
+def log_dbg(msg):
+    # promote or demote as needed
+    App.Console.PrintMessage(f"{APP_PREFIX}[DEBUG] {msg}\n")
+
+def param_get(group=PARAM_ROOT):
+    return App.ParamGet(group)
+
+def get_param_str(key, default=""):
+    return param_get().GetString(key, default)
+
+def set_param_str(key, val):
+    param_get().SetString(key, val)
+
+def get_param_bool(key, default=False):
+    return param_get().GetBool(key, default)
+
+def set_param_bool(key, val):
+    param_get().SetBool(key, val)
+
+def ensure_dir(p):
+    Path(p).mkdir(parents=True, exist_ok=True)
+
+
+def get_doc_dir_and_stem():
+    """Return (doc_dir: Path or None, stem_sanitized: str) from the active document."""
+    doc = get_active_doc()
+    fname = getattr(doc, "FileName", "") or ""
+    if fname:
+        p = Path(fname)
+        doc_dir = p.parent
+        stem = p.stem
+    else:
+        doc_dir = None
+        stem = getattr(doc, "Label", "Scene")
+
+    normalized = unicodedata.normalize("NFKD", stem)
+    stem_ascii = "".join(
+        ch for ch in normalized if ((ch.isalnum() and ord(ch) < 128) or ch == "_")
+    )
+    if not stem_ascii:
+        stem_ascii = "Scene"
+    return doc_dir, stem_ascii
+
+
+def get_project_export_dir_fallback():
+    """Prefer the document directory; fallback to DEFAULT_EXPORT_DIR."""
+    doc_dir, _ = get_doc_dir_and_stem()
+    if doc_dir:
+        return str(doc_dir)
+    configured = get_param_str("export_dir", DEFAULT_EXPORT_DIR).strip()
+    return configured or DEFAULT_EXPORT_DIR
+
+
+def get_sidecar_path():
+    """Return Path for per-file config JSON in the same dir as the FCStd."""
+    doc_dir, stem = get_doc_dir_and_stem()
+    if not doc_dir:
+        fallback_dir = get_param_str("export_dir", DEFAULT_EXPORT_DIR).strip() or DEFAULT_EXPORT_DIR
+        return Path(fallback_dir).joinpath(f"{stem}.gee.json")
+    return doc_dir.joinpath(f"{stem}.gee.json")
+
+
+def save_project_sidecar(data: dict):
+    p = get_sidecar_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    log_info(f"Project sidecar saved: {p}")
+
+
+def load_project_sidecar():
+    p = get_sidecar_path()
+    if p.exists():
+        with open(p, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return None
+
+
+def _fmt(val, digits=6):
+    text = f"{val:.{digits}f}"
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def _rotation_from_euler(yaw_deg=0.0, pitch_deg=0.0, roll_deg=0.0):
+    """Return FreeCAD Rotation composed from yaw(Z), pitch(Y), roll(X)."""
+    rot_z = App.Rotation(App.Vector(0, 0, 1), float(yaw_deg))
+    rot_y = App.Rotation(App.Vector(0, 1, 0), float(pitch_deg))
+    rot_x = App.Rotation(App.Vector(1, 0, 0), float(roll_deg))
+    return rot_z.multiply(rot_y).multiply(rot_x)
+
+
+def compute_gamestart_viewpoint(doc, name):
+    """Return dict with position (mm), orientation (axis-angle rad) and fov from GameStart marker."""
+    if App is None or doc is None or not name:
+        return None
+    obj = doc.getObject(name)
+    if obj is None:
+        obj = find_object_by_label(doc, name)
+    if obj is None:
+        return None
+
+    base = getattr(obj.Placement, "Base", App.Vector(0, 0, 0))
+    height_offset_m = float(getattr(obj, "HeightOffset", 1.6))
+    height_offset_mm = height_offset_m * 1000.0
+    position_mm = App.Vector(base.x, base.y, base.z + height_offset_mm)
+
+    yaw = float(getattr(obj, "Yaw", 0.0))
+    pitch = float(getattr(obj, "Pitch", 0.0))
+    roll = float(getattr(obj, "Roll", 0.0))
+    user_rot = _rotation_from_euler(yaw, pitch, roll)
+    placement_rot = getattr(obj.Placement, "Rotation", App.Rotation())
+    final_rot = placement_rot.multiply(user_rot)
+
+    axis = App.Vector(final_rot.Axis.x, final_rot.Axis.y, final_rot.Axis.z)
+    angle_deg = float(final_rot.Angle)
+    if axis.Length == 0 or abs(angle_deg) < 1e-6:
+        axis = App.Vector(0, 1, 0)
+        angle_rad = 0.0
+    else:
+        axis.normalize()
+        angle_rad = math.radians(angle_deg)
+
+    fov_deg = float(getattr(obj, "FOV", 60.0))
+    fov_rad = math.radians(fov_deg)
+    desc = getattr(obj, "Label", name) or name
+    desc = desc.replace('"', "'")
+
+    return {
+        "position_mm": (position_mm.x, position_mm.y, position_mm.z),
+        "orientation": (axis.x, axis.y, axis.z, angle_rad),
+        "field_of_view": fov_rad,
+        "description": desc,
+    }
+
+
+def convert_viewpoint_to_scene(data, rotation=None, scale=1.0):
+    """Apply rotation/scale to viewpoint data to match scene coordinates."""
+    if App is None:
+        axis = data["orientation"][:3]
+        angle = data["orientation"][3]
+        position = tuple(v * scale for v in data["position_mm"])
+        return {
+            "position": position,
+            "orientation": (*axis, angle),
+            "field_of_view": data["field_of_view"],
+            "description": data["description"],
+        }
+
+    rot = rotation or App.Rotation()
+    pos_vec = App.Vector(*data["position_mm"])
+    pos_rot = rot.multVec(pos_vec)
+    pos_scaled = (pos_rot.x * scale, pos_rot.y * scale, pos_rot.z * scale)
+
+    axis_vec = App.Vector(*data["orientation"][:3])
+    if axis_vec.Length == 0:
+        view_rot = App.Rotation()
+    else:
+        view_rot = App.Rotation(axis_vec, math.degrees(data["orientation"][3]))
+    final_rot = rot.multiply(view_rot)
+    final_axis = final_rot.Axis
+    if final_axis.Length == 0:
+        final_axis = App.Vector(0, 1, 0)
+    orientation = (
+        final_axis.x,
+        final_axis.y,
+        final_axis.z,
+        math.radians(final_rot.Angle),
+    )
+    return {
+        "position": pos_scaled,
+        "orientation": orientation,
+        "field_of_view": data["field_of_view"],
+        "description": data["description"],
+    }
+
+
+def _get_object_center(obj):
+    shape = getattr(obj, "Shape", None)
+    if shape and hasattr(shape, "BoundBox") and not shape.isNull():
+        try:
+            bb = shape.BoundBox
+            return App.Vector(bb.Center.x, bb.Center.y, bb.Center.z)
+        except Exception:
+            pass
+    base = getattr(getattr(obj, "Placement", None), "Base", None)
+    if base is not None:
+        return App.Vector(base.x, base.y, base.z)
+    return App.Vector(0, 0, 0)
+
+
+def _find_down_face(obj):
+    shape = getattr(obj, "Shape", None)
+    if not shape or shape.isNull():
+        return None, None
+    best_area = 0.0
+    best_center = None
+    best_normal = None
+    try:
+        for face in shape.Faces:
+            normal = face.normalAt(0.5, 0.5)
+            if normal.z < -0.7 and face.Area > best_area:
+                best_area = face.Area
+                best_center = face.CenterOfMass
+                best_normal = normal
+    except Exception:
+        return None, None
+    if best_center is None or best_normal is None:
+        return None, None
+    return (
+        App.Vector(best_center.x, best_center.y, best_center.z),
+        App.Vector(best_normal.x, best_normal.y, best_normal.z),
+    )
+
+
+def _sanitize_id(text):
+    token = _normalize_token(text)
+    token = re.sub(r"[^a-z0-9_]+", "_", token)
+    token = token.strip("_")
+    return token or "light"
+
+
+def build_light_nodes(doc, entries):
+    if not entries:
+        return []
+    nodes = []
+    for entry in entries:
+        name = entry.get("name")
+        if not name:
+            continue
+        obj = doc.getObject(name)
+        if obj is None:
+            log_warn(f"Luz omitida, objeto no encontrado: {name}")
+            continue
+        label = getattr(obj, "Label", name)
+        light_type = entry.get("type", "PointLight")
+        intensity = max(0.0, min(1.0, float(entry.get("intensity", 1.0))))
+        radius_m = max(0.0, float(entry.get("radius_m", 5.0)))
+        radius_mm = radius_m * 1000.0
+        safe = _sanitize_id(label)
+
+        if light_type == "SpotLight":
+            center, normal = _find_down_face(obj)
+            if center is None or normal is None:
+                log_warn(f"SpotLight sin cara inferior valida: {label}")
+                continue
+            location = " ".join(_fmt(v) for v in (center.x, center.y, center.z))
+            try:
+                normal.normalize()
+            except Exception:
+                pass
+            direction = " ".join(_fmt(v) for v in (normal.x, normal.y, normal.z))
+            beam = _fmt(float(entry.get("beam_width", 0.7)))
+            cutoff = _fmt(float(entry.get("cut_off", 1.0)))
+            radius = _fmt(radius_mm)
+            node = (
+                f'<SpotLight DEF="Spot_{safe}" location="{location}" direction="{direction}" '
+                f'color="1 1 1" intensity="{_fmt(intensity)}" beamWidth="{beam}" cutOffAngle="{cutoff}" '
+                f'radius="{radius}"/>'
+            )
+            nodes.append(node)
+        elif light_type == "DirectionalLight":
+            _, normal = _find_down_face(obj)
+            if normal is None:
+                normal = App.Vector(0, -1, -1)
+            try:
+                normal.normalize()
+            except Exception:
+                pass
+            direction = " ".join(_fmt(v) for v in (normal.x, normal.y, normal.z))
+            node = (
+                f'<DirectionalLight DEF="Dir_{safe}" direction="{direction}" '
+                f'color="1 1 1" intensity="{_fmt(intensity)}"/>'
+            )
+            nodes.append(node)
+        else:
+            center = _get_object_center(obj)
+            location = " ".join(_fmt(v) for v in (center.x, center.y, center.z))
+            radius = _fmt(radius_mm)
+            node = (
+                f'<PointLight DEF="Point_{safe}" location="{location}" color="1 1 1" '
+                f'intensity="{_fmt(intensity)}" radius="{radius}"/>'
+            )
+            nodes.append(node)
+    return nodes
+
+
+def build_viewpoint_xml(data, include_def=True):
+    pos = " ".join(_fmt(v) for v in data["position"])
+    orient = " ".join(_fmt(v) for v in data["orientation"])
+    fov = _fmt(data["field_of_view"])
+    desc = data["description"]
+    def_attr = ' DEF="GameStartView"' if include_def else ""
+    return (
+        f'<Viewpoint{def_attr} description="{desc}" position="{pos}" '
+        f'orientation="{orient}" fieldOfView="{fov}" centerOfRotation="{pos}"/>'
+    )
+
+
+def _remove_tag(body, tag):
+    pattern_pair = rf'\s*<{tag}\b[^>]*?>[\s\S]*?</{tag}>\s*'
+    pattern_self = rf'\s*<{tag}\b[^>]*?\/>\s*'
+    body = re.sub(pattern_pair, "\n", body, flags=re.IGNORECASE)
+    body = re.sub(pattern_self, "\n", body, flags=re.IGNORECASE)
+    return body
+
+
+def _purge_scene_overrides(body):
+    body = re.sub(r'\s*<!--\s*\[CastleProject\][\s\S]*?-->\s*', "\n", body, flags=re.IGNORECASE)
+    for tag in ("NavigationInfo", "Background", "Viewpoint"):
+        body = _remove_tag(body, tag)
+    return body.strip()
+
+
+def decorate_x3d_scene(filepath, doc, gamestart_name, light_entries=None):
+    """Rewrite exported X3D to match Castle Game Engine expectations."""
+    try:
+        text = Path(filepath).read_text(encoding="utf-8")
+    except Exception as ex:
+        log_warn(f"No se pudo leer X3D para postprocesar: {ex}")
+        return
+
+    scene_start = text.find("<Scene")
+    if scene_start == -1:
+        log_warn("X3D export no contiene <Scene>; se omite postproceso.")
+        return
+    scene_open_end = text.find(">", scene_start)
+    scene_close = text.rfind("</Scene>")
+    if scene_open_end == -1 or scene_close == -1:
+        log_warn("X3D Scene incompleta; se omite postproceso.")
+        return
+
+    prefix = text[:scene_start]
+    scene_open_tag = text[scene_start:scene_open_end + 1]
+    body = text[scene_open_end + 1:scene_close]
+    suffix = text[scene_close:]
+
+    xml_decl = ""
+    if prefix.startswith("<?xml"):
+        xml_end = prefix.find("?>") + 2
+        xml_decl = prefix[:xml_end]
+        prefix = prefix[xml_end:]
+
+    body = _purge_scene_overrides(body)
+    transform_rotation = App.Rotation(App.Vector(1, 0, 0), -90.0) if App is not None else None
+
+    viewpoint_data = compute_gamestart_viewpoint(doc, gamestart_name)
+    scale_factor = SCALE_TO_METERS
+    if viewpoint_data is None:
+        log_warn("GameStart no encontrado; se usa viewpoint por defecto.")
+        default_data = {
+            "position_mm": (0.0, 0.0, 1600.0),
+            "orientation": (0.0, 1.0, 0.0, 0.0),
+            "field_of_view": math.radians(60.0),
+            "description": "Default start",
+        }
+        viewpoint_scene = convert_viewpoint_to_scene(default_data, transform_rotation, scale_factor)
+    else:
+        viewpoint_scene = convert_viewpoint_to_scene(viewpoint_data, transform_rotation, scale_factor)
+    viewpoint_xml = build_viewpoint_xml(viewpoint_scene)
+
+    geometry = body.strip()
+    scale_str = _fmt(scale_factor)
+    transform_lines = [
+        f'  <Transform DEF="FCScene" rotation="1 0 0 -1.57079632679" scale="{scale_str} {scale_str} {scale_str}">'
+    ]
+    if geometry:
+        transform_lines.append(textwrap.indent(geometry, "    "))
+    else:
+        transform_lines.append("    <!-- (Scene vacia) -->")
+    light_nodes = build_light_nodes(doc, light_entries or [])
+    for node in light_nodes:
+        transform_lines.append(textwrap.indent(node, "    "))
+    transform_lines.append("  </Transform>")
+    transform_block = "\n".join(transform_lines)
+
+    background = '  <Background skyColor="0.2 0.4 1.0" groundColor="0.4 0.2 0.1"/>'
+    navigation = '  <NavigationInfo avatarSize="0.25 1.6 0.75" speed="2" headlight="false" type=\'"WALK" "ANY"\'/>'
+
+    new_body_parts = [background, navigation, viewpoint_xml, transform_block]
+    new_body = "\n".join(new_body_parts) + "\n"
+
+    castle_comment = "<!-- [CastleProject] DefaultLights=false WalkNavigation=true -->\n"
+    if "[CastleProject]" in prefix:
+        castle_comment = ""
+
+    new_text = xml_decl + castle_comment + prefix + scene_open_tag + "\n" + new_body + suffix
+
+    try:
+        Path(filepath).write_text(new_text, encoding="utf-8")
+        log_info(f"X3D postprocesado: {filepath}")
+    except Exception as ex:
+        log_warn(f"No se pudo escribir X3D postprocesado: {ex}")
+
+
+def _normalize_token(text):
+    if not text:
+        return ""
+    normalized = unicodedata.normalize("NFKD", str(text))
+    ascii_text = "".join(ch for ch in normalized if ord(ch) < 128)
+    return ascii_text.lower()
+
+
+CATEGORY_KEYWORDS = {
+    "Lights": {"light", "lights", "luz", "luces", "lamp", "lampara", "spot", "foco"},
+    "Cameras": {"camera", "camara", "view", "vista"},
+    "Walls": {"wall", "walls", "muro", "muros", "pared", "paredes", "partition"},
+    "Floors": {"floor", "floors", "piso", "pisos", "slab", "slabs", "losa", "losas", "forjado", "suelo"},
+    "Roofs": {"roof", "roofs", "techo", "techos", "cubierta", "azotea"},
+    "Furniture": {"furniture", "mueble", "muebles", "sofa", "silla", "mesa", "cama", "escritorio", "puerta", "door", "ventana", "window", "stair", "escalera"},
+}
+
+CATEGORY_TYPE_HINTS = {
+    "Lights": {"light", "lamp"},
+    "Cameras": {"camera"},
+    "Walls": {"wall"},
+    "Floors": {"floor", "slab"},
+    "Roofs": {"roof"},
+    "Furniture": {"furn", "door", "window", "stair"},
+}
+
+
+def _collect_tokens_for_object(obj):
+    tokens = []
+    for attr in ("Label", "Name", "TypeId", "IfcType"):
+        tokens.append(_normalize_token(getattr(obj, attr, "")))
+    proxy = getattr(obj, "Proxy", None)
+    if proxy is not None:
+        tokens.append(_normalize_token(getattr(proxy, "Type", "")))
+    # consider parent groups for additional context
+    parents = getattr(obj, "InList", []) or []
+    for parent in parents:
+        for attr in ("Label", "Name", "TypeId", "IfcType"):
+            tokens.append(_normalize_token(getattr(parent, attr, "")))
+        parent_proxy = getattr(parent, "Proxy", None)
+        if parent_proxy is not None:
+            tokens.append(_normalize_token(getattr(parent_proxy, "Type", "")))
+    return [t for t in tokens if t]
+
+
+def _object_matches_category(obj, category, tokens):
+    keywords = CATEGORY_KEYWORDS.get(category, set())
+    if keywords:
+        for token in tokens:
+            if any(keyword in token for keyword in keywords):
+                return True
+
+    typeid = _normalize_token(getattr(obj, "TypeId", ""))
+    type_hints = CATEGORY_TYPE_HINTS.get(category, set())
+    if typeid and type_hints and any(hint in typeid for hint in type_hints):
+        return True
+
+    if category == "Furniture":
+        return True
+    return False
+
+
+def _object_has_shape(obj):
+    shape = getattr(obj, "Shape", None)
+    if shape is not None:
+        try:
+            return not shape.isNull()
+        except Exception:
+            return True
+    mesh = getattr(obj, "Mesh", None)
+    return bool(mesh)
+
+
+def _dedupe_objects(objs):
+    out = []
+    seen = set()
+    for o in objs:
+        key = getattr(o, "Name", None) or id(o)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(o)
+    return out
+
+
+# -------------------------------
+# Scene / selection helpers
+# -------------------------------
+
+def get_active_doc():
+    doc = App.ActiveDocument
+    if not doc:
+        raise RuntimeError("No active document")
+    return doc
+
+def find_object_by_label(doc, label):
+    for o in doc.Objects:
+        if getattr(o, "Label", "") == label:
+            return o
+    return None
+
+def collect_children_recursive(obj):
+    """Return flat list of object and all descendants (supports OutList/Group)."""
+    result = []
+    seen = set()
+    stack = [obj]
+
+    while stack:
+        current = stack.pop()
+        key = getattr(current, "Name", None) or id(current)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(current)
+
+        for attr in ("OutList", "Group"):
+            children = getattr(current, attr, None)
+            if not children:
+                continue
+            if callable(children):
+                try:
+                    children = children()
+                except Exception:
+                    children = None
+            if not children:
+                continue
+            if isinstance(children, (list, tuple, set)):
+                stack.extend(children)
+            else:
+                stack.append(children)
+    return _dedupe_objects(result)
+
+def filter_by_categories(objects, cats):
+    """
+    cats: set like {"Walls","Floors","Roofs","Furniture","Lights","Cameras"}
+    Returns objects matching selected categories. Falls back to all if nothing matches.
+    """
+    if not cats:
+        return objects
+
+    filtered = []
+    category_order = ("Lights", "Cameras", "Walls", "Floors", "Roofs", "Furniture")
+    active_categories = [cat for cat in category_order if cat in cats]
+
+    for o in objects:
+        tokens = _collect_tokens_for_object(o)
+        for cat in active_categories:
+            if _object_matches_category(o, cat, tokens):
+                filtered.append(o)
+                break
+
+    if not filtered:
+        log_warn("Category filter no encontro objetos; se exportaran todos los seleccionados.")
+        return objects
+
+    return _dedupe_objects(filtered)
+
+
+# -------------------------------
+# Materials (emissive) - placeholder
+# -------------------------------
+
+def apply_emissive_to_objects(objs, rgb=(1.0, 1.0, 1.0), transparency=0.0, shininess=0.2):
+    """
+    Placeholder. In FreeCAD, material assignment for export may depend on WB.
+    The idea: bake color-like info so X3D Material.emissiveColor is meaningful.
+    """
+    for o in objs:
+        try:
+            # Example: set ViewObject properties; exporter may bake them
+            if hasattr(o, "ViewObject"):
+                vo = o.ViewObject
+                # set a diffuse color to something, and mark emissive via custom props
+                vo.ShapeColor = (rgb[0], rgb[1], rgb[2])
+                vo.Transparency = int(max(0.0, min(1.0, transparency)) * 100.0)
+                # custom property tag for later mapping if you implement deeper pipeline
+                if not hasattr(o, "EmissiveTag"):
+                    o.addProperty("App::PropertyString","EmissiveTag","GameEngine","emissive tag")
+                o.EmissiveTag = f"{rgb[0]:.3f},{rgb[1]:.3f},{rgb[2]:.3f}|{shininess:.3f}"
+            log_dbg(f"Applied emissive to: {o.Label}")
+        except Exception as ex:
+            log_warn(f"apply_emissive failed on {getattr(o,'Label','?')}: {ex}")
+
+
+# -------------------------------
+# Lights normalization - placeholder
+# -------------------------------
+
+def detect_lights(root_obj):
+    """
+    Return list of objects considered as lights (heuristic).
+    """
+    all_objs = collect_children_recursive(root_obj)
+    return [o for o in all_objs if "light" in (getattr(o,"Label","")+getattr(o,"Name","")).lower()]
+
+def normalize_lights(light_objs):
+    """
+    Placeholder: clamp intensity/range to sane defaults for CGE.
+    """
+    for o in light_objs:
+        try:
+            if not hasattr(o, "Intensity"):
+                o.addProperty("App::PropertyFloat","Intensity","GameEngine","light intensity")
+            if not hasattr(o, "Range"):
+                o.addProperty("App::PropertyFloat","Range","GameEngine","light range")
+            # clamp
+            o.Intensity = max(0.0, min(5.0, getattr(o, "Intensity", 1.0)))
+            o.Range = max(1.0, min(100.0, getattr(o, "Range", 10.0)))
+            log_dbg(f"Normalized light: {o.Label} -> I={o.Intensity} R={o.Range}")
+        except Exception as ex:
+            log_warn(f"normalize_lights failed on {getattr(o,'Label','?')}: {ex}")
+
+
+# -------------------------------
+# GameStart marker: create simple cone arrow and store props
+# -------------------------------
+
+def create_gamestart(doc, name="GameStart"):
+    """
+    Create a simple marker (cone) with custom properties:
+      Yaw, Pitch, Roll (deg), HeightOffset (m), FOV (deg)
+    """
+    if doc.getObject(name):
+        log_info("GameStart already exists")
+        return doc.getObject(name)
+
+    cone = Part.makeCone(0, 100, 200)  # mm
+    base = Part.makeCylinder(80, 10)   # base disk
+    shape = Part.makeCompound([base, cone])
+    obj = doc.addObject("Part::Feature", name)
+    obj.Shape = shape
+    obj.Label = "GameStart"
+    # default placement: above origin
+    obj.Placement.Base = App.Vector(0, 0, 1000)
+
+    # custom properties
+    obj.addProperty("App::PropertyFloat","Yaw","GameEngine","yaw deg").Yaw = 0.0
+    obj.addProperty("App::PropertyFloat","Pitch","GameEngine","pitch deg").Pitch = 0.0
+    obj.addProperty("App::PropertyFloat","Roll","GameEngine","roll deg").Roll = 0.0
+    obj.addProperty("App::PropertyFloat","HeightOffset","GameEngine","height m").HeightOffset = 1.6
+    obj.addProperty("App::PropertyFloat","FOV","GameEngine","fov deg").FOV = 60.0
+
+    # view cosmetics
+    if hasattr(obj, "ViewObject"):
+        obj.ViewObject.ShapeColor = (1.0, 0.2, 0.2)
+        obj.ViewObject.DisplayMode = "Flat Lines"
+
+    doc.recompute()
+    log_info("GameStart created")
+    return obj
+
+
+# -------------------------------
+# Export helpers (X3D)
+# -------------------------------
+
+def export_objects_to_x3d(objs, filepath):
+    """
+    Export objs a X3D. Intenta primero ImportGui.export y, si no genera archivo,
+    convierte objetos a mallas y fuerza una exportacion alternativa.
+    """
+    if ImportGui is None:
+        raise RuntimeError("ImportGui module not available")
+    if not objs:
+        raise RuntimeError("No objects to export")
+
+    target = Path(filepath)
+    ensure_dir(target.parent)
+
+    if target.exists():
+        try:
+            target.unlink()
+        except Exception as unlink_ex:
+            log_warn(f"No se pudo eliminar archivo existente: {unlink_ex}")
+
+    try:
+        ImportGui.export(objs, filepath)
+        if target.exists():
+            log_info(f"Exported X3D (via ImportGui): {filepath}")
+        else:
+            log_warn(f"ImportGui export no genero archivo en {filepath}.")
+    except Exception as ex:
+        log_warn(f"ImportGui.export raised exception: {ex}")
+
+    if not target.exists() and Gui is not None and hasattr(Gui, "export"):
+        try:
+            Gui.export(objs, filepath)
+            if target.exists():
+                log_info(f"Exported X3D (via FreeCADGui.export): {filepath}")
+            else:
+                log_warn("FreeCADGui.export no genero archivo X3D.")
+        except Exception as gui_ex:
+            log_warn(f"FreeCADGui.export fallo: {gui_ex}")
+
+    if not target.exists():
+        log_warn(f"X3D no fue generado con ImportGui en {filepath}, intentando conversion mesh.")
+        try:
+            import Mesh
+        except Exception as mesh_import_ex:
+            log_err(f"Mesh module not available for fallback: {mesh_import_ex}")
+        else:
+            mesh_objs = []
+            for o in objs:
+                shape = getattr(o, "Shape", None)
+                try:
+                    if shape and hasattr(shape, "tessellate"):
+                        mesh_obj = Mesh.Mesh(shape.tessellate(1.0))
+                        if mesh_obj:
+                            mesh_objs.append(mesh_obj)
+                except Exception as mesh_ex:
+                    log_warn(f"No se pudo convertir {getattr(o, 'Label', o)} a mesh: {mesh_ex}")
+            if mesh_objs:
+                try:
+                    Mesh.export(mesh_objs, filepath)
+                    if target.exists():
+                        log_info(f"Exported X3D (via Mesh.export fallback): {filepath}")
+                except Exception as ex2:
+                    log_err(f"Mesh-based export fallo: {ex2}")
+            else:
+                log_err("No se pudo convertir objetos a mesh para exportar.")
+
+    if not target.exists():
+        raise RuntimeError(f"Export failed: archivo {filepath} no encontrado.")
+
+def make_baseline_export(objects, out_dir, base_name):
+    """
+    Export provided objects as a baseline X3D to validate geometry/scale.
+    """
+    if not objects:
+        raise RuntimeError("No objects provided for baseline export")
+    out_file = str(Path(out_dir).joinpath(f"{base_name}_baseline.x3d"))
+    export_objects_to_x3d(objects, out_file)
+    return out_file
+
+
+# -------------------------------
+# Presets IO
+# -------------------------------
+
+def get_presets_dir():
+    base_dir = get_param_str("export_dir", DEFAULT_EXPORT_DIR)
+    pdir = Path(base_dir).joinpath(PRESETS_DIR_NAME)
+    ensure_dir(pdir)
+    return pdir
+
+def save_preset(name, data):
+    p = get_presets_dir().joinpath(f"{name}.json")
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    log_info(f"Preset saved: {p}")
+
+def load_preset(name):
+    p = get_presets_dir().joinpath(f"{name}.json")
+    if not p.exists():
+        raise RuntimeError("Preset not found")
+    with open(p, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+# -------------------------------
+# Castle Game Engine helpers
+# -------------------------------
+
+def is_valid_cge_executable(path_str):
+    if not path_str:
+        return False
+    p = Path(path_str)
+    return p.exists() and p.is_file()
+
+def launch_cge(executable_path, exported_file):
+    if not is_valid_cge_executable(executable_path):
+        log_warn("No se encontro la ruta de CGE.")
+        return False
+
+    exported = Path(exported_file)
+    if not exported.exists():
+        log_warn("Archivo exportado no encontrado para lanzar CGE.")
+        return False
+
+    try:
+        if os.name == "nt":
+            subprocess.Popen([executable_path, str(exported)])
+        else:
+            subprocess.Popen([executable_path, str(exported)])
+        return True
+    except Exception as ex:
+        log_err(f"Launch CGE failed: {ex}")
+        return False
+
+# -------------------------------
+# GUI
+# -------------------------------
+
+class GameEngineExportDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("GameEngineExport - FreeCAD to Castle Game Engine (X3D)")
+        self.resize(940, 620)
+
+        self.doc = get_active_doc()
+        self.root_obj = None
+        self._selected_object_names = set()
+        self._light_entries = []
+
+        # widgets
+        self.tabs = QtWidgets.QTabWidget()
+
+        self.tab_project = self._build_tab_project()
+        self.tab_scene = self._build_tab_scene()
+        self.tab_lights = self._build_tab_lights()
+        self.tab_materials = self._build_tab_materials()
+        self.tab_start = self._build_tab_start()
+        self.tab_presets = self._build_tab_presets()
+        self.tab_settings = self._build_tab_settings()
+
+        self.tabs.addTab(self.tab_project, "Project / Proyecto")
+        self.tabs.addTab(self.tab_scene, "Scene / Escena")
+        self.tabs.addTab(self.tab_lights, "Lights / Luces")
+        self.tabs.addTab(self.tab_materials, "Materials / Materiales")
+        self.tabs.addTab(self.tab_start, "Start / Inicio")
+        self.tabs.addTab(self.tab_presets, "Presets / Perfiles")
+        self.tabs.addTab(self.tab_settings, "Settings / Config")
+
+        # status bar like label
+        self.status = QtWidgets.QLabel("Ready.")
+
+        # layout
+        main = QtWidgets.QVBoxLayout(self)
+        main.addWidget(self.tabs)
+        main.addWidget(self.status)
+
+        # restore parameters
+        self._restore_params()
+        # intentar cargar sidecar del proyecto (prioridad sobre la general)
+        sidecar = load_project_sidecar()
+        if sidecar:
+            self._apply_preset_data(sidecar)
+            self._set_status("Config del archivo cargada desde sidecar (.gee.json)")
+
+        # auto baseline export on open
+        if self.chk_auto_baseline.isChecked():
+            self._do_baseline_export()
+
+    # ---------- Project tab ----------
+    def _build_tab_project(self):
+        w = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(w)
+
+        intro = QtWidgets.QLabel(
+            "This macro exports scenes to X3D for Castle Game Engine.\n"
+            "Esta macro exporta escenas a X3D para Castle Game Engine.\n\n"
+            "Tips:\n"
+            "- Select a specific scene root group or only the objects you want to export. Do not select the entire document.\n"
+            "- Seleccione un grupo raiz especifico o solo los objetos que desea exportar. No seleccione el documento completo.\n"
+            "- FreeCAD units are millimeters; export runs in meters (scale 0.001).\n"
+            "- FreeCAD trabaja en milimetros; la exportacion se realiza en metros (escala 0.001).\n"
+            "- Export rotates X = -90 deg (Z arriba) y ubica el avatar de Castle en GameStart (altura 1.6 m)."
+        )
+        intro.setWordWrap(True)
+        lay.addWidget(intro)
+
+        # root selector (by label)
+        self.ed_root = QtWidgets.QLineEdit()
+        self.ed_root.editingFinished.connect(lambda: self._refresh_object_lists(silent=True))
+        self.btn_pick_root = QtWidgets.QPushButton("Pick selected as Root / Tomar seleccion como Raiz")
+        self.btn_pick_root.clicked.connect(self._pick_selected_root)
+
+        # export dir
+        self.ed_export_dir = QtWidgets.QLineEdit()
+        self.btn_browse_dir = QtWidgets.QPushButton("Browse / Examinar")
+        self.btn_browse_dir.clicked.connect(self._browse_dir)
+
+        # base file name
+        self.ed_base_name = QtWidgets.QLineEdit("Scene")
+
+        # auto baseline
+        self.chk_auto_baseline = QtWidgets.QCheckBox("Auto export baseline on open / Exportar baseline al abrir")
+
+        # export baseline
+        self.btn_export_baseline = QtWidgets.QPushButton("Export Baseline X3D / Exportar X3D Base")
+        self.btn_export_baseline.clicked.connect(self._do_baseline_export)
+
+        form = QtWidgets.QFormLayout()
+        form.addRow("Scene root (Label) / Raiz de escena (Label):", self.ed_root)
+        form.addRow("", self.btn_pick_root)
+        form.addRow("Export folder / Carpeta de export:", self._h(self.ed_export_dir, self.btn_browse_dir))
+        form.addRow("Base file name / Nombre base:", self.ed_base_name)
+        form.addRow("", self.chk_auto_baseline)
+        lay.addLayout(form)
+        lay.addWidget(self.btn_export_baseline)
+        lay.addStretch(1)
+        return w
+
+    # ---------- Scene tab ----------
+    def _build_tab_scene(self):
+        w = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(w)
+
+        tips = QtWidgets.QLabel(
+            "Scene packing and X3D options.\n"
+            "Opciones de empaque de escena y X3D.\n\n"
+            "- Select walls, floors and roofs; do NOT select the top 'Building' aggregate.\n"
+            "- Seleccione paredes, pisos y techos; NO seleccione 'Edificio' completo.\n"
+            "- Export applies scale 0.001 (mm -> m) and rotates X = -90 deg so Z is up.\n"
+            "- A floor is required for player navigation; the walk avatar height is 1.6 m."
+        )
+        tips.setWordWrap(True)
+        lay.addWidget(tips)
+
+        self.chk_walls = QtWidgets.QCheckBox("Walls / Paredes")
+        self.chk_floors = QtWidgets.QCheckBox("Floors / Pisos")
+        self.chk_roofs = QtWidgets.QCheckBox("Roofs / Techos")
+        self.chk_furniture = QtWidgets.QCheckBox("Furniture / Mobiliario")
+        self.chk_lights = QtWidgets.QCheckBox("Lights / Luces")
+        self.chk_cameras = QtWidgets.QCheckBox("Cameras / Camaras")
+
+        self.chk_triangulate = QtWidgets.QCheckBox("Triangulate meshes / Triangular mallas")
+        self.chk_freeze_colors = QtWidgets.QCheckBox("Freeze colors into materials / Hornear colores en materiales")
+
+        self.lst_available_objects = QtWidgets.QListWidget()
+        self.lst_available_objects.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+        self.lst_selected_objects = QtWidgets.QListWidget()
+        self.lst_selected_objects.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+
+        self.btn_add_object = QtWidgets.QPushButton("Anadir >>")
+        self.btn_remove_object = QtWidgets.QPushButton("<< Remover")
+        self.btn_clear_object_selection = QtWidgets.QPushButton("Limpiar seleccion")
+        self.btn_refresh_object_lists = QtWidgets.QPushButton("Actualizar lista")
+
+        self.btn_add_object.clicked.connect(self._add_available_objects)
+        self.btn_remove_object.clicked.connect(self._remove_selected_objects)
+        self.btn_clear_object_selection.clicked.connect(self._clear_object_selection)
+        self.btn_refresh_object_lists.clicked.connect(lambda: self._refresh_object_lists())
+        self.lst_available_objects.itemDoubleClicked.connect(self._on_available_double_clicked)
+        self.lst_selected_objects.itemDoubleClicked.connect(self._on_selected_double_clicked)
+
+        self.btn_export_scene = QtWidgets.QPushButton("Export X3D / Exportar X3D")
+        self.btn_export_scene.clicked.connect(self._do_scene_export)
+
+        grid = QtWidgets.QGridLayout()
+        grid.addWidget(self.chk_walls, 0, 0)
+        grid.addWidget(self.chk_floors, 0, 1)
+        grid.addWidget(self.chk_roofs, 0, 2)
+        grid.addWidget(self.chk_furniture, 1, 0)
+        grid.addWidget(self.chk_lights, 1, 1)
+        grid.addWidget(self.chk_cameras, 1, 2)
+        lay.addLayout(grid)
+
+        lay.addWidget(self.chk_triangulate)
+        lay.addWidget(self.chk_freeze_colors)
+        selection_group = QtWidgets.QGroupBox("Objetos a exportar / Export objects")
+        sel_layout = QtWidgets.QGridLayout(selection_group)
+        sel_layout.addWidget(QtWidgets.QLabel("Disponibles"), 0, 0)
+        sel_layout.addWidget(QtWidgets.QLabel("Se exportan"), 0, 2)
+        sel_layout.addWidget(self.lst_available_objects, 1, 0)
+        btn_col = QtWidgets.QVBoxLayout()
+        btn_col.addWidget(self.btn_add_object)
+        btn_col.addWidget(self.btn_remove_object)
+        btn_col.addWidget(self.btn_clear_object_selection)
+        btn_col.addWidget(self.btn_refresh_object_lists)
+        btn_col.addStretch(1)
+        sel_layout.addLayout(btn_col, 1, 1)
+        sel_layout.addWidget(self.lst_selected_objects, 1, 2)
+        lay.addWidget(selection_group)
+
+        lights_group = QtWidgets.QGroupBox("Luces CGE / Castle lights")
+        lights_layout = QtWidgets.QVBoxLayout(lights_group)
+        lights_layout.addWidget(QtWidgets.QLabel("Selecciona emisores en 'Disponibles' y agregalos como luces. Se exportan como Point/Spot/Directional al X3D."))
+        self.lst_light_entries = QtWidgets.QListWidget()
+        self.lst_light_entries.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+        lights_layout.addWidget(self.lst_light_entries)
+        btn_lights = QtWidgets.QHBoxLayout()
+        self.btn_add_light = QtWidgets.QPushButton("Agregar luces")
+        self.btn_edit_light = QtWidgets.QPushButton("Editar")
+        self.btn_remove_light = QtWidgets.QPushButton("Quitar")
+        self.btn_clear_lights = QtWidgets.QPushButton("Limpiar")
+        btn_lights.addWidget(self.btn_add_light)
+        btn_lights.addWidget(self.btn_edit_light)
+        btn_lights.addWidget(self.btn_remove_light)
+        btn_lights.addWidget(self.btn_clear_lights)
+        btn_lights.addStretch(1)
+        lights_layout.addLayout(btn_lights)
+        self.btn_add_light.clicked.connect(self._add_lights_from_available)
+        self.btn_edit_light.clicked.connect(self._edit_light_entry)
+        self.btn_remove_light.clicked.connect(self._remove_light_entries)
+        self.btn_clear_lights.clicked.connect(self._clear_light_entries)
+        self.lst_light_entries.itemDoubleClicked.connect(self._edit_light_entry)
+        lay.addWidget(lights_group)
+        lay.addWidget(self.btn_export_scene)
+        lay.addStretch(1)
+        return w
+
+    def _on_available_double_clicked(self, item):
+        if item:
+            self._transfer_available_items([item])
+
+    def _on_selected_double_clicked(self, item):
+        if item:
+            self._transfer_selected_items([item])
+
+    def _add_available_objects(self):
+        items = self.lst_available_objects.selectedItems()
+        if not items:
+            self._set_status("Selecciona objetos disponibles para agregar.")
+            return
+        self._transfer_available_items(items)
+
+    def _remove_selected_objects(self):
+        items = self.lst_selected_objects.selectedItems()
+        if not items:
+            self._set_status("Selecciona objetos exportados para remover.")
+            return
+        self._transfer_selected_items(items)
+
+    def _clear_object_selection(self):
+        if not self._selected_object_names:
+            self._set_status("No hay objetos seleccionados para limpiar.")
+            return
+        self._selected_object_names.clear()
+        self._refresh_object_lists(silent=True)
+        self._set_status("Seleccion de objetos limpiada.")
+
+    def _transfer_available_items(self, items):
+        added = 0
+        non_geom = 0
+        for item in items:
+            name = item.data(QtCore.Qt.UserRole)
+            if not name:
+                continue
+            if name not in self._selected_object_names:
+                self._selected_object_names.add(name)
+                added += 1
+            if not item.data(QtCore.Qt.UserRole + 1):
+                non_geom += 1
+        if added:
+            self._refresh_object_lists(silent=True)
+        if added or non_geom:
+            msg = f"{added} objetos agregados a la exportacion."
+            if non_geom:
+                msg += f" {non_geom} sin geometria directa (se usaran sus hijos)."
+            self._set_status(msg)
+
+    def _transfer_selected_items(self, items):
+        removed = 0
+        for item in items:
+            name = item.data(QtCore.Qt.UserRole)
+            if name and name in self._selected_object_names:
+                self._selected_object_names.remove(name)
+                removed += 1
+        if removed:
+            self._refresh_object_lists(silent=True)
+            self._set_status(f"{removed} objetos removidos de la exportacion.")
+
+    def _refresh_object_lists(self, silent=False):
+        if not hasattr(self, "lst_available_objects"):
+            return
+        self.lst_available_objects.clear()
+        self.lst_selected_objects.clear()
+
+        label = self.ed_root.text().strip() if hasattr(self, "ed_root") else ""
+        if not label:
+            return
+        root_obj = find_object_by_label(self.doc, label)
+        if root_obj is None:
+            return
+
+        all_objs = collect_children_recursive(root_obj)
+        selected_names = set(self._selected_object_names)
+        valid_selected = set()
+        seen = set()
+
+        for obj in all_objs:
+            name = getattr(obj, "Name", "")
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            exportable = _object_has_shape(obj)
+            text = getattr(obj, "Label", "") or name
+            if not exportable:
+                text = f"{text} [sin geometria]"
+            item = QtWidgets.QListWidgetItem(text)
+            item.setData(QtCore.Qt.UserRole, name)
+            item.setData(QtCore.Qt.UserRole + 1, bool(exportable))
+
+            if name in selected_names:
+                self.lst_selected_objects.addItem(item)
+                valid_selected.add(name)
+            else:
+                self.lst_available_objects.addItem(item)
+
+        if valid_selected != selected_names:
+            self._selected_object_names = valid_selected
+
+        self._refresh_light_summary(valid_names=seen, silent=silent)
+
+        if not silent:
+            available_count = self.lst_available_objects.count()
+            selected_count = self.lst_selected_objects.count()
+            self._set_status(f"Lista de objetos actualizada. Disponibles: {available_count}, Exportados: {selected_count}")
+
+    def _prompt_light_config(self, count=1, existing=None):
+        dlg = QtWidgets.QDialog(self)
+        dlg.setWindowTitle("Configurar luz")
+        layout = QtWidgets.QFormLayout(dlg)
+
+        combo = QtWidgets.QComboBox()
+        combo.addItems(["PointLight", "SpotLight", "DirectionalLight"])
+        spin_intensity = QtWidgets.QDoubleSpinBox()
+        spin_intensity.setRange(0.0, 5.0)
+        spin_intensity.setSingleStep(0.1)
+        spin_intensity.setValue(1.0)
+
+        spin_radius = QtWidgets.QDoubleSpinBox()
+        spin_radius.setRange(0.1, 100.0)
+        spin_radius.setSingleStep(0.5)
+        spin_radius.setValue(5.0)
+
+        spin_beam = QtWidgets.QDoubleSpinBox()
+        spin_beam.setRange(0.1, 3.14)
+        spin_beam.setSingleStep(0.1)
+        spin_beam.setValue(0.7)
+
+        spin_cut = QtWidgets.QDoubleSpinBox()
+        spin_cut.setRange(0.1, 3.14)
+        spin_cut.setSingleStep(0.1)
+        spin_cut.setValue(1.0)
+
+        if existing:
+            idx = combo.findText(existing.get("type", "PointLight"))
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
+            spin_intensity.setValue(float(existing.get("intensity", 1.0)))
+            spin_radius.setValue(float(existing.get("radius_m", 5.0)))
+            spin_beam.setValue(float(existing.get("beam_width", 0.7)))
+            spin_cut.setValue(float(existing.get("cut_off", 1.0)))
+
+        info_lbl = QtWidgets.QLabel(f"Aplicar configuracion a {count} objeto(s). Intensidad 0-1 recomendada.")
+        layout.addRow(info_lbl)
+        layout.addRow("Tipo:", combo)
+        layout.addRow("Intensidad:", spin_intensity)
+        layout.addRow("Radio (m):", spin_radius)
+        layout.addRow("Haz Spot (rad):", spin_beam)
+        layout.addRow("Corte Spot (rad):", spin_cut)
+
+        btn_box = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        layout.addRow(btn_box)
+        btn_box.accepted.connect(dlg.accept)
+        btn_box.rejected.connect(dlg.reject)
+
+        if dlg.exec_() != QtWidgets.QDialog.Accepted:
+            return None
+        return {
+            "type": combo.currentText(),
+            "intensity": float(spin_intensity.value()),
+            "radius_m": float(spin_radius.value()),
+            "beam_width": float(spin_beam.value()),
+            "cut_off": float(spin_cut.value()),
+        }
+
+    def _add_lights_from_available(self):
+        items = []
+        if hasattr(self, "lst_available_objects"):
+            items.extend(self.lst_available_objects.selectedItems())
+        if hasattr(self, "lst_selected_objects"):
+            items.extend(self.lst_selected_objects.selectedItems())
+        if not items:
+            self._set_status("Selecciona emisores en las listas para agregarlos como luces.")
+            return
+        names = []
+        for item in items:
+            name = item.data(QtCore.Qt.UserRole)
+            if name:
+                names.append(name)
+        names = list(dict.fromkeys(names))
+        if not names:
+            self._set_status("No se encontraron nombres validos de objetos.")
+            return
+        config = self._prompt_light_config(count=len(names))
+        if not config:
+            return
+        added = 0
+        for name in names:
+            if any(entry.get("name") == name for entry in self._light_entries):
+                continue
+            entry = {
+                "name": name,
+                "type": config["type"],
+                "intensity": float(config["intensity"]),
+                "radius_m": float(config["radius_m"]),
+                "beam_width": float(config["beam_width"]),
+                "cut_off": float(config["cut_off"]),
+            }
+            self._light_entries.append(entry)
+            added += 1
+        if added:
+            self._refresh_light_summary()
+            self._set_status(f"{added} luces agregadas.")
+        else:
+            self._set_status("Los objetos seleccionados ya estaban configurados como luces.")
+
+    def _edit_light_entry(self, item=None):
+        target_item = item
+        if target_item is None:
+            selected = self.lst_light_entries.selectedItems()
+            if len(selected) != 1:
+                self._set_status("Selecciona una luz para editar.")
+                return
+            target_item = selected[0]
+        name = target_item.data(QtCore.Qt.UserRole)
+        if not name:
+            return
+        entry = next((e for e in self._light_entries if e.get("name") == name), None)
+        if entry is None:
+            self._set_status("La luz seleccionada ya no existe.")
+            return
+        config = self._prompt_light_config(existing=entry)
+        if not config:
+            return
+        entry.update({
+            "type": config["type"],
+            "intensity": float(config["intensity"]),
+            "radius_m": float(config["radius_m"]),
+            "beam_width": float(config["beam_width"]),
+            "cut_off": float(config["cut_off"]),
+        })
+        self._refresh_light_summary()
+        self._set_status("Luz actualizada.")
+
+    def _remove_light_entries(self):
+        selected = self.lst_light_entries.selectedItems()
+        if not selected:
+            self._set_status("Selecciona luces para quitar.")
+            return
+        names = {item.data(QtCore.Qt.UserRole) for item in selected if item.data(QtCore.Qt.UserRole)}
+        before = len(self._light_entries)
+        self._light_entries = [e for e in self._light_entries if e.get("name") not in names]
+        removed = before - len(self._light_entries)
+        if removed:
+            self._refresh_light_summary()
+            self._set_status(f"{removed} luces removidas.")
+        else:
+            self._set_status("No se removieron luces.")
+
+    def _clear_light_entries(self):
+        if not self._light_entries:
+            self._set_status("No hay luces definidas.")
+            return
+        self._light_entries.clear()
+        self._refresh_light_summary()
+        self._set_status("Listado de luces limpiado.")
+
+    def _refresh_light_summary(self, valid_names=None, silent=False):
+        if not hasattr(self, "lst_light_entries"):
+            return
+        if valid_names is not None:
+            before = len(self._light_entries)
+            self._light_entries = [
+                entry for entry in self._light_entries if entry.get("name") in valid_names
+            ]
+            if len(self._light_entries) != before and not silent:
+                self._set_status("Se eliminaron luces cuyos objetos no existen.")
+        self.lst_light_entries.clear()
+        for entry in self._light_entries:
+            name = entry.get("name")
+            obj = self.doc.getObject(name) if name else None
+            label = getattr(obj, "Label", name) if obj else name
+            text = f"{entry.get('type','PointLight')} | {label} | I={entry.get('intensity',1.0):.2f}"
+            item = QtWidgets.QListWidgetItem(text)
+            item.setData(QtCore.Qt.UserRole, name)
+            self.lst_light_entries.addItem(item)
+        if not silent:
+            self._set_status(f"Luces definidas: {len(self._light_entries)}")
+
+    def _gather_category_selection(self):
+        categories = set()
+        if self.chk_walls.isChecked(): categories.add("Walls")
+        if self.chk_floors.isChecked(): categories.add("Floors")
+        if self.chk_roofs.isChecked(): categories.add("Roofs")
+        if self.chk_furniture.isChecked(): categories.add("Furniture")
+        if self.chk_lights.isChecked(): categories.add("Lights")
+        if self.chk_cameras.isChecked(): categories.add("Cameras")
+        return categories
+
+    def _build_export_pool(self):
+        if self._selected_object_names:
+            pool = []
+            missing = []
+            for name in list(self._selected_object_names):
+                obj = self.doc.getObject(name)
+                if obj is None:
+                    missing.append(name)
+                    continue
+                pool.extend(collect_children_recursive(obj))
+            if missing:
+                for name in missing:
+                    log_warn(f"Objeto seleccionado no encontrado: {name}")
+                for name in missing:
+                    self._selected_object_names.discard(name)
+                self._refresh_object_lists(silent=True)
+            if not pool:
+                raise RuntimeError("Los objetos seleccionados ya no existen en el documento.")
+            return _dedupe_objects(pool)
+        root_obj = self._resolve_root()
+        return _dedupe_objects(collect_children_recursive(root_obj))
+
+    def _prepare_export_objects(self, categories):
+        pool = self._build_export_pool()
+        filtered = filter_by_categories(pool, categories)
+        gs_name = self.ed_gamestart.text().strip() if hasattr(self, "ed_gamestart") else ""
+        if gs_name:
+            filtered = [
+                o for o in filtered
+                if getattr(o, "Name", "") != gs_name and getattr(o, "Label", "") != gs_name
+            ]
+        exportables = [o for o in filtered if _object_has_shape(o)]
+        if not exportables:
+            raise RuntimeError("No se encontraron objetos exportables en la seleccion actual.")
+        return _dedupe_objects(exportables)
+
+    # ---------- Lights tab ----------
+    def _build_tab_lights(self):
+        w = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(w)
+
+        info = QtWidgets.QLabel(
+            "Normalize lights for Castle Game Engine.\n"
+            "Normalizar luces para Castle Game Engine.\n"
+            "Supported: DirectionalLight, PointLight, SpotLight."
+        )
+        info.setWordWrap(True)
+        lay.addWidget(info)
+
+        self.btn_detect_lights = QtWidgets.QPushButton("Detect lights / Detectar luces")
+        self.btn_norm_sel = QtWidgets.QPushButton("Normalize selection / Normalizar seleccion")
+        self.btn_norm_all = QtWidgets.QPushButton("Apply to all / Aplicar a todas")
+
+        self.btn_detect_lights.clicked.connect(self._do_detect_lights)
+        self.btn_norm_sel.clicked.connect(self._do_normalize_selection)
+        self.btn_norm_all.clicked.connect(self._do_normalize_all)
+
+        lay.addWidget(self._h(self.btn_detect_lights, self.btn_norm_sel, self.btn_norm_all))
+
+        self.lst_lights = QtWidgets.QListWidget()
+        lay.addWidget(self.lst_lights)
+        return w
+
+    # ---------- Materials tab ----------
+    def _build_tab_materials(self):
+        w = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(w)
+
+        info = QtWidgets.QLabel(
+            "Emissive, transparency and surface parameters.\n"
+            "Parametros de emissive, transparencia y superficie."
+        )
+        info.setWordWrap(True)
+        lay.addWidget(info)
+
+        self.spn_em_r = QtWidgets.QDoubleSpinBox(); self._conf_float(self.spn_em_r, 0,1,0.0)
+        self.spn_em_g = QtWidgets.QDoubleSpinBox(); self._conf_float(self.spn_em_g, 0,1,0.0)
+        self.spn_em_b = QtWidgets.QDoubleSpinBox(); self._conf_float(self.spn_em_b, 0,1,0.0)
+        self.spn_transp = QtWidgets.QDoubleSpinBox(); self._conf_float(self.spn_transp, 0,1,0.0)
+        self.spn_shiny = QtWidgets.QDoubleSpinBox(); self._conf_float(self.spn_shiny, 0,1,0.2)
+
+        form = QtWidgets.QFormLayout()
+        form.addRow("Emissive R:", self.spn_em_r)
+        form.addRow("Emissive G:", self.spn_em_g)
+        form.addRow("Emissive B:", self.spn_em_b)
+        form.addRow("Transparency (0-1):", self.spn_transp)
+        form.addRow("Shininess (0-1):", self.spn_shiny)
+        lay.addLayout(form)
+
+        self.btn_apply_sel = QtWidgets.QPushButton("Apply to selection / Aplicar a seleccion")
+        self.btn_apply_all = QtWidgets.QPushButton("Apply to all / Aplicar a todos")
+        self.btn_apply_sel.clicked.connect(self._do_apply_emissive_sel)
+        self.btn_apply_all.clicked.connect(self._do_apply_emissive_all)
+        lay.addWidget(self._h(self.btn_apply_sel, self.btn_apply_all))
+        lay.addStretch(1)
+        return w
+
+    # ---------- Start tab ----------
+    def _build_tab_start(self):
+        w = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(w)
+
+        info = QtWidgets.QLabel(
+            "Player start (spawn) and initial viewpoint.\n"
+            "Inicio del personaje (spawn) y Viewpoint inicial.\n"
+            "Place a 'GameStart' object above the floor; HeightOffset (por defecto 1.6 m) define la altura del avatar y la camara."
+        )
+        info.setWordWrap(True)
+        lay.addWidget(info)
+
+        self.ed_gamestart = QtWidgets.QLineEdit("GameStart")
+        self.btn_create_gs = QtWidgets.QPushButton("Create GameStart / Crear GameStart")
+        self.btn_create_gs.clicked.connect(self._do_create_gamestart)
+
+        form = QtWidgets.QFormLayout()
+        form.addRow("GameStart name / nombre:", self.ed_gamestart)
+        lay.addLayout(form)
+        lay.addWidget(self.btn_create_gs)
+        lay.addStretch(1)
+        return w
+
+    # ---------- Presets tab ----------
+    def _build_tab_presets(self):
+        w = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(w)
+
+        self.ed_preset_name = QtWidgets.QLineEdit("default")
+        self.btn_save_preset = QtWidgets.QPushButton("Save preset / Guardar perfil")
+        self.btn_load_preset = QtWidgets.QPushButton("Load preset / Cargar perfil")
+        self.btn_save_preset.clicked.connect(self._do_save_preset)
+        self.btn_load_preset.clicked.connect(self._do_load_preset)
+
+        form = QtWidgets.QFormLayout()
+        form.addRow("Preset name / Nombre de perfil:", self.ed_preset_name)
+        lay.addLayout(form)
+        lay.addWidget(self._h(self.btn_save_preset, self.btn_load_preset))
+        lay.addStretch(1)
+        return w
+
+    # ---------- Settings tab ----------
+    def _build_tab_settings(self):
+        w = QtWidgets.QWidget()
+        lay = QtWidgets.QFormLayout(w)
+
+        self.ed_default_dir = QtWidgets.QLineEdit(get_param_str("export_dir_default", DEFAULT_EXPORT_DIR))
+        self.ed_suffix = QtWidgets.QLineEdit(get_param_str("file_suffix", ""))
+
+        self.chk_restore = QtWidgets.QCheckBox("Restore last session / Restaurar ultima sesion")
+        self.chk_restore.setChecked(get_param_bool("restore_last", True))
+
+        self.ed_cge_path = QtWidgets.QLineEdit(get_param_str("cge_executable_path", ""))
+        tooltip = "Seleccione el ejecutable del Castle Game Engine. Ejemplo: C:\\CastleEngine\\castle-engine.exe"
+        self.ed_cge_path.setToolTip(tooltip)
+        self.btn_cge_browse = QtWidgets.QPushButton("Browse / Examinar")
+        self.btn_cge_browse.setToolTip(tooltip)
+        self.btn_cge_browse.clicked.connect(self._browse_cge_executable)
+
+        self.chk_auto_launch_cge = QtWidgets.QCheckBox("Run Castle Game Engine after export / Ejecutar Castle Game Engine al exportar")
+        self.chk_auto_launch_cge.setChecked(get_param_bool("auto_launch_cge", False))
+        self.chk_auto_launch_cge.setToolTip("Ejecuta Castle Game Engine automaticamente despues de exportar")
+
+        lay.addRow("Default export folder / Carpeta por defecto:", self.ed_default_dir)
+        lay.addRow("Filename suffix / Sufijo:", self.ed_suffix)
+        lay.addRow("", self.chk_restore)
+        lay.addRow("Castle Game Engine path / Ruta de Castle Game Engine (CGE):", self._h(self.ed_cge_path, self.btn_cge_browse))
+        lay.addRow("", self.chk_auto_launch_cge)
+        return w
+
+    # ---------- helpers ----------
+    def _h(self, *widgets):
+        w = QtWidgets.QWidget()
+        h = QtWidgets.QHBoxLayout(w)
+        h.setContentsMargins(0,0,0,0)
+        for ww in widgets:
+            h.addWidget(ww)
+        h.addStretch(1)
+        return w
+
+    def _conf_float(self, spn, a, b, val):
+        spn.setRange(a,b)
+        spn.setDecimals(3)
+        spn.setSingleStep(0.05)
+        spn.setValue(val)
+
+    # ---------- param restore/save ----------
+    def _restore_params(self):
+        doc_dir, stem = get_doc_dir_and_stem()
+        if doc_dir:
+            self.ed_export_dir.setText(str(doc_dir))
+        else:
+            saved_dir = get_param_str("export_dir", DEFAULT_EXPORT_DIR).strip()
+            self.ed_export_dir.setText(saved_dir or DEFAULT_EXPORT_DIR)
+
+        if doc_dir:
+            saved_base = get_param_str("base_name", "").strip()
+            self.ed_base_name.setText(saved_base or stem)
+        else:
+            self.ed_base_name.setText(get_param_str("base_name", "Scene"))
+        self.ed_root.setText(get_param_str("root_label", ""))
+
+        self.chk_auto_baseline.setChecked(get_param_bool("auto_baseline", False))
+
+        self.chk_walls.setChecked(get_param_bool("cat_walls", True))
+        self.chk_floors.setChecked(get_param_bool("cat_floors", True))
+        self.chk_roofs.setChecked(get_param_bool("cat_roofs", True))
+        self.chk_furniture.setChecked(get_param_bool("cat_furniture", True))
+        self.chk_lights.setChecked(get_param_bool("cat_lights", True))
+        self.chk_cameras.setChecked(get_param_bool("cat_cameras", False))
+
+        self.chk_triangulate.setChecked(get_param_bool("triangulate", True))
+        self.chk_freeze_colors.setChecked(get_param_bool("freeze_colors", True))
+
+        # material defaults
+        self.spn_em_r.setValue(float(get_param_str("em_r","0.0")))
+        self.spn_em_g.setValue(float(get_param_str("em_g","0.0")))
+        self.spn_em_b.setValue(float(get_param_str("em_b","0.0")))
+        self.spn_transp.setValue(float(get_param_str("m_transp","0.0")))
+        self.spn_shiny.setValue(float(get_param_str("m_shiny","0.2")))
+
+        self.ed_default_dir.setText(get_param_str("export_dir_default", DEFAULT_EXPORT_DIR))
+        self.ed_suffix.setText(get_param_str("file_suffix", ""))
+        self.chk_restore.setChecked(get_param_bool("restore_last", True))
+        self.ed_cge_path.setText(get_param_str("cge_executable_path", ""))
+        self.chk_auto_launch_cge.setChecked(get_param_bool("auto_launch_cge", False))
+        if hasattr(self, "ed_gamestart"):
+            self.ed_gamestart.setText(get_param_str("gamestart_label", "GameStart"))
+        self._refresh_object_lists(silent=True)
+
+    def _save_params(self):
+        set_param_str("export_dir", self.ed_export_dir.text().strip())
+        set_param_str("base_name", self.ed_base_name.text().strip())
+        set_param_str("root_label", self.ed_root.text().strip())
+
+        set_param_bool("auto_baseline", self.chk_auto_baseline.isChecked())
+
+        set_param_bool("cat_walls", self.chk_walls.isChecked())
+        set_param_bool("cat_floors", self.chk_floors.isChecked())
+        set_param_bool("cat_roofs", self.chk_roofs.isChecked())
+        set_param_bool("cat_furniture", self.chk_furniture.isChecked())
+        set_param_bool("cat_lights", self.chk_lights.isChecked())
+        set_param_bool("cat_cameras", self.chk_cameras.isChecked())
+
+        set_param_bool("triangulate", self.chk_triangulate.isChecked())
+        set_param_bool("freeze_colors", self.chk_freeze_colors.isChecked())
+
+        set_param_str("em_r", str(self.spn_em_r.value()))
+        set_param_str("em_g", str(self.spn_em_g.value()))
+        set_param_str("em_b", str(self.spn_em_b.value()))
+        set_param_str("m_transp", str(self.spn_transp.value()))
+        set_param_str("m_shiny", str(self.spn_shiny.value()))
+
+        set_param_str("export_dir_default", self.ed_default_dir.text().strip())
+        set_param_str("file_suffix", self.ed_suffix.text().strip())
+        set_param_bool("restore_last", self.chk_restore.isChecked())
+        if hasattr(self, "ed_gamestart"):
+            set_param_str("gamestart_label", self.ed_gamestart.text().strip())
+
+        cge_path = self.ed_cge_path.text().strip()
+        if cge_path:
+            if is_valid_cge_executable(cge_path):
+                set_param_str("cge_executable_path", cge_path)
+            else:
+                self._set_status("Castle Game Engine ejecutable no encontrado.")
+                log_warn("No se encontro la ruta de CGE.")
+        else:
+            set_param_str("cge_executable_path", "")
+        set_param_bool("auto_launch_cge", self.chk_auto_launch_cge.isChecked())
+
+
+    # ---------- preset helpers ----------
+    def _collect_preset_data(self):
+        """Collect current UI state into a dict to be saved as a preset."""
+        data = {
+            "root_label": self.ed_root.text().strip(),
+            "export_dir": self.ed_export_dir.text().strip(),
+            "base_name": self.ed_base_name.text().strip(),
+            "auto_baseline": self.chk_auto_baseline.isChecked(),
+            "gamestart_label": self.ed_gamestart.text().strip() if hasattr(self, "ed_gamestart") else "GameStart",
+            "selected_objects": sorted(self._selected_object_names),
+
+            "cats": {
+                "Walls": self.chk_walls.isChecked(),
+                "Floors": self.chk_floors.isChecked(),
+                "Roofs": self.chk_roofs.isChecked(),
+                "Furniture": self.chk_furniture.isChecked(),
+                "Lights": self.chk_lights.isChecked(),
+                "Cameras": self.chk_cameras.isChecked(),
+            },
+
+            "triangulate": self.chk_triangulate.isChecked(),
+            "freeze_colors": self.chk_freeze_colors.isChecked(),
+
+            "materials": {
+                "em_r": float(self.spn_em_r.value()),
+                "em_g": float(self.spn_em_g.value()),
+                "em_b": float(self.spn_em_b.value()),
+                "transp": float(self.spn_transp.value()),
+                "shiny": float(self.spn_shiny.value()),
+            },
+
+            "settings": {
+                "default_dir": self.ed_default_dir.text().strip(),
+                "file_suffix": self.ed_suffix.text().strip(),
+                "restore_last": self.chk_restore.isChecked(),
+              "cge_executable_path": self.ed_cge_path.text().strip(),
+              "auto_launch_cge": self.chk_auto_launch_cge.isChecked(),
+          }
+      }
+        data["lights"] = copy.deepcopy(self._light_entries)
+        return data
+
+    def _apply_preset_data(self, data: dict):
+        """Apply a loaded preset dict to the UI and params (does not run exports)."""
+        # project
+        self.ed_root.setText(data.get("root_label",""))
+        self.ed_export_dir.setText(data.get("export_dir", self.ed_export_dir.text()))
+        self.ed_base_name.setText(data.get("base_name", self.ed_base_name.text()))
+        self.chk_auto_baseline.setChecked(bool(data.get("auto_baseline", False)))
+        if hasattr(self, "ed_gamestart"):
+            self.ed_gamestart.setText(data.get("gamestart_label", self.ed_gamestart.text()))
+        self._selected_object_names = set(data.get("selected_objects", []))
+        self._refresh_object_lists(silent=True)
+        self._light_entries = copy.deepcopy(data.get("lights", []))
+        self._refresh_light_summary(silent=True)
+
+        # categories
+        cats = data.get("cats", {})
+        self.chk_walls.setChecked(bool(cats.get("Walls", self.chk_walls.isChecked())))
+        self.chk_floors.setChecked(bool(cats.get("Floors", self.chk_floors.isChecked())))
+        self.chk_roofs.setChecked(bool(cats.get("Roofs", self.chk_roofs.isChecked())))
+        self.chk_furniture.setChecked(bool(cats.get("Furniture", self.chk_furniture.isChecked())))
+        self.chk_lights.setChecked(bool(cats.get("Lights", self.chk_lights.isChecked())))
+        self.chk_cameras.setChecked(bool(cats.get("Cameras", self.chk_cameras.isChecked())))
+
+        # scene options
+        self.chk_triangulate.setChecked(bool(data.get("triangulate", self.chk_triangulate.isChecked())))
+        self.chk_freeze_colors.setChecked(bool(data.get("freeze_colors", self.chk_freeze_colors.isChecked())))
+
+        # materials
+        mats = data.get("materials", {})
+        self.spn_em_r.setValue(float(mats.get("em_r", self.spn_em_r.value())))
+        self.spn_em_g.setValue(float(mats.get("em_g", self.spn_em_g.value())))
+        self.spn_em_b.setValue(float(mats.get("em_b", self.spn_em_b.value())))
+        self.spn_transp.setValue(float(mats.get("transp", self.spn_transp.value())))
+        self.spn_shiny.setValue(float(mats.get("shiny", self.spn_shiny.value())))
+
+        # settings
+        st = data.get("settings", {})
+        self.ed_default_dir.setText(st.get("default_dir", self.ed_default_dir.text()))
+        self.ed_suffix.setText(st.get("file_suffix", self.ed_suffix.text()))
+        self.chk_restore.setChecked(bool(st.get("restore_last", self.chk_restore.isChecked())))
+        self.ed_cge_path.setText(st.get("cge_executable_path", self.ed_cge_path.text()))
+        self.chk_auto_launch_cge.setChecked(bool(st.get("auto_launch_cge", self.chk_auto_launch_cge.isChecked())))
+
+        # persist to ParamGet tambien, para mantener coherencia
+        self._save_params()
+
+    # ---------- presets actions ----------
+    def _do_save_preset(self):
+        """Save current UI state as a JSON preset."""
+        try:
+            name = self.ed_preset_name.text().strip() or "default"
+            data = self._collect_preset_data()
+            save_preset(name, data)
+            self._set_status(f"Preset saved / Perfil guardado: {name}")
+        except Exception as ex:
+            self._set_status(f"Save preset failed: {ex}")
+            log_err(ex)
+
+    def _do_load_preset(self):
+        """Load a JSON preset and apply it to the UI."""
+        try:
+            name = self.ed_preset_name.text().strip() or "default"
+            data = load_preset(name)
+            self._apply_preset_data(data)
+            self._set_status(f"Preset loaded / Perfil cargado: {name}")
+        except Exception as ex:
+            self._set_status(f"Load preset failed: {ex}")
+            log_err(ex)
+
+    def accept(self):
+        self._save_params()
+        super().accept()
+
+    # ---------- actions ----------
+    def _pick_selected_root(self):
+        sel = Gui.Selection.getSelection()
+        if not sel:
+            self._set_status("No selection. / Sin seleccion.")
+            return
+        self.root_obj = sel[0]
+        self.ed_root.setText(self.root_obj.Label)
+        self._selected_object_names.clear()
+        self._refresh_object_lists(silent=True)
+        self._set_status(f"Root set to: {self.root_obj.Label}")
+
+    def _browse_dir(self):
+        d = QtWidgets.QFileDialog.getExistingDirectory(self, "Select export folder")
+        if d:
+            self.ed_export_dir.setText(d)
+
+    def _browse_cge_executable(self):
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Select Castle Game Engine executable",
+            self.ed_cge_path.text().strip() or "",
+        )
+        if path:
+            self.ed_cge_path.setText(path)
+
+    def _resolve_root(self):
+        label = self.ed_root.text().strip()
+        if not label:
+            raise RuntimeError("Root label empty / Raiz vacia")
+        obj = find_object_by_label(self.doc, label)
+        if obj is None:
+            raise RuntimeError("Root not found / Raiz no encontrada")
+        return obj
+
+    def _maybe_launch_cge(self, exported_file):
+        if not self.chk_auto_launch_cge.isChecked():
+            return
+
+        cge_path = self.ed_cge_path.text().strip()
+        if not is_valid_cge_executable(cge_path):
+            self._set_status("Castle Game Engine no encontrado. Configure la ruta en configuracion.")
+            log_warn("No se encontro la ruta de CGE.")
+            return
+
+        exported = Path(exported_file)
+        if not exported.exists():
+            self._set_status("Archivo exportado no encontrado para lanzar CGE.")
+            log_warn("Archivo exportado no encontrado para lanzar CGE.")
+            return
+
+        self._set_status("Ejecutando Castle Game Engine...")
+        if launch_cge(cge_path, str(exported)):
+            self._set_status("Exportacion completada y lanzada en CGE.")
+        else:
+            self._set_status("Castle Game Engine ejecutable no encontrado.")
+
+    def _do_baseline_export(self):
+        try:
+            categories = self._gather_category_selection()
+            export_objs = self._prepare_export_objects(categories)
+            out_dir = self.ed_export_dir.text().strip() or get_project_export_dir_fallback()
+            ensure_dir(out_dir)
+            base_name = self.ed_base_name.text().strip() or "Scene"
+            # suffix
+            suffix = get_param_str("file_suffix","")
+            if suffix:
+                base_name = f"{base_name}{suffix}"
+
+            path = make_baseline_export(export_objs, out_dir, base_name)
+            self._postprocess_export(path)
+            self._set_status(f"Baseline exported: {path}")
+            set_param_str("last_export_path", path)
+            data = self._collect_preset_data()
+            save_project_sidecar(data)
+            self._maybe_launch_cge(path)
+        except Exception as ex:
+            self._set_status(f"Baseline export failed: {ex}")
+            log_err(ex)
+
+    def _do_scene_export(self):
+        try:
+            categories = self._gather_category_selection()
+            export_objs = self._prepare_export_objects(categories)
+            if not any(c in categories for c in ["Floors"]):
+                log_warn("No floor selected; player navigation may fail / Sin piso la navegacion puede fallar")
+
+            out_dir = self.ed_export_dir.text().strip() or get_project_export_dir_fallback()
+            ensure_dir(out_dir)
+            base_name = self.ed_base_name.text().strip() or "Scene"
+
+            # time suffix option
+            suffix = get_param_str("file_suffix","")
+            if suffix:
+                base_name = f"{base_name}{suffix}"
+
+            out_file = str(Path(out_dir).joinpath(f"{base_name}.x3d"))
+            export_objects_to_x3d(export_objs, out_file)
+            self._postprocess_export(out_file)
+            self._set_status(f"Scene exported: {out_file}")
+            set_param_str("last_export_path", out_file)
+            data = self._collect_preset_data()
+            save_project_sidecar(data)
+            self._maybe_launch_cge(out_file)
+        except Exception as ex:
+            self._set_status(f"Scene export failed: {ex}")
+            log_err(ex)
+
+    def _postprocess_export(self, filepath):
+        gamestart = ""
+        if hasattr(self, "ed_gamestart"):
+            gamestart = self.ed_gamestart.text().strip()
+        try:
+            decorate_x3d_scene(filepath, self.doc, gamestart or "GameStart", copy.deepcopy(self._light_entries))
+        except Exception as ex:
+            log_warn(f"Postproceso X3D fallo: {ex}")
+
+    def _do_detect_lights(self):
+        try:
+            root = self._resolve_root()
+            lights = detect_lights(root)
+            self.lst_lights.clear()
+            for o in lights:
+                self.lst_lights.addItem(o.Label)
+            self._set_status(f"Detected lights: {len(lights)}")
+        except Exception as ex:
+            self._set_status(f"Detect lights failed: {ex}")
+            log_err(ex)
+
+    def _do_normalize_selection(self):
+        items = self.lst_lights.selectedItems()
+        if not items:
+            self._set_status("No light selected / Sin seleccion")
+            return
+        try:
+            root = self._resolve_root()
+            names = [it.text() for it in items]
+            objs = [o for o in collect_children_recursive(root) if o.Label in names]
+            normalize_lights(objs)
+            self._set_status("Selected lights normalized / Seleccion normalizada")
+        except Exception as ex:
+            self._set_status(f"Normalize selection failed: {ex}")
+            log_err(ex)
+
+    def _do_normalize_all(self):
+        try:
+            root = self._resolve_root()
+            objs = detect_lights(root)
+            normalize_lights(objs)
+            self._set_status("All lights normalized / Todas normalizadas")
+        except Exception as ex:
+            self._set_status(f"Normalize all failed: {ex}")
+            log_err(ex)
+
+    def _do_apply_emissive_sel(self):
+        try:
+            sel = Gui.Selection.getSelection()
+            if not sel:
+                self._set_status("No selection / Sin seleccion")
+                return
+            rgb = (self.spn_em_r.value(), self.spn_em_g.value(), self.spn_em_b.value())
+            apply_emissive_to_objects(sel, rgb, self.spn_transp.value(), self.spn_shiny.value())
+            self._set_status("Applied to selection / Aplicado a seleccion")
+        except Exception as ex:
+            self._set_status(f"Apply to selection failed: {ex}")
+            log_err(ex)
+
+    def _do_apply_emissive_all(self):
+        try:
+            root = self._resolve_root()
+            all_objs = collect_children_recursive(root)
+            rgb = (self.spn_em_r.value(), self.spn_em_g.value(), self.spn_em_b.value())
+            apply_emissive_to_objects(all_objs, rgb, self.spn_transp.value(), self.spn_shiny.value())
+            self._set_status("Applied to all / Aplicado a todos")
+        except Exception as ex:
+            self._set_status(f"Apply to all failed: {ex}")
+            log_err(ex)
+
+    def _do_create_gamestart(self):
+        try:
+            name = self.ed_gamestart.text().strip() or "GameStart"
+            obj = create_gamestart(self.doc, name)
+            self._set_status(f"GameStart ready: {obj.Label}")
+        except Exception as ex:
+            self._set_status(f"Create GameStart failed: {ex}")
+            log_err(ex)
+
+    def _set_status(self, msg):
+        self.status.setText(msg)
+        log_info(msg)
+
+
+# -------------------------------
+# Run dialog
+# -------------------------------
+
+def run():
+    try:
+        dlg = GameEngineExportDialog(Gui.getMainWindow())
+        dlg.exec_()
+    except Exception as ex:
+        log_err(f"Dialog failed: {ex}")
+
+if __name__ == "__main__":
+    log_info("Starting GameEngineExport...")
+    run()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

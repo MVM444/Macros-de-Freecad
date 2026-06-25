@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<package format="1">
+  <name>GameEngineExportWB</name>
+  <description>Export FreeCAD scenes to X3D for Castle Game Engine</description>
+  <version>0.1.0</version>
+  <date>2025-10-13</date>
+  <maintainer email="">Marco Vinicio Mora Fallas</maintainer>
+  <license>MIT</license>
+  <url type="repository">https://castle-engine.io/</url>
+  <content>
+    <workbench>
+      <name>GameEngineExportWB</name>
+      <description>Export FreeCAD scenes to X3D for Castle Game Engine</description>
+      <icon>resources/icons/gameexport.svg</icon>
+    </workbench>
+  </content>
+</package>

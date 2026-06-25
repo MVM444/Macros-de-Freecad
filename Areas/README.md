@@ -9,6 +9,10 @@ Este directorio contiene macros para crear, nombrar y usar poligonos/rectangulos
 - 2026-06-10: antes de agregar la guia visible de Areas, se respaldo `README.md` y posibles archivos de guia en `../Respaldos/Areas_Guia_Areas_20260610_105630/`.
 - 2026-06-10: se agrego `Guia_Areas.FCMacro` como ventana practica de flujo de trabajo para la barra `Areas`.
 - 2026-06-10: se agrego `Guia_Areas.svg` junto a la macro y en `ElectricCR/icons/Areas/Guia_Areas.svg`; el icono usa un signo de pregunta para identificarlo como ayuda/guia.
+- 2026-06-22: antes de ajustar `RectFromBoundaryLines.FCMacro`, se respaldo la macro y este README en `../Respaldos/Areas_RectFromBoundaryLines_estilo_20260622_150731/`.
+- 2026-06-22: `RectFromBoundaryLines.FCMacro` ahora guarda el rectangulo en el grupo `Areas`, agrega propiedades ElectricCR y usa un tono verde-azulado similar pero distinguible de `AreaPorClick`.
+- 2026-06-22: antes de ajustar `AsignarNombreEstandar.FCMacro`, se respaldo la macro y este README en `../Respaldos/Areas_AsignarNombreEstandar_grupo_hojas_20260622_163722/`.
+- 2026-06-22: `AsignarNombreEstandar.FCMacro` ahora crea o mueve la hoja `NombresEstandar` dentro del grupo `Hojas de Calculo`.
 
 ## Convenciones actuales
 
@@ -86,12 +90,27 @@ Notas:
 - Puede recortar lineas largas.
 - El resultado mantiene propiedades y estilo de `AreaPorClick`.
 
+## RectFromBoundaryLines.FCMacro
+
+Macro manual estable para crear rectangulos a partir de 2 a N aristas limite seleccionadas.
+
+Comportamiento actual:
+
+- Calcula el rectangulo desde orientaciones y limites de las aristas seleccionadas.
+- Crea el objeto dentro del grupo `Areas`.
+- Etiqueta el resultado como `Area_###`.
+- Agrega propiedades `ElectricCRTipo`, `GeneratedBy`, `AreaM2`, `VirtualClosures` y `Confidence`.
+- Usa un color verde-azulado transparente para diferenciarlo de las areas creadas por click.
+
 ## AsignarNombreEstandar.FCMacro
 
 Macro para asignar nombres desde la hoja `NombresEstandar`.
 
 Cambios aplicados hoy:
 
+- La hoja `NombresEstandar` queda dentro del grupo `Hojas de Calculo`.
+- Si la hoja ya existia en la raiz del documento, la macro la reubica al abrirse.
+- Reconoce grupos existentes llamados `Hojas de Calculo`, `Hojas de Cálculo` o `Hojas_Calculo`.
 - Importacion Qt compatible:
   - `PySide2`
   - `PySide`
@@ -125,6 +144,7 @@ Algunos puntos de restauracion utiles:
 - `Areas_AreaPorClick_rect_auto_boundary_20260608_135618`
 - `Areas_AsignarNombreEstandar_pyside_20260608_142311`
 - `Areas_AsignarNombreEstandar_refresh_20260608_173932`
+- `Areas_AsignarNombreEstandar_grupo_hojas_20260622_163722`
 
 Tambien existen respaldos experimentales de `AreaPorClick`; no todos son estables.
 

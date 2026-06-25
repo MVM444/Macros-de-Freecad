@@ -1,0 +1,1021 @@
+# Qt compatibility for FreeCAD 1.x (PySide6) and older builds.
+def _ensure_qt_compat():
+    import sys
+    import types
+
+    QtCore = QtGui = QtWidgets = None
+    binding_name = None
+
+    for candidate in ("PySide6", "PySide2", "PySide"):
+        try:
+            if candidate == "PySide":
+                from PySide import QtCore as _QtCore, QtGui as _QtGui
+                _QtWidgets = _QtGui
+            else:
+                module = __import__(candidate, fromlist=["QtCore", "QtGui", "QtWidgets"])
+                _QtCore = module.QtCore
+                _QtGui = module.QtGui
+                _QtWidgets = module.QtWidgets
+            QtCore, QtGui, QtWidgets = _QtCore, _QtGui, _QtWidgets
+            binding_name = candidate
+            break
+        except Exception:
+            continue
+
+    if QtCore is None:
+        return
+
+    qtgui_compat = types.ModuleType("QtGui")
+    qtgui_compat.__dict__.update(getattr(QtGui, "__dict__", {}))
+    qtgui_compat.__dict__.update(getattr(QtWidgets, "__dict__", {}))
+
+    qtsvg_compat = None
+    for module_name in ("QtSvg", "QtSvgWidgets"):
+        try:
+            module = __import__(binding_name, fromlist=[module_name])
+            qt_module = getattr(module, module_name)
+        except Exception:
+            continue
+        if qtsvg_compat is None:
+            qtsvg_compat = types.ModuleType("QtSvg")
+        qtsvg_compat.__dict__.update(getattr(qt_module, "__dict__", {}))
+
+    qtuitools_compat = None
+    try:
+        module = __import__(binding_name, fromlist=["QtUiTools"])
+        qtuitools_compat = module.QtUiTools
+    except Exception:
+        pass
+
+    for package_name in ("PySide2", "PySide"):
+        package = sys.modules.get(package_name)
+        if package is None:
+            package = types.ModuleType(package_name)
+            sys.modules[package_name] = package
+        package.QtCore = QtCore
+        package.QtGui = qtgui_compat
+        package.QtWidgets = QtWidgets
+        sys.modules[package_name + ".QtCore"] = QtCore
+        sys.modules[package_name + ".QtGui"] = qtgui_compat
+        sys.modules[package_name + ".QtWidgets"] = QtWidgets
+        if qtsvg_compat is not None:
+            package.QtSvg = qtsvg_compat
+            sys.modules[package_name + ".QtSvg"] = qtsvg_compat
+        if qtuitools_compat is not None:
+            package.QtUiTools = qtuitools_compat
+            sys.modules[package_name + ".QtUiTools"] = qtuitools_compat
+
+
+_ensure_qt_compat()
+
+# GameEngineExport.FCMacro
+# Version: 2025-10-09  (America/Costa_Rica)
+# Autor: Marco + GPT
+# Nota: comentarios y textos en ASCII (sin acentos) para evitar problemas en FreeCAD
+
+import os, json, math, subprocess
+from datetime import datetime
+import FreeCAD as App
+import FreeCADGui as Gui
+
+# PySide2 / PySide fallback
+try:
+    from PySide2 import QtCore, QtGui, QtWidgets
+except ImportError:
+    from PySide import QtCore, QtGui
+    QtWidgets = QtGui
+
+APP_PREFIX = "[GAMEEXPORT]"
+PARAM_GROUP = "User parameter:BaseApp/Preferences/GameEngineExport"
+
+def log_info(msg):
+    App.Console.PrintMessage(f"{APP_PREFIX}[INFO] {msg}\n")
+
+def log_warn(msg):
+    App.Console.PrintWarning(f"{APP_PREFIX}[WARN] {msg}\n")
+
+def log_err(msg):
+    App.Console.PrintError(f"{APP_PREFIX}[ERROR] {msg}\n")
+
+def get_param():
+    return App.ParamGet(PARAM_GROUP)
+
+def _conf_float(spn, mn, mx, val, step=0.1, dec=3):
+    spn.setRange(mn, mx)
+    spn.setSingleStep(step)
+    spn.setDecimals(dec)
+    spn.setValue(val)
+
+class TimePickerDialog(QtWidgets.QDialog):
+    """ Dialogo simple para elegir hora:minuto (sin acentos). """
+    def __init__(self, parent=None, initial=None):
+        super(TimePickerDialog, self).__init__(parent)
+        self.setWindowTitle("Elegir hora / Pick time")
+        self.setModal(True)
+        v = QtWidgets.QVBoxLayout(self)
+        h = QtWidgets.QHBoxLayout()
+        self.spn_h = QtWidgets.QSpinBox(); self.spn_h.setRange(0,23)
+        self.spn_m = QtWidgets.QSpinBox(); self.spn_m.setRange(0,59)
+        if initial is None:
+            now = datetime.now()
+            self.spn_h.setValue(now.hour)
+            self.spn_m.setValue(now.minute)
+        else:
+            self.spn_h.setValue(initial[0])
+            self.spn_m.setValue(initial[1])
+        h.addWidget(QtWidgets.QLabel("Hora:")); h.addWidget(self.spn_h)
+        h.addSpacing(12)
+        h.addWidget(QtWidgets.QLabel("Min:")); h.addWidget(self.spn_m)
+        v.addLayout(h)
+        btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok|QtWidgets.QDialogButtonBox.Cancel)
+        btns.accepted.connect(self.accept); btns.rejected.connect(self.reject)
+        v.addWidget(btns)
+
+    def get_hm(self):
+        return int(self.spn_h.value()), int(self.spn_m.value())
+
+class GameEngineExportDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None):
+        super(GameEngineExportDialog, self).__init__(parent)
+        try:
+            self.setWindowTitle("GameEngineExport - FreeCAD -> X3D (Castle Game Engine)")
+            self.resize(980, 680)
+            self.doc = App.ActiveDocument
+            if not self.doc:
+                QtWidgets.QMessageBox.warning(self, "FreeCAD", "No hay documento activo.")
+                self.reject()
+                return
+
+            self.tabs = QtWidgets.QTabWidget(self)
+
+            self.tab_scene = self._build_tab_scene()
+            self.tab_materials = self._build_tab_materials()
+            self.tab_config = self._build_tab_config()
+            self.tab_info = self._build_tab_info()
+
+            self.tabs.addTab(self.tab_scene, "Escena / Scene")
+            self.tabs.addTab(self.tab_materials, "Materiales / Materials")
+            self.tabs.addTab(self.tab_config, "Config & Perfiles")
+            self.tabs.addTab(self.tab_info, "Informacion / Info")
+
+            lay = QtWidgets.QVBoxLayout(self)
+            lay.addWidget(self.tabs)
+
+            self.status = QtWidgets.QLabel("Ready.")
+            lay.addWidget(self.status)
+
+            self._load_settings()
+            self._populate_available()
+            self._update_gamestart_status()
+            log_info("GUI lista.")
+        except Exception:
+            import traceback
+            log_err("__init__ failed:\n" + traceback.format_exc())
+            raise
+
+    # ----------------- GUI -----------------
+
+    def _build_tab_scene(self):
+        w = QtWidgets.QWidget()
+        v = QtWidgets.QVBoxLayout(w)
+
+        # Raiz (opcional)
+        grp_root = QtWidgets.QGroupBox("Raiz de escena (opcional) / Scene root (optional)")
+        froot = QtWidgets.QFormLayout(grp_root)
+        self.ed_root = QtWidgets.QLineEdit()
+        self.btn_take_root = QtWidgets.QPushButton("Tomar seleccion / Pick selected")
+        self.btn_take_root.clicked.connect(self._on_take_root)
+        froot.addRow("Raiz (Label/Name):", self.ed_root)
+        froot.addRow("", self.btn_take_root)
+        v.addWidget(grp_root)
+
+        # Objetos a exportar
+        grp_objs = QtWidgets.QGroupBox("Objetos a exportar / Objects to export")
+        vobjs = QtWidgets.QVBoxLayout(grp_objs)
+        tip = QtWidgets.QLabel("Mueva manualmente los objetos a exportar. Use Actualizar y Limpiar segun sea necesario.")
+        tip.setWordWrap(True)
+        vobjs.addWidget(tip)
+
+        tools = QtWidgets.QHBoxLayout()
+        self.btn_refresh = QtWidgets.QPushButton("Actualizar lista")
+        self.btn_clear = QtWidgets.QPushButton("Limpiar lista")
+        self.btn_refresh.clicked.connect(self._populate_available)
+        self.btn_clear.clicked.connect(self._on_clear_selected_list)
+        tools.addWidget(self.btn_refresh)
+        tools.addWidget(self.btn_clear)
+        tools.addStretch(1)
+        vobjs.addLayout(tools)
+
+        hlists = QtWidgets.QHBoxLayout()
+        self.lst_available = QtWidgets.QListWidget()
+        self.lst_available.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+        self.lst_selected = QtWidgets.QListWidget()
+        self.lst_selected.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+        btns = QtWidgets.QVBoxLayout()
+        self.btn_add = QtWidgets.QPushButton(">> Anadir / Add")
+        self.btn_remove = QtWidgets.QPushButton("<< Quitar / Remove")
+        self.btn_add.clicked.connect(self._on_add)
+        self.btn_remove.clicked.connect(self._on_remove)
+        btns.addWidget(self.btn_add); btns.addWidget(self.btn_remove); btns.addStretch(1)
+        hlists.addWidget(self.lst_available)
+        hlists.addLayout(btns)
+        hlists.addWidget(self.lst_selected)
+        vobjs.addLayout(hlists)
+        v.addWidget(grp_objs)
+
+        # Salida
+        grp_out = QtWidgets.QGroupBox("Salida / Output")
+        fout = QtWidgets.QFormLayout(grp_out)
+        self.ed_out_folder = QtWidgets.QLineEdit()
+        self.btn_browse_out = QtWidgets.QPushButton("Examinar / Browse")
+        self.btn_browse_out.clicked.connect(self._on_browse_out)
+        h1 = QtWidgets.QHBoxLayout()
+        h1.addWidget(self.ed_out_folder); h1.addWidget(self.btn_browse_out)
+        self.ed_base = QtWidgets.QLineEdit()
+        fout.addRow("Carpeta / Folder:", self._wrap(h1))
+        fout.addRow("Nombre base / Base name:", self.ed_base)
+        v.addWidget(grp_out)
+
+        # Luz global
+        grp_gl = QtWidgets.QGroupBox("Iluminacion (Luz global) / Lighting (Global light)")
+        fgl = QtWidgets.QFormLayout(grp_gl)
+        self.chk_gl = QtWidgets.QCheckBox("Activar luz global / Enable global light")
+        self.cmb_gl_type = QtWidgets.QComboBox(); self.cmb_gl_type.addItems(["Directional (Sun)"])
+        self.spn_gl_int = QtWidgets.QDoubleSpinBox(); _conf_float(self.spn_gl_int, 0.0, 5.0, 1.2, 0.1, 2)
+        # color
+        self.frm_gl_color = QtWidgets.QFrame(); self.frm_gl_color.setFrameShape(QtWidgets.QFrame.Box)
+        self.frm_gl_color.setAutoFillBackground(True); self._set_color(QtGui.QColor(255,255,255))
+        self.btn_gl_color = QtWidgets.QPushButton("Color...")
+        self.btn_gl_color.clicked.connect(self._on_pick_color)
+        hcolor = QtWidgets.QHBoxLayout(); hcolor.addWidget(self.frm_gl_color); hcolor.addWidget(self.btn_gl_color); hcolor.addStretch(1)
+        # direccion
+        self.spn_gl_yaw = QtWidgets.QDoubleSpinBox(); _conf_float(self.spn_gl_yaw, 0.0, 360.0, 135.0, 1.0, 1)
+        self.spn_gl_pitch = QtWidgets.QDoubleSpinBox(); _conf_float(self.spn_gl_pitch, -90.0, 90.0, -35.0, 1.0, 1)
+        hypr = QtWidgets.QHBoxLayout(); hypr.addWidget(QtWidgets.QLabel("Yaw (deg):")); hypr.addWidget(self.spn_gl_yaw)
+        hypr.addSpacing(12); hypr.addWidget(QtWidgets.QLabel("Pitch (deg):")); hypr.addWidget(self.spn_gl_pitch); hypr.addStretch(1)
+        # latitud y botones Sol
+        self.spn_lat = QtWidgets.QDoubleSpinBox(); _conf_float(self.spn_lat, -90.0, 90.0, 9.9, 0.1, 2)
+        self.btn_sun_local = QtWidgets.QPushButton("Usar sol (hora local)")
+        self.btn_sun_pick = QtWidgets.QPushButton("Hora...")
+        self.btn_sun_local.clicked.connect(self._on_set_solar_local)
+        self.btn_sun_pick.clicked.connect(self._on_set_solar_picktime)
+        hsun = QtWidgets.QHBoxLayout()
+        hsun.addWidget(QtWidgets.QLabel("Latitud (deg):")); hsun.addWidget(self.spn_lat); hsun.addStretch(1)
+        hsun.addWidget(self.btn_sun_local); hsun.addWidget(self.btn_sun_pick)
+
+        fgl.addRow("", self.chk_gl)
+        fgl.addRow("Tipo / Type:", self.cmb_gl_type)
+        fgl.addRow("Intensidad / Intensity:", self.spn_gl_int)
+        fgl.addRow("Color:", self._wrap(hcolor))
+        fgl.addRow("Direccion:", self._wrap(hypr))
+        fgl.addRow("", self._wrap(hsun))
+        v.addWidget(grp_gl)
+
+        # GameStart
+        grp_gs = QtWidgets.QGroupBox("GameStart (Viewpoint inicial)")
+        hgs = QtWidgets.QHBoxLayout(grp_gs)
+        self.ed_gs = QtWidgets.QLineEdit()
+        self.ed_gs.setPlaceholderText("GameStart")
+        self.btn_gs = QtWidgets.QPushButton("Crear / Create")
+        self.btn_gs.clicked.connect(self._on_create_gamestart)
+        self.lbl_gs = QtWidgets.QLabel("")
+        hgs.addWidget(QtWidgets.QLabel("Nombre:")); hgs.addWidget(self.ed_gs)
+        hgs.addWidget(self.btn_gs); hgs.addWidget(self.lbl_gs)
+        v.addWidget(grp_gs)
+
+        # Exportar
+        self.btn_export = QtWidgets.QPushButton("Exportar X3D / Export X3D")
+        self.btn_export.setStyleSheet("font-weight: bold;")
+        self.btn_export.clicked.connect(self._on_export)
+        v.addWidget(self.btn_export)
+
+        note = QtWidgets.QLabel("Escala 0.001 (FreeCAD mm -> CGE m). Asegure piso para navegar. Evite caracteres especiales en nombres.")
+        note.setStyleSheet("color: gray;")
+        v.addWidget(note); v.addStretch(1)
+        return w
+
+    def _build_tab_materials(self):
+        w = QtWidgets.QWidget()
+        v = QtWidgets.QVBoxLayout(w)
+        lbl = QtWidgets.QLabel("Materiales (Provisional). Los materiales de FreeCAD pueden exportar de forma diferente segun el exportador.")
+        lbl.setStyleSheet("font-style: italic;")
+        v.addWidget(lbl)
+        v.addStretch(1)
+        return w
+
+    def _build_tab_config(self):
+        w = QtWidgets.QWidget()
+        v = QtWidgets.QVBoxLayout(w)
+
+        # Opciones exportacion
+        grp_opts = QtWidgets.QGroupBox("Opciones de exportacion")
+        vopts = QtWidgets.QVBoxLayout(grp_opts)
+        self.chk_triang = QtWidgets.QCheckBox("Triangular mallas (tessellate)")
+        self.chk_freeze = QtWidgets.QCheckBox("Congelar transformaciones (freeze)")
+        self.chk_baseline = QtWidgets.QCheckBox("Auto-baseline Z=0")
+        self.chk_confirm_over = QtWidgets.QCheckBox("Confirmar sobreescritura de X3D")
+        vopts.addWidget(self.chk_triang); vopts.addWidget(self.chk_freeze)
+        vopts.addWidget(self.chk_baseline); vopts.addWidget(self.chk_confirm_over)
+        v.addWidget(grp_opts)
+
+        # CGE
+        grp_cge = QtWidgets.QGroupBox("Castle Game Engine (CGE)")
+        fcge = QtWidgets.QFormLayout(grp_cge)
+        self.ed_cge = QtWidgets.QLineEdit()
+        self.btn_cge = QtWidgets.QPushButton("Examinar / Browse")
+        self.btn_cge.clicked.connect(self._on_browse_cge)
+        self.chk_run_cge = QtWidgets.QCheckBox("Ejecutar CGE al exportar / Run CGE after export")
+        h = QtWidgets.QHBoxLayout(); h.addWidget(self.ed_cge); h.addWidget(self.btn_cge)
+        fcge.addRow("Ruta ejecutable:", self._wrap(h))
+        fcge.addRow("", self.chk_run_cge)
+        v.addWidget(grp_cge)
+
+        # Defaults y presets
+        grp_def = QtWidgets.QGroupBox("Valores por defecto")
+        fdef = QtWidgets.QFormLayout(grp_def)
+        self.ed_default_gs = QtWidgets.QLineEdit("GameStart")
+        fdef.addRow("Nombre GameStart por defecto:", self.ed_default_gs)
+        v.addWidget(grp_def)
+
+        grp_pres = QtWidgets.QGroupBox("Perfiles (presets)")
+        hp = QtWidgets.QHBoxLayout(grp_pres)
+        self.btn_preset_save = QtWidgets.QPushButton("Guardar preset...")
+        self.btn_preset_load = QtWidgets.QPushButton("Cargar preset...")
+        self.btn_restore = QtWidgets.QPushButton("Restaurar valores")
+        self.btn_preset_save.clicked.connect(self._on_preset_save)
+        self.btn_preset_load.clicked.connect(self._on_preset_load)
+        self.btn_restore.clicked.connect(self._on_restore_defaults)
+        hp.addWidget(self.btn_restore); hp.addStretch(1); hp.addWidget(self.btn_preset_save); hp.addWidget(self.btn_preset_load)
+        v.addWidget(grp_pres)
+
+        v.addStretch(1)
+        return w
+
+    def _build_tab_info(self):
+        w = QtWidgets.QWidget()
+        v = QtWidgets.QVBoxLayout(w)
+        self.info = QtWidgets.QPlainTextEdit()
+        self.info.setReadOnly(True)
+        self.info.setPlainText(
+            "GameEngineExport - FreeCAD -> X3D (Castle Game Engine)\n"
+            "Pasos: seleccione objetos, configure luz global y GameStart, exporte X3D.\n"
+            "Se guardan ajustes en ParamGet y en <Proyecto>.gee.json.\n\n"
+            "Created by Ing. Marco Vinicio Mora Fallas with ChatGPT support (99.9%).\n"
+            "Version: 2025-10-09 (America/Costa_Rica)\n"
+        )
+        self.btn_info_copy = QtWidgets.QPushButton("Copiar informacion")
+        self.btn_info_copy.clicked.connect(lambda: QtWidgets.QApplication.clipboard().setText(self.info.toPlainText()))
+        v.addWidget(self.info)
+        h = QtWidgets.QHBoxLayout(); h.addStretch(1); h.addWidget(self.btn_info_copy)
+        v.addLayout(h)
+        return w
+
+    # ----------------- UI handlers -----------------
+
+    def _wrap(self, layout):
+        w = QtWidgets.QWidget()
+        w.setLayout(layout)
+        return w
+
+    def _on_take_root(self):
+        sel = Gui.Selection.getSelection()
+        if sel:
+            self.ed_root.setText(sel[0].Name)
+        else:
+            self.ed_root.clear()
+        self._populate_available()
+
+    def _on_add(self):
+        for it in self.lst_available.selectedItems():
+            name = it.data(QtCore.Qt.UserRole)
+            if not self._exists_in(self.lst_selected, name):
+                new = QtWidgets.QListWidgetItem(it.text())
+                new.setData(QtCore.Qt.UserRole, name)
+                self.lst_selected.addItem(new)
+
+    def _on_remove(self):
+        for it in list(self.lst_selected.selectedItems()):
+            self.lst_selected.takeItem(self.lst_selected.row(it))
+
+    def _on_clear_selected_list(self):
+        self.lst_selected.clear()
+
+    def _on_browse_out(self):
+        d = QtWidgets.QFileDialog.getExistingDirectory(self, "Seleccione carpeta de export")
+        if d:
+            self.ed_out_folder.setText(d)
+
+    def _on_browse_cge(self):
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Seleccione ejecutable de CGE", "", "Exe (*.exe);;All (*.*)")
+        if path:
+            self.ed_cge.setText(path)
+
+    def _on_pick_color(self):
+        col = QtWidgets.QColorDialog.getColor(self._get_color(), self, "Color de luz")
+        if col.isValid():
+            self._set_color(col)
+
+    def _on_set_solar_local(self):
+        self._set_solar_from_time(None)  # usa hora local del sistema
+
+    def _on_set_solar_picktime(self):
+        now = datetime.now()
+        dlg = TimePickerDialog(self, initial=(now.hour, now.minute))
+        if dlg.exec_() == QtWidgets.QDialog.Accepted:
+            hh, mm = dlg.get_hm()
+            self._set_solar_from_time((hh, mm))
+
+    def _set_solar_from_time(self, hm_tuple):
+        try:
+            lat = float(self.spn_lat.value())
+        except:
+            lat = 0.0
+
+        if hm_tuple is None:
+            now = datetime.now()
+            hour = now.hour + now.minute/60.0 + now.second/3600.0
+            doy = now.timetuple().tm_yday
+        else:
+            now = datetime.now()
+            hour = float(hm_tuple[0]) + float(hm_tuple[1])/60.0
+            doy = now.timetuple().tm_yday
+
+        # declinacion aprox
+        decl = 23.44 * math.sin(math.radians((360.0/365.0) * (284 + doy)))
+        H = 15.0 * (hour - 12.0)  # deg relativo al mediodia
+        latr = math.radians(lat); decr = math.radians(decl); Hr = math.radians(H)
+        sin_alt = math.sin(latr)*math.sin(decr) + math.cos(latr)*math.cos(decr)*math.cos(Hr)
+        sin_alt = max(-1.0, min(1.0, sin_alt))
+        alt = math.degrees(math.asin(sin_alt))
+        cos_alt = max(1e-6, math.cos(math.radians(alt)))
+        sinA = -math.sin(Hr)*math.cos(decr)/cos_alt
+        cosA = (math.sin(decr) - math.sin(latr)*math.sin(math.radians(alt))) / (math.cos(latr)*cos_alt)
+        A = math.degrees(math.atan2(sinA, cosA))
+        if A < 0: A += 360.0
+        yaw = A
+        pitch = -alt
+
+        self.chk_gl.setChecked(True)
+        self.spn_gl_int.setValue(1.2)
+        self._set_color(QtGui.QColor(255,255,255))
+        self.spn_gl_yaw.setValue(yaw)
+        self.spn_gl_pitch.setValue(pitch)
+        src = "local" if hm_tuple is None else f"{int(hm_tuple[0]):02d}:{int(hm_tuple[1]):02d}"
+        log_info(f"Luz solar: lat={lat:.2f} doy={doy} hora={hour:.2f} ({src}) -> alt={alt:.1f} azim={A:.1f}, yaw={yaw:.1f} pitch={pitch:.1f}")
+
+    def _on_create_gamestart(self):
+        name = self.ed_gs.text().strip() or "GameStart"
+        if name in self.doc.Objects:
+            self.lbl_gs.setText("Ya existe")
+            self._update_gamestart_status()
+            return
+        try:
+            obj = self.doc.addObject("App::Part", name)
+            obj.Label = name
+            # propiedades utiles (opcionales)
+            if not hasattr(obj, "Yaw"):
+                obj.addProperty("App::PropertyFloat","Yaw","GameEngine","yaw deg").Yaw = 0.0
+            if not hasattr(obj, "Pitch"):
+                obj.addProperty("App::PropertyFloat","Pitch","GameEngine","pitch deg").Pitch = 0.0
+            if not hasattr(obj, "Roll"):
+                obj.addProperty("App::PropertyFloat","Roll","GameEngine","roll deg").Roll = 0.0
+            if not hasattr(obj, "HeightOffset"):
+                obj.addProperty("App::PropertyFloat","HeightOffset","GameEngine","eye height m").HeightOffset = 1.6
+            if not hasattr(obj, "FOV"):
+                obj.addProperty("App::PropertyFloat","FOV","GameEngine","fov rad").FOV = 1.047197551
+            self.doc.recompute()
+            self.lbl_gs.setText("Creado")
+        except Exception as ex:
+            log_err(f"Create GameStart failed: {ex}")
+            self.lbl_gs.setText("Error")
+        self._update_gamestart_status()
+        self._populate_available()
+
+    def _update_gamestart_status(self):
+        name = self.ed_gs.text().strip() or "GameStart"
+        if name in self.doc.Objects:
+            self.lbl_gs.setText("Existe")
+        else:
+            self.lbl_gs.setText("")
+
+    # ----------------- Core -----------------
+
+    def _populate_available(self):
+        self.lst_available.clear()
+        objs = []
+        root = self.ed_root.text().strip()
+        if root:
+            obj = self._find_obj(root)
+            if obj:
+                objs = self._walk(obj)
+        else:
+            objs = list(self.doc.Objects)
+
+        def is_exportable(o):
+            if hasattr(o, "Shape") and o.Shape and not o.Shape.isNull():
+                if hasattr(o, "ViewObject") and o.ViewObject.Visibility is False:
+                    return False
+                return True
+            if hasattr(o, "Mesh") and o.Mesh:
+                if hasattr(o, "ViewObject") and o.ViewObject.Visibility is False:
+                    return False
+                return True
+            return False
+
+        labels = []
+        for o in objs:
+            if is_exportable(o):
+                labels.append((o.Label, o.Name))
+
+        labels.sort(key=lambda x: x[0].lower())
+        for lbl, name in labels:
+            if self._exists_in(self.lst_selected, name):
+                continue
+            it = QtWidgets.QListWidgetItem(lbl)
+            it.setData(QtCore.Qt.UserRole, name)
+            self.lst_available.addItem(it)
+
+    def _exists_in(self, listw, obj_name):
+        for i in range(listw.count()):
+            it = listw.item(i)
+            if it.data(QtCore.Qt.UserRole) == obj_name:
+                return True
+        return False
+
+    def _find_obj(self, name_or_label):
+        o = self.doc.getObject(name_or_label)
+        if o: return o
+        for x in self.doc.Objects:
+            if getattr(x, "Label", "") == name_or_label:
+                return x
+        return None
+
+    def _walk(self, root):
+        out = []
+        try:
+            for c in root.OutList:
+                out.append(c)
+                out.extend(self._walk(c))
+        except Exception:
+            pass
+        return out
+
+    def _get_color(self):
+        pal = self.frm_gl_color.palette()
+        return pal.color(QtGui.QPalette.Window)
+
+    def _set_color(self, qcolor):
+        pal = self.frm_gl_color.palette()
+        pal.setColor(QtGui.QPalette.Window, qcolor)
+        self.frm_gl_color.setPalette(pal)
+        self.frm_gl_color.update()
+
+    def _launch_cge(self, x3d_path):
+        exe = self.ed_cge.text().strip()
+        if not exe or not os.path.isfile(exe):
+            log_warn("Ruta de CGE invalida.")
+            return False
+        if not os.path.isfile(x3d_path):
+            log_warn("Archivo X3D no existe para lanzar CGE.")
+            return False
+        try:
+            subprocess.Popen([exe, x3d_path])
+            return True
+        except Exception as ex:
+            log_err(f"Lanzar CGE fallo: {ex}")
+            return False
+
+    def _on_export(self):
+        try:
+            folder = self.ed_out_folder.text().strip()
+            base = self.ed_base.text().strip()
+            if not folder or not os.path.isdir(folder):
+                QtWidgets.QMessageBox.warning(self, "Exportar X3D", "Seleccione carpeta valida.")
+                return
+            if not base:
+                QtWidgets.QMessageBox.warning(self, "Exportar X3D", "Indique nombre base.")
+                return
+            x3d_path = os.path.join(folder, base + ".x3d")
+            if os.path.exists(x3d_path) and self.chk_confirm_over.isChecked():
+                r = QtWidgets.QMessageBox.question(
+                    self, "Sobrescribir archivo",
+                    "El archivo ya existe:\n{}\n\nDesea sobrescribirlo?".format(x3d_path),
+                    QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+                    QtWidgets.QMessageBox.No
+                )
+                if r != QtWidgets.QMessageBox.Yes:
+                    return
+
+            export_objs = []
+            for i in range(self.lst_selected.count()):
+                name = self.lst_selected.item(i).data(QtCore.Qt.UserRole)
+                o = self.doc.getObject(name)
+                if o: export_objs.append(o)
+            if not export_objs:
+                QtWidgets.QMessageBox.warning(self, "Exportar X3D", "No hay objetos seleccionados.")
+                return
+
+            original = {}
+            temp_objs = []
+            z_shift = 0.0
+
+            if self.chk_baseline.isChecked():
+                zmin = None
+                for o in export_objs:
+                    if hasattr(o, "Shape") and o.Shape and not o.Shape.isNull():
+                        bb = o.Shape.BoundBox
+                        if zmin is None or bb.ZMin < zmin:
+                            zmin = bb.ZMin
+                if zmin is not None and abs(zmin) > 1e-6:
+                    z_shift = -zmin
+
+            if self.chk_freeze.isChecked():
+                for o in export_objs:
+                    if hasattr(o, "Shape") and o.Shape and not o.Shape.isNull():
+                        new = self.doc.addObject("Part::Feature", f"Export_{o.Name}")
+                        plc = o.Placement
+                        basev = App.Vector(plc.Base.x, plc.Base.y, plc.Base.z + z_shift)
+                        new_plc = App.Placement(basev, plc.Rotation)
+                        M = new_plc.toMatrix()
+                        new.Shape = o.Shape.transformed(M, True)
+                        new.Placement = App.Placement()
+                        temp_objs.append(new)
+                    else:
+                        temp_objs.append(o)
+                to_export = temp_objs[:]
+            else:
+                if abs(z_shift) > 1e-9:
+                    for o in export_objs:
+                        if hasattr(o, "Placement"):
+                            original[o.Name] = o.Placement.copy()
+                            plc = o.Placement
+                            o.Placement = App.Placement(
+                                App.Vector(plc.Base.x, plc.Base.y, plc.Base.z + z_shift),
+                                plc.Rotation
+                            )
+                if self.chk_triang.isChecked():
+                    import Mesh, MeshPart
+                    for o in export_objs:
+                        if hasattr(o, "Shape") and o.Shape and not o.Shape.isNull():
+                            m = self.doc.addObject("Mesh::Feature", f"Mesh_{o.Name}")
+                            m.Mesh = MeshPart.meshFromShape(Shape=o.Shape, LinearDeflection=0.1, AngularDeflection=15, Relative=False)
+                            m.Placement = o.Placement
+                            temp_objs.append(m)
+                        else:
+                            temp_objs.append(o)
+                    to_export = temp_objs[:]
+                else:
+                    to_export = export_objs[:]
+
+            Gui.export(to_export, x3d_path)
+            log_info(f"Exported X3D: {x3d_path}")
+
+            if original:
+                for nm, plc in original.items():
+                    obj = self.doc.getObject(nm)
+                    if obj: obj.Placement = plc
+
+            for t in temp_objs:
+                if t.Document is self.doc and (t.Name.startswith("Export_") or t.Name.startswith("Mesh_")):
+                    try:
+                        self.doc.removeObject(t.Name)
+                    except Exception:
+                        pass
+            self.doc.recompute()
+
+            # post-proceso: mm->m, background, navigation, luz, viewpoint
+            self._decorate_x3d(x3d_path)
+
+            self._save_session_config()
+
+            if self.chk_run_cge.isChecked():
+                ok = self._launch_cge(x3d_path)
+                if not ok:
+                    QtWidgets.QMessageBox.warning(self, "CGE", "No se pudo ejecutar Castle Game Engine. Verifique la ruta en Config & Perfiles.")
+
+            QtWidgets.QMessageBox.information(self, "Exportar X3D", "Exportacion completada:\n" + x3d_path)
+
+        except Exception:
+            import traceback
+            log_err("Export failed:\n" + traceback.format_exc())
+            QtWidgets.QMessageBox.critical(self, "Exportar X3D", "Fallo la exportacion. Revise la consola.")
+
+    def _decorate_x3d(self, x3d_path):
+        """
+        Post-proceso del X3D:
+        - Inserta Background y NavigationInfo con avatar en metros.
+        - Envuelve contenido de <Scene> con Transform DEF="FreeCAD_mm_to_m" scale="0.001 0.001 0.001" (mm->m) si no existe.
+        - Inserta DirectionalLight (si activo) y Viewpoint desde GameStart (si existe), en METROS.
+        """
+        if not os.path.isfile(x3d_path):
+            log_warn("X3D no existe para decorar.")
+            return
+        try:
+            with open(x3d_path, "r", encoding="utf-8") as f:
+                content = f.read()
+
+            if 'DEF="FreeCAD_mm_to_m"' in content:
+                mm_wrapper_present = True
+            else:
+                mm_wrapper_present = False
+
+            si = content.find("<Scene")
+            if si == -1:
+                log_warn("No se encontro <Scene> en el X3D.")
+                return
+            open_end = content.find(">", si)
+            if open_end == -1:
+                log_warn("Scene sin cierre de tag '>'")
+                return
+            ci = content.find("</Scene>")
+            if ci == -1:
+                log_warn("No se encontro </Scene> en el X3D.")
+                return
+
+            scene_open = content[:open_end+1]
+            scene_body = content[open_end+1:ci]
+            scene_close = content[ci:]
+            indent = "  "
+
+            avatar_collision = 0.25
+            avatar_step = 0.75
+            avatar_eye = 1.6
+            nav_speed = 2.0
+            background = f'{indent}<Background skyColor="0.2 0.4 1.0" groundColor="0.4 0.2 0.1"/>'
+            navigation = (f"{indent}<NavigationInfo avatarSize=\"{avatar_collision} {avatar_step} {avatar_eye}\" "
+                          f"speed=\"{nav_speed}\" headlight=\"false\" type='\"WALK\" \"ANY\"'/>")
+
+            dir_line = ""
+            if self.chk_gl.isChecked():
+                yaw = math.radians(self.spn_gl_yaw.value())
+                pitch = math.radians(self.spn_gl_pitch.value())
+                dx = math.sin(yaw) * math.cos(pitch)
+                dy = -math.cos(yaw) * math.cos(pitch)
+                dz = -math.sin(pitch)
+                intensity = float(self.spn_gl_int.value())
+                col = self._get_color()
+                r, g, b = col.red()/255.0, col.green()/255.0, col.blue()/255.0
+                dir_line = (f'{indent}<DirectionalLight intensity="{intensity:.3f}" '
+                            f'color="{r:.3f} {g:.3f} {b:.3f}" '
+                            f'direction="{dx:.6f} {dy:.6f} {dz:.6f}"/>')
+
+            vp_line = ""
+            gs = self.ed_gs.text().strip() or "GameStart"
+            if gs in self.doc.Objects:
+                obj = self.doc.getObject(gs)
+                plc = obj.Placement
+                tx_m, ty_m, tz_m = plc.Base.x * 0.001, plc.Base.y * 0.001, plc.Base.z * 0.001
+                axis = plc.Rotation.Axis
+                ang = plc.Rotation.Angle
+                rot_attr = f' orientation="{axis.x:.6f} {axis.y:.6f} {axis.z:.6f} {ang:.6f}"' if abs(ang) > 1e-6 else ""
+                # usa FOV del objeto si existe
+                fov = getattr(obj, "FOV", 1.047197551)
+                try:
+                    fov = float(fov)
+                except:
+                    fov = 1.047197551
+                vp_line = (f'{indent}<Viewpoint DEF="{gs}_VP" position="{tx_m:.3f} {ty_m:.3f} {tz_m:.3f}"{rot_attr} '
+                           f'fieldOfView="{fov:.6f}" description="GameStart"/>')
+
+            head_block_lines = [background, navigation]
+            if dir_line:
+                head_block_lines.append(dir_line)
+            if not mm_wrapper_present:
+                head_block_lines.append(f'{indent}<Transform DEF="FreeCAD_mm_to_m" scale="0.001 0.001 0.001">')
+                tail_block = f"\n{indent}</Transform>\n"
+            else:
+                tail_block = ""
+            if vp_line:
+                head_block_lines.append(vp_line)
+
+            head_block = "\n" + "\n".join(head_block_lines) + "\n"
+
+            if not mm_wrapper_present:
+                new_body = head_block + scene_body + tail_block
+            else:
+                new_body = head_block + scene_body
+
+            new_content = scene_open + new_body + scene_close
+
+            with open(x3d_path, "w", encoding="utf-8") as f:
+                f.write(new_content)
+
+            log_info("X3D decorado: background, navigation, escala mm->m, luz global y Viewpoint aplicados.")
+        except Exception as ex:
+            log_warn(f"No se pudo decorar X3D: {ex}")
+
+    # ----------------- Persistencia -----------------
+
+    def _load_settings(self):
+        p = get_param()
+        project_name = os.path.splitext(os.path.basename(self.doc.FileName))[0] if self.doc.FileName else None
+        sidecar = os.path.join(os.path.dirname(self.doc.FileName), f"{project_name}.gee.json") if project_name else ""
+        loaded_json = False
+
+        if sidecar and os.path.isfile(sidecar):
+            try:
+                with open(sidecar, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                self.ed_root.setText(data.get("root",""))
+                self.ed_out_folder.setText(data.get("outputFolder", os.path.dirname(self.doc.FileName) if self.doc.FileName else ""))
+                self.ed_base.setText(data.get("baseFilename", project_name or "Export"))
+                self.lst_selected.clear()
+                for nm in data.get("exportedObjects", []):
+                    o = self.doc.getObject(nm)
+                    if o:
+                        it = QtWidgets.QListWidgetItem(o.Label)
+                        it.setData(QtCore.Qt.UserRole, o.Name)
+                        self.lst_selected.addItem(it)
+                gl = data.get("globalLight", {})
+                self.chk_gl.setChecked(bool(gl.get("enabled", False)))
+                self.spn_gl_int.setValue(float(gl.get("intensity", 1.2)))
+                col = gl.get("color", [255,255,255])
+                if isinstance(col, list) and len(col)==3:
+                    self._set_color(QtGui.QColor(int(col[0]), int(col[1]), int(col[2])))
+                self.spn_gl_yaw.setValue(float(gl.get("yaw", 135.0)))
+                self.spn_gl_pitch.setValue(float(gl.get("pitch", -35.0)))
+                gs = data.get("gameStart", {})
+                self.ed_gs.setText(gs.get("name", p.GetString("DefaultGameStartName","GameStart")))
+                opt = data.get("options", {})
+                self.chk_triang.setChecked(bool(opt.get("triangulate", False)))
+                self.chk_freeze.setChecked(bool(opt.get("freeze", False)))
+                self.chk_baseline.setChecked(bool(opt.get("autoBaseline", False)))
+                self.ed_cge.setText(data.get("CGE_path", p.GetString("CGE_Path","")))
+                self.chk_run_cge.setChecked(bool(data.get("AutoLaunchCGE", p.GetBool("AutoLaunchCGE", False))))
+                self.ed_default_gs.setText(data.get("defaultGameStartName", p.GetString("DefaultGameStartName","GameStart")))
+                self.chk_confirm_over.setChecked(bool(data.get("confirmOverwrite", p.GetBool("ConfirmOverwrite", True))))
+                self.spn_lat.setValue(float(data.get("solarLatitude", p.GetFloat("SolarLatitude", 9.9))))
+                loaded_json = True
+                log_info("Config del archivo cargada desde sidecar (.gee.json)")
+            except Exception as ex:
+                log_warn(f"No se pudo cargar sidecar: {ex}")
+
+        if not loaded_json:
+            self.ed_root.setText(p.GetString("RootObject",""))
+            self.ed_out_folder.setText(p.GetString("OutputFolder", os.path.dirname(self.doc.FileName) if self.doc.FileName else ""))
+            project_name = os.path.splitext(os.path.basename(self.doc.FileName))[0] if self.doc.FileName else "Export"
+            self.ed_base.setText(p.GetString("BaseFileName", project_name))
+            self.lst_selected.clear()
+            sel_csv = p.GetString("ExportList","")
+            if sel_csv:
+                for nm in sel_csv.split(","):
+                    nm = nm.strip()
+                    if not nm: continue
+                    o = self.doc.getObject(nm)
+                    if o:
+                        it = QtWidgets.QListWidgetItem(o.Label)
+                        it.setData(QtCore.Qt.UserRole, o.Name)
+                        self.lst_selected.addItem(it)
+            self.chk_gl.setChecked(p.GetBool("LightEnabled", False))
+            self.spn_gl_int.setValue(p.GetFloat("LightIntensity", 1.2))
+            col_s = p.GetString("LightColor", "255,255,255")
+            try:
+                r,g,b = [int(x) for x in col_s.split(",")]
+            except:
+                r,g,b = 255,255,255
+            self._set_color(QtGui.QColor(r,g,b))
+            self.spn_gl_yaw.setValue(p.GetFloat("LightYaw", 135.0))
+            self.spn_gl_pitch.setValue(p.GetFloat("LightPitch", -35.0))
+            self.ed_gs.setText(p.GetString("GameStartName", p.GetString("DefaultGameStartName","GameStart")))
+            self.chk_triang.setChecked(p.GetBool("OptTriangulate", False))
+            self.chk_freeze.setChecked(p.GetBool("OptFreeze", False))
+            self.chk_baseline.setChecked(p.GetBool("OptBaseline", False))
+            self.ed_cge.setText(p.GetString("CGE_Path",""))
+            self.chk_run_cge.setChecked(p.GetBool("AutoLaunchCGE", False))
+            self.ed_default_gs.setText(p.GetString("DefaultGameStartName","GameStart"))
+            self.chk_confirm_over.setChecked(p.GetBool("ConfirmOverwrite", True))
+            self.spn_lat.setValue(p.GetFloat("SolarLatitude", 9.9))
+
+    def _save_session_config(self):
+        p = get_param()
+        p.SetString("RootObject", self.ed_root.text().strip())
+        p.SetString("OutputFolder", self.ed_out_folder.text().strip())
+        p.SetString("BaseFileName", self.ed_base.text().strip())
+        exp_names = []
+        for i in range(self.lst_selected.count()):
+            exp_names.append(self.lst_selected.item(i).data(QtCore.Qt.UserRole))
+        p.SetString("ExportList", ",".join(exp_names))
+        p.SetBool("LightEnabled", self.chk_gl.isChecked())
+        p.SetFloat("LightIntensity", float(self.spn_gl_int.value()))
+        col = self._get_color()
+        p.SetString("LightColor", f"{col.red()},{col.green()},{col.blue()}")
+        p.SetFloat("LightYaw", float(self.spn_gl_yaw.value()))
+        p.SetFloat("LightPitch", float(self.spn_gl_pitch.value()))
+        p.SetString("GameStartName", self.ed_gs.text().strip() or "GameStart")
+        p.SetBool("OptTriangulate", self.chk_triang.isChecked())
+        p.SetBool("OptFreeze", self.chk_freeze.isChecked())
+        p.SetBool("OptBaseline", self.chk_baseline.isChecked())
+        p.SetString("CGE_Path", self.ed_cge.text().strip())
+        p.SetBool("AutoLaunchCGE", self.chk_run_cge.isChecked())
+        p.SetString("DefaultGameStartName", self.ed_default_gs.text().strip() or "GameStart")
+        p.SetBool("ConfirmOverwrite", self.chk_confirm_over.isChecked())
+        p.SetFloat("SolarLatitude", float(self.spn_lat.value()))
+
+        project_name = os.path.splitext(os.path.basename(self.doc.FileName))[0] if self.doc.FileName else None
+        if project_name:
+            json_path = os.path.join(os.path.dirname(self.doc.FileName), f"{project_name}.gee.json")
+        else:
+            json_path = os.path.join(self.ed_out_folder.text().strip(), (self.ed_base.text().strip() or "Export") + ".gee.json")
+        try:
+            data = {
+                "root": self.ed_root.text().strip(),
+                "exportedObjects": exp_names,
+                "outputFolder": self.ed_out_folder.text().strip(),
+                "baseFilename": self.ed_base.text().strip(),
+                "globalLight": {
+                    "enabled": self.chk_gl.isChecked(),
+                    "intensity": float(self.spn_gl_int.value()),
+                    "color": [col.red(), col.green(), col.blue()],
+                    "yaw": float(self.spn_gl_yaw.value()),
+                    "pitch": float(self.spn_gl_pitch.value())
+                },
+                "gameStart": {
+                    "name": self.ed_gs.text().strip() or "GameStart",
+                    "present": (self.ed_gs.text().strip() or "GameStart") in self.doc.Objects
+                },
+                "options": {
+                    "triangulate": self.chk_triang.isChecked(),
+                    "freeze": self.chk_freeze.isChecked(),
+                    "autoBaseline": self.chk_baseline.isChecked()
+                },
+                "CGE_path": self.ed_cge.text().strip(),
+                "AutoLaunchCGE": self.chk_run_cge.isChecked(),
+                "defaultGameStartName": self.ed_default_gs.text().strip() or "GameStart",
+                "confirmOverwrite": self.chk_confirm_over.isChecked(),
+                "solarLatitude": float(self.spn_lat.value())
+            }
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+            log_info(f"Sidecar guardado: {json_path}")
+        except Exception as ex:
+            log_warn(f"No se pudo guardar sidecar: {ex}")
+
+    # ----------------- Presets -----------------
+
+    def _on_preset_save(self):
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Guardar preset", "", "JSON (*.json)")
+        if not path: return
+        try:
+            data = {
+                "triangulate": self.chk_triang.isChecked(),
+                "freeze": self.chk_freeze.isChecked(),
+                "autoBaseline": self.chk_baseline.isChecked(),
+                "CGE_path": self.ed_cge.text().strip(),
+                "AutoLaunchCGE": self.chk_run_cge.isChecked(),
+                "defaultGameStartName": self.ed_default_gs.text().strip() or "GameStart",
+                "confirmOverwrite": self.chk_confirm_over.isChecked(),
+                "solarLatitude": float(self.spn_lat.value())
+            }
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+            log_info(f"Preset guardado: {path}")
+        except Exception as ex:
+            QtWidgets.QMessageBox.critical(self, "Preset", f"No se pudo guardar preset:\n{ex}")
+
+    def _on_preset_load(self):
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Cargar preset", "", "JSON (*.json)")
+        if not path: return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                d = json.load(f)
+            self.chk_triang.setChecked(bool(d.get("triangulate", False)))
+            self.chk_freeze.setChecked(bool(d.get("freeze", False)))
+            self.chk_baseline.setChecked(bool(d.get("autoBaseline", False)))
+            self.ed_cge.setText(d.get("CGE_path", ""))
+            self.chk_run_cge.setChecked(bool(d.get("AutoLaunchCGE", False)))
+            self.ed_default_gs.setText(d.get("defaultGameStartName", "GameStart"))
+            self.chk_confirm_over.setChecked(bool(d.get("confirmOverwrite", True)))
+            self.spn_lat.setValue(float(d.get("solarLatitude", 9.9)))
+            log_info("Preset cargado.")
+        except Exception as ex:
+            QtWidgets.QMessageBox.critical(self, "Preset", f"No se pudo cargar preset:\n{ex}")
+
+    def _on_restore_defaults(self):
+        self.chk_triang.setChecked(False)
+        self.chk_freeze.setChecked(False)
+        self.chk_baseline.setChecked(False)
+        self.chk_confirm_over.setChecked(True)
+        self.ed_cge.setText("")
+        self.chk_run_cge.setChecked(False)
+        self.ed_default_gs.setText("GameStart")
+        self.spn_lat.setValue(9.9)
+
+    def _set_status(self, msg):
+        self.status.setText(msg)
+        log_info(msg)
+
+# ----------------- RUN -----------------
+
+def run():
+    try:
+        dlg = GameEngineExportDialog(Gui.getMainWindow())
+        dlg.exec_()
+    except Exception as ex:
+        import traceback
+        log_err("Dialog crashed:\n" + traceback.format_exc())
+
+if __name__ == "__main__":
+    App.Console.PrintMessage("[GAMEEXPORT][DEBUG] macro build: gui-redesign-v2.3\n")
+    App.Console.PrintMessage("[GAMEEXPORT][INFO] Starting GameEngineExport...\n")
+    run()
+# -*- coding: utf-8 -*-

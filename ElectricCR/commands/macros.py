@@ -455,7 +455,8 @@ def register_predefined_macros(base_dir: str):
     # Crear grupos por cada subcarpeta encontrada
     ignore_dirs = {
         '.git', '.vscode', '__pycache__', 'Respaldos', 'Xcluidos',
-        'ElectricCR', 'Resources', '.qodo'
+        'ElectricCR', 'MEPWorkbenchCR', 'GameEngineExport', 'GameEngineExportWB',
+        'Resources', 'scripts', 'Documentacion_organizacion', '.qodo'
     }
     for entry in sorted(os.listdir(repo_root)):
         full = os.path.join(repo_root, entry)

@@ -1,0 +1,1101 @@
+# -*- coding: utf-8 -*-
+"""
+GameEngineExport.FCMacro
+Version: 2025-10-04 20:00 (America/Costa_Rica)
+Author: Marco + GPT
+
+Descripcion / Description:
+  Macro unificada para exportar escenas desde FreeCAD hacia motores de juego (X3D para Castle Game Engine).
+  Unifica tres funciones base: materiales (emissive), luces, y export de escena.
+  Agrega un objeto marcador de inicio "GameStart" que se exporta como X3D Viewpoint.
+  GUI con pestanas y microcopy bilingue (ES/EN). Guarda configuraciones con ParamGet y soporta presets JSON.
+
+Notas importantes (ES):
+  - FreeCAD trabaja en mm. El X3D objetivo es en metros. Se aplica factor 0.001.
+  - Seleccione un grupo raiz especifico (no el documento completo).
+  - Debe existir al menos un "piso" para la navegacion del personaje.
+  - Evitar nombres con acentos, espacios raros o caracteres especiales en archivos/salidas.
+
+Important notes (EN):
+  - FreeCAD units are millimeters; X3D targets meters. Scale factor 0.001 is applied.
+  - Select a specific scene root group (not the whole document).
+  - At least one floor surface is required for player navigation.
+  - Avoid special characters in file names/paths.
+
+References:
+  - FreeCAD X3D export (selection + Mesh WB): forum threads and docs. [see citations in chat]
+  - ParamGet for preferences. [see citations in chat]
+  - X3D Material.emissiveColor; CGE lights and Viewpoint. [see citations in chat]
+"""
+
+# Qt compatibility for FreeCAD 1.x (PySide6) and older builds.
+def _ensure_qt_compat():
+    import sys
+    import types
+
+    QtCore = QtGui = QtWidgets = None
+    binding_name = None
+
+    for candidate in ("PySide6", "PySide2", "PySide"):
+        try:
+            if candidate == "PySide":
+                from PySide import QtCore as _QtCore, QtGui as _QtGui
+                _QtWidgets = _QtGui
+            else:
+                module = __import__(candidate, fromlist=["QtCore", "QtGui", "QtWidgets"])
+                _QtCore = module.QtCore
+                _QtGui = module.QtGui
+                _QtWidgets = module.QtWidgets
+            QtCore, QtGui, QtWidgets = _QtCore, _QtGui, _QtWidgets
+            binding_name = candidate
+            break
+        except Exception:
+            continue
+
+    if QtCore is None:
+        return
+
+    qtgui_compat = types.ModuleType("QtGui")
+    qtgui_compat.__dict__.update(getattr(QtGui, "__dict__", {}))
+    qtgui_compat.__dict__.update(getattr(QtWidgets, "__dict__", {}))
+
+    qtsvg_compat = None
+    for module_name in ("QtSvg", "QtSvgWidgets"):
+        try:
+            module = __import__(binding_name, fromlist=[module_name])
+            qt_module = getattr(module, module_name)
+        except Exception:
+            continue
+        if qtsvg_compat is None:
+            qtsvg_compat = types.ModuleType("QtSvg")
+        qtsvg_compat.__dict__.update(getattr(qt_module, "__dict__", {}))
+
+    qtuitools_compat = None
+    try:
+        module = __import__(binding_name, fromlist=["QtUiTools"])
+        qtuitools_compat = module.QtUiTools
+    except Exception:
+        pass
+
+    for package_name in ("PySide2", "PySide"):
+        package = sys.modules.get(package_name)
+        if package is None:
+            package = types.ModuleType(package_name)
+            sys.modules[package_name] = package
+        package.QtCore = QtCore
+        package.QtGui = qtgui_compat
+        package.QtWidgets = QtWidgets
+        sys.modules[package_name + ".QtCore"] = QtCore
+        sys.modules[package_name + ".QtGui"] = qtgui_compat
+        sys.modules[package_name + ".QtWidgets"] = QtWidgets
+        if qtsvg_compat is not None:
+            package.QtSvg = qtsvg_compat
+            sys.modules[package_name + ".QtSvg"] = qtsvg_compat
+        if qtuitools_compat is not None:
+            package.QtUiTools = qtuitools_compat
+            sys.modules[package_name + ".QtUiTools"] = qtuitools_compat
+
+
+_ensure_qt_compat()
+
+import os
+import json
+from pathlib import Path
+from datetime import datetime
+import subprocess
+
+try:
+    import FreeCAD as App  # type: ignore
+    import FreeCADGui as Gui  # type: ignore
+except ImportError:  # running outside FreeCAD (e.g. linting)
+    App = None  # type: ignore[assignment]
+    Gui = None  # type: ignore[assignment]
+
+# ImportGui is used for export
+try:
+    import ImportGui
+except Exception:
+    ImportGui = None
+
+# Part used to create simple GameStart marker (cone + base)
+import Part
+
+# PySide2 for GUI
+from PySide2 import QtWidgets, QtCore
+
+
+# -------------------------------
+# Constants and parameters
+# -------------------------------
+
+PARAM_ROOT = "User parameter:BaseApp/Preferences/GameEngineExport"
+if App is not None:
+    _USER_APP_DIR = Path(App.getUserAppDataDir())
+else:
+    _USER_APP_DIR = Path.home()
+DEFAULT_EXPORT_DIR = str(_USER_APP_DIR.joinpath("tmp"))
+PRESETS_DIR_NAME = "presets"
+APP_PREFIX = "[GAMEEXPORT]"
+
+SCALE_TO_METERS = 0.001  # FreeCAD mm -> meters for X3D engines
+
+# -------------------------------
+# Utilities and logging
+# -------------------------------
+
+def log_info(msg):
+    App.Console.PrintMessage(f"{APP_PREFIX}[INFO] {msg}\n")
+
+def log_warn(msg):
+    App.Console.PrintWarning(f"{APP_PREFIX}[WARN] {msg}\n")
+
+def log_err(msg):
+    App.Console.PrintError(f"{APP_PREFIX}[ERROR] {msg}\n")
+
+def log_dbg(msg):
+    # promote or demote as needed
+    App.Console.PrintMessage(f"{APP_PREFIX}[DEBUG] {msg}\n")
+
+def param_get(group=PARAM_ROOT):
+    return App.ParamGet(group)
+
+def get_param_str(key, default=""):
+    return param_get().GetString(key, default)
+
+def set_param_str(key, val):
+    param_get().SetString(key, val)
+
+def get_param_bool(key, default=False):
+    return param_get().GetBool(key, default)
+
+def set_param_bool(key, val):
+    param_get().SetBool(key, val)
+
+def ensure_dir(p):
+    Path(p).mkdir(parents=True, exist_ok=True)
+
+
+# -------------------------------
+# Scene / selection helpers
+# -------------------------------
+
+def get_active_doc():
+    doc = App.ActiveDocument
+    if not doc:
+        raise RuntimeError("No active document")
+    return doc
+
+def find_object_by_label(doc, label):
+    for o in doc.Objects:
+        if getattr(o, "Label", "") == label:
+            return o
+    return None
+
+def collect_children_recursive(obj):
+    """ Return flat list of children if obj is a group-like. Otherwise [obj]. """
+    out = []
+    if hasattr(obj, "OutList"):
+        # For groups and features, OutList holds children in tree
+        for c in obj.OutList:
+            out.extend(collect_children_recursive(c))
+        return out or [obj]
+    return [obj]
+
+def filter_by_categories(objects, cats):
+    """
+    cats: set like {"Walls","Floors","Roofs","Furniture","Lights","Cameras"}
+    This is a placeholder. Adjust type detection to your model conventions.
+    """
+    out = []
+    for o in objects:
+        name = (getattr(o, "Name", "") or "").lower()
+        label = (getattr(o, "Label", "") or "").lower()
+        typeid = (getattr(o, "TypeId", "") or "").lower()
+        # naive heuristics; replace with your groups/tags
+        if "light" in label or "light" in name:
+            if "Lights" in cats:
+                out.append(o)
+        elif "camera" in label or "camera" in name:
+            if "Cameras" in cats:
+                out.append(o)
+        elif any(k in label for k in ["wall","muro","pared"]):
+            if "Walls" in cats:
+                out.append(o)
+        elif any(k in label for k in ["floor","piso","slab","losa"]):
+            if "Floors" in cats:
+                out.append(o)
+        elif any(k in label for k in ["roof","techo","cubierta"]):
+            if "Roofs" in cats:
+                out.append(o)
+        else:
+            if "Furniture" in cats:
+                out.append(o)
+    return out
+
+
+# -------------------------------
+# Materials (emissive) - placeholder
+# -------------------------------
+
+def apply_emissive_to_objects(objs, rgb=(1.0, 1.0, 1.0), transparency=0.0, shininess=0.2):
+    """
+    Placeholder. In FreeCAD, material assignment for export may depend on WB.
+    The idea: bake color-like info so X3D Material.emissiveColor is meaningful.
+    """
+    for o in objs:
+        try:
+            # Example: set ViewObject properties; exporter may bake them
+            if hasattr(o, "ViewObject"):
+                vo = o.ViewObject
+                # set a diffuse color to something, and mark emissive via custom props
+                vo.ShapeColor = (rgb[0], rgb[1], rgb[2])
+                vo.Transparency = int(max(0.0, min(1.0, transparency)) * 100.0)
+                # custom property tag for later mapping if you implement deeper pipeline
+                if not hasattr(o, "EmissiveTag"):
+                    o.addProperty("App::PropertyString","EmissiveTag","GameEngine","emissive tag")
+                o.EmissiveTag = f"{rgb[0]:.3f},{rgb[1]:.3f},{rgb[2]:.3f}|{shininess:.3f}"
+            log_dbg(f"Applied emissive to: {o.Label}")
+        except Exception as ex:
+            log_warn(f"apply_emissive failed on {getattr(o,'Label','?')}: {ex}")
+
+
+# -------------------------------
+# Lights normalization - placeholder
+# -------------------------------
+
+def detect_lights(root_obj):
+    """
+    Return list of objects considered as lights (heuristic).
+    """
+    all_objs = collect_children_recursive(root_obj)
+    return [o for o in all_objs if "light" in (getattr(o,"Label","")+getattr(o,"Name","")).lower()]
+
+def normalize_lights(light_objs):
+    """
+    Placeholder: clamp intensity/range to sane defaults for CGE.
+    """
+    for o in light_objs:
+        try:
+            if not hasattr(o, "Intensity"):
+                o.addProperty("App::PropertyFloat","Intensity","GameEngine","light intensity")
+            if not hasattr(o, "Range"):
+                o.addProperty("App::PropertyFloat","Range","GameEngine","light range")
+            # clamp
+            o.Intensity = max(0.0, min(5.0, getattr(o, "Intensity", 1.0)))
+            o.Range = max(1.0, min(100.0, getattr(o, "Range", 10.0)))
+            log_dbg(f"Normalized light: {o.Label} -> I={o.Intensity} R={o.Range}")
+        except Exception as ex:
+            log_warn(f"normalize_lights failed on {getattr(o,'Label','?')}: {ex}")
+
+
+# -------------------------------
+# GameStart marker: create simple cone arrow and store props
+# -------------------------------
+
+def create_gamestart(doc, name="GameStart"):
+    """
+    Create a simple marker (cone) with custom properties:
+      Yaw, Pitch, Roll (deg), HeightOffset (m), FOV (deg)
+    """
+    if doc.getObject(name):
+        log_info("GameStart already exists")
+        return doc.getObject(name)
+
+    cone = Part.makeCone(0, 100, 200)  # mm
+    base = Part.makeCylinder(80, 10)   # base disk
+    shape = Part.makeCompound([base, cone])
+    obj = doc.addObject("Part::Feature", name)
+    obj.Shape = shape
+    obj.Label = "GameStart"
+    # default placement: above origin
+    obj.Placement.Base = App.Vector(0, 0, 1000)
+
+    # custom properties
+    obj.addProperty("App::PropertyFloat","Yaw","GameEngine","yaw deg").Yaw = 0.0
+    obj.addProperty("App::PropertyFloat","Pitch","GameEngine","pitch deg").Pitch = 0.0
+    obj.addProperty("App::PropertyFloat","Roll","GameEngine","roll deg").Roll = 0.0
+    obj.addProperty("App::PropertyFloat","HeightOffset","GameEngine","height m").HeightOffset = 1.6
+    obj.addProperty("App::PropertyFloat","FOV","GameEngine","fov deg").FOV = 60.0
+
+    # view cosmetics
+    if hasattr(obj, "ViewObject"):
+        obj.ViewObject.ShapeColor = (1.0, 0.2, 0.2)
+        obj.ViewObject.DisplayMode = "Flat Lines"
+
+    doc.recompute()
+    log_info("GameStart created")
+    return obj
+
+
+# -------------------------------
+# Export helpers (X3D)
+# -------------------------------
+
+def export_objects_to_x3d(objs, filepath):
+    """
+    Use ImportGui.export to X3D (requires selection-like behavior).
+    Note: FreeCAD exports meshes; ensure objects are exportable.
+    """
+    if ImportGui is None:
+        raise RuntimeError("ImportGui module not available")
+    if not objs:
+        raise RuntimeError("No objects to export")
+
+    # Ensure parent dir
+    ensure_dir(Path(filepath).parent)
+
+    try:
+        ImportGui.export(objs, filepath)
+        log_info(f"Exported X3D: {filepath}")
+    except Exception as ex:
+        log_err(f"Export failed: {ex}")
+        raise
+
+def make_baseline_export(root_obj, out_dir, base_name):
+    """
+    Export the whole root subtree as a baseline X3D to validate geometry/scale.
+    """
+    if root_obj is None:
+        raise RuntimeError("Invalid scene root")
+    all_objs = collect_children_recursive(root_obj)
+    # optional filters could go here
+    out_file = str(Path(out_dir).joinpath(f"{base_name}_baseline.x3d"))
+    export_objects_to_x3d(all_objs, out_file)
+    return out_file
+
+
+# -------------------------------
+# Presets IO
+# -------------------------------
+
+def get_presets_dir():
+    base_dir = get_param_str("export_dir", DEFAULT_EXPORT_DIR)
+    pdir = Path(base_dir).joinpath(PRESETS_DIR_NAME)
+    ensure_dir(pdir)
+    return pdir
+
+def save_preset(name, data):
+    p = get_presets_dir().joinpath(f"{name}.json")
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    log_info(f"Preset saved: {p}")
+
+def load_preset(name):
+    p = get_presets_dir().joinpath(f"{name}.json")
+    if not p.exists():
+        raise RuntimeError("Preset not found")
+    with open(p, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+# -------------------------------
+# Castle Game Engine helpers
+# -------------------------------
+
+def is_valid_cge_executable(path_str):
+    if not path_str:
+        return False
+    p = Path(path_str)
+    return p.exists() and p.is_file()
+
+def launch_cge(executable_path, exported_file):
+    if not is_valid_cge_executable(executable_path):
+        log_warn("No se encontro la ruta de CGE.")
+        return False
+
+    exported = Path(exported_file)
+    if not exported.exists():
+        log_warn("Archivo exportado no encontrado para lanzar CGE.")
+        return False
+
+    try:
+        if os.name == "nt":
+            subprocess.Popen([executable_path, str(exported)])
+        else:
+            subprocess.Popen([executable_path, str(exported)])
+        return True
+    except Exception as ex:
+        log_err(f"Launch CGE failed: {ex}")
+        return False
+
+# -------------------------------
+# GUI
+# -------------------------------
+
+class GameEngineExportDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("GameEngineExport - FreeCAD to Castle Game Engine (X3D)")
+        self.resize(940, 620)
+
+        self.doc = get_active_doc()
+        self.root_obj = None
+
+        # widgets
+        self.tabs = QtWidgets.QTabWidget()
+
+        self.tab_project = self._build_tab_project()
+        self.tab_scene = self._build_tab_scene()
+        self.tab_lights = self._build_tab_lights()
+        self.tab_materials = self._build_tab_materials()
+        self.tab_start = self._build_tab_start()
+        self.tab_presets = self._build_tab_presets()
+        self.tab_settings = self._build_tab_settings()
+
+        self.tabs.addTab(self.tab_project, "Project / Proyecto")
+        self.tabs.addTab(self.tab_scene, "Scene / Escena")
+        self.tabs.addTab(self.tab_lights, "Lights / Luces")
+        self.tabs.addTab(self.tab_materials, "Materials / Materiales")
+        self.tabs.addTab(self.tab_start, "Start / Inicio")
+        self.tabs.addTab(self.tab_presets, "Presets / Perfiles")
+        self.tabs.addTab(self.tab_settings, "Settings / Config")
+
+        # status bar like label
+        self.status = QtWidgets.QLabel("Ready.")
+
+        # layout
+        main = QtWidgets.QVBoxLayout(self)
+        main.addWidget(self.tabs)
+        main.addWidget(self.status)
+
+        # restore parameters
+        self._restore_params()
+
+        # auto baseline export on open
+        if self.chk_auto_baseline.isChecked():
+            self._do_baseline_export()
+
+    # ---------- Project tab ----------
+    def _build_tab_project(self):
+        w = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(w)
+
+        intro = QtWidgets.QLabel(
+            "This macro exports scenes to X3D for Castle Game Engine.\n"
+            "Esta macro exporta escenas a X3D para Castle Game Engine.\n\n"
+            "Tips:\n"
+            "- Select a specific scene root group or only the objects you want to export. Do not select the entire document.\n"
+            "- Seleccione un grupo raiz especifico o solo los objetos que desea exportar. No seleccione el documento completo.\n"
+            "- FreeCAD units are millimeters; export runs in meters (scale 0.001).\n"
+            "- FreeCAD trabaja en milimetros; la exportacion se realiza en metros (escala 0.001)."
+        )
+        intro.setWordWrap(True)
+        lay.addWidget(intro)
+
+        # root selector (by label)
+        self.ed_root = QtWidgets.QLineEdit()
+        self.btn_pick_root = QtWidgets.QPushButton("Pick selected as Root / Tomar seleccion como Raiz")
+        self.btn_pick_root.clicked.connect(self._pick_selected_root)
+
+        # export dir
+        self.ed_export_dir = QtWidgets.QLineEdit()
+        self.btn_browse_dir = QtWidgets.QPushButton("Browse / Examinar")
+        self.btn_browse_dir.clicked.connect(self._browse_dir)
+
+        # base file name
+        self.ed_base_name = QtWidgets.QLineEdit("Scene")
+
+        # auto baseline
+        self.chk_auto_baseline = QtWidgets.QCheckBox("Auto export baseline on open / Exportar baseline al abrir")
+
+        # export baseline
+        self.btn_export_baseline = QtWidgets.QPushButton("Export Baseline X3D / Exportar X3D Base")
+        self.btn_export_baseline.clicked.connect(self._do_baseline_export)
+
+        form = QtWidgets.QFormLayout()
+        form.addRow("Scene root (Label) / Raiz de escena (Label):", self.ed_root)
+        form.addRow("", self.btn_pick_root)
+        form.addRow("Export folder / Carpeta de export:", self._h(self.ed_export_dir, self.btn_browse_dir))
+        form.addRow("Base file name / Nombre base:", self.ed_base_name)
+        form.addRow("", self.chk_auto_baseline)
+        lay.addLayout(form)
+        lay.addWidget(self.btn_export_baseline)
+        lay.addStretch(1)
+        return w
+
+    # ---------- Scene tab ----------
+    def _build_tab_scene(self):
+        w = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(w)
+
+        tips = QtWidgets.QLabel(
+            "Scene packing and X3D options.\n"
+            "Opciones de empaque de escena y X3D.\n\n"
+            "- Select walls, floors and roofs; do NOT select the top 'Building' aggregate.\n"
+            "- Seleccione paredes, pisos y techos; NO seleccione 'Edificio' completo.\n"
+            "- A floor is required for player navigation.\n"
+            "- Es necesario que exista un piso para caminar."
+        )
+        tips.setWordWrap(True)
+        lay.addWidget(tips)
+
+        self.chk_walls = QtWidgets.QCheckBox("Walls / Paredes")
+        self.chk_floors = QtWidgets.QCheckBox("Floors / Pisos")
+        self.chk_roofs = QtWidgets.QCheckBox("Roofs / Techos")
+        self.chk_furniture = QtWidgets.QCheckBox("Furniture / Mobiliario")
+        self.chk_lights = QtWidgets.QCheckBox("Lights / Luces")
+        self.chk_cameras = QtWidgets.QCheckBox("Cameras / Camaras")
+
+        self.chk_triangulate = QtWidgets.QCheckBox("Triangulate meshes / Triangular mallas")
+        self.chk_freeze_colors = QtWidgets.QCheckBox("Freeze colors into materials / Hornear colores en materiales")
+
+        self.btn_export_scene = QtWidgets.QPushButton("Export X3D / Exportar X3D")
+        self.btn_export_scene.clicked.connect(self._do_scene_export)
+
+        grid = QtWidgets.QGridLayout()
+        grid.addWidget(self.chk_walls, 0, 0)
+        grid.addWidget(self.chk_floors, 0, 1)
+        grid.addWidget(self.chk_roofs, 0, 2)
+        grid.addWidget(self.chk_furniture, 1, 0)
+        grid.addWidget(self.chk_lights, 1, 1)
+        grid.addWidget(self.chk_cameras, 1, 2)
+        lay.addLayout(grid)
+
+        lay.addWidget(self.chk_triangulate)
+        lay.addWidget(self.chk_freeze_colors)
+        lay.addWidget(self.btn_export_scene)
+        lay.addStretch(1)
+        return w
+
+    # ---------- Lights tab ----------
+    def _build_tab_lights(self):
+        w = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(w)
+
+        info = QtWidgets.QLabel(
+            "Normalize lights for Castle Game Engine.\n"
+            "Normalizar luces para Castle Game Engine.\n"
+            "Supported: DirectionalLight, PointLight, SpotLight."
+        )
+        info.setWordWrap(True)
+        lay.addWidget(info)
+
+        self.btn_detect_lights = QtWidgets.QPushButton("Detect lights / Detectar luces")
+        self.btn_norm_sel = QtWidgets.QPushButton("Normalize selection / Normalizar seleccion")
+        self.btn_norm_all = QtWidgets.QPushButton("Apply to all / Aplicar a todas")
+
+        self.btn_detect_lights.clicked.connect(self._do_detect_lights)
+        self.btn_norm_sel.clicked.connect(self._do_normalize_selection)
+        self.btn_norm_all.clicked.connect(self._do_normalize_all)
+
+        lay.addWidget(self._h(self.btn_detect_lights, self.btn_norm_sel, self.btn_norm_all))
+
+        self.lst_lights = QtWidgets.QListWidget()
+        lay.addWidget(self.lst_lights)
+        return w
+
+    # ---------- Materials tab ----------
+    def _build_tab_materials(self):
+        w = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(w)
+
+        info = QtWidgets.QLabel(
+            "Emissive, transparency and surface parameters.\n"
+            "Parametros de emissive, transparencia y superficie."
+        )
+        info.setWordWrap(True)
+        lay.addWidget(info)
+
+        self.spn_em_r = QtWidgets.QDoubleSpinBox(); self._conf_float(self.spn_em_r, 0,1,0.0)
+        self.spn_em_g = QtWidgets.QDoubleSpinBox(); self._conf_float(self.spn_em_g, 0,1,0.0)
+        self.spn_em_b = QtWidgets.QDoubleSpinBox(); self._conf_float(self.spn_em_b, 0,1,0.0)
+        self.spn_transp = QtWidgets.QDoubleSpinBox(); self._conf_float(self.spn_transp, 0,1,0.0)
+        self.spn_shiny = QtWidgets.QDoubleSpinBox(); self._conf_float(self.spn_shiny, 0,1,0.2)
+
+        form = QtWidgets.QFormLayout()
+        form.addRow("Emissive R:", self.spn_em_r)
+        form.addRow("Emissive G:", self.spn_em_g)
+        form.addRow("Emissive B:", self.spn_em_b)
+        form.addRow("Transparency (0-1):", self.spn_transp)
+        form.addRow("Shininess (0-1):", self.spn_shiny)
+        lay.addLayout(form)
+
+        self.btn_apply_sel = QtWidgets.QPushButton("Apply to selection / Aplicar a seleccion")
+        self.btn_apply_all = QtWidgets.QPushButton("Apply to all / Aplicar a todos")
+        self.btn_apply_sel.clicked.connect(self._do_apply_emissive_sel)
+        self.btn_apply_all.clicked.connect(self._do_apply_emissive_all)
+        lay.addWidget(self._h(self.btn_apply_sel, self.btn_apply_all))
+        lay.addStretch(1)
+        return w
+
+    # ---------- Start tab ----------
+    def _build_tab_start(self):
+        w = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(w)
+
+        info = QtWidgets.QLabel(
+            "Player start (spawn) and initial viewpoint.\n"
+            "Inicio del personaje (spawn) y Viewpoint inicial.\n"
+            "Place a 'GameStart' object above the floor."
+        )
+        info.setWordWrap(True)
+        lay.addWidget(info)
+
+        self.ed_gamestart = QtWidgets.QLineEdit("GameStart")
+        self.btn_create_gs = QtWidgets.QPushButton("Create GameStart / Crear GameStart")
+        self.btn_create_gs.clicked.connect(self._do_create_gamestart)
+
+        form = QtWidgets.QFormLayout()
+        form.addRow("GameStart name / nombre:", self.ed_gamestart)
+        lay.addLayout(form)
+        lay.addWidget(self.btn_create_gs)
+        lay.addStretch(1)
+        return w
+
+    # ---------- Presets tab ----------
+    def _build_tab_presets(self):
+        w = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(w)
+
+        self.ed_preset_name = QtWidgets.QLineEdit("default")
+        self.btn_save_preset = QtWidgets.QPushButton("Save preset / Guardar perfil")
+        self.btn_load_preset = QtWidgets.QPushButton("Load preset / Cargar perfil")
+        self.btn_save_preset.clicked.connect(self._do_save_preset)
+        self.btn_load_preset.clicked.connect(self._do_load_preset)
+
+        form = QtWidgets.QFormLayout()
+        form.addRow("Preset name / Nombre de perfil:", self.ed_preset_name)
+        lay.addLayout(form)
+        lay.addWidget(self._h(self.btn_save_preset, self.btn_load_preset))
+        lay.addStretch(1)
+        return w
+
+    # ---------- Settings tab ----------
+    def _build_tab_settings(self):
+        w = QtWidgets.QWidget()
+        lay = QtWidgets.QFormLayout(w)
+
+        self.ed_default_dir = QtWidgets.QLineEdit(get_param_str("export_dir_default", DEFAULT_EXPORT_DIR))
+        self.ed_suffix = QtWidgets.QLineEdit(get_param_str("file_suffix", ""))
+
+        self.chk_restore = QtWidgets.QCheckBox("Restore last session / Restaurar ultima sesion")
+        self.chk_restore.setChecked(get_param_bool("restore_last", True))
+
+        self.ed_cge_path = QtWidgets.QLineEdit(get_param_str("cge_executable_path", ""))
+        tooltip = "Seleccione el ejecutable del Castle Game Engine. Ejemplo: C:\\CastleEngine\\castle-engine.exe"
+        self.ed_cge_path.setToolTip(tooltip)
+        self.btn_cge_browse = QtWidgets.QPushButton("Browse / Examinar")
+        self.btn_cge_browse.setToolTip(tooltip)
+        self.btn_cge_browse.clicked.connect(self._browse_cge_executable)
+
+        self.chk_auto_launch_cge = QtWidgets.QCheckBox("Run Castle Game Engine after export / Ejecutar Castle Game Engine al exportar")
+        self.chk_auto_launch_cge.setChecked(get_param_bool("auto_launch_cge", False))
+        self.chk_auto_launch_cge.setToolTip("Ejecuta Castle Game Engine automaticamente despues de exportar")
+
+        lay.addRow("Default export folder / Carpeta por defecto:", self.ed_default_dir)
+        lay.addRow("Filename suffix / Sufijo:", self.ed_suffix)
+        lay.addRow("", self.chk_restore)
+        lay.addRow("Castle Game Engine path / Ruta de Castle Game Engine (CGE):", self._h(self.ed_cge_path, self.btn_cge_browse))
+        lay.addRow("", self.chk_auto_launch_cge)
+        return w
+
+    # ---------- helpers ----------
+    def _h(self, *widgets):
+        w = QtWidgets.QWidget()
+        h = QtWidgets.QHBoxLayout(w)
+        h.setContentsMargins(0,0,0,0)
+        for ww in widgets:
+            h.addWidget(ww)
+        h.addStretch(1)
+        return w
+
+    def _conf_float(self, spn, a, b, val):
+        spn.setRange(a,b)
+        spn.setDecimals(3)
+        spn.setSingleStep(0.05)
+        spn.setValue(val)
+
+    # ---------- param restore/save ----------
+    def _restore_params(self):
+        self.ed_export_dir.setText(get_param_str("export_dir", DEFAULT_EXPORT_DIR))
+        self.ed_base_name.setText(get_param_str("base_name", "Scene"))
+        self.ed_root.setText(get_param_str("root_label", ""))
+
+        self.chk_auto_baseline.setChecked(get_param_bool("auto_baseline", False))
+
+        self.chk_walls.setChecked(get_param_bool("cat_walls", True))
+        self.chk_floors.setChecked(get_param_bool("cat_floors", True))
+        self.chk_roofs.setChecked(get_param_bool("cat_roofs", True))
+        self.chk_furniture.setChecked(get_param_bool("cat_furniture", True))
+        self.chk_lights.setChecked(get_param_bool("cat_lights", True))
+        self.chk_cameras.setChecked(get_param_bool("cat_cameras", False))
+
+        self.chk_triangulate.setChecked(get_param_bool("triangulate", True))
+        self.chk_freeze_colors.setChecked(get_param_bool("freeze_colors", True))
+
+        # material defaults
+        self.spn_em_r.setValue(float(get_param_str("em_r","0.0")))
+        self.spn_em_g.setValue(float(get_param_str("em_g","0.0")))
+        self.spn_em_b.setValue(float(get_param_str("em_b","0.0")))
+        self.spn_transp.setValue(float(get_param_str("m_transp","0.0")))
+        self.spn_shiny.setValue(float(get_param_str("m_shiny","0.2")))
+
+        self.ed_default_dir.setText(get_param_str("export_dir_default", DEFAULT_EXPORT_DIR))
+        self.ed_suffix.setText(get_param_str("file_suffix", ""))
+        self.chk_restore.setChecked(get_param_bool("restore_last", True))
+        self.ed_cge_path.setText(get_param_str("cge_executable_path", ""))
+        self.chk_auto_launch_cge.setChecked(get_param_bool("auto_launch_cge", False))
+
+    def _save_params(self):
+        set_param_str("export_dir", self.ed_export_dir.text().strip())
+        set_param_str("base_name", self.ed_base_name.text().strip())
+        set_param_str("root_label", self.ed_root.text().strip())
+
+        set_param_bool("auto_baseline", self.chk_auto_baseline.isChecked())
+
+        set_param_bool("cat_walls", self.chk_walls.isChecked())
+        set_param_bool("cat_floors", self.chk_floors.isChecked())
+        set_param_bool("cat_roofs", self.chk_roofs.isChecked())
+        set_param_bool("cat_furniture", self.chk_furniture.isChecked())
+        set_param_bool("cat_lights", self.chk_lights.isChecked())
+        set_param_bool("cat_cameras", self.chk_cameras.isChecked())
+
+        set_param_bool("triangulate", self.chk_triangulate.isChecked())
+        set_param_bool("freeze_colors", self.chk_freeze_colors.isChecked())
+
+        set_param_str("em_r", str(self.spn_em_r.value()))
+        set_param_str("em_g", str(self.spn_em_g.value()))
+        set_param_str("em_b", str(self.spn_em_b.value()))
+        set_param_str("m_transp", str(self.spn_transp.value()))
+        set_param_str("m_shiny", str(self.spn_shiny.value()))
+
+        set_param_str("export_dir_default", self.ed_default_dir.text().strip())
+        set_param_str("file_suffix", self.ed_suffix.text().strip())
+        set_param_bool("restore_last", self.chk_restore.isChecked())
+
+        cge_path = self.ed_cge_path.text().strip()
+        if cge_path:
+            if is_valid_cge_executable(cge_path):
+                set_param_str("cge_executable_path", cge_path)
+            else:
+                self._set_status("Castle Game Engine ejecutable no encontrado.")
+                log_warn("No se encontro la ruta de CGE.")
+        else:
+            set_param_str("cge_executable_path", "")
+        set_param_bool("auto_launch_cge", self.chk_auto_launch_cge.isChecked())
+
+
+    # ---------- preset helpers ----------
+    def _collect_preset_data(self):
+        """Collect current UI state into a dict to be saved as a preset."""
+        data = {
+            "root_label": self.ed_root.text().strip(),
+            "export_dir": self.ed_export_dir.text().strip(),
+            "base_name": self.ed_base_name.text().strip(),
+            "auto_baseline": self.chk_auto_baseline.isChecked(),
+
+            "cats": {
+                "Walls": self.chk_walls.isChecked(),
+                "Floors": self.chk_floors.isChecked(),
+                "Roofs": self.chk_roofs.isChecked(),
+                "Furniture": self.chk_furniture.isChecked(),
+                "Lights": self.chk_lights.isChecked(),
+                "Cameras": self.chk_cameras.isChecked(),
+            },
+
+            "triangulate": self.chk_triangulate.isChecked(),
+            "freeze_colors": self.chk_freeze_colors.isChecked(),
+
+            "materials": {
+                "em_r": float(self.spn_em_r.value()),
+                "em_g": float(self.spn_em_g.value()),
+                "em_b": float(self.spn_em_b.value()),
+                "transp": float(self.spn_transp.value()),
+                "shiny": float(self.spn_shiny.value()),
+            },
+
+            "settings": {
+                "default_dir": self.ed_default_dir.text().strip(),
+                "file_suffix": self.ed_suffix.text().strip(),
+                "restore_last": self.chk_restore.isChecked(),
+                "cge_executable_path": self.ed_cge_path.text().strip(),
+                "auto_launch_cge": self.chk_auto_launch_cge.isChecked(),
+            }
+        }
+        return data
+
+    def _apply_preset_data(self, data: dict):
+        """Apply a loaded preset dict to the UI and params (does not run exports)."""
+        # project
+        self.ed_root.setText(data.get("root_label",""))
+        self.ed_export_dir.setText(data.get("export_dir", self.ed_export_dir.text()))
+        self.ed_base_name.setText(data.get("base_name", self.ed_base_name.text()))
+        self.chk_auto_baseline.setChecked(bool(data.get("auto_baseline", False)))
+
+        # categories
+        cats = data.get("cats", {})
+        self.chk_walls.setChecked(bool(cats.get("Walls", self.chk_walls.isChecked())))
+        self.chk_floors.setChecked(bool(cats.get("Floors", self.chk_floors.isChecked())))
+        self.chk_roofs.setChecked(bool(cats.get("Roofs", self.chk_roofs.isChecked())))
+        self.chk_furniture.setChecked(bool(cats.get("Furniture", self.chk_furniture.isChecked())))
+        self.chk_lights.setChecked(bool(cats.get("Lights", self.chk_lights.isChecked())))
+        self.chk_cameras.setChecked(bool(cats.get("Cameras", self.chk_cameras.isChecked())))
+
+        # scene options
+        self.chk_triangulate.setChecked(bool(data.get("triangulate", self.chk_triangulate.isChecked())))
+        self.chk_freeze_colors.setChecked(bool(data.get("freeze_colors", self.chk_freeze_colors.isChecked())))
+
+        # materials
+        mats = data.get("materials", {})
+        self.spn_em_r.setValue(float(mats.get("em_r", self.spn_em_r.value())))
+        self.spn_em_g.setValue(float(mats.get("em_g", self.spn_em_g.value())))
+        self.spn_em_b.setValue(float(mats.get("em_b", self.spn_em_b.value())))
+        self.spn_transp.setValue(float(mats.get("transp", self.spn_transp.value())))
+        self.spn_shiny.setValue(float(mats.get("shiny", self.spn_shiny.value())))
+
+        # settings
+        st = data.get("settings", {})
+        self.ed_default_dir.setText(st.get("default_dir", self.ed_default_dir.text()))
+        self.ed_suffix.setText(st.get("file_suffix", self.ed_suffix.text()))
+        self.chk_restore.setChecked(bool(st.get("restore_last", self.chk_restore.isChecked())))
+        self.ed_cge_path.setText(st.get("cge_executable_path", self.ed_cge_path.text()))
+        self.chk_auto_launch_cge.setChecked(bool(st.get("auto_launch_cge", self.chk_auto_launch_cge.isChecked())))
+
+        # persist to ParamGet tambien, para mantener coherencia
+        self._save_params()
+
+    # ---------- presets actions ----------
+    def _do_save_preset(self):
+        """Save current UI state as a JSON preset."""
+        try:
+            name = self.ed_preset_name.text().strip() or "default"
+            data = self._collect_preset_data()
+            save_preset(name, data)
+            self._set_status(f"Preset saved / Perfil guardado: {name}")
+        except Exception as ex:
+            self._set_status(f"Save preset failed: {ex}")
+            log_err(ex)
+
+    def _do_load_preset(self):
+        """Load a JSON preset and apply it to the UI."""
+        try:
+            name = self.ed_preset_name.text().strip() or "default"
+            data = load_preset(name)
+            self._apply_preset_data(data)
+            self._set_status(f"Preset loaded / Perfil cargado: {name}")
+        except Exception as ex:
+            self._set_status(f"Load preset failed: {ex}")
+            log_err(ex)
+
+    def accept(self):
+        self._save_params()
+        super().accept()
+
+    # ---------- actions ----------
+    def _pick_selected_root(self):
+        sel = Gui.Selection.getSelection()
+        if not sel:
+            self._set_status("No selection. / Sin seleccion.")
+            return
+        self.root_obj = sel[0]
+        self.ed_root.setText(self.root_obj.Label)
+        self._set_status(f"Root set to: {self.root_obj.Label}")
+
+    def _browse_dir(self):
+        d = QtWidgets.QFileDialog.getExistingDirectory(self, "Select export folder")
+        if d:
+            self.ed_export_dir.setText(d)
+
+    def _browse_cge_executable(self):
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Select Castle Game Engine executable",
+            self.ed_cge_path.text().strip() or "",
+        )
+        if path:
+            self.ed_cge_path.setText(path)
+
+    def _resolve_root(self):
+        label = self.ed_root.text().strip()
+        if not label:
+            raise RuntimeError("Root label empty / Raiz vacia")
+        obj = find_object_by_label(self.doc, label)
+        if obj is None:
+            raise RuntimeError("Root not found / Raiz no encontrada")
+        return obj
+
+    def _maybe_launch_cge(self, exported_file):
+        if not self.chk_auto_launch_cge.isChecked():
+            return
+
+        cge_path = self.ed_cge_path.text().strip()
+        if not is_valid_cge_executable(cge_path):
+            self._set_status("Castle Game Engine no encontrado. Configure la ruta en Configuracion.")
+            log_warn("No se encontro la ruta de CGE.")
+            return
+
+        exported = Path(exported_file)
+        if not exported.exists():
+            self._set_status("Archivo exportado no encontrado para lanzar CGE.")
+            log_warn("Archivo exportado no encontrado para lanzar CGE.")
+            return
+
+        self._set_status("Ejecutando Castle Game Engine...")
+        if launch_cge(cge_path, str(exported)):
+            self._set_status("Exportacion completada y lanzada en CGE.")
+        else:
+            self._set_status("Castle Game Engine ejecutable no encontrado.")
+
+    def _do_baseline_export(self):
+        try:
+            root = self._resolve_root()
+            out_dir = self.ed_export_dir.text().strip() or DEFAULT_EXPORT_DIR
+            base_name = self.ed_base_name.text().strip() or "Scene"
+            # suffix
+            suffix = get_param_str("file_suffix","")
+            if suffix:
+                base_name = f"{base_name}{suffix}"
+
+            path = make_baseline_export(root, out_dir, base_name)
+            self._set_status(f"Baseline exported: {path}")
+            self._maybe_launch_cge(path)
+        except Exception as ex:
+            self._set_status(f"Baseline export failed: {ex}")
+            log_err(ex)
+
+    def _do_scene_export(self):
+        try:
+            root = self._resolve_root()
+            categories = set()
+            if self.chk_walls.isChecked(): categories.add("Walls")
+            if self.chk_floors.isChecked(): categories.add("Floors")
+            if self.chk_roofs.isChecked(): categories.add("Roofs")
+            if self.chk_furniture.isChecked(): categories.add("Furniture")
+            if self.chk_lights.isChecked(): categories.add("Lights")
+            if self.chk_cameras.isChecked(): categories.add("Cameras")
+
+            all_objs = collect_children_recursive(root)
+            objs = filter_by_categories(all_objs, categories)
+
+            if not any(c in categories for c in ["Floors"]):
+                log_warn("No floor selected; player navigation may fail / Sin piso la navegacion puede fallar")
+
+            out_dir = self.ed_export_dir.text().strip() or DEFAULT_EXPORT_DIR
+            base_name = self.ed_base_name.text().strip() or "Scene"
+
+            # time suffix option
+            suffix = get_param_str("file_suffix","")
+            if suffix:
+                base_name = f"{base_name}{suffix}"
+
+            out_file = str(Path(out_dir).joinpath(f"{base_name}.x3d"))
+            export_objects_to_x3d(objs, out_file)
+            self._set_status(f"Scene exported: {out_file}")
+            self._maybe_launch_cge(out_file)
+        except Exception as ex:
+            self._set_status(f"Scene export failed: {ex}")
+            log_err(ex)
+
+    def _do_detect_lights(self):
+        try:
+            root = self._resolve_root()
+            lights = detect_lights(root)
+            self.lst_lights.clear()
+            for o in lights:
+                self.lst_lights.addItem(o.Label)
+            self._set_status(f"Detected lights: {len(lights)}")
+        except Exception as ex:
+            self._set_status(f"Detect lights failed: {ex}")
+            log_err(ex)
+
+    def _do_normalize_selection(self):
+        items = self.lst_lights.selectedItems()
+        if not items:
+            self._set_status("No light selected / Sin seleccion")
+            return
+        try:
+            root = self._resolve_root()
+            names = [it.text() for it in items]
+            objs = [o for o in collect_children_recursive(root) if o.Label in names]
+            normalize_lights(objs)
+            self._set_status("Selected lights normalized / Seleccion normalizada")
+        except Exception as ex:
+            self._set_status(f"Normalize selection failed: {ex}")
+            log_err(ex)
+
+    def _do_normalize_all(self):
+        try:
+            root = self._resolve_root()
+            objs = detect_lights(root)
+            normalize_lights(objs)
+            self._set_status("All lights normalized / Todas normalizadas")
+        except Exception as ex:
+            self._set_status(f"Normalize all failed: {ex}")
+            log_err(ex)
+
+    def _do_apply_emissive_sel(self):
+        try:
+            sel = Gui.Selection.getSelection()
+            if not sel:
+                self._set_status("No selection / Sin seleccion")
+                return
+            rgb = (self.spn_em_r.value(), self.spn_em_g.value(), self.spn_em_b.value())
+            apply_emissive_to_objects(sel, rgb, self.spn_transp.value(), self.spn_shiny.value())
+            self._set_status("Applied to selection / Aplicado a seleccion")
+        except Exception as ex:
+            self._set_status(f"Apply to selection failed: {ex}")
+            log_err(ex)
+
+    def _do_apply_emissive_all(self):
+        try:
+            root = self._resolve_root()
+            all_objs = collect_children_recursive(root)
+            rgb = (self.spn_em_r.value(), self.spn_em_g.value(), self.spn_em_b.value())
+            apply_emissive_to_objects(all_objs, rgb, self.spn_transp.value(), self.spn_shiny.value())
+            self._set_status("Applied to all / Aplicado a todos")
+        except Exception as ex:
+            self._set_status(f"Apply to all failed: {ex}")
+            log_err(ex)
+
+    def _do_create_gamestart(self):
+        try:
+            name = self.ed_gamestart.text().strip() or "GameStart"
+            obj = create_gamestart(self.doc, name)
+            self._set_status(f"GameStart ready: {obj.Label}")
+        except Exception as ex:
+            self._set_status(f"Create GameStart failed: {ex}")
+            log_err(ex)
+
+    def _set_status(self, msg):
+        self.status.setText(msg)
+        log_info(msg)
+
+
+# -------------------------------
+# Run dialog
+# -------------------------------
+
+def run():
+    try:
+        dlg = GameEngineExportDialog(Gui.getMainWindow())
+        dlg.exec_()
+    except Exception as ex:
+        log_err(f"Dialog failed: {ex}")
+
+if __name__ == "__main__":
+    log_info("Starting GameEngineExport...")
+    run()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
