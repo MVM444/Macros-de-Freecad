@@ -32,14 +32,48 @@ Version inicial 0.1.0 (2025-10-13 13:54 UTC). Solo contiene la estructura base y
 ## Cargar el workbench en FreeCAD
 
 1. Ejecuta `GameEngineExportLoader.FCMacro` desde la carpeta de macros de FreeCAD.
-2. El loader agrega `Macros-de-Freecad` al `sys.path` y registra el workbench.
+2. El loader cierra el TaskPanel activo, purga comandos/modulos anteriores, agrega `Macros-de-Freecad` al `sys.path` y registra de nuevo el workbench.
 3. Desde la barra superior elige el workbench **Game Engine Export WB**.
 4. Abre el comando **GameEngineExport Open** para mostrar el TaskPanel.
 5. Veras mensajes `[GAMEEXPORT]` en la consola de reportes confirmando la carga.
 
 ## Uso rapido
 
-Abre el comando **GameEngineExport Open** para mostrar el panel principal. Desde ahi podras elegir la raiz de la escena, listas de objetos, marcador GameStart, luces y carpeta de salida. Aun no existe funcionalidad final de exportacion.
+Abre el comando **GameEngineExport Open** para mostrar el panel principal. Desde ahi puedes elegir la raiz de la escena, listas de objetos, marcador GameStart, iluminacion, cielo de Castle Viewer, materiales X3D y carpeta de salida.
+
+## Materiales e iluminacion interior
+
+En la pestana **Iluminacion / Lighting**, marca **Mejorar iluminacion interior / Improve interior lighting** y usa **Architectural** o **Bright** para interiores cerrados. Este ajuste solo modifica el X3D exportado mediante atributos `ambientIntensity`, `emissiveColor` y `shininess`; no cambia los materiales del archivo `.FCStd`.
+
+Los `PointLight` exportados usan **Atenuacion / Falloff = Interior** para evitar una iluminacion constante hasta el borde del radio. Las **Sombras limitadas / Limited shadows** son experimentales y estan desactivadas por defecto: si se activan, solo se escriben en unas pocas luces para evitar errores de shader morado y lentitud en Castle Viewer.
+
+Nota: las sombras dependen de la geometria. Paredes con espesor y caras cerradas funcionan mejor que superficies simples de una sola cara.
+
+## Cielo Castle Viewer
+
+En la pestana **Configuracion / Config**, marca **Usar cielo de Castle Viewer / Use Castle Viewer sky** para insertar un `Background` con seis imagenes de cielo en el X3D exportado.
+
+La macro detecta la carpeta desde el ejecutable configurado. Si el ejecutable esta en `<CastleModelViewer>/castle-model-viewer.exe`, busca automaticamente `<CastleModelViewer>/example_models/skies`. Tambien puedes usar **Detectar / Detect** o **Examinar / Browse** si la carpeta esta en otra ubicacion.
+
+El selector acepta una carpeta con archivos terminados en `back`, `bottom`, `front`, `left`, `right` y `top`, como `foggy_sky_back.png`.
+
+Durante el postproceso, las imagenes se copian junto al X3D en `<BaseName>_assets/skies/` y el `Background` usa rutas relativas. Esto mantiene portable la exportacion y no modifica el archivo `.FCStd`.
+
+Cuando la carpeta se detecta desde el ejecutable, el sidecar guarda el modo automatico en vez de guardar una ruta absoluta de usuario. Asi otro equipo puede usar su propio ejecutable Castle y su propia carpeta `example_models/skies`.
+
+## Textura de suelo
+
+En la pestana **Texturas / Textures**, puedes seleccionar el objeto suelo existente de FreeCAD y aplicar una textura solo al X3D exportado. Usa **Tomar seleccion / Use selection** con el suelo seleccionado, elige una imagen `.png`, `.jpg`, `.jpeg` o `.webp`, y ajusta **Repetir S/T**.
+
+La textura se copia a `<BaseName>_assets/textures/` y se referencia con ruta relativa. El repetido se aplica con `TextureTransform scale="S T"`. Si **Generar UV planar XY / Generate planar XY UV** esta activo, el exportador crea `TextureCoordinate` desde las coordenadas X/Y del objeto para estabilizar el mapeo sobre el suelo.
+
+## Herramienta Add Light Properties
+
+El comando **Agregar propiedades a luz** (`GameEngineExport_AddLightProperties`) permite seleccionar una luminaria master o una instancia `App::Link`. Si se selecciona un Link, el comando resuelve el master y guarda alli las propiedades `CGE_Light*`; el Link no se modifica.
+
+Durante la exportacion X3D, cada Link genera sus propios `PointLight` usando su `Placement`. La configuracion vive en el master y las instancias heredan intensidad, color, rango, direccion, offset y distribucion.
+
+La vista previa crea objetos temporales `CGE_TempLightPreview*`, que se excluyen de la geometria exportada.
 
 ## Archivos incluidos
 
@@ -48,7 +82,11 @@ Abre el comando **GameEngineExport Open** para mostrar el panel principal. Desde
 - `ui/`: paneles TaskPanel de escena, configuracion y texto informativo.
 - `commands/`: comando principal GameEngineExport_Open.
 - `resources/icons/gameexport.svg`: icono del workbench.
+- `resources/icons/add_light_properties.svg`: icono del comando para propiedades de luz.
 - `notes/GameEngineExportWB_chat.md`: registro de conversaciones y decisiones relevantes.
+- `notes/add_light_properties.md`: nota tecnica del comando de propiedades de luz.
+- `notes/environment_skybox.md`: nota tecnica de cielo cubemap X3D.
+- `notes/ground_texture.md`: nota tecnica de textura aplicada a objeto suelo exportado.
 - `../GameEngineExportLoader.FCMacro`: macro para recargar el workbench en FreeCAD sin reiniciar.
 
 ## Ubicacion dentro del repositorio / Location inside repository

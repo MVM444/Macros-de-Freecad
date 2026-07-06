@@ -13,6 +13,7 @@ import FreeCAD
 import FreeCADGui
 import os
 
+from .commands import cmd_add_light_properties
 from .commands import cmd_open_panel
 
 LOG_PREFIX = "[GAMEEXPORT] "
@@ -32,10 +33,15 @@ class GameEngineExportWorkbench(FreeCADGui.Workbench):
     def Initialize(self):  # noqa: N802 (FreeCAD naming)
         """Register command and set up menus and toolbars."""
         FreeCAD.Console.PrintMessage(LOG_PREFIX + "Initializing workbench menus\n")
-        command = cmd_open_panel.CommandClass()
-        FreeCADGui.addCommand(command.CommandName, command)
-        self.appendToolbar("Game Engine Export", [command.CommandName])
-        self.appendMenu("Game Engine Export", [command.CommandName])
+        FreeCAD.Console.PrintMessage(LOG_PREFIX + "Workbench source: " + os.path.dirname(__file__) + "\n")
+        export_command = cmd_open_panel.CommandClass()
+        light_command = cmd_add_light_properties.CommandClass()
+        FreeCADGui.addCommand(export_command.CommandName, export_command)
+        FreeCADGui.addCommand(light_command.CommandName, light_command)
+        FreeCAD.Console.PrintMessage(LOG_PREFIX + "Registered export command: " + export_command.CommandName + "\n")
+        commands = [export_command.CommandName, light_command.CommandName]
+        self.appendToolbar("Game Engine Export", commands)
+        self.appendMenu("Game Engine Export", commands)
 
     def Activated(self):  # noqa: N802
         FreeCAD.Console.PrintMessage(LOG_PREFIX + "Workbench activated\n")

@@ -23,7 +23,7 @@ ICON_PATH = os.path.abspath(
 class CommandClass:
     """FreeCAD command wrapper for the export TaskPanel."""
 
-    CommandName = "GameEngineExport_Export"
+    CommandName = "GameEngineExport_Export_Current"
 
     def GetResources(self):  # noqa: N802 (FreeCAD API)
         return {
@@ -34,6 +34,9 @@ class CommandClass:
 
     def Activated(self):  # noqa: N802
         FreeCAD.Console.PrintMessage("[GAMEEXPORT] Opening export panel\n")
+        FreeCAD.Console.PrintMessage(
+            "[GAMEEXPORT] Export panel module: " + str(getattr(panel_export, "__file__", "unknown")) + "\n"
+        )
         try:
             if hasattr(FreeCADGui.Control, "activeDialog") and FreeCADGui.Control.activeDialog():
                 FreeCADGui.Control.closeDialog()

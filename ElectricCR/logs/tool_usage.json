@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-06-23T12:22:22",
+  "updated": "2026-07-01T13:22:06",
   "tools": {
     "Draft_Line": {
       "count": 224,
@@ -541,10 +541,10 @@
       }
     },
     "macro:C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Configuracion del proyecto\\Exportar_DXF_DWG_Plano_Trabajo.FCMacro": {
-      "count": 7,
-      "last_ts": "2026-06-09T12:00:41",
+      "count": 15,
+      "last_ts": "2026-07-01T13:22:06",
       "last_meta": {
-        "cmd": "ElectricCR_Configuracion del proyecto_Exportar_DXF_DWG_Plano_Trabajo_1773175289",
+        "cmd": "ElectricCR_Configuracion del proyecto_Exportar_DXF_DWG_Plano_Trabajo_1781299828",
         "macro": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Configuracion del proyecto\\Exportar_DXF_DWG_Plano_Trabajo.FCMacro",
         "label": "Exportar DXF/DWG (plano de trabajo)"
       }
@@ -577,10 +577,10 @@
       }
     },
     "macro:C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Configuracion del proyecto\\Gestionar_Visibilidad_ElectricCR.FCMacro": {
-      "count": 44,
-      "last_ts": "2026-04-22T12:27:34",
+      "count": 50,
+      "last_ts": "2026-07-01T12:44:57",
       "last_meta": {
-        "cmd": "ElectricCR_Configuracion del proyecto_Gestionar_Visibilidad_ElectricCR_1776206689",
+        "cmd": "ElectricCR_Configuracion del proyecto_Gestionar_Visibilidad_ElectricCR_1781299828",
         "macro": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Configuracion del proyecto\\Gestionar_Visibilidad_ElectricCR.FCMacro",
         "label": "Gestionar visibilidad ElectricCR"
       }
@@ -887,8 +887,8 @@
       }
     },
     "macro:C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Iluminaci\u00f3n\\ColocarLuminarias_Link.FCMacro": {
-      "count": 38,
-      "last_ts": "2026-06-22T16:55:40",
+      "count": 41,
+      "last_ts": "2026-07-01T12:25:09",
       "last_meta": {
         "cmd": "ElectricCR_Iluminaci\u00f3n_ColocarLuminarias_Link_1781299828",
         "macro": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Iluminaci\u00f3n\\ColocarLuminarias_Link.FCMacro",
@@ -1524,8 +1524,8 @@
       }
     },
     "macro:C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Iluminaci\u00f3n\\Actualizar_Iluminacion_Completa.FCMacro": {
-      "count": 9,
-      "last_ts": "2026-06-22T15:29:24",
+      "count": 15,
+      "last_ts": "2026-07-01T12:23:39",
       "last_meta": {
         "cmd": "ElectricCR_Iluminaci\u00f3n_Actualizar_Iluminacion_Completa_1781299828",
         "macro": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Iluminaci\u00f3n\\Actualizar_Iluminacion_Completa.FCMacro",
@@ -1533,8 +1533,8 @@
       }
     },
     "macro:C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Iluminaci\u00f3n\\Guia_Iluminacion.FCMacro": {
-      "count": 9,
-      "last_ts": "2026-06-22T15:21:39",
+      "count": 10,
+      "last_ts": "2026-07-01T12:16:33",
       "last_meta": {
         "cmd": "ElectricCR_Iluminaci\u00f3n_Guia_Iluminacion_1781299828",
         "macro": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Iluminaci\u00f3n\\Guia_Iluminacion.FCMacro",
@@ -1596,8 +1596,8 @@
       }
     },
     "macro:C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Iluminaci\u00f3n\\Actualizar_Iluminacion_Completa.FCMacro": {
-      "count": 1,
-      "last_ts": "2026-06-23T12:20:09",
+      "count": 2,
+      "last_ts": "2026-07-01T11:07:13",
       "last_meta": {
         "cmd": "ElectricCR_Iluminaci\u00f3n_Actualizar_Iluminacion_Completa_1781299828",
         "macro": "C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Iluminaci\u00f3n\\Actualizar_Iluminacion_Completa.FCMacro",

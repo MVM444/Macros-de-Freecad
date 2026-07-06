@@ -79,6 +79,7 @@ def _ensure_qt_compat():
 _ensure_qt_compat()
 
 import datetime
+import json
 import math
 import os
 import subprocess
@@ -115,6 +116,20 @@ FreeCAD = __import__("FreeCAD")
 FreeCADGui = __import__("FreeCADGui")
 
 PARAM_GROUP = "User parameter:Plugins/GameEngineExportWB"
+DEBUG_VERSION = "2026-07-02-skybox-from-castle-path"
+
+
+def _qt_button_mask(*buttons) -> int:
+    mask = 0
+    for button in buttons:
+        try:
+            mask |= int(button)
+            continue
+        except TypeError:
+            pass
+        value = getattr(button, "value", button)
+        mask |= int(value)
+    return mask
 
 
 class ExportTaskPanel:
@@ -122,6 +137,7 @@ class ExportTaskPanel:
 
     def __init__(self):
         FreeCAD.Console.PrintMessage("[GAMEEXPORT] Opening export panel\n")
+        FreeCAD.Console.PrintMessage("[GAMEEXPORT] Debug version: " + DEBUG_VERSION + "\n")
         self.params = FreeCAD.ParamGet(PARAM_GROUP)
         self.widget = QtGui.QWidget()
         self.widget.setWindowTitle("Game Engine Export - Seleccion y exportacion")
@@ -135,7 +151,7 @@ class ExportTaskPanel:
         self.light_color_current = (1.0, 1.0, 1.0)
 
         layout = QtGui.QVBoxLayout(self.widget)
-        self.version_label = QtGui.QLabel(_git_last_update_label())
+        self.version_label = QtGui.QLabel(_git_last_update_label() + " | Panel: " + DEBUG_VERSION)
         self.version_label.setStyleSheet("color: #1f4e79; font-size: 11px;")
         layout.addWidget(self.version_label)
 
@@ -147,17 +163,15 @@ class ExportTaskPanel:
         scene_layout.addWidget(self._build_root_group())
         scene_layout.addWidget(self._build_gamestart_group())
         scene_layout.addWidget(self._build_lists_group())
-        scene_layout.addWidget(self._build_global_light_group())
-        scene_layout.addWidget(self._build_scene_lights_group())
         scene_layout.addWidget(self._build_output_group())
         scene_layout.addStretch()
         self.tabs.addTab(scene_tab, "Escena / Scene")
 
-        materials_tab = QtGui.QWidget()
-        materials_layout = QtGui.QVBoxLayout(materials_tab)
-        materials_layout.addWidget(QtGui.QLabel("Materiales / Materials\n(Proximamente / Coming soon)"))
-        materials_layout.addStretch()
-        self.tabs.addTab(materials_tab, "Materiales / Materials")
+        lighting_tab = self._build_lighting_tab()
+        self.tabs.addTab(lighting_tab, "Iluminacion / Lighting")
+
+        textures_tab = self._build_textures_tab()
+        self.tabs.addTab(textures_tab, "Texturas / Textures")
 
         config_tab = self._build_config_tab()
         self.tabs.addTab(config_tab, "Configuracion / Config")
@@ -270,13 +284,13 @@ class ExportTaskPanel:
         )
         layout.addWidget(self.chk_global_light, 0, 0, 1, 3)
 
-        layout.addWidget(QtGui.QLabel("Yaw (°)"), 1, 0)
+        layout.addWidget(QtGui.QLabel("Yaw (deg)"), 1, 0)
         self.spin_gl_yaw = QtGui.QDoubleSpinBox()
         self.spin_gl_yaw.setRange(-180.0, 180.0)
         self.spin_gl_yaw.setSingleStep(1.0)
         layout.addWidget(self.spin_gl_yaw, 1, 1)
 
-        layout.addWidget(QtGui.QLabel("Pitch (°)"), 2, 0)
+        layout.addWidget(QtGui.QLabel("Pitch (deg)"), 2, 0)
         self.spin_gl_pitch = QtGui.QDoubleSpinBox()
         self.spin_gl_pitch.setRange(-90.0, 90.0)
         self.spin_gl_pitch.setSingleStep(1.0)
@@ -303,6 +317,13 @@ class ExportTaskPanel:
         self.btn_gl_time.clicked.connect(self._open_solar_dialog)
         layout.addWidget(self.btn_gl_time, 4, 1)
 
+        self.chk_gl_shadows = QtGui.QCheckBox("Sombras / Shadows")
+        self.chk_gl_shadows.setToolTip(
+            "ES: Activa sombras X3D para la luz global. Puede bajar el rendimiento.\n"
+            "EN: Enable X3D shadows for the global light. May reduce performance."
+        )
+        layout.addWidget(self.chk_gl_shadows, 5, 0, 1, 2)
+
         return group
 
     def _build_scene_lights_group(self):
@@ -314,6 +335,29 @@ class ExportTaskPanel:
             "ES: Marca luminarias para exportarlas como PointLight.\nEN: Mark fixtures to export as PointLight."
         )
         layout.addWidget(self.chk_pointlights)
+
+        render_row = QtGui.QHBoxLayout()
+        self.chk_pointlight_shadows = QtGui.QCheckBox(
+            "Sombras limitadas / Limited shadows"
+        )
+        self.chk_pointlight_shadows.setToolTip(
+            "ES: Experimental. Activa sombras solo en pocas PointLight para evitar shaders morados/lentos.\n"
+            "EN: Experimental. Enables shadows on only a few PointLights to avoid slow/purple shaders."
+        )
+        render_row.addWidget(self.chk_pointlight_shadows)
+
+        render_row.addWidget(QtGui.QLabel("Max sombras / Max shadows"))
+        self.spin_max_shadow_lights = QtGui.QSpinBox()
+        self.spin_max_shadow_lights.setRange(0, 4)
+        self.spin_max_shadow_lights.setValue(1)
+        render_row.addWidget(self.spin_max_shadow_lights)
+
+        render_row.addWidget(QtGui.QLabel("Atenuacion / Falloff"))
+        self.combo_pointlight_falloff = QtGui.QComboBox()
+        self.combo_pointlight_falloff.addItems(["Interior", "Soft", "Constant"])
+        render_row.addWidget(self.combo_pointlight_falloff)
+        render_row.addStretch()
+        layout.addLayout(render_row)
 
         btn_row = QtGui.QHBoxLayout()
         self.btn_add_light = QtGui.QPushButton("Agregar seleccion como luz")
@@ -387,6 +431,128 @@ class ExportTaskPanel:
 
         return group
 
+    def _build_lighting_tab(self):
+        tab = QtGui.QWidget()
+        layout = QtGui.QVBoxLayout(tab)
+        layout.addWidget(self._build_global_light_group())
+        layout.addWidget(self._build_scene_lights_group())
+        layout.addWidget(self._build_materials_group())
+        layout.addStretch()
+        return tab
+
+    def _build_materials_group(self):
+        group = QtGui.QGroupBox("Materiales X3D / X3D Materials")
+        grid = QtGui.QGridLayout(group)
+
+        self.chk_improve_interior_lighting = QtGui.QCheckBox(
+            "Mejorar iluminacion interior / Improve interior lighting"
+        )
+        grid.addWidget(self.chk_improve_interior_lighting, 0, 0, 1, 2)
+
+        grid.addWidget(QtGui.QLabel("Modo / Mode"), 1, 0)
+        self.combo_interior_lighting_mode = QtGui.QComboBox()
+        self.combo_interior_lighting_mode.addItems(["None", "Soft", "Architectural", "Bright"])
+        self.chk_improve_interior_lighting.toggled.connect(self._on_improve_interior_lighting_toggled)
+        self.combo_interior_lighting_mode.currentIndexChanged.connect(self._on_material_lighting_mode_changed)
+        grid.addWidget(self.combo_interior_lighting_mode, 1, 1)
+
+        return group
+
+    def _build_textures_tab(self):
+        tab = QtGui.QWidget()
+        layout = QtGui.QVBoxLayout(tab)
+        layout.addWidget(self._build_ground_texture_group())
+        layout.addStretch()
+        return tab
+
+    def _build_ground_texture_group(self):
+        group = QtGui.QGroupBox("Textura de suelo / Ground texture")
+        grid = QtGui.QGridLayout(group)
+
+        self.chk_ground_texture = QtGui.QCheckBox("Aplicar textura al objeto suelo / Apply texture to ground object")
+        self.chk_ground_texture.setToolTip(
+            "ES: Cambia solo el X3D exportado; no modifica materiales de FreeCAD.\n"
+            "EN: Changes only the exported X3D; FreeCAD materials are not modified."
+        )
+        self.chk_ground_texture.toggled.connect(self._update_ground_texture_status)
+        grid.addWidget(self.chk_ground_texture, 0, 0, 1, 4)
+
+        grid.addWidget(QtGui.QLabel("Objeto / Object"), 1, 0)
+        self.ground_object_line = QtGui.QLineEdit()
+        self.ground_object_line.setReadOnly(True)
+        grid.addWidget(self.ground_object_line, 1, 1)
+        btn_ground_selection = QtGui.QPushButton("Tomar seleccion / Use selection")
+        btn_ground_selection.clicked.connect(self._use_selection_as_ground_texture_object)
+        grid.addWidget(btn_ground_selection, 1, 2, 1, 2)
+
+        grid.addWidget(QtGui.QLabel("Textura / Texture"), 2, 0)
+        self.ground_texture_line = QtGui.QLineEdit()
+        self.ground_texture_line.textChanged.connect(self._update_ground_texture_status)
+        grid.addWidget(self.ground_texture_line, 2, 1)
+        btn_texture_browse = QtGui.QPushButton("Examinar / Browse")
+        btn_texture_browse.clicked.connect(self._browse_ground_texture)
+        grid.addWidget(btn_texture_browse, 2, 2, 1, 2)
+
+        grid.addWidget(QtGui.QLabel("Repetir S / Repeat S"), 3, 0)
+        self.spin_ground_repeat_s = QtGui.QDoubleSpinBox()
+        self.spin_ground_repeat_s.setRange(0.01, 1000.0)
+        self.spin_ground_repeat_s.setDecimals(2)
+        self.spin_ground_repeat_s.setSingleStep(1.0)
+        self.spin_ground_repeat_s.setValue(20.0)
+        grid.addWidget(self.spin_ground_repeat_s, 3, 1)
+
+        grid.addWidget(QtGui.QLabel("Repetir T / Repeat T"), 3, 2)
+        self.spin_ground_repeat_t = QtGui.QDoubleSpinBox()
+        self.spin_ground_repeat_t.setRange(0.01, 1000.0)
+        self.spin_ground_repeat_t.setDecimals(2)
+        self.spin_ground_repeat_t.setSingleStep(1.0)
+        self.spin_ground_repeat_t.setValue(20.0)
+        grid.addWidget(self.spin_ground_repeat_t, 3, 3)
+
+        self.chk_ground_planar_uv = QtGui.QCheckBox("Generar UV planar XY / Generate planar XY UV")
+        self.chk_ground_planar_uv.setChecked(True)
+        self.chk_ground_planar_uv.setToolTip(
+            "ES: Crea coordenadas UV desde X/Y del objeto exportado para evitar textura estirada.\n"
+            "EN: Creates UV coordinates from exported object X/Y to avoid stretched texture."
+        )
+        grid.addWidget(self.chk_ground_planar_uv, 4, 0, 1, 4)
+
+        self.ground_texture_status_label = QtGui.QLabel("")
+        self.ground_texture_status_label.setStyleSheet("color: #475569;")
+        grid.addWidget(self.ground_texture_status_label, 5, 0, 1, 4)
+
+        return group
+
+    def _add_skybox_controls(self, grid, row_offset: int) -> None:
+        sky_label = QtGui.QLabel("Cielo Castle Viewer / Castle Viewer sky")
+        sky_label.setStyleSheet("font-weight: bold;")
+        grid.addWidget(sky_label, row_offset, 0, 1, 4)
+
+        self.chk_environment_skybox = QtGui.QCheckBox("Usar cielo de Castle Viewer / Use Castle Viewer sky")
+        self.chk_environment_skybox.setToolTip(
+            "ES: Inserta un Background con las seis imagenes de example_models/skies.\n"
+            "EN: Insert a Background using the six images from example_models/skies."
+        )
+        self.chk_environment_skybox.toggled.connect(self._update_skybox_status)
+        grid.addWidget(self.chk_environment_skybox, row_offset + 1, 0, 1, 4)
+
+        grid.addWidget(QtGui.QLabel("Carpeta skies / Skies folder"), row_offset + 2, 0)
+        self.skybox_dir_line = QtGui.QLineEdit()
+        self.skybox_dir_line.textChanged.connect(self._update_skybox_status)
+        grid.addWidget(self.skybox_dir_line, row_offset + 2, 1)
+
+        btn_detect = QtGui.QPushButton("Detectar / Detect")
+        btn_detect.clicked.connect(self._detect_skybox_dir_from_config)
+        grid.addWidget(btn_detect, row_offset + 2, 2)
+
+        btn_browse = QtGui.QPushButton("Examinar / Browse")
+        btn_browse.clicked.connect(self._browse_skybox_dir)
+        grid.addWidget(btn_browse, row_offset + 2, 3)
+
+        self.skybox_status_label = QtGui.QLabel("")
+        self.skybox_status_label.setStyleSheet("color: #475569;")
+        grid.addWidget(self.skybox_status_label, row_offset + 3, 0, 1, 4)
+
     def _build_config_tab(self):
         """Build in-dialog configuration tab (no separate command required)."""
         tab = QtGui.QWidget()
@@ -420,10 +586,12 @@ class ExportTaskPanel:
         cge_layout = QtGui.QGridLayout(cge_group)
         cge_layout.addWidget(QtGui.QLabel("Ejecutable / Executable"), 0, 0)
         self.cge_path_line = QtGui.QLineEdit()
+        self.cge_path_line.textChanged.connect(self._update_skybox_status)
         cge_layout.addWidget(self.cge_path_line, 0, 1)
         btn_cge_browse = QtGui.QPushButton("Examinar / Browse")
         btn_cge_browse.clicked.connect(self._browse_cge_path)
         cge_layout.addWidget(btn_cge_browse, 0, 2)
+        self._add_skybox_controls(cge_layout, 1)
         layout.addWidget(cge_group)
 
         layout.addStretch()
@@ -449,10 +617,32 @@ class ExportTaskPanel:
         self.spin_gl_yaw.setValue(float(self.params.GetFloat("gl_yaw", -30.0)))
         self.spin_gl_pitch.setValue(float(self.params.GetFloat("gl_pitch", -45.0)))
         self.spin_gl_intensity.setValue(float(self.params.GetFloat("gl_intensity", 1.2)))
+        self.chk_gl_shadows.setChecked(bool(self.params.GetBool("gl_shadows", False)))
         color_string = self.params.GetString("gl_color", "255,243,217")
         self.global_light_color = self._color_from_param_string(color_string, self.global_light_color)
         self._update_global_color_button()
         self.chk_pointlights.setChecked(bool(self.params.GetBool("export_pointlights", False)))
+        shadow_version = self.params.GetString("pointlight_shadow_version", "")
+        self.chk_pointlight_shadows.setChecked(
+            bool(self.params.GetBool("pointlight_shadows", False)) and shadow_version == "limited-v1"
+        )
+        self.spin_max_shadow_lights.setValue(int(self.params.GetInt("pointlight_max_shadows", 1)))
+        self._set_point_light_falloff_mode(self.params.GetString("pointlight_falloff", "Interior"))
+        self.chk_improve_interior_lighting.setChecked(
+            bool(self.params.GetBool("improve_interior_lighting", False))
+        )
+        self._set_material_lighting_mode(self.params.GetString("interior_lighting_mode", "None"))
+        self.chk_environment_skybox.setChecked(bool(self.params.GetBool("env_use_skybox", False)))
+        stored_skybox_dir = self.params.GetString("env_skybox_dir", "").strip()
+        self.skybox_dir_line.setText(stored_skybox_dir or self._discover_skybox_dir())
+        self._update_skybox_status()
+        self.chk_ground_texture.setChecked(bool(self.params.GetBool("ground_texture_enabled", False)))
+        self.ground_object_line.setText(self.params.GetString("ground_texture_object", ""))
+        self.ground_texture_line.setText(self.params.GetString("ground_texture_path", ""))
+        self.spin_ground_repeat_s.setValue(float(self.params.GetFloat("ground_texture_repeat_s", 20.0)))
+        self.spin_ground_repeat_t.setValue(float(self.params.GetFloat("ground_texture_repeat_t", 20.0)))
+        self.chk_ground_planar_uv.setChecked(bool(self.params.GetBool("ground_texture_planar_uv", True)))
+        self._update_ground_texture_status()
         gamestart_label = self.params.GetString("gamestart_label", "GameStart")
         self.gamestart_line.setText(gamestart_label)
         self.root_names = []
@@ -518,6 +708,8 @@ class ExportTaskPanel:
             if "color" in global_cfg:
                 self.global_light_color = self._color_from_config_value(global_cfg["color"])
                 self._update_global_color_button()
+            if "shadows" in global_cfg:
+                self.chk_gl_shadows.setChecked(bool(global_cfg.get("shadows", False)))
 
         navigation_cfg = data.get("navigation")
         if isinstance(navigation_cfg, dict):
@@ -532,6 +724,55 @@ class ExportTaskPanel:
 
         if "export_pointlights" in data:
             self.chk_pointlights.setChecked(bool(data.get("export_pointlights", False)))
+
+        point_options = data.get("point_light_options")
+        if isinstance(point_options, dict):
+            if "shadows" in point_options:
+                has_safe_limit = "max_shadow_lights" in point_options
+                self.chk_pointlight_shadows.setChecked(bool(point_options.get("shadows", False)) and has_safe_limit)
+            if "max_shadow_lights" in point_options:
+                self.spin_max_shadow_lights.setValue(
+                    max(0, min(4, int(point_options.get("max_shadow_lights", 1) or 1)))
+                )
+            if "falloff" in point_options:
+                self._set_point_light_falloff_mode(str(point_options.get("falloff", "Interior")))
+
+        materials_cfg = data.get("materials")
+        if isinstance(materials_cfg, dict):
+            if "improve_interior_lighting" in materials_cfg:
+                self.chk_improve_interior_lighting.setChecked(
+                    bool(materials_cfg.get("improve_interior_lighting", False))
+                )
+            if "interior_lighting_mode" in materials_cfg:
+                self._set_material_lighting_mode(str(materials_cfg.get("interior_lighting_mode", "None")))
+
+        environment_cfg = data.get("environment")
+        if isinstance(environment_cfg, dict):
+            if "use_skybox" in environment_cfg:
+                self.chk_environment_skybox.setChecked(bool(environment_cfg.get("use_skybox", False)))
+            if "skybox_dir" in environment_cfg:
+                sidecar_skybox_dir = str(environment_cfg.get("skybox_dir", "") or "").strip()
+                if sidecar_skybox_dir:
+                    self.skybox_dir_line.setText(sidecar_skybox_dir)
+            if not self.skybox_dir_line.text().strip():
+                    self.skybox_dir_line.setText(self._discover_skybox_dir())
+            self._update_skybox_status()
+
+        ground_cfg = data.get("ground_texture")
+        if isinstance(ground_cfg, dict):
+            if "enabled" in ground_cfg:
+                self.chk_ground_texture.setChecked(bool(ground_cfg.get("enabled", False)))
+            if "object_name" in ground_cfg:
+                self.ground_object_line.setText(str(ground_cfg.get("object_name", "") or ""))
+            if "texture_path" in ground_cfg:
+                self.ground_texture_line.setText(str(ground_cfg.get("texture_path", "") or ""))
+            if "repeat_s" in ground_cfg:
+                self.spin_ground_repeat_s.setValue(float(ground_cfg.get("repeat_s", self.spin_ground_repeat_s.value())))
+            if "repeat_t" in ground_cfg:
+                self.spin_ground_repeat_t.setValue(float(ground_cfg.get("repeat_t", self.spin_ground_repeat_t.value())))
+            if "generate_planar_uv" in ground_cfg:
+                self.chk_ground_planar_uv.setChecked(bool(ground_cfg.get("generate_planar_uv", True)))
+            self._update_ground_texture_status()
 
         scene_lights = data.get("scene_lights", [])
         resolved_names: set[str] = set()
@@ -625,8 +866,13 @@ class ExportTaskPanel:
             "pitch": float(self.spin_gl_pitch.value()),
             "intensity": float(self.spin_gl_intensity.value()),
             "color": global_color_ints,
+            "shadows": bool(self.chk_gl_shadows.isChecked()),
         }
         data["navigation"] = self._navigation_config()
+        data["materials"] = self._material_lighting_config()
+        data["environment"] = self._environment_config_for_sidecar()
+        data["point_light_options"] = self._point_light_options_config()
+        data["ground_texture"] = self._ground_texture_config()
 
         data["export_pointlights"] = bool(self.chk_pointlights.isChecked())
         self._update_light_names()
@@ -916,6 +1162,11 @@ class ExportTaskPanel:
         )
         if selected:
             self.cge_path_line.setText(selected)
+            if not exporter_x3d.detect_skybox_faces(self.skybox_dir_line.text().strip()):
+                detected = self._discover_skybox_dir()
+                if detected:
+                    self.skybox_dir_line.setText(detected)
+            self._update_skybox_status()
 
     def _create_gamestart(self):
         doc = FreeCAD.ActiveDocument
@@ -1068,8 +1319,8 @@ class ExportTaskPanel:
 
         btn_now.clicked.connect(_apply_now)
 
-        form.addRow("Latitud (°)", lat_spin)
-        form.addRow("Longitud (°)", lon_spin)
+        form.addRow("Latitud (deg)", lat_spin)
+        form.addRow("Longitud (deg)", lon_spin)
         form.addRow("Zona horaria UTC", tz_spin)
         form.addRow("Fecha y hora", dt_edit)
 
@@ -1107,7 +1358,9 @@ class ExportTaskPanel:
         self.spin_gl_yaw.setValue(yaw)
         self.spin_gl_pitch.setValue(pitch)
         self.status_label.setText(
-            "Luz solar: yaw {:.1f}°, pitch {:.1f}° (altura solar {:.1f}°)".format(yaw, pitch, altitude)
+            "Luz solar: yaw {:.1f} deg, pitch {:.1f} deg (altura solar {:.1f} deg)".format(
+                yaw, pitch, altitude
+            )
         )
 
         if not isinstance(self.sidecar_data, dict):
@@ -1343,6 +1596,7 @@ class ExportTaskPanel:
             "pitch": float(self.spin_gl_pitch.value()),
             "intensity": float(self.spin_gl_intensity.value()),
             "color": self.global_light_color,
+            "shadows": bool(self.chk_gl_shadows.isChecked()),
         }
 
     def _navigation_config(self) -> dict:
@@ -1355,32 +1609,408 @@ class ExportTaskPanel:
             "gravity_up": "Z+",
         }
 
+    def _material_lighting_config(self) -> dict:
+        return {
+            "improve_interior_lighting": bool(self.chk_improve_interior_lighting.isChecked()),
+            "interior_lighting_mode": self._material_lighting_mode(),
+        }
+
+    def _ground_texture_config(self, log: bool = False) -> dict:
+        cfg = {
+            "enabled": bool(self.chk_ground_texture.isChecked()),
+            "object_name": self.ground_object_line.text().strip(),
+            "texture_path": self.ground_texture_line.text().strip(),
+            "repeat_s": float(self.spin_ground_repeat_s.value()),
+            "repeat_t": float(self.spin_ground_repeat_t.value()),
+            "generate_planar_uv": bool(self.chk_ground_planar_uv.isChecked()),
+        }
+        if log and cfg["enabled"]:
+            if not cfg["object_name"]:
+                FreeCAD.Console.PrintWarning("[GAMEEXPORT][WARN] Ground texture enabled without object.\n")
+            if not cfg["texture_path"]:
+                FreeCAD.Console.PrintWarning("[GAMEEXPORT][WARN] Ground texture enabled without texture file.\n")
+            elif not os.path.isfile(cfg["texture_path"]):
+                FreeCAD.Console.PrintWarning(
+                    "[GAMEEXPORT][WARN] Ground texture file not found: " + cfg["texture_path"] + "\n"
+                )
+            else:
+                FreeCAD.Console.PrintMessage(
+                    "[GAMEEXPORT] Ground texture enabled for object "
+                    + cfg["object_name"]
+                    + ": "
+                    + cfg["texture_path"]
+                    + "\n"
+                )
+        return cfg
+
+    def _use_selection_as_ground_texture_object(self):
+        selection = FreeCADGui.Selection.getSelection()
+        if not selection:
+            self.status_label.setText("Seleccione el objeto suelo.")
+            return
+        obj = selection[0]
+        self.ground_object_line.setText(str(getattr(obj, "Name", "") or ""))
+        self.chk_ground_texture.setChecked(True)
+        self._update_ground_texture_status()
+        label = getattr(obj, "Label", "") or getattr(obj, "Name", "")
+        self.status_label.setText("Objeto suelo seleccionado: " + str(label))
+
+    def _browse_ground_texture(self):
+        start = self.ground_texture_line.text().strip() or os.path.expanduser("~")
+        selected, _ = QtGui.QFileDialog.getOpenFileName(
+            self.widget,
+            "Seleccionar textura de suelo / Select ground texture",
+            start,
+            "Images (*.png *.jpg *.jpeg *.webp);;All files (*.*)",
+        )
+        if selected:
+            self.ground_texture_line.setText(selected)
+            self.chk_ground_texture.setChecked(True)
+            self._update_ground_texture_status()
+
+    def _update_ground_texture_status(self, *_args) -> None:
+        if not hasattr(self, "ground_texture_status_label"):
+            return
+        if not bool(self.chk_ground_texture.isChecked()):
+            self.ground_texture_status_label.setText("Textura de suelo desactivada / Ground texture disabled")
+            return
+        object_name = self.ground_object_line.text().strip()
+        texture_path = self.ground_texture_line.text().strip()
+        if not object_name:
+            self.ground_texture_status_label.setText("Falta seleccionar objeto suelo")
+            return
+        if not texture_path:
+            self.ground_texture_status_label.setText("Falta seleccionar archivo de textura")
+            return
+        if not os.path.isfile(texture_path):
+            self.ground_texture_status_label.setText("Archivo de textura no encontrado")
+            return
+        self.ground_texture_status_label.setText("Textura lista para aplicar al X3D")
+
+    def _point_light_options_config(self) -> dict:
+        shadows = bool(self.chk_pointlight_shadows.isChecked())
+        falloff = self._point_light_falloff_mode()
+        max_shadow_lights = max(0, min(4, int(self.spin_max_shadow_lights.value())))
+        attenuation = {
+            "Interior": "1 0.25 0.04",
+            "Soft": "1 0.08 0.01",
+            "Constant": "1 0 0",
+        }.get(falloff, "1 0.25 0.04")
+        return {
+            "shadows": shadows,
+            "max_shadow_lights": max_shadow_lights,
+            "falloff": falloff,
+            "attenuation": attenuation,
+            "ambient_intensity": 0.04 if falloff == "Interior" else 0.10,
+        }
+
+    def _point_light_falloff_mode(self) -> str:
+        mode = str(self.combo_pointlight_falloff.currentText() or "Interior")
+        if mode not in {"Interior", "Soft", "Constant"}:
+            return "Interior"
+        return mode
+
+    def _set_point_light_falloff_mode(self, mode: str) -> None:
+        clean_mode = mode if mode in {"Interior", "Soft", "Constant"} else "Interior"
+        index = self.combo_pointlight_falloff.findText(clean_mode)
+        if index < 0:
+            index = 0
+        self.combo_pointlight_falloff.setCurrentIndex(index)
+
+    def _environment_config(self, log: bool = False) -> dict:
+        use_skybox = bool(self.chk_environment_skybox.isChecked())
+        skybox_dir = self.skybox_dir_line.text().strip()
+        detected = self._discover_skybox_dir()
+        source = "manual"
+        if use_skybox and not exporter_x3d.detect_skybox_faces(skybox_dir):
+            if detected:
+                skybox_dir = detected
+                self.skybox_dir_line.setText(detected)
+                if log:
+                    FreeCAD.Console.PrintMessage(
+                        "[GAMEEXPORT] Skybox folder auto-detected from Castle executable: "
+                        + detected
+                        + "\n"
+                    )
+        if detected and skybox_dir == detected:
+            source = "castle_executable"
+        if use_skybox and log:
+            if exporter_x3d.detect_skybox_faces(skybox_dir):
+                FreeCAD.Console.PrintMessage("[GAMEEXPORT] Environment skybox enabled: " + skybox_dir + "\n")
+            else:
+                FreeCAD.Console.PrintWarning(
+                    "[GAMEEXPORT][WARN] Environment skybox enabled but no complete skies folder was found.\n"
+                )
+        elif log:
+            FreeCAD.Console.PrintMessage("[GAMEEXPORT] Environment skybox disabled\n")
+        return {
+            "use_skybox": use_skybox,
+            "skybox_dir": skybox_dir,
+            "skybox_source": source,
+        }
+
+    def _environment_config_for_sidecar(self) -> dict:
+        cfg = self._environment_config(log=False)
+        if cfg.get("skybox_source") == "castle_executable":
+            cfg["skybox_dir"] = ""
+        return cfg
+
+    def _browse_skybox_dir(self):
+        start_dir = self.skybox_dir_line.text().strip() or self._discover_skybox_dir() or os.path.expanduser("~")
+        selected = QtGui.QFileDialog.getExistingDirectory(
+            self.widget,
+            "Seleccionar carpeta skies / Select skies folder",
+            start_dir,
+        )
+        if selected:
+            self.skybox_dir_line.setText(selected)
+            self._update_skybox_status()
+
+    def _detect_skybox_dir_from_config(self):
+        detected = self._discover_skybox_dir()
+        if detected:
+            self.skybox_dir_line.setText(detected)
+            self.chk_environment_skybox.setChecked(True)
+            self._update_skybox_status()
+            self.status_label.setText("Cielo detectado: " + detected)
+        else:
+            self._update_skybox_status()
+            self.status_label.setText("No se encontro carpeta skies junto al ejecutable Castle.")
+
+    def _update_skybox_status(self, *_args) -> None:
+        if not hasattr(self, "skybox_status_label"):
+            return
+        folder = self.skybox_dir_line.text().strip() if hasattr(self, "skybox_dir_line") else ""
+        faces = exporter_x3d.detect_skybox_faces(folder)
+        if not bool(self.chk_environment_skybox.isChecked()):
+            if len(faces) == 6:
+                self.skybox_status_label.setText("Cielo desactivado. Cubemap valido detectado.")
+            else:
+                detected = self._discover_skybox_dir()
+                if detected:
+                    self.skybox_status_label.setText("Cielo desactivado. Detectado junto al ejecutable Castle.")
+                else:
+                    self.skybox_status_label.setText("Cielo desactivado. Use Detectar o Examinar.")
+            return
+        if len(faces) == 6:
+            self.skybox_status_label.setText("Cubemap completo: 6 imagenes detectadas")
+        else:
+            detected = self._discover_skybox_dir()
+            if detected and detected != folder:
+                self.skybox_status_label.setText("Cubemap detectado junto al ejecutable Castle. Pulse Detectar.")
+            else:
+                self.skybox_status_label.setText("Falta cubemap completo: back, bottom, front, left, right, top")
+
+    def _discover_skybox_dir(self) -> str:
+        for candidate in self._skybox_candidate_dirs():
+            if exporter_x3d.detect_skybox_faces(str(candidate)):
+                return str(candidate)
+        return ""
+
+    def _skybox_candidate_dirs(self) -> list[Path]:
+        candidates: list[Path] = []
+
+        def add_candidate(path_value) -> None:
+            if not path_value:
+                return
+            try:
+                path = Path(str(path_value)).expanduser()
+            except Exception:
+                return
+            if path not in candidates:
+                candidates.append(path)
+
+        cge_text = ""
+        if hasattr(self, "cge_path_line"):
+            cge_text = self.cge_path_line.text().strip()
+        if not cge_text and hasattr(self, "cge_path"):
+            cge_text = str(self.cge_path or "").strip()
+
+        if cge_text:
+            exe_path = Path(cge_text).expanduser()
+            bases = [exe_path.parent, exe_path.parent.parent]
+            for base in bases:
+                add_candidate(base / "example_models" / "skies")
+                add_candidate(base / "data" / "example_models" / "skies")
+
+        home = Path.home()
+        add_candidate(home / "Desktop" / "castle-model-viewer" / "example_models" / "skies")
+        userprofile = os.environ.get("USERPROFILE", "")
+        if userprofile:
+            add_candidate(Path(userprofile) / "Desktop" / "castle-model-viewer" / "example_models" / "skies")
+
+        return candidates
+
+    def _on_improve_interior_lighting_toggled(self, checked) -> None:
+        if bool(checked) and self._material_lighting_mode() == "None":
+            self._set_material_lighting_mode("Architectural")
+
+    def _on_material_lighting_mode_changed(self, *_args) -> None:
+        if self._material_lighting_mode() != "None":
+            self.chk_improve_interior_lighting.setChecked(True)
+
+    def _material_lighting_mode(self) -> str:
+        mode = str(self.combo_interior_lighting_mode.currentText() or "None")
+        if mode not in {"None", "Soft", "Architectural", "Bright"}:
+            return "None"
+        return mode
+
+    def _set_material_lighting_mode(self, mode: str) -> None:
+        clean_mode = mode if mode in {"None", "Soft", "Architectural", "Bright"} else "None"
+        index = self.combo_interior_lighting_mode.findText(clean_mode)
+        if index < 0:
+            index = 0
+        self.combo_interior_lighting_mode.setCurrentIndex(index)
+
     def _normalize_nav_speed(self, speed: float) -> float:
         """Normalize navigation speed and migrate legacy bad default 2000->2."""
         if speed >= 1500.0:
             return 2.0
         return max(0.1, min(10000.0, float(speed)))
 
-    def _point_light_entries(self, doc):
-        if not self.chk_pointlights.isChecked():
-            return []
-        self._update_light_names()
+    def _point_light_entries(self, doc, export_objects=None, debug_records=None):
         entries = []
-        for data in lights.gather_point_light_data(doc, self.light_names):
-            entries.append(
-                {
-                    "name": data.name,
-                    "label": data.label,
-                    "position_mm": data.position_mm,
-                    "intensity": data.intensity,
-                    "color": data.color_rgb,
-                    "radius": data.radius,
-                }
+        manual_count = 0
+        if self.chk_pointlights.isChecked():
+            self._update_light_names()
+            for data in lights.gather_point_light_data(
+                doc,
+                self.light_names,
+                skip_effective_cge=True,
+                debug_records=debug_records,
+            ):
+                entries.append(self._point_light_entry_dict(data))
+                manual_count += 1
+            if manual_count == 0:
+                FreeCAD.Console.PrintWarning(
+                    "[GAMEEXPORT][WARN] Manual point lights enabled but no tagged objects were found.\n"
+                )
+        cge_data = lights.gather_cge_light_data(doc, export_objects, debug_records)
+        if not cge_data and export_objects is not None:
+            FreeCAD.Console.PrintWarning(
+                "[GAMEEXPORT][WARN] No CGE lights found in export selection; retrying full document scan.\n"
             )
+            if debug_records is not None:
+                debug_records.append({"event": "cge_fallback_full_document_scan"})
+            cge_data = lights.gather_cge_light_data(doc, None, debug_records)
+        cge_count = 0
+        for data in cge_data:
+            entries.append(self._point_light_entry_dict(data))
+            cge_count += 1
+        point_options = self._point_light_options_config()
+        shadow_indices = set()
+        if point_options["shadows"] and point_options["max_shadow_lights"] > 0:
+            ranked = sorted(
+                range(len(entries)),
+                key=lambda idx: float(entries[idx].get("intensity", 0.0) or 0.0),
+                reverse=True,
+            )
+            shadow_indices = set(ranked[: point_options["max_shadow_lights"]])
+        for index, entry in enumerate(entries):
+            entry["shadows"] = index in shadow_indices
+            entry["falloff"] = point_options["falloff"]
+            entry["attenuation"] = point_options["attenuation"]
+            entry["ambient_intensity"] = point_options["ambient_intensity"]
+        if entries:
+            shadowed_count = len(shadow_indices)
+            if point_options["shadows"] and shadowed_count < len(entries):
+                FreeCAD.Console.PrintWarning(
+                    "[GAMEEXPORT][WARN] PointLight shadows limited to "
+                    + str(shadowed_count)
+                    + " of "
+                    + str(len(entries))
+                    + " lights to avoid Castle shader resource overflow.\n"
+                )
+            FreeCAD.Console.PrintMessage(
+                "[GAMEEXPORT] PointLight entries prepared: "
+                + f"manual={manual_count}, cge={cge_count}, total={len(entries)}, "
+                + "shadowed="
+                + str(shadowed_count)
+                + ", falloff="
+                + str(point_options["falloff"])
+                + "\n"
+            )
+        elif debug_records is not None:
+            debug_records.append({"event": "no_point_lights_prepared"})
         return entries
 
+    @staticmethod
+    def _point_light_entry_dict(data):
+        return {
+            "name": data.name,
+            "label": data.label,
+            "position_mm": data.position_mm,
+            "intensity": data.intensity,
+            "color": data.color_rgb,
+            "radius": data.radius,
+        }
+
+    def _save_debug_snapshot(
+        self,
+        file_path: Path,
+        doc,
+        export_objects,
+        point_entries,
+        debug_records,
+        environment_cfg=None,
+        ground_texture_cfg=None,
+    ) -> None:
+        debug_path = file_path.with_suffix(".gee.debug.json")
+        try:
+            payload = {
+                "debug_version": DEBUG_VERSION,
+                "document": {
+                    "name": str(getattr(doc, "Name", "") or ""),
+                    "label": str(getattr(doc, "Label", "") or ""),
+                    "file": str(getattr(doc, "FileName", "") or ""),
+                },
+                "output_x3d": str(file_path),
+                "export_object_count": len(export_objects or []),
+                "export_objects": [self._debug_object_info(obj) for obj in export_objects or []],
+                "point_light_count": len(point_entries or []),
+                "point_lights": list(point_entries or []),
+                "light_source_names": self._light_source_names_from_entries(point_entries),
+                "environment": dict(environment_cfg or {}),
+                "ground_texture": dict(ground_texture_cfg or {}),
+                "records": list(debug_records or []),
+            }
+            debug_path.write_text(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=True), encoding="utf-8")
+            FreeCAD.Console.PrintMessage("[GAMEEXPORT] Debug snapshot saved at " + str(debug_path) + "\n")
+        except Exception as exc:
+            FreeCAD.Console.PrintWarning("[GAMEEXPORT][WARN] Could not save debug snapshot: " + str(exc) + "\n")
+
+    @staticmethod
+    def _light_source_names_from_entries(point_entries) -> list:
+        names = []
+        seen = set()
+        for entry in point_entries or []:
+            name = str(entry.get("name", "") or "")
+            if "_CGE_" in name:
+                name = name.split("_CGE_", 1)[0]
+            if name and name not in seen:
+                seen.add(name)
+                names.append(name)
+        return names
+
+    @staticmethod
+    def _debug_object_info(obj):
+        if obj is None:
+            return None
+        placement = lights.get_global_placement(obj)
+        base = getattr(placement, "Base", None)
+        return {
+            "name": str(getattr(obj, "Name", "") or ""),
+            "label": str(getattr(obj, "Label", "") or ""),
+            "type_id": str(getattr(obj, "TypeId", "") or ""),
+            "global_base_mm": [
+                float(getattr(base, "x", 0.0)),
+                float(getattr(base, "y", 0.0)),
+                float(getattr(base, "z", 0.0)),
+            ],
+        }
+
     def getStandardButtons(self):
-        return int(QtGui.QDialogButtonBox.Ok | QtGui.QDialogButtonBox.Cancel)
+        return _qt_button_mask(QtGui.QDialogButtonBox.Ok, QtGui.QDialogButtonBox.Cancel)
 
     def accept(self):
         if self._export_scene():
@@ -1463,13 +2093,36 @@ class ExportTaskPanel:
 
         file_path = Path(output_dir) / (safe_base_name + ".x3d")
         gamestart_meta = gamestart.get_metadata(gamestart_obj) if gamestart_obj else None
+        light_debug_records = []
+        point_light_entries = self._point_light_entries(doc, export_objects, light_debug_records)
         lighting_cfg = {
             "global": self._global_light_config(),
-            "point_lights": self._point_light_entries(doc),
+            "point_lights": point_light_entries,
             "navigation": self._navigation_config(),
         }
+        material_cfg = self._material_lighting_config()
+        material_cfg["light_source_names"] = self._light_source_names_from_entries(point_light_entries)
+        environment_cfg = self._environment_config(log=True)
+        ground_texture_cfg = self._ground_texture_config(log=True)
+        self._save_debug_snapshot(
+            file_path,
+            doc,
+            export_objects,
+            point_light_entries,
+            light_debug_records,
+            environment_cfg,
+            ground_texture_cfg,
+        )
         try:
-            exporter_x3d.export_to_x3d(export_objects, file_path, gamestart_meta, lighting_cfg)
+            exporter_x3d.export_to_x3d(
+                export_objects,
+                file_path,
+                gamestart_meta,
+                lighting_cfg,
+                material_cfg,
+                environment_cfg,
+                ground_texture_cfg,
+            )
         except Exception as exc:
             FreeCAD.Console.PrintError("[GAMEEXPORT] Export failed: " + str(exc) + "\n")
             return False
@@ -1486,8 +2139,25 @@ class ExportTaskPanel:
         self.params.SetFloat("gl_yaw", float(self.spin_gl_yaw.value()))
         self.params.SetFloat("gl_pitch", float(self.spin_gl_pitch.value()))
         self.params.SetFloat("gl_intensity", float(self.spin_gl_intensity.value()))
+        self.params.SetBool("gl_shadows", bool(self.chk_gl_shadows.isChecked()))
         self.params.SetString("gl_color", self._color_to_param_string(self.global_light_color))
         self.params.SetBool("export_pointlights", bool(self.chk_pointlights.isChecked()))
+        self.params.SetBool("pointlight_shadows", bool(self.chk_pointlight_shadows.isChecked()))
+        self.params.SetInt("pointlight_max_shadows", int(self.spin_max_shadow_lights.value()))
+        self.params.SetString("pointlight_shadow_version", "limited-v1")
+        self.params.SetString("pointlight_falloff", self._point_light_falloff_mode())
+        self.params.SetBool(
+            "improve_interior_lighting", bool(self.chk_improve_interior_lighting.isChecked())
+        )
+        self.params.SetString("interior_lighting_mode", self._material_lighting_mode())
+        self.params.SetBool("env_use_skybox", bool(self.chk_environment_skybox.isChecked()))
+        self.params.SetString("env_skybox_dir", self.skybox_dir_line.text().strip())
+        self.params.SetBool("ground_texture_enabled", bool(self.chk_ground_texture.isChecked()))
+        self.params.SetString("ground_texture_object", self.ground_object_line.text().strip())
+        self.params.SetString("ground_texture_path", self.ground_texture_line.text().strip())
+        self.params.SetFloat("ground_texture_repeat_s", float(self.spin_ground_repeat_s.value()))
+        self.params.SetFloat("ground_texture_repeat_t", float(self.spin_ground_repeat_t.value()))
+        self.params.SetBool("ground_texture_planar_uv", bool(self.chk_ground_planar_uv.isChecked()))
 
         self._update_export_names()
         self._save_sidecar(output_dir, base_name, gamestart_label)
