@@ -63,6 +63,13 @@ El generador tambien crea `AI_Contexto_QuickExample`, un `App::TextDocument` con
 
 El comando **Puertas y ventanas BIM** agrega objetos de puerta/ventana sobre el ultimo `GEE_QuickExample_*`. Lee los sketches `GEE_SK_DoorOpenings` y `GEE_SK_WindowOpenings`, intenta crear objetos con `Arch.makeWindow(...)` y agrega hojas de puerta abiertas a 90 grados para pruebas visuales y de exportacion.
 
+Para proyectos que no vienen del Quick Example existen macros genericas:
+
+- `CrearPuertasBIMDesdeSketch.FCMacro`: convierte el sketch seleccionado en puertas BIM/visuales con hojas abiertas a 90 grados.
+- `CrearVentanasBIMDesdeSketch.FCMacro`: convierte el sketch seleccionado en ventanas BIM/visuales con panel de vidrio simple.
+
+En ambos casos el sketch debe contener lineas de centro de los buques. No dependen de nombres `GEE_*` ni de grupos del generador.
+
 ## Materiales e iluminacion interior
 
 En la pestana **Iluminacion / Lighting**, marca **Mejorar iluminacion interior / Improve interior lighting** y usa **Architectural** o **Bright** para interiores cerrados. Este ajuste solo modifica el X3D exportado mediante atributos `ambientIntensity`, `emissiveColor` y `shininess`; no cambia los materiales del archivo `.FCStd`.
@@ -107,6 +114,9 @@ La vista previa crea objetos temporales `CGE_TempLightPreview*`, que se excluyen
 - `commands/`: comando principal GameEngineExport_Open.
 - `core/quick_examples.py`: generador de ejemplos rapidos con Sketcher y Arch Wall.
 - `macros/AgregarPuertasVentanasBIM_QuickExample.FCMacro`: macro usada por el comando de puertas y ventanas BIM.
+- `macros/bim_from_selected_sketch.py`: base reutilizable para crear puertas o ventanas desde el sketch seleccionado.
+- `macros/CrearPuertasBIMDesdeSketch.FCMacro`: macro generica de puertas desde sketch seleccionado.
+- `macros/CrearVentanasBIMDesdeSketch.FCMacro`: macro generica de ventanas desde sketch seleccionado.
 - `resources/icons/gameexport.svg`: icono del workbench.
 - `resources/icons/add_light_properties.svg`: icono del comando para propiedades de luz.
 - `resources/icons/quick_example.svg`: icono del comando de ejemplo rapido.

@@ -348,10 +348,25 @@ class SketchOpeningCutterProxy:
 
     def __init__(self, sketch=None, depth: float = 250.0, height: float = 2100.0, z_offset: float = 0.0):
         self.Type = "GameEngineExport_SketchOpeningCutter"
-        self._fallback_sketch = sketch
+        self._fallback_sketch = None
         self._fallback_depth = float(depth)
         self._fallback_height = float(height)
         self._fallback_z_offset = float(z_offset)
+
+    def __getstate__(self):
+        return {
+            "Type": self.Type,
+            "_fallback_depth": float(getattr(self, "_fallback_depth", 250.0)),
+            "_fallback_height": float(getattr(self, "_fallback_height", 2100.0)),
+            "_fallback_z_offset": float(getattr(self, "_fallback_z_offset", 0.0)),
+        }
+
+    def __setstate__(self, state):
+        self.Type = str(state.get("Type", "GameEngineExport_SketchOpeningCutter"))
+        self._fallback_sketch = None
+        self._fallback_depth = float(state.get("_fallback_depth", 250.0))
+        self._fallback_height = float(state.get("_fallback_height", 2100.0))
+        self._fallback_z_offset = float(state.get("_fallback_z_offset", 0.0))
 
     def execute(self, obj) -> None:
         sketch = getattr(obj, "SourceSketch", None) or self._fallback_sketch
