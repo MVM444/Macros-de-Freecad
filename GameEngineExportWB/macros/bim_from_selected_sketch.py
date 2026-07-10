@@ -2,9 +2,8 @@
 
 This helper is intentionally independent from GameEngineExport quick examples.
 The selected sketch must contain line segments representing centerlines of
-openings. Door mode creates visible leaves opened at 90 degrees. Window mode
-creates a simple glass panel. Both modes create an Arch Window object from a
-generated Sketcher profile, matching the BIM/Arch Window command workflow.
+openings. Both modes create Arch Window objects from generated Sketcher
+profiles, matching the BIM/Arch Window command workflow.
 """
 
 from __future__ import annotations
@@ -34,10 +33,8 @@ except Exception:  # pragma: no cover - FreeCAD runtime only
 LOG_PREFIX = "[BIM-SKETCH] "
 
 DEFAULT_DOOR_HEIGHT = 2100.0
-DEFAULT_DOOR_LEAF_THICKNESS = 45.0
 DEFAULT_WINDOW_SILL = 900.0
 DEFAULT_WINDOW_HEIGHT = 1200.0
-DEFAULT_GLASS_THICKNESS = 30.0
 MIN_DEDUCED_WINDOW_HEIGHT = 300.0
 
 
@@ -229,7 +226,7 @@ def _make_profile_sketch(doc, group, name, p1, p2, z0, height, mode, source_sket
         rot_z_to_segment.multiply(rot_x_to_vertical),
     )
     _add_rect(profile, 0.0, 0.0, length, height)
-    if mode == "windows":
+    if mode in {"doors", "windows"}:
         inset = max(10.0, min(100.0, length * 0.12, height * 0.12))
         if length > inset * 2.0 and height > inset * 2.0:
             _add_rect(profile, inset, inset, length - inset * 2.0, height - inset * 2.0)
@@ -246,7 +243,18 @@ def _make_profile_sketch(doc, group, name, p1, p2, z0, height, mode, source_sket
 
 def _window_parts(mode):
     if mode == "doors":
-        return ["DoorPanel", "Solid panel", "Wire0", "40", "0"]
+        return [
+            "Frame",
+            "Frame",
+            "Wire0,Wire1",
+            "60",
+            "0",
+            "Door",
+            "Solid panel",
+            "Wire1,Edge8,Mode1",
+            "40",
+            "0",
+        ]
     return [
         "Frame",
         "Frame",
@@ -307,61 +315,6 @@ def _make_arch_window(doc, group, name, base, role, width, height, sill, open_pe
     # Keep the BIM object opaque; transparency here affects frames too.
     _set_view(obj, color=color, transparency=0)
     return obj
-
-
-def _make_box(doc, group, name, shape, role, color, transparency=0):
-    obj = doc.addObject("Part::Feature", _safe_name(name))
-    obj.Label = name
-    obj.Shape = shape
-    group.addObject(obj)
-    _set_prop(obj, "App::PropertyString", "GEE_Role", "GameEngineExport", "Rol GameEngineExport", role)
-    _set_view(obj, color=color, transparency=transparency)
-    return obj
-
-
-def _door_open_direction(info, p1):
-    if info["horizontal"]:
-        return 1.0 if p1.y < 100.0 else (-1.0 if int(p1.x / 1000.0) % 2 else 1.0)
-    return 1.0 if int(p1.y / 1000.0) % 2 else -1.0
-
-
-def _make_open_door_leaf(doc, group, name, p1, p2, z_base, height):
-    info = _segment_info(p1, p2)
-    if info is None:
-        return None
-    leaf_width = max(min(info["length"] - 80.0, 1200.0), 650.0)
-    thickness = DEFAULT_DOOR_LEAF_THICKNESS
-    open_dir = _door_open_direction(info, p1)
-    hinge = p1
-    if info["horizontal"]:
-        x0 = hinge.x - thickness / 2.0
-        y0 = hinge.y if open_dir > 0 else hinge.y - leaf_width
-        shape = Part.makeBox(thickness, leaf_width, height, FreeCAD.Vector(x0, y0, z_base))
-    else:
-        x0 = hinge.x if open_dir > 0 else hinge.x - leaf_width
-        y0 = hinge.y - thickness / 2.0
-        shape = Part.makeBox(leaf_width, thickness, height, FreeCAD.Vector(x0, y0, z_base))
-    leaf = _make_box(doc, group, name, shape, "door_leaf_open_90_visual", (0.55, 0.28, 0.10), transparency=0)
-    _set_prop(leaf, "App::PropertyFloat", "GEE_OpeningAngle_deg", "GameEngineExport", "Angulo de apertura", 90.0)
-    _set_prop(leaf, "App::PropertyFloat", "GEE_OpeningPercent", "GameEngineExport", "Apertura porcentual", 100.0)
-    return leaf
-
-
-def _make_window_glass(doc, group, name, p1, p2, sill, height):
-    info = _segment_info(p1, p2)
-    if info is None:
-        return None
-    length = max(info["length"] - 160.0, 200.0)
-    depth = DEFAULT_GLASS_THICKNESS
-    z = sill + 80.0
-    glass_height = max(height - 160.0, 200.0)
-    min_x = min(p1.x, p2.x)
-    min_y = min(p1.y, p2.y)
-    if info["horizontal"]:
-        shape = Part.makeBox(length, depth, glass_height, FreeCAD.Vector(min_x + 80.0, p1.y - depth / 2.0, z))
-    else:
-        shape = Part.makeBox(depth, length, glass_height, FreeCAD.Vector(p1.x - depth / 2.0, min_y + 80.0, z))
-    return _make_box(doc, group, name, shape, "window_glass_visual", (0.35, 0.75, 0.95), transparency=55)
 
 
 def _make_group(doc, sketch, mode):
@@ -427,18 +380,7 @@ def run(mode):
                     (0.85, 0.35, 0.10),
                     "doors",
                 )
-                leaf = _make_open_door_leaf(
-                    doc,
-                    group,
-                    "BIM_Door_Leaf_Open90_%02d" % (index + 1),
-                    p1,
-                    p2,
-                    z_base,
-                    DEFAULT_DOOR_HEIGHT - 50.0,
-                )
-                for obj in (opening, leaf):
-                    if obj is not None:
-                        _set_prop(obj, "App::PropertyLink", "SourceSketch", "GameEngineExport", "Sketch fuente", sketch)
+                _set_prop(opening, "App::PropertyLink", "SourceSketch", "GameEngineExport", "Sketch fuente", sketch)
             else:
                 sill = _segment_base_z(p1, p2)
                 base, width = _make_profile_sketch(
@@ -467,10 +409,7 @@ def run(mode):
                     (0.12, 0.62, 0.88),
                     "windows",
                 )
-                glass = _make_window_glass(doc, group, "BIM_Window_Glass_%02d" % (index + 1), p1, p2, sill, window_height)
-                for obj in (opening, glass):
-                    if obj is not None:
-                        _set_prop(obj, "App::PropertyLink", "SourceSketch", "GameEngineExport", "Sketch fuente", sketch)
+                _set_prop(opening, "App::PropertyLink", "SourceSketch", "GameEngineExport", "Sketch fuente", sketch)
             created += 1
 
         doc.recompute()

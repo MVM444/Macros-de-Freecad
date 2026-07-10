@@ -65,8 +65,8 @@ El comando **Puertas y ventanas BIM** agrega objetos de puerta/ventana sobre el 
 
 Para proyectos que no vienen del Quick Example existen macros genericas:
 
-- `CrearPuertasBIMDesdeSketch.FCMacro`: convierte el sketch seleccionado en puertas BIM/visuales con hojas abiertas a 90 grados.
-- `CrearVentanasBIMDesdeSketch.FCMacro`: convierte el sketch seleccionado en ventanas BIM/visuales con panel de vidrio simple.
+- `CrearPuertasBIMDesdeSketch.FCMacro`: convierte el sketch seleccionado en puertas `Arch_Window` con `IfcType = Door` y apertura nativa `Opening = 100`.
+- `CrearVentanasBIMDesdeSketch.FCMacro`: convierte el sketch seleccionado en ventanas `Arch_Window` con marco y vidrio definidos en `WindowParts`.
 
 En ambos casos el sketch debe contener lineas de centro de los buques. No dependen de nombres `GEE_*` ni de grupos del generador. Las macros usan una transaccion de FreeCAD, por lo que `Ctrl+Z` elimina el conjunto completo creado.
 
@@ -75,7 +75,7 @@ Reglas de ventana:
 - La cota `Z` del sketch o de la linea seleccionada se usa como base/antepecho de la ventana.
 - La altura de ventana se indica en un dialogo.
 - Si el sketch contiene geometria con variacion vertical suficiente en `Z`, la macro puede deducir la altura del buque.
-- La macro genera un sketch rectangular de perfil por cada buque y llama `Arch.makeWindow(baseobj=perfil_sketch, parts=...)`, replicando el flujo de la herramienta BIM `Arch_Window`.
+- La macro genera un sketch rectangular de perfil por cada buque y llama `Arch.makeWindow(baseobj=perfil_sketch, parts=...)`, replicando el flujo de la herramienta BIM `Arch_Window` sin agregar geometria auxiliar `Part`.
 
 ## Materiales e iluminacion interior
 
