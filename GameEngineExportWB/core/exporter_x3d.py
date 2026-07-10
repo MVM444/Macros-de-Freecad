@@ -32,6 +32,18 @@ DEFAULT_POINT_LIGHT_AMBIENT_INTENSITY = 0.18
 MAX_POINT_LIGHT_SHADOWS = 4
 EMITTER_MATERIAL_DEF_PREFIX = "GameExport_Emitter_"
 GROUND_TEXTURE_MATERIAL_DEF_PREFIX = "GameExport_GroundTexture_"
+GROUND_TEXTURE_FALLBACK_KEYWORDS = (
+    ("terrain", 100),
+    ("ground", 90),
+    ("suelo", 90),
+    ("zacate", 90),
+    ("cesped", 90),
+    ("grass", 90),
+    ("site", 60),
+    ("floor", 45),
+    ("slab", 45),
+    ("piso", 45),
+)
 MATERIAL_LIGHTING_PROFILES = {
     "Soft": {
         "ambientIntensity": "0.35",
@@ -550,8 +562,12 @@ def _ground_texture_cfg_with_object_indices(
         return ground_texture_cfg
 
     objects = list(exportable_objects)
-    object_name = str(ground_texture_cfg.get("object_name", "") or "").strip()
-    if not object_name:
+    names = {
+        str(ground_texture_cfg.get("object_name", "") or "").strip(),
+        str(ground_texture_cfg.get("object_label", "") or "").strip(),
+    }
+    names = {name for name in names if name}
+    if not names:
         return ground_texture_cfg
 
     cfg = dict(ground_texture_cfg)
@@ -561,10 +577,12 @@ def _ground_texture_cfg_with_object_indices(
     for index, obj in enumerate(objects):
         obj_name = str(getattr(obj, "Name", "") or "")
         obj_label = str(getattr(obj, "Label", "") or "")
-        if object_name in {obj_name, obj_label}:
+        aliases = _object_name_aliases(obj)
+        if names.intersection(aliases):
             indices.append(index)
-            matched.add(obj_name)
-            matched.add(obj_label)
+            matched.update(aliases)
+    if not indices:
+        indices = _guess_ground_texture_indices(objects)
     cfg["object_indices"] = indices
 
     try:
@@ -572,13 +590,64 @@ def _ground_texture_cfg_with_object_indices(
         FreeCAD.Console.PrintMessage(
             LOG_PREFIX + "Ground texture object mapping: " + str(len(indices)) + " export objects matched\n"
         )
-        if object_name not in matched:
+        if not names.intersection(matched):
             FreeCAD.Console.PrintWarning(
-                LOG_PREFIX + "[WARN] Ground texture object not found in export geometry: " + object_name + "\n"
+                LOG_PREFIX
+                + "[WARN] Ground texture object not found in export geometry: "
+                + ", ".join(sorted(names))
+                + "\n"
             )
+            if indices:
+                FreeCAD.Console.PrintWarning(
+                    LOG_PREFIX + "[WARN] Using inferred ground texture target: " + _object_display_name(objects[indices[0]]) + "\n"
+                )
     except Exception:
         pass
     return cfg
+
+
+def _object_name_aliases(obj: object) -> set:
+    aliases = set()
+    for attr in ("Name", "Label"):
+        value = str(getattr(obj, attr, "") or "").strip()
+        if value:
+            aliases.add(value)
+    linked = getattr(obj, "LinkedObject", None)
+    if linked is not None and linked is not obj:
+        for attr in ("Name", "Label"):
+            value = str(getattr(linked, attr, "") or "").strip()
+            if value:
+                aliases.add(value)
+    return aliases
+
+
+def _object_display_name(obj: object) -> str:
+    label = str(getattr(obj, "Label", "") or "").strip()
+    name = str(getattr(obj, "Name", "") or "").strip()
+    if label and name and label != name:
+        return label + " (" + name + ")"
+    return label or name or "Unknown"
+
+
+def _guess_ground_texture_indices(objects: List[object]) -> List[int]:
+    scored = []
+    for index, obj in enumerate(objects):
+        score = _ground_texture_candidate_score(obj)
+        if score > 0:
+            scored.append((score, index))
+    if not scored:
+        return []
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    return [scored[0][1]]
+
+
+def _ground_texture_candidate_score(obj: object) -> int:
+    text = " ".join(_object_name_aliases(obj)).lower()
+    score = 0
+    for keyword, value in GROUND_TEXTURE_FALLBACK_KEYWORDS:
+        if keyword in text:
+            score = max(score, value)
+    return score
 
 
 def _apply_light_source_emissive_materials(scene, q, material_cfg: Optional[Dict[str, object]]) -> int:
@@ -707,9 +776,12 @@ def _copy_texture_asset(texture_path: Path, file_path: Path) -> str:
 
 
 def _apply_texture_to_shapes(node, q, texture_url: str, repeat_s: float, repeat_t: float, generate_uv: bool) -> int:
+    coord_defs = _collect_coordinate_defs(node)
     count = 0
     for shape in node.iter():
         if _local_name(shape.tag) != "Shape":
+            continue
+        if not _shape_has_textured_surface(shape):
             continue
         appearance = _ensure_shape_appearance(shape, q)
         _ensure_textured_material(appearance, q, count)
@@ -719,10 +791,37 @@ def _apply_texture_to_shapes(node, q, texture_url: str, repeat_s: float, repeat_
             ET.Element(q("ImageTexture"), {"url": _x3d_mfstring_url(texture_url), "repeatS": "true", "repeatT": "true"}),
         )
         if generate_uv:
-            _generate_planar_uv_for_shape(shape, q, 1.0, 1.0)
+            _generate_planar_uv_for_shape(shape, q, 1.0, 1.0, coord_defs)
         _ensure_texture_transform(appearance, q, repeat_s, repeat_t)
         count += 1
     return count
+
+
+def _collect_coordinate_defs(node) -> Dict[str, str]:
+    coord_defs: Dict[str, str] = {}
+    for child in node.iter():
+        if _local_name(child.tag) != "Coordinate":
+            continue
+        coord_def = str(child.attrib.get("DEF", "") or "").strip()
+        points = str(child.attrib.get("point", "") or "").strip()
+        if coord_def and points:
+            coord_defs[coord_def] = points
+    return coord_defs
+
+
+def _shape_has_textured_surface(shape) -> bool:
+    surface_nodes = {
+        "ElevationGrid",
+        "Extrusion",
+        "IndexedFaceSet",
+        "IndexedTriangleSet",
+        "TriangleSet",
+        "TriangleStripSet",
+    }
+    for child in list(shape):
+        if _local_name(child.tag) in surface_nodes:
+            return True
+    return False
 
 
 def _ensure_shape_appearance(shape, q):
@@ -769,7 +868,9 @@ def _ensure_texture_transform(appearance, q, scale_s: float, scale_t: float) -> 
     )
 
 
-def _generate_planar_uv_for_shape(shape, q, repeat_s: float, repeat_t: float) -> bool:
+def _generate_planar_uv_for_shape(
+    shape, q, repeat_s: float, repeat_t: float, coord_defs: Optional[Dict[str, str]] = None
+) -> bool:
     for geometry in list(shape):
         if _local_name(geometry.tag) != "IndexedFaceSet":
             continue
@@ -780,7 +881,11 @@ def _generate_planar_uv_for_shape(shape, q, repeat_s: float, repeat_t: float) ->
                 break
         if coord is None:
             continue
-        points = _parse_vec3_points(coord.attrib.get("point", ""))
+        point_text = coord.attrib.get("point", "")
+        if not point_text:
+            coord_use = str(coord.attrib.get("USE", "") or "").strip()
+            point_text = (coord_defs or {}).get(coord_use, "")
+        points = _parse_vec3_points(point_text)
         if not points:
             continue
         xs = [point[0] for point in points]

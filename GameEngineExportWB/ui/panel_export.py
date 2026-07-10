@@ -116,7 +116,7 @@ FreeCAD = __import__("FreeCAD")
 FreeCADGui = __import__("FreeCADGui")
 
 PARAM_GROUP = "User parameter:Plugins/GameEngineExportWB"
-DEBUG_VERSION = "2026-07-02-skybox-from-castle-path"
+DEBUG_VERSION = "2026-07-08-ground-texture-fallback"
 
 
 def _qt_button_mask(*buttons) -> int:
@@ -1616,9 +1616,13 @@ class ExportTaskPanel:
         }
 
     def _ground_texture_config(self, log: bool = False) -> dict:
+        object_name = self.ground_object_line.text().strip()
+        doc = FreeCAD.ActiveDocument
+        target_obj = self._find_ground_texture_object(doc, object_name)
         cfg = {
             "enabled": bool(self.chk_ground_texture.isChecked()),
-            "object_name": self.ground_object_line.text().strip(),
+            "object_name": object_name,
+            "object_label": str(getattr(target_obj, "Label", "") or "") if target_obj is not None else "",
             "texture_path": self.ground_texture_line.text().strip(),
             "repeat_s": float(self.spin_ground_repeat_s.value()),
             "repeat_t": float(self.spin_ground_repeat_t.value()),
@@ -1627,6 +1631,12 @@ class ExportTaskPanel:
         if log and cfg["enabled"]:
             if not cfg["object_name"]:
                 FreeCAD.Console.PrintWarning("[GAMEEXPORT][WARN] Ground texture enabled without object.\n")
+            elif target_obj is None:
+                FreeCAD.Console.PrintWarning(
+                    "[GAMEEXPORT][WARN] Ground texture object not found in document: "
+                    + cfg["object_name"]
+                    + "; exporter will try inferred terrain target.\n"
+                )
             if not cfg["texture_path"]:
                 FreeCAD.Console.PrintWarning("[GAMEEXPORT][WARN] Ground texture enabled without texture file.\n")
             elif not os.path.isfile(cfg["texture_path"]):
@@ -1685,7 +1695,21 @@ class ExportTaskPanel:
         if not os.path.isfile(texture_path):
             self.ground_texture_status_label.setText("Archivo de textura no encontrado")
             return
+        if self._find_ground_texture_object(FreeCAD.ActiveDocument, object_name) is None:
+            self.ground_texture_status_label.setText("Objeto suelo no encontrado; se intentara detectar terreno")
+            return
         self.ground_texture_status_label.setText("Textura lista para aplicar al X3D")
+
+    def _find_ground_texture_object(self, doc, object_name):
+        if doc is None or not object_name:
+            return None
+        obj = doc.getObject(object_name)
+        if obj is not None:
+            return obj
+        for candidate in getattr(doc, "Objects", []):
+            if str(getattr(candidate, "Label", "") or "") == object_name:
+                return candidate
+        return None
 
     def _point_light_options_config(self) -> dict:
         shadows = bool(self.chk_pointlight_shadows.isChecked())

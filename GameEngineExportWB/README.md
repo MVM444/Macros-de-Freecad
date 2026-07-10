@@ -41,6 +41,28 @@ Version inicial 0.1.0 (2025-10-13 13:54 UTC). Solo contiene la estructura base y
 
 Abre el comando **GameEngineExport Open** para mostrar el panel principal. Desde ahi puedes elegir la raiz de la escena, listas de objetos, marcador GameStart, iluminacion, cielo de Castle Viewer, materiales X3D y carpeta de salida.
 
+El comando **Ejemplo rapido / Quick Example** (`GameEngineExport_QuickExample_*`) genera una casa u oficina de prueba con sketches, `Arch Wall`, buques de puertas/ventanas, terreno irregular y losa de piso. Sirve para crear escenas BIM rapidas cuando se quiere probar exportacion sin preparar un modelo manualmente.
+
+Los sketches quedan como fuente parametrica:
+
+- `GEE_SK_ExteriorWalls`
+- `GEE_SK_InteriorWalls`
+- `GEE_SK_DoorOpenings`
+- `GEE_SK_WindowOpenings`
+
+Las paredes se crean con `Arch.makeWall(...)` desde esos sketches. Los buques se crean como cutters parametricos enlazados a los sketches de puertas y ventanas, y se asignan como `Subtractions` de los muros.
+
+El grupo `SiteAndFloors` incluye:
+
+- `GEE_Terrain_Irregular`: terreno triangulado no plano para probar exportacion de suelo, sombras y textura.
+- `GEE_Building_Floor_Slab`: losa/piso del edificio, elevada sobre el terreno y con sobresaliente visible. Si `Arch.makeStructure` esta disponible, se genera como estructura BIM; si no, queda como solido `Part`.
+
+El panel permite activar `Aplanar terreno bajo edificio`. Con esa opcion, el area de la casa/oficina y un margen configurable quedan en una plataforma horizontal real dentro de la malla del terreno; si se desactiva, el relieve continua bajo la huella del edificio.
+
+El generador tambien crea `AI_Contexto_QuickExample`, un `App::TextDocument` con JSON del ejemplo: dimensiones, semilla, recintos aproximados, sketches, muros, buques, terreno, losa y objetos creados. La opcion `Copiar contexto JSON al portapapeles` copia ese JSON al generar.
+
+El comando **Puertas y ventanas BIM** agrega objetos de puerta/ventana sobre el ultimo `GEE_QuickExample_*`. Lee los sketches `GEE_SK_DoorOpenings` y `GEE_SK_WindowOpenings`, intenta crear objetos con `Arch.makeWindow(...)` y agrega hojas de puerta abiertas a 90 grados para pruebas visuales y de exportacion.
+
 ## Materiales e iluminacion interior
 
 En la pestana **Iluminacion / Lighting**, marca **Mejorar iluminacion interior / Improve interior lighting** y usa **Architectural** o **Bright** para interiores cerrados. Este ajuste solo modifica el X3D exportado mediante atributos `ambientIntensity`, `emissiveColor` y `shininess`; no cambia los materiales del archivo `.FCStd`.
@@ -67,6 +89,8 @@ En la pestana **Texturas / Textures**, puedes seleccionar el objeto suelo existe
 
 La textura se copia a `<BaseName>_assets/textures/` y se referencia con ruta relativa. El repetido se aplica con `TextureTransform scale="S T"`. Si **Generar UV planar XY / Generate planar XY UV** esta activo, el exportador crea `TextureCoordinate` desde las coordenadas X/Y del objeto para estabilizar el mapeo sobre el suelo.
 
+Si el objeto guardado ya no existe en el documento actual, el panel lo avisa y el exportador intenta usar un objetivo de terreno por nombre, por ejemplo `terrain`, `ground`, `suelo`, `grass`, `floor` o `slab`. Esto cubre casos donde FreeCAD cambia el objeto exportado despues de regenerar un ejemplo o un compound.
+
 ## Herramienta Add Light Properties
 
 El comando **Agregar propiedades a luz** (`GameEngineExport_AddLightProperties`) permite seleccionar una luminaria master o una instancia `App::Link`. Si se selecciona un Link, el comando resuelve el master y guarda alli las propiedades `CGE_Light*`; el Link no se modifica.
@@ -81,8 +105,12 @@ La vista previa crea objetos temporales `CGE_TempLightPreview*`, que se excluyen
 - `core/`: modulos para exportar, manejar luces, persistencia y utilidades.
 - `ui/`: paneles TaskPanel de escena, configuracion y texto informativo.
 - `commands/`: comando principal GameEngineExport_Open.
+- `core/quick_examples.py`: generador de ejemplos rapidos con Sketcher y Arch Wall.
+- `macros/AgregarPuertasVentanasBIM_QuickExample.FCMacro`: macro usada por el comando de puertas y ventanas BIM.
 - `resources/icons/gameexport.svg`: icono del workbench.
 - `resources/icons/add_light_properties.svg`: icono del comando para propiedades de luz.
+- `resources/icons/quick_example.svg`: icono del comando de ejemplo rapido.
+- `resources/icons/bim_doors_windows.svg`: icono del comando para puertas y ventanas BIM.
 - `notes/GameEngineExportWB_chat.md`: registro de conversaciones y decisiones relevantes.
 - `notes/add_light_properties.md`: nota tecnica del comando de propiedades de luz.
 - `notes/environment_skybox.md`: nota tecnica de cielo cubemap X3D.

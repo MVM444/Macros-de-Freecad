@@ -18,6 +18,8 @@ The **Texturas / Textures** tab can apply an image texture to an existing export
 - The same `Appearance` receives a `TextureTransform` using Repeat S/T as scale.
 - The material is set to white diffuse color so the texture color is visible.
 - When planar UV is enabled, the exporter adds normalized `TextureCoordinate` to each `IndexedFaceSet` shape using the exported object's X/Y coordinates.
+- `Coordinate USE` references are resolved during postprocess when possible.
+- If the saved object name no longer exists in the export list, the exporter can infer a terrain target by name.
 - Paths are written relative to the X3D file.
 
 ## Sidecar
@@ -40,3 +42,5 @@ The document sidecar stores:
 ## Notes
 
 Planar UV uses X/Y because FreeCAD geometry is exported before the global FreeCAD Z-up to X3D Y-up transform is applied. This maps the typical FreeCAD ground plane to Castle's ground plane after the exporter transform.
+
+The texture pass is limited to surface geometry. `PointSet` and line-only shapes are ignored so helper outlines are not textured.
