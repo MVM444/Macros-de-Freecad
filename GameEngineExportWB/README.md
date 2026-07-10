@@ -75,6 +75,7 @@ Reglas de ventana:
 - La cota `Z` del sketch o de la linea seleccionada se usa como base/antepecho de la ventana.
 - La altura de ventana se indica en un dialogo.
 - Si el sketch contiene geometria con variacion vertical suficiente en `Z`, la macro puede deducir la altura del buque.
+- La macro genera un sketch rectangular de perfil por cada buque y llama `Arch.makeWindow(baseobj=perfil_sketch, parts=...)`, replicando el flujo de la herramienta BIM `Arch_Window`.
 
 ## Materiales e iluminacion interior
 

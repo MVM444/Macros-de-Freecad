@@ -3,8 +3,8 @@
 This helper is intentionally independent from GameEngineExport quick examples.
 The selected sketch must contain line segments representing centerlines of
 openings. Door mode creates visible leaves opened at 90 degrees. Window mode
-creates a simple glass panel. Both modes try Arch.makeWindow first and fall
-back to Part geometry when Arch/BIM rejects the generated profile.
+creates a simple glass panel. Both modes create an Arch Window object from a
+generated Sketcher profile, matching the BIM/Arch Window command workflow.
 """
 
 from __future__ import annotations
@@ -201,50 +201,99 @@ def _ask_window_height(sketch):
     return float(height_spin.value()), False
 
 
-def _make_profile_face(p1, p2, z0, height):
-    a = FreeCAD.Vector(p1.x, p1.y, z0)
-    b = FreeCAD.Vector(p2.x, p2.y, z0)
-    c = FreeCAD.Vector(p2.x, p2.y, z0 + height)
-    d = FreeCAD.Vector(p1.x, p1.y, z0 + height)
-    return Part.Face(Part.makePolygon([a, b, c, d, a]))
+def _add_rect(sketch, x0, y0, width, height):
+    pts = [
+        FreeCAD.Vector(x0, y0, 0),
+        FreeCAD.Vector(x0 + width, y0, 0),
+        FreeCAD.Vector(x0 + width, y0 + height, 0),
+        FreeCAD.Vector(x0, y0 + height, 0),
+    ]
+    for a, b in ((0, 1), (1, 2), (2, 3), (3, 0)):
+        sketch.addGeometry(Part.LineSegment(pts[a], pts[b]), False)
 
 
-def _make_base_profile(doc, group, name, p1, p2, z0, height, source_sketch, color):
-    obj = doc.addObject("Part::Feature", _safe_name(name))
+def _make_profile_sketch(doc, group, name, p1, p2, z0, height, mode, source_sketch, color):
+    info = _segment_info(p1, p2)
+    if info is None:
+        raise RuntimeError("Segmento invalido para crear perfil BIM.")
+    length = float(info["length"])
+    angle_deg = math.degrees(math.atan2(p2.y - p1.y, p2.x - p1.x))
+    profile = doc.addObject("Sketcher::SketchObject", _safe_name(name))
+    profile.Label = name
+
+    # Local X follows the buque centerline; local Y is vertical global Z.
+    rot_x_to_vertical = FreeCAD.Rotation(FreeCAD.Vector(1, 0, 0), 90)
+    rot_z_to_segment = FreeCAD.Rotation(FreeCAD.Vector(0, 0, 1), angle_deg)
+    profile.Placement = FreeCAD.Placement(
+        FreeCAD.Vector(p1.x, p1.y, z0),
+        rot_z_to_segment.multiply(rot_x_to_vertical),
+    )
+    _add_rect(profile, 0.0, 0.0, length, height)
+    if mode == "windows":
+        inset = max(10.0, min(100.0, length * 0.12, height * 0.12))
+        if length > inset * 2.0 and height > inset * 2.0:
+            _add_rect(profile, inset, inset, length - inset * 2.0, height - inset * 2.0)
+
+    group.addObject(profile)
+    _set_prop(profile, "App::PropertyString", "GEE_Role", "GameEngineExport", "Rol GameEngineExport", "bim_arch_window_profile_sketch")
+    _set_prop(profile, "App::PropertyString", "GEE_BIMTool", "GameEngineExport", "Herramienta BIM usada", "Arch_Window")
+    _set_prop(profile, "App::PropertyLink", "SourceSketch", "GameEngineExport", "Sketch fuente", source_sketch)
+    _set_prop(profile, "App::PropertyFloat", "Width_mm", "GameEngineExport", "Ancho", length)
+    _set_prop(profile, "App::PropertyFloat", "Height_mm", "GameEngineExport", "Altura", float(height))
+    _set_view(profile, color=color, transparency=0)
+    return profile, length
+
+
+def _window_parts(mode):
+    if mode == "doors":
+        return ["DoorPanel", "Solid panel", "Wire0", "40", "0"]
+    return [
+        "Frame",
+        "Frame",
+        "Wire0,Wire1",
+        "60",
+        "0",
+        "Glass",
+        "Glass panel",
+        "Wire1",
+        "10",
+        "25",
+    ]
+
+
+def _make_arch_window(doc, group, name, base, role, width, height, sill, open_percent, color, mode):
+    if Arch is None or not hasattr(Arch, "makeWindow"):
+        raise RuntimeError("Arch.makeWindow no esta disponible. Active el workbench BIM/Arch.")
+
+    parts = _window_parts(mode)
+    try:
+        obj = Arch.makeWindow(baseobj=base, parts=parts, name=_safe_name(name))
+    except TypeError:
+        obj = Arch.makeWindow(base, None, None, parts, _safe_name(name))
+
+    group.addObject(obj)
     obj.Label = name
-    obj.Shape = _make_profile_face(p1, p2, z0, height)
-    group.addObject(obj)
-    _set_prop(obj, "App::PropertyString", "GEE_Role", "GameEngineExport", "Rol GameEngineExport", "bim_opening_profile")
-    _set_prop(obj, "App::PropertyLink", "SourceSketch", "GameEngineExport", "Sketch fuente", source_sketch)
-    _set_view(obj, color=color, transparency=85)
-    return obj
-
-
-def _make_arch_window_or_fallback(doc, group, name, base, role, height, sill, open_percent, color):
-    obj = None
-    if Arch is not None and hasattr(Arch, "makeWindow"):
+    try:
+        obj.Width = float(width)
+    except Exception:
+        pass
+    try:
+        obj.Height = float(height)
+    except Exception:
+        pass
+    if mode == "doors":
         try:
-            obj = Arch.makeWindow(base, name=_safe_name(name))
-        except TypeError:
-            try:
-                obj = Arch.makeWindow(base)
-            except Exception:
-                obj = None
+            obj.IfcType = "Door"
         except Exception:
-            obj = None
-
-    if obj is None:
-        obj = doc.addObject("Part::Feature", _safe_name(name + "_Fallback"))
-        obj.Label = name
-        obj.Shape = base.Shape
-        _set_prop(obj, "App::PropertyBool", "GEE_BIMFallback", "GameEngineExport", "Arch.makeWindow no disponible", True)
-    else:
-        obj.Label = name
-
-    group.addObject(obj)
+            pass
+    elif mode == "windows":
+        try:
+            obj.IfcType = "Window"
+        except Exception:
+            pass
     _set_prop(obj, "App::PropertyString", "GEE_Role", "GameEngineExport", "Rol GameEngineExport", role)
     _set_prop(obj, "App::PropertyString", "GEE_BIMType", "GameEngineExport", "Tipo BIM", role)
-    _set_prop(obj, "App::PropertyString", "GEE_BIMTool", "GameEngineExport", "Herramienta BIM usada", "Arch.makeWindow")
+    _set_prop(obj, "App::PropertyString", "GEE_BIMTool", "GameEngineExport", "Herramienta BIM usada", "Arch_Window")
     _set_prop(obj, "App::PropertyLink", "GEE_BaseProfile", "GameEngineExport", "Perfil base", base)
     _set_prop(obj, "App::PropertyFloat", "Height_mm", "GameEngineExport", "Altura", float(height))
     _set_prop(obj, "App::PropertyFloat", "Sill_mm", "GameEngineExport", "Antepecho", float(sill))
@@ -320,7 +369,7 @@ def _make_group(doc, sketch, mode):
     group.Label = label
     _set_prop(group, "App::PropertyLink", "SourceSketch", "GameEngineExport", "Sketch fuente", sketch)
     _set_prop(group, "App::PropertyString", "GEE_Role", "GameEngineExport", "Rol GameEngineExport", mode + "_from_selected_sketch")
-    _set_prop(group, "App::PropertyString", "GEE_BIMTool", "GameEngineExport", "Herramienta BIM usada", "Arch.makeWindow")
+    _set_prop(group, "App::PropertyString", "GEE_BIMTool", "GameEngineExport", "Herramienta BIM usada", "Arch_Window")
     return group
 
 
@@ -351,27 +400,31 @@ def run(mode):
         for index, p1, p2 in segments:
             if mode == "doors":
                 z_base = _segment_base_z(p1, p2)
-                base = _make_base_profile(
+                base, width = _make_profile_sketch(
                     doc,
                     group,
-                    "BIM_Door_Profile_%02d" % (index + 1),
+                    "BIM_Door_ArchWindow_Profile_%02d" % (index + 1),
                     p1,
                     p2,
                     z_base,
                     DEFAULT_DOOR_HEIGHT,
+                    "doors",
                     sketch,
                     (0.85, 0.35, 0.10),
                 )
-                opening = _make_arch_window_or_fallback(
+                doc.recompute()
+                opening = _make_arch_window(
                     doc,
                     group,
                     "BIM_Door_Open100_%02d" % (index + 1),
                     base,
                     "bim_door_open_100",
+                    width,
                     DEFAULT_DOOR_HEIGHT,
                     z_base,
                     100.0,
                     (0.85, 0.35, 0.10),
+                    "doors",
                 )
                 leaf = _make_open_door_leaf(
                     doc,
@@ -387,27 +440,31 @@ def run(mode):
                         _set_prop(obj, "App::PropertyLink", "SourceSketch", "GameEngineExport", "Sketch fuente", sketch)
             else:
                 sill = _segment_base_z(p1, p2)
-                base = _make_base_profile(
+                base, width = _make_profile_sketch(
                     doc,
                     group,
-                    "BIM_Window_Profile_%02d" % (index + 1),
+                    "BIM_Window_ArchWindow_Profile_%02d" % (index + 1),
                     p1,
                     p2,
                     sill,
                     window_height,
+                    "windows",
                     sketch,
                     (0.12, 0.62, 0.88),
                 )
-                opening = _make_arch_window_or_fallback(
+                doc.recompute()
+                opening = _make_arch_window(
                     doc,
                     group,
                     "BIM_Window_%02d" % (index + 1),
                     base,
                     "bim_window",
+                    width,
                     window_height,
                     sill,
                     0.0,
                     (0.12, 0.62, 0.88),
+                    "windows",
                 )
                 glass = _make_window_glass(doc, group, "BIM_Window_Glass_%02d" % (index + 1), p1, p2, sill, window_height)
                 for obj in (opening, glass):
