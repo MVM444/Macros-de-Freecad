@@ -304,7 +304,8 @@ def _make_arch_window(doc, group, name, base, role, width, height, sill, open_pe
                 setattr(obj, attr, float(open_percent))
             except Exception:
                 pass
-    _set_view(obj, color=color, transparency=0 if role.startswith("bim_door") else 35)
+    # Keep the BIM object opaque; transparency here affects frames too.
+    _set_view(obj, color=color, transparency=0)
     return obj
 
 
