@@ -68,7 +68,13 @@ Para proyectos que no vienen del Quick Example existen macros genericas:
 - `CrearPuertasBIMDesdeSketch.FCMacro`: convierte el sketch seleccionado en puertas BIM/visuales con hojas abiertas a 90 grados.
 - `CrearVentanasBIMDesdeSketch.FCMacro`: convierte el sketch seleccionado en ventanas BIM/visuales con panel de vidrio simple.
 
-En ambos casos el sketch debe contener lineas de centro de los buques. No dependen de nombres `GEE_*` ni de grupos del generador.
+En ambos casos el sketch debe contener lineas de centro de los buques. No dependen de nombres `GEE_*` ni de grupos del generador. Las macros usan una transaccion de FreeCAD, por lo que `Ctrl+Z` elimina el conjunto completo creado.
+
+Reglas de ventana:
+
+- La cota `Z` del sketch o de la linea seleccionada se usa como base/antepecho de la ventana.
+- La altura de ventana se indica en un dialogo.
+- Si el sketch contiene geometria con variacion vertical suficiente en `Z`, la macro puede deducir la altura del buque.
 
 ## Materiales e iluminacion interior
 

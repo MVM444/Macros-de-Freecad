@@ -21,6 +21,11 @@ except Exception:  # pragma: no cover - FreeCAD runtime only
     FreeCADGui = None
 
 try:
+    from PySide import QtGui
+except Exception:  # pragma: no cover - FreeCAD runtime only
+    QtGui = None
+
+try:
     import Arch
 except Exception:  # pragma: no cover - FreeCAD runtime only
     Arch = None
@@ -33,6 +38,7 @@ DEFAULT_DOOR_LEAF_THICKNESS = 45.0
 DEFAULT_WINDOW_SILL = 900.0
 DEFAULT_WINDOW_HEIGHT = 1200.0
 DEFAULT_GLASS_THICKNESS = 30.0
+MIN_DEDUCED_WINDOW_HEIGHT = 300.0
 
 
 def _msg(text):
@@ -118,6 +124,83 @@ def _segment_info(p1, p2):
     }
 
 
+def _segment_base_z(p1, p2):
+    return (float(p1.z) + float(p2.z)) / 2.0
+
+
+def _world_points(sketch):
+    placement = getattr(sketch, "Placement", FreeCAD.Placement())
+    points = []
+    for geo in list(getattr(sketch, "Geometry", []) or []):
+        for attr in ("StartPoint", "EndPoint", "Center"):
+            if hasattr(geo, attr):
+                try:
+                    points.append(placement.multVec(getattr(geo, attr)))
+                except Exception:
+                    pass
+    return points
+
+
+def _deduce_window_height_from_sketch(sketch):
+    points = _world_points(sketch)
+    if not points:
+        return None
+    zs = [float(point.z) for point in points]
+    z_span = max(zs) - min(zs)
+    if z_span >= MIN_DEDUCED_WINDOW_HEIGHT:
+        return z_span
+    for attr in ("WindowHeight_mm", "Height_mm", "OpeningHeight_mm"):
+        if hasattr(sketch, attr):
+            try:
+                value = float(getattr(sketch, attr))
+                if value > 0:
+                    return value
+            except Exception:
+                pass
+    return None
+
+
+def _ask_window_height(sketch):
+    deduced = _deduce_window_height_from_sketch(sketch)
+    default_height = float(deduced or DEFAULT_WINDOW_HEIGHT)
+    if QtGui is None:
+        return default_height, bool(deduced)
+
+    dialog = QtGui.QDialog()
+    dialog.setWindowTitle("Ventanas BIM desde sketch")
+    layout = QtGui.QVBoxLayout(dialog)
+    form = QtGui.QFormLayout()
+
+    height_spin = QtGui.QDoubleSpinBox()
+    height_spin.setRange(100.0, 10000.0)
+    height_spin.setDecimals(0)
+    height_spin.setSingleStep(100.0)
+    height_spin.setValue(default_height)
+    form.addRow("Altura ventana mm", height_spin)
+
+    deduce_check = QtGui.QCheckBox("Deducir altura del buque si el sketch lo permite")
+    deduce_check.setChecked(deduced is not None)
+    deduce_check.setEnabled(deduced is not None)
+    form.addRow("", deduce_check)
+
+    base_label = QtGui.QLabel("La cota Z del sketch/linea se usara como base o antepecho.")
+    form.addRow("", base_label)
+    if deduced is not None:
+        form.addRow("Altura deducida mm", QtGui.QLabel(str(round(deduced, 1))))
+
+    layout.addLayout(form)
+    buttons = QtGui.QDialogButtonBox(QtGui.QDialogButtonBox.Ok | QtGui.QDialogButtonBox.Cancel)
+    buttons.accepted.connect(dialog.accept)
+    buttons.rejected.connect(dialog.reject)
+    layout.addWidget(buttons)
+
+    if dialog.exec_() != QtGui.QDialog.Accepted:
+        raise RuntimeError("Operacion cancelada.")
+    if deduce_check.isChecked() and deduced is not None:
+        return float(deduced), True
+    return float(height_spin.value()), False
+
+
 def _make_profile_face(p1, p2, z0, height):
     a = FreeCAD.Vector(p1.x, p1.y, z0)
     b = FreeCAD.Vector(p2.x, p2.y, z0)
@@ -161,6 +244,7 @@ def _make_arch_window_or_fallback(doc, group, name, base, role, height, sill, op
     group.addObject(obj)
     _set_prop(obj, "App::PropertyString", "GEE_Role", "GameEngineExport", "Rol GameEngineExport", role)
     _set_prop(obj, "App::PropertyString", "GEE_BIMType", "GameEngineExport", "Tipo BIM", role)
+    _set_prop(obj, "App::PropertyString", "GEE_BIMTool", "GameEngineExport", "Herramienta BIM usada", "Arch.makeWindow")
     _set_prop(obj, "App::PropertyLink", "GEE_BaseProfile", "GameEngineExport", "Perfil base", base)
     _set_prop(obj, "App::PropertyFloat", "Height_mm", "GameEngineExport", "Altura", float(height))
     _set_prop(obj, "App::PropertyFloat", "Sill_mm", "GameEngineExport", "Antepecho", float(sill))
@@ -191,7 +275,7 @@ def _door_open_direction(info, p1):
     return 1.0 if int(p1.y / 1000.0) % 2 else -1.0
 
 
-def _make_open_door_leaf(doc, group, name, p1, p2, height):
+def _make_open_door_leaf(doc, group, name, p1, p2, z_base, height):
     info = _segment_info(p1, p2)
     if info is None:
         return None
@@ -202,11 +286,11 @@ def _make_open_door_leaf(doc, group, name, p1, p2, height):
     if info["horizontal"]:
         x0 = hinge.x - thickness / 2.0
         y0 = hinge.y if open_dir > 0 else hinge.y - leaf_width
-        shape = Part.makeBox(thickness, leaf_width, height, FreeCAD.Vector(x0, y0, 0.0))
+        shape = Part.makeBox(thickness, leaf_width, height, FreeCAD.Vector(x0, y0, z_base))
     else:
         x0 = hinge.x if open_dir > 0 else hinge.x - leaf_width
         y0 = hinge.y - thickness / 2.0
-        shape = Part.makeBox(leaf_width, thickness, height, FreeCAD.Vector(x0, y0, 0.0))
+        shape = Part.makeBox(leaf_width, thickness, height, FreeCAD.Vector(x0, y0, z_base))
     leaf = _make_box(doc, group, name, shape, "door_leaf_open_90_visual", (0.55, 0.28, 0.10), transparency=0)
     _set_prop(leaf, "App::PropertyFloat", "GEE_OpeningAngle_deg", "GameEngineExport", "Angulo de apertura", 90.0)
     _set_prop(leaf, "App::PropertyFloat", "GEE_OpeningPercent", "GameEngineExport", "Apertura porcentual", 100.0)
@@ -236,6 +320,7 @@ def _make_group(doc, sketch, mode):
     group.Label = label
     _set_prop(group, "App::PropertyLink", "SourceSketch", "GameEngineExport", "Sketch fuente", sketch)
     _set_prop(group, "App::PropertyString", "GEE_Role", "GameEngineExport", "Rol GameEngineExport", mode + "_from_selected_sketch")
+    _set_prop(group, "App::PropertyString", "GEE_BIMTool", "GameEngineExport", "Herramienta BIM usada", "Arch.makeWindow")
     return group
 
 
@@ -250,66 +335,95 @@ def run(mode):
     if not segments:
         raise RuntimeError("El sketch seleccionado no tiene lineas validas.")
 
-    group = _make_group(doc, sketch, mode)
-    created = 0
-    for index, p1, p2 in segments:
-        if mode == "doors":
-            base = _make_base_profile(
-                doc,
-                group,
-                "BIM_Door_Profile_%02d" % (index + 1),
-                p1,
-                p2,
-                0.0,
-                DEFAULT_DOOR_HEIGHT,
-                sketch,
-                (0.85, 0.35, 0.10),
-            )
-            opening = _make_arch_window_or_fallback(
-                doc,
-                group,
-                "BIM_Door_Open100_%02d" % (index + 1),
-                base,
-                "bim_door_open_100",
-                DEFAULT_DOOR_HEIGHT,
-                0.0,
-                100.0,
-                (0.85, 0.35, 0.10),
-            )
-            leaf = _make_open_door_leaf(doc, group, "BIM_Door_Leaf_Open90_%02d" % (index + 1), p1, p2, DEFAULT_DOOR_HEIGHT - 50.0)
-            for obj in (opening, leaf):
-                if obj is not None:
-                    _set_prop(obj, "App::PropertyLink", "SourceSketch", "GameEngineExport", "Sketch fuente", sketch)
-        else:
-            base = _make_base_profile(
-                doc,
-                group,
-                "BIM_Window_Profile_%02d" % (index + 1),
-                p1,
-                p2,
-                DEFAULT_WINDOW_SILL,
-                DEFAULT_WINDOW_HEIGHT,
-                sketch,
-                (0.12, 0.62, 0.88),
-            )
-            opening = _make_arch_window_or_fallback(
-                doc,
-                group,
-                "BIM_Window_%02d" % (index + 1),
-                base,
-                "bim_window",
-                DEFAULT_WINDOW_HEIGHT,
-                DEFAULT_WINDOW_SILL,
-                0.0,
-                (0.12, 0.62, 0.88),
-            )
-            glass = _make_window_glass(doc, group, "BIM_Window_Glass_%02d" % (index + 1), p1, p2, DEFAULT_WINDOW_SILL, DEFAULT_WINDOW_HEIGHT)
-            for obj in (opening, glass):
-                if obj is not None:
-                    _set_prop(obj, "App::PropertyLink", "SourceSketch", "GameEngineExport", "Sketch fuente", sketch)
-        created += 1
+    window_height = DEFAULT_WINDOW_HEIGHT
+    window_height_deduced = False
+    if mode == "windows":
+        window_height, window_height_deduced = _ask_window_height(sketch)
 
-    doc.recompute()
+    transaction_name = "Crear puertas BIM desde sketch" if mode == "doors" else "Crear ventanas BIM desde sketch"
+    doc.openTransaction(transaction_name)
+    try:
+        group = _make_group(doc, sketch, mode)
+        if mode == "windows":
+            _set_prop(group, "App::PropertyFloat", "WindowHeight_mm", "GameEngineExport", "Altura ventana", float(window_height))
+            _set_prop(group, "App::PropertyBool", "WindowHeightDeduced", "GameEngineExport", "Altura deducida", bool(window_height_deduced))
+        created = 0
+        for index, p1, p2 in segments:
+            if mode == "doors":
+                z_base = _segment_base_z(p1, p2)
+                base = _make_base_profile(
+                    doc,
+                    group,
+                    "BIM_Door_Profile_%02d" % (index + 1),
+                    p1,
+                    p2,
+                    z_base,
+                    DEFAULT_DOOR_HEIGHT,
+                    sketch,
+                    (0.85, 0.35, 0.10),
+                )
+                opening = _make_arch_window_or_fallback(
+                    doc,
+                    group,
+                    "BIM_Door_Open100_%02d" % (index + 1),
+                    base,
+                    "bim_door_open_100",
+                    DEFAULT_DOOR_HEIGHT,
+                    z_base,
+                    100.0,
+                    (0.85, 0.35, 0.10),
+                )
+                leaf = _make_open_door_leaf(
+                    doc,
+                    group,
+                    "BIM_Door_Leaf_Open90_%02d" % (index + 1),
+                    p1,
+                    p2,
+                    z_base,
+                    DEFAULT_DOOR_HEIGHT - 50.0,
+                )
+                for obj in (opening, leaf):
+                    if obj is not None:
+                        _set_prop(obj, "App::PropertyLink", "SourceSketch", "GameEngineExport", "Sketch fuente", sketch)
+            else:
+                sill = _segment_base_z(p1, p2)
+                base = _make_base_profile(
+                    doc,
+                    group,
+                    "BIM_Window_Profile_%02d" % (index + 1),
+                    p1,
+                    p2,
+                    sill,
+                    window_height,
+                    sketch,
+                    (0.12, 0.62, 0.88),
+                )
+                opening = _make_arch_window_or_fallback(
+                    doc,
+                    group,
+                    "BIM_Window_%02d" % (index + 1),
+                    base,
+                    "bim_window",
+                    window_height,
+                    sill,
+                    0.0,
+                    (0.12, 0.62, 0.88),
+                )
+                glass = _make_window_glass(doc, group, "BIM_Window_Glass_%02d" % (index + 1), p1, p2, sill, window_height)
+                for obj in (opening, glass):
+                    if obj is not None:
+                        _set_prop(obj, "App::PropertyLink", "SourceSketch", "GameEngineExport", "Sketch fuente", sketch)
+            created += 1
+
+        doc.recompute()
+        doc.commitTransaction()
+    except Exception:
+        try:
+            doc.abortTransaction()
+        except Exception:
+            pass
+        raise
+
     if FreeCADGui is not None:
         try:
             FreeCADGui.Selection.clearSelection()
