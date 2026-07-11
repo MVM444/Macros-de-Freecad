@@ -75,6 +75,18 @@ Hay un ejemplo en `examples/json/quick_example_house_sample.json`.
 
 El comando **Puertas y ventanas BIM** agrega objetos de puerta/ventana sobre el ultimo `GEE_QuickExample_*`. Lee los sketches `GEE_SK_DoorOpenings` y `GEE_SK_WindowOpenings`, intenta crear objetos con `Arch.makeWindow(...)` y agrega hojas de puerta abiertas a 90 grados para pruebas visuales y de exportacion.
 
+El comando **Agregar techo / Add Roof** agrega un techo sencillo al ultimo `GEE_QuickExample_*` generado o importado desde JSON. Lee `GEE_ContextJSON` cuando esta disponible, toma `width_mm`, `depth_mm`, `wall_height_mm` y los segmentos exteriores, y crea un techo a dos aguas como solido `Part::Feature` exportable a X3D. Internamente ejecuta `macros/AgregarTechoBIM_QuickExample.FCMacro`.
+
+Parametros iniciales del techo:
+
+- Tipo: dos aguas con cumbrera longitudinal.
+- Alero: `600 mm`.
+- Altura de cumbrera: `1800 mm` sobre la altura de muro.
+- Espesor: `120 mm`.
+- Material visual: teja oscura.
+
+Por ahora no usa un objeto techo BIM complejo. Queda etiquetado con propiedades `GEE_Role = roof`, `IfcType = Roof`, `GEE_QuickExampleObject = True` y `GEE_BIMFallback = True` para exportacion, filtrado y futuras conversiones BIM.
+
 Para proyectos que no vienen del Quick Example existen macros genericas:
 
 - `CrearPuertasBIMDesdeSketch.FCMacro`: convierte el sketch seleccionado en puertas `Arch_Window` con `IfcType = Door` y apertura nativa `Opening = 100`.
@@ -134,6 +146,7 @@ La vista previa crea objetos temporales `CGE_TempLightPreview*`, que se excluyen
 - `core/quick_examples.py`: generador de ejemplos rapidos con Sketcher y Arch Wall.
 - `core/json_importer.py`: lectura, validacion y reconstruccion de Quick Example desde JSON.
 - `macros/AgregarPuertasVentanasBIM_QuickExample.FCMacro`: macro usada por el comando de puertas y ventanas BIM.
+- `macros/AgregarTechoBIM_QuickExample.FCMacro`: macro independiente para agregar un techo simple exportable al ultimo Quick Example.
 - `macros/bim_from_selected_sketch.py`: base reutilizable para crear puertas o ventanas desde el sketch seleccionado.
 - `macros/CrearPuertasBIMDesdeSketch.FCMacro`: macro generica de puertas desde sketch seleccionado.
 - `macros/CrearVentanasBIMDesdeSketch.FCMacro`: macro generica de ventanas desde sketch seleccionado.
@@ -142,6 +155,7 @@ La vista previa crea objetos temporales `CGE_TempLightPreview*`, que se excluyen
 - `resources/icons/quick_example.svg`: icono del comando de ejemplo rapido.
 - `resources/icons/import_json_example.svg`: icono del comando para importar JSON.
 - `resources/icons/bim_doors_windows.svg`: icono del comando para puertas y ventanas BIM.
+- `resources/icons/quick_example_roof.svg`: icono del comando para agregar techo simple.
 - `examples/json/quick_example_house_sample.json`: payload de prueba para importacion JSON.
 - `notes/GameEngineExportWB_chat.md`: registro de conversaciones y decisiones relevantes.
 - `notes/add_light_properties.md`: nota tecnica del comando de propiedades de luz.
