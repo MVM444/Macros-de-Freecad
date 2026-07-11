@@ -811,34 +811,36 @@ def _office_segments(width: float, depth: float, rng: random.Random) -> Dict:
     }
 
 
-def generate_quick_example(options: Optional[Dict] = None):
-    """Generate a quick Arch Wall example scene and return the root group."""
+def _generate_quick_example_from_data(
+    doc,
+    building_type: str,
+    variant: str,
+    seed: int,
+    dimensions: Dict,
+    terrain: Dict,
+    segments: Dict,
+    rooms: Optional[Sequence[Dict]] = None,
+    options: Optional[Dict] = None,
+):
+    """Draw a quick example from normalized data and return root/context."""
     options = dict(options or {})
-    doc = FreeCAD.ActiveDocument or FreeCAD.newDocument("GameEngineExport_QuickExample")
-    if options.get("clear_previous", True):
-        removed = _clear_previous(doc)
-        if removed:
-            _info("Removed previous quick example objects: %d" % removed)
+    width = float(dimensions.get("width_mm", 0.0))
+    depth = float(dimensions.get("depth_mm", 0.0))
+    ext_wall = float(dimensions.get("ext_wall_mm", DEFAULT_EXT_WALL_MM))
+    int_wall = float(dimensions.get("int_wall_mm", DEFAULT_INT_WALL_MM))
+    wall_height = float(dimensions.get("wall_height_mm", DEFAULT_WALL_HEIGHT_MM))
+    door_height = float(dimensions.get("door_height_mm", DEFAULT_DOOR_HEIGHT_MM))
+    window_sill = float(dimensions.get("window_sill_mm", DEFAULT_WINDOW_SILL_MM))
+    window_height = float(dimensions.get("window_height_mm", DEFAULT_WINDOW_HEIGHT_MM))
 
-    seed = int(options.get("seed", 0) or 0)
-    if seed <= 0:
-        seed = int(time.time_ns() % 2147483647) or 1
-    rng = random.Random(seed)
+    exterior_segments = list(segments.get("exterior_walls", []))
+    interior_segments = list(segments.get("interior_walls", []))
+    door_segments = list(segments.get("door_openings", []))
+    window_segments = list(segments.get("window_openings", []))
+    terrain = dict(terrain or {})
+    rooms = list(rooms or [])
+    rng = random.Random(int(seed or 1))
 
-    building_type = options.get("building_type", "Casa")
-    if building_type == "Aleatorio":
-        building_type = rng.choice(["Casa", "Oficina"])
-    width = float(options.get("width_mm", 0) or (12000 if building_type == "Casa" else 22000))
-    depth = float(options.get("depth_mm", 0) or (9000 if building_type == "Casa" else 14000))
-    ext_wall = float(options.get("ext_wall_mm", DEFAULT_EXT_WALL_MM))
-    int_wall = float(options.get("int_wall_mm", DEFAULT_INT_WALL_MM))
-    wall_height = float(options.get("wall_height_mm", DEFAULT_WALL_HEIGHT_MM))
-    door_height = float(options.get("door_height_mm", DEFAULT_DOOR_HEIGHT_MM))
-    window_sill = float(options.get("window_sill_mm", DEFAULT_WINDOW_SILL_MM))
-    window_height = float(options.get("window_height_mm", DEFAULT_WINDOW_HEIGHT_MM))
-
-    segments = _house_segments(width, depth, rng) if building_type == "Casa" else _office_segments(width, depth, rng)
-    variant = str(segments.get("variant", "default"))
     stamp = int(time.time())
     root = doc.addObject("App::DocumentObjectGroup", RESULT_PREFIX + str(stamp))
     root.Label = RESULT_PREFIX + str(stamp)
@@ -864,20 +866,20 @@ def generate_quick_example(options: Optional[Dict] = None):
             "window_height_mm": round(window_height, 1),
         },
         "terrain": {
-            "enabled": bool(options.get("create_terrain", True)),
-            "flatten_pad": bool(options.get("flatten_pad", DEFAULT_FLATTEN_PAD)),
-            "pad_margin_mm": float(options.get("pad_margin_mm", DEFAULT_PAD_MARGIN_MM)),
-            "terrain_margin_mm": float(options.get("terrain_margin_mm", DEFAULT_TERRAIN_MARGIN_MM)),
-            "terrain_variation_mm": float(options.get("terrain_variation_mm", DEFAULT_TERRAIN_VARIATION_MM)),
-            "floor_overhang_mm": float(options.get("floor_overhang_mm", DEFAULT_FLOOR_OVERHANG_MM)),
+            "enabled": bool(terrain.get("enabled", True)),
+            "flatten_pad": bool(terrain.get("flatten_pad", DEFAULT_FLATTEN_PAD)),
+            "pad_margin_mm": float(terrain.get("pad_margin_mm", DEFAULT_PAD_MARGIN_MM)),
+            "terrain_margin_mm": float(terrain.get("terrain_margin_mm", DEFAULT_TERRAIN_MARGIN_MM)),
+            "terrain_variation_mm": float(terrain.get("terrain_variation_mm", DEFAULT_TERRAIN_VARIATION_MM)),
+            "floor_overhang_mm": float(terrain.get("floor_overhang_mm", DEFAULT_FLOOR_OVERHANG_MM)),
         },
         "segments": {
-            "exterior_walls": _segments_to_json(segments["exterior"]),
-            "interior_walls": _segments_to_json(segments["interior"]),
-            "door_openings": _segments_to_json(segments["doors"]),
-            "window_openings": _segments_to_json(segments["windows"]),
+            "exterior_walls": _segments_to_json(exterior_segments),
+            "interior_walls": _segments_to_json(interior_segments),
+            "door_openings": _segments_to_json(door_segments),
+            "window_openings": _segments_to_json(window_segments),
         },
-        "rooms": segments.get("rooms", []),
+        "rooms": rooms,
         "objects": {},
     }
 
@@ -887,8 +889,18 @@ def generate_quick_example(options: Optional[Dict] = None):
     for group in (sketch_group, wall_group, cutter_group):
         root.addObject(group)
 
-    if options.get("create_terrain", True):
-        site_group, site_objects = _create_site_and_floor(doc, root, width, depth, rng, options)
+    if payload["terrain"]["enabled"]:
+        terrain_options = dict(options)
+        terrain_options.update(
+            {
+                "terrain_margin_mm": payload["terrain"]["terrain_margin_mm"],
+                "terrain_variation_mm": payload["terrain"]["terrain_variation_mm"],
+                "flatten_pad": payload["terrain"]["flatten_pad"],
+                "pad_margin_mm": payload["terrain"]["pad_margin_mm"],
+                "floor_overhang_mm": payload["terrain"]["floor_overhang_mm"],
+            }
+        )
+        site_group, site_objects = _create_site_and_floor(doc, root, width, depth, rng, terrain_options)
         payload["objects"]["site_group"] = _object_ref(site_group)
         payload["objects"]["site"] = {key: _object_ref(value) for key, value in site_objects.items()}
 
@@ -903,13 +915,13 @@ def generate_quick_example(options: Optional[Dict] = None):
         "window_openings": _object_ref(window_sk),
     }
 
-    for segment in segments["exterior"]:
+    for segment in exterior_segments:
         _line(exterior_sk, segment)
-    for segment in segments["interior"]:
+    for segment in interior_segments:
         _line(interior_sk, segment)
-    for segment in segments["doors"]:
+    for segment in door_segments:
         _line(door_sk, segment)
-    for segment in segments["windows"]:
+    for segment in window_segments:
         _line(window_sk, segment)
 
     exterior_wall = _make_wall(doc, wall_group, "GEE_ArchWall_Exterior", exterior_sk, ext_wall, wall_height, "exterior", (0.70, 0.70, 0.70))
@@ -957,4 +969,79 @@ def generate_quick_example(options: Optional[Dict] = None):
                 _info("Quick example JSON context copied to clipboard")
         except Exception as exc:
             _warn("Could not copy JSON context to clipboard: %s" % exc)
+    return root, payload, context_text
+
+
+def build_quick_example_from_data(
+    building_type: str,
+    variant: str,
+    seed: int,
+    dimensions: Dict,
+    terrain: Dict,
+    segments: Dict,
+    rooms: Optional[Sequence[Dict]] = None,
+    options: Optional[Dict] = None,
+):
+    """Public helper used by JSON importers and tests."""
+    options = dict(options or {})
+    doc = FreeCAD.ActiveDocument or FreeCAD.newDocument("GameEngineExport_QuickExample")
+    if options.get("clear_previous", True):
+        removed = _clear_previous(doc)
+        if removed:
+            _info("Removed previous quick example objects: %d" % removed)
+    root, payload, context_text = _generate_quick_example_from_data(
+        doc, building_type, variant, int(seed or 0), dimensions, terrain, segments, rooms, options
+    )
+    return root, payload, context_text
+
+
+def generate_quick_example(options: Optional[Dict] = None):
+    """Generate a quick Arch Wall example scene and return the root group."""
+    options = dict(options or {})
+    seed = int(options.get("seed", 0) or 0)
+    if seed <= 0:
+        seed = int(time.time_ns() % 2147483647) or 1
+    rng = random.Random(seed)
+
+    building_type = options.get("building_type", "Casa")
+    if building_type == "Aleatorio":
+        building_type = rng.choice(["Casa", "Oficina"])
+    width = float(options.get("width_mm", 0) or (12000 if building_type == "Casa" else 22000))
+    depth = float(options.get("depth_mm", 0) or (9000 if building_type == "Casa" else 14000))
+    segments_raw = _house_segments(width, depth, rng) if building_type == "Casa" else _office_segments(width, depth, rng)
+    variant = str(segments_raw.get("variant", "default"))
+    dimensions = {
+        "width_mm": width,
+        "depth_mm": depth,
+        "ext_wall_mm": float(options.get("ext_wall_mm", DEFAULT_EXT_WALL_MM)),
+        "int_wall_mm": float(options.get("int_wall_mm", DEFAULT_INT_WALL_MM)),
+        "wall_height_mm": float(options.get("wall_height_mm", DEFAULT_WALL_HEIGHT_MM)),
+        "door_height_mm": float(options.get("door_height_mm", DEFAULT_DOOR_HEIGHT_MM)),
+        "window_sill_mm": float(options.get("window_sill_mm", DEFAULT_WINDOW_SILL_MM)),
+        "window_height_mm": float(options.get("window_height_mm", DEFAULT_WINDOW_HEIGHT_MM)),
+    }
+    terrain = {
+        "enabled": bool(options.get("create_terrain", True)),
+        "flatten_pad": bool(options.get("flatten_pad", DEFAULT_FLATTEN_PAD)),
+        "pad_margin_mm": float(options.get("pad_margin_mm", DEFAULT_PAD_MARGIN_MM)),
+        "terrain_margin_mm": float(options.get("terrain_margin_mm", DEFAULT_TERRAIN_MARGIN_MM)),
+        "terrain_variation_mm": float(options.get("terrain_variation_mm", DEFAULT_TERRAIN_VARIATION_MM)),
+        "floor_overhang_mm": float(options.get("floor_overhang_mm", DEFAULT_FLOOR_OVERHANG_MM)),
+    }
+    segments = {
+        "exterior_walls": _segments_to_json(segments_raw["exterior"]),
+        "interior_walls": _segments_to_json(segments_raw["interior"]),
+        "door_openings": _segments_to_json(segments_raw["doors"]),
+        "window_openings": _segments_to_json(segments_raw["windows"]),
+    }
+    root, _payload, _context_text = build_quick_example_from_data(
+        building_type,
+        variant,
+        seed,
+        dimensions,
+        terrain,
+        segments,
+        segments_raw.get("rooms", []),
+        options,
+    )
     return root

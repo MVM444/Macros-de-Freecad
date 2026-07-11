@@ -61,6 +61,18 @@ El panel permite activar `Aplanar terreno bajo edificio`. Con esa opcion, el are
 
 El generador tambien crea `AI_Contexto_QuickExample`, un `App::TextDocument` con JSON del ejemplo: dimensiones, semilla, recintos aproximados, sketches, muros, buques, terreno, losa y objetos creados. La opcion `Copiar contexto JSON al portapapeles` copia ese JSON al generar.
 
+El comando **Importar JSON / Import JSON** (`GameEngineExport_ImportJSONExample`) abre un dialogo para pegar JSON de ChatGPT y reconstruir una casa u oficina con el mismo motor del Quick Example. Acepta JSON puro o texto con encabezado y extrae automaticamente el bloque desde el primer `{` hasta el ultimo `}`. La reconstruccion usa `dimensions`, `terrain`, `segments` y `rooms`; la seccion `objects` se ignora porque pertenece al documento anterior.
+
+Flujo recomendado:
+
+- Genere un `Quick Example`.
+- Copie el JSON desde `AI_Contexto_QuickExample`.
+- Modifique ese JSON en ChatGPT.
+- Abra `Importar JSON / Import JSON`.
+- Pegue el JSON y pulse `Generar`.
+
+Hay un ejemplo en `examples/json/quick_example_house_sample.json`.
+
 El comando **Puertas y ventanas BIM** agrega objetos de puerta/ventana sobre el ultimo `GEE_QuickExample_*`. Lee los sketches `GEE_SK_DoorOpenings` y `GEE_SK_WindowOpenings`, intenta crear objetos con `Arch.makeWindow(...)` y agrega hojas de puerta abiertas a 90 grados para pruebas visuales y de exportacion.
 
 Para proyectos que no vienen del Quick Example existen macros genericas:
@@ -120,6 +132,7 @@ La vista previa crea objetos temporales `CGE_TempLightPreview*`, que se excluyen
 - `ui/`: paneles TaskPanel de escena, configuracion y texto informativo.
 - `commands/`: comando principal GameEngineExport_Open.
 - `core/quick_examples.py`: generador de ejemplos rapidos con Sketcher y Arch Wall.
+- `core/json_importer.py`: lectura, validacion y reconstruccion de Quick Example desde JSON.
 - `macros/AgregarPuertasVentanasBIM_QuickExample.FCMacro`: macro usada por el comando de puertas y ventanas BIM.
 - `macros/bim_from_selected_sketch.py`: base reutilizable para crear puertas o ventanas desde el sketch seleccionado.
 - `macros/CrearPuertasBIMDesdeSketch.FCMacro`: macro generica de puertas desde sketch seleccionado.
@@ -127,7 +140,9 @@ La vista previa crea objetos temporales `CGE_TempLightPreview*`, que se excluyen
 - `resources/icons/gameexport.svg`: icono del workbench.
 - `resources/icons/add_light_properties.svg`: icono del comando para propiedades de luz.
 - `resources/icons/quick_example.svg`: icono del comando de ejemplo rapido.
+- `resources/icons/import_json_example.svg`: icono del comando para importar JSON.
 - `resources/icons/bim_doors_windows.svg`: icono del comando para puertas y ventanas BIM.
+- `examples/json/quick_example_house_sample.json`: payload de prueba para importacion JSON.
 - `notes/GameEngineExportWB_chat.md`: registro de conversaciones y decisiones relevantes.
 - `notes/add_light_properties.md`: nota tecnica del comando de propiedades de luz.
 - `notes/environment_skybox.md`: nota tecnica de cielo cubemap X3D.

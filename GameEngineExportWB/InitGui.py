@@ -15,6 +15,7 @@ import os
 
 from .commands import cmd_add_light_properties
 from .commands import cmd_bim_doors_windows
+from .commands import cmd_import_json_example
 from .commands import cmd_open_panel
 from .commands import cmd_quick_examples
 
@@ -39,16 +40,19 @@ class GameEngineExportWorkbench(FreeCADGui.Workbench):
         export_command = cmd_open_panel.CommandClass()
         light_command = cmd_add_light_properties.CommandClass()
         quick_example_command = cmd_quick_examples.CommandClass()
+        import_json_command = cmd_import_json_example.CommandClass()
         bim_doors_windows_command = cmd_bim_doors_windows.CommandClass()
         FreeCADGui.addCommand(export_command.CommandName, export_command)
         FreeCADGui.addCommand(light_command.CommandName, light_command)
         FreeCADGui.addCommand(quick_example_command.CommandName, quick_example_command)
+        FreeCADGui.addCommand(import_json_command.CommandName, import_json_command)
         FreeCADGui.addCommand(bim_doors_windows_command.CommandName, bim_doors_windows_command)
         FreeCAD.Console.PrintMessage(LOG_PREFIX + "Registered export command: " + export_command.CommandName + "\n")
         commands = [
             export_command.CommandName,
             light_command.CommandName,
             quick_example_command.CommandName,
+            import_json_command.CommandName,
             bim_doors_windows_command.CommandName,
         ]
         self.appendToolbar("Game Engine Export", commands)
