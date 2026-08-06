@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="cab" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffbf47"/>
+      <stop offset="1" stop-color="#e06b00"/>
+    </linearGradient>
+  </defs>
+  <rect x="11" y="7" width="36" height="49" rx="4" fill="url(#cab)" stroke="#20242a" stroke-width="3"/>
+  <rect x="16" y="12" width="26" height="38" rx="2" fill="#fff4dc" stroke="#20242a" stroke-width="2"/>
+  <path d="M29 17v26M20 30h18" stroke="#168bd2" stroke-width="3" stroke-linecap="round"/>
+  <path d="m22 22 14 16M36 22 22 38" stroke="#168bd2" stroke-width="2.5" stroke-linecap="round"/>
+  <circle cx="29" cy="30" r="4" fill="#168bd2"/>
+  <path d="M49 15h7v14h-7M52.5 29v11" fill="none" stroke="#f6d32d" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="m48 40 5 8 5-8z" fill="#f6d32d" stroke="#20242a" stroke-width="1.5"/>
+</svg>

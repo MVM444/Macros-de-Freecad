@@ -159,7 +159,7 @@ DETAIL_HEADERS = [
     "VA_por_salida", "Polos", "Voltaje", "F1", "F2", "F3",
     "Pot_Fase1", "Pot_Fase2", "Pot_Fase3", "Pot_Total",
     "Corriente_A", "Breaker_Calculado_A",
-    "Dist_RutaCritica_m", "Dist_RutaCritica3D_m", "Dist_Total3D_m",
+    "Dist_Critica_m", "Dist_Total_m",
     "Notas",
 ]
 
@@ -456,6 +456,9 @@ def _cid_from_hint(text):
 
 
 def _tipo_salida(row):
+    override = _txt(row.get("_TipoSalidaOverride", "")).strip()
+    if override:
+        return override
     rec = _f(row.get("VA_Recp180", 0.0), 0.0) + _f(row.get("VA_Recp300", 0.0), 0.0)
     lig = _f(row.get("VA_Light", 0.0), 0.0)
     hv = _f(row.get("VA_HVAC", 0.0), 0.0)
@@ -1139,6 +1142,7 @@ def _read_assign_sheet(sheet):
         loads_txt = _sheet_get(sheet, "F{}".format(r))
         key = _sheet_get(sheet, "H{}".format(r))
         order_txt = _sheet_get(sheet, "J{}".format(r))
+        circuit_slot = _sheet_get(sheet, "K{}".format(r))
 
         if not (use_txt or panel or item or source or key):
             empty_run += 1
@@ -1180,6 +1184,7 @@ def _read_assign_sheet(sheet):
                         "loads": max(0, _i(loads_txt, 0)),
                         "cid_hint": hint,
                         "order": ord_effective,
+                        "circuit_slot": circuit_slot,
                     }
                 )
         elif key.startswith("EQ::"):
@@ -1191,6 +1196,8 @@ def _read_assign_sheet(sheet):
                     "source": source,
                     "key": key,
                     "order": ord_effective,
+                    "circuit_slot": circuit_slot,
+                    "sheet_row": r,
                 }
             )
         if source:
@@ -1357,6 +1364,31 @@ def _cid_hint_for_object(o, member, parent, cid_hint_by_group=None, source_rules
     return ""
 
 
+def _effective_cid(o, member, parent, cid_hint_by_group=None, source_rules=None):
+    """Circuito vigente del objeto, priorizando su grupo asignado actual.
+
+    Los dispositivos pueden conservar CircuitoID de una numeracion anterior
+    cuando el usuario renombra o intercambia manualmente grupos en el arbol.
+    Asignacion_Red describe el grupo vigente y por ello debe prevalecer sobre
+    esa propiedad historica del dispositivo.
+    """
+    assigned = _cid_hint_for_object(
+        o,
+        member,
+        parent,
+        cid_hint_by_group=cid_hint_by_group,
+        source_rules=source_rules,
+    )
+    if assigned:
+        return assigned
+    return (
+        _get_text(o, CID_PROPS, "")
+        or _cid_from_ancestors(o, member, parent)
+        or _cid_from_text(_txt(getattr(o, "Label", "")))
+        or _cid_from_text(_txt(getattr(o, "Name", "")))
+    )
+
+
 def _override_panel(o, assign_map, member, parent, cid="", panel_by_cid=None, source_rules=None):
     for g in _ancestors(o, member, parent):
         gn = _txt(getattr(g, "Name", "")).strip()
@@ -1454,6 +1486,247 @@ def _distance_metrics_for_group(group_obj):
     }
 
 
+def _cid_matches(a, b):
+    aa = _cid_from_text(_txt(a)) or _txt(a).strip().upper()
+    bb = _cid_from_text(_txt(b)) or _txt(b).strip().upper()
+    return bool(aa and bb and aa == bb)
+
+
+def _rooms_only_description(text, cid=""):
+    """Quita numero, cantidad, potencia y notas; conserva solo recintos."""
+    parts = [_txt(p).strip() for p in _txt(text).split("|") if _txt(p).strip()]
+    result = []
+    for part in parts:
+        norm = _norm(part)
+        part_cid = _cid_from_text(part)
+        # Nombres validos de recinto como COMEDOR001 tambien parecen un CID
+        # para el parser generico. Solo quitar el codigo si coincide con el
+        # circuito que estamos describiendo.
+        if part_cid and _cid_matches(part_cid, cid):
+            continue
+        if re.match(r"^\d+\s+(?:toma|tomas|tomacorriente|tomacorrientes|luminaria|luminarias|salida|salidas)\b", norm):
+            continue
+        if re.match(r"^\d+(?:[.,]\d+)?\s*(?:w|va|kva|kw)\b", norm):
+            continue
+        if any(tok in norm for tok in ("asignacion manual", "asignacion automatica")):
+            continue
+        if norm in ("iluminacion", "tomas", "tomacorrientes", "especial"):
+            continue
+        result.append(part)
+    return " | ".join(result)
+
+
+def _find_lighting_group(doc, cid):
+    for obj in (getattr(doc, "Objects", []) or []):
+        if _txt(getattr(obj, "ECR_TipoCircuito", "")).strip() != "Iluminacion":
+            continue
+        if _cid_matches(getattr(obj, "CircuitoID", ""), cid):
+            return obj
+    return None
+
+
+def _axis_length_m(obj):
+    """Longitud del eje de una ruta; nunca usa la topologia de una caja 3D."""
+    if _txt(getattr(obj, "TypeId", "")) == "App::Link":
+        return 0.0
+    try:
+        shape = getattr(obj, "Shape", None)
+        if shape is None or shape.isNull():
+            return 0.0
+        # Los tubos/rutas ElectricCR son Edge/Wire. Una caja o equipo solido
+        # devuelve la suma de todas sus aristas y no es una distancia valida.
+        if list(getattr(shape, "Solids", []) or []):
+            return 0.0
+        length = float(getattr(shape, "Length", 0.0) or 0.0)
+        return max(0.0, length / 1000.0)
+    except Exception:
+        return 0.0
+
+
+def _lighting_network_metrics(doc, cid):
+    """Distancia total y ruta critica acumulada en la red 3D de iluminacion."""
+    objects = [
+        obj for obj in (getattr(doc, "Objects", []) or [])
+        if _cid_matches(getattr(obj, "CircuitoID", ""), cid)
+    ]
+
+    box_by_luminaire = {}
+    for obj in objects:
+        if _txt(getattr(obj, "GeneradoPor", "")) != "CAJA_LUM_CLUSTER_V1":
+            continue
+        if _txt(getattr(obj, "TypeId", "")) != "App::Link":
+            continue
+        raw = _txt(getattr(obj, "LuminariasCSV", ""))
+        for token in re.split(r"[,;\n]+", raw):
+            name = _txt(token).strip()
+            if name:
+                box_by_luminaire[name] = obj.Name
+
+    edges = []
+    for obj in objects:
+        length = _axis_length_m(obj)
+        if length <= 0.0:
+            continue
+        generated = _txt(getattr(obj, "GeneradoPor", ""))
+        kind = _txt(getattr(obj, "LinkKind", ""))
+        a = b = ""
+
+        if generated in (
+            "Conectar_Circuitos_TP_a_Cara_Superior_Tablero",
+            "Conectar_Circuitos_TCOM_a_Cara_Superior_Tablero",
+        ):
+            box = getattr(obj, "CajaOrigen", None)
+            if box is not None:
+                a, b = "__PANEL__", _txt(getattr(box, "Name", ""))
+        elif generated == "PrepararRedIluminacionCompleta" and kind in ("backbone", "drop_box"):
+            a = _txt(getattr(obj, "OrigenName", ""))
+            b = _txt(getattr(obj, "DestinoName", ""))
+        elif generated == "CAJA_LUM_CLUSTER_V1" and "LuminariaRef" in getattr(obj, "PropertiesList", []):
+            ref = getattr(obj, "LuminariaRef", "")
+            luminaire = _txt(getattr(ref, "Name", "") if not isinstance(ref, str) else ref).strip()
+            box_name = box_by_luminaire.get(luminaire, "")
+            if luminaire and box_name:
+                a, b = box_name, "LUM::" + luminaire
+
+        if a and b and a != b:
+            edges.append((a, b, length))
+
+    adjacency = {}
+    total = 0.0
+    for a, b, length in edges:
+        adjacency.setdefault(a, []).append((b, length))
+        adjacency.setdefault(b, []).append((a, length))
+        total += length
+
+    critical = 0.0
+    if "__PANEL__" in adjacency:
+        import heapq
+        distances = {"__PANEL__": 0.0}
+        queue = [(0.0, "__PANEL__")]
+        while queue:
+            distance, node = heapq.heappop(queue)
+            if distance > distances.get(node, float("inf")) + 1e-12:
+                continue
+            for nxt, weight in adjacency.get(node, []):
+                candidate = distance + weight
+                if candidate + 1e-12 < distances.get(nxt, float("inf")):
+                    distances[nxt] = candidate
+                    heapq.heappush(queue, (candidate, nxt))
+        critical = max(distances.values()) if distances else 0.0
+
+    return {
+        "dist_critica_m": round(critical, 3),
+        "dist_critica_3d_m": round(critical, 3),
+        "dist_total_3d_m": round(total, 3),
+        "route_count": len(edges),
+    }
+
+
+def _endpoint_name(value):
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return _txt(value).strip()
+    return _txt(getattr(value, "Name", "")).strip()
+
+
+def _circuit_network_metrics(doc, group_obj, cid):
+    """Grafo 3D generico para tomas: tablero, ramales y bajantes."""
+    candidates = {}
+    if group_obj is not None:
+        for obj in _iter_group_objects(group_obj):
+            candidates[obj.Name] = obj
+    for obj in (getattr(doc, "Objects", []) or []):
+        generated = _txt(getattr(obj, "GeneradoPor", ""))
+        if generated not in (
+            "Conectar_Circuitos_TP_a_Cara_Superior_Tablero",
+            "Conectar_Circuitos_TCOM_a_Cara_Superior_Tablero",
+        ):
+            continue
+        if _cid_matches(getattr(obj, "CircuitoID", ""), cid):
+            candidates[obj.Name] = obj
+
+    edges = []
+    for obj in candidates.values():
+        length = _axis_length_m(obj)
+        if length <= 0.0:
+            continue
+        generated = _txt(getattr(obj, "GeneradoPor", ""))
+        a = b = ""
+        if generated in (
+            "Conectar_Circuitos_TP_a_Cara_Superior_Tablero",
+            "Conectar_Circuitos_TCOM_a_Cara_Superior_Tablero",
+        ):
+            a = "__PANEL__"
+            b = _endpoint_name(getattr(obj, "CajaOrigen", None))
+        elif "CajaOrigen" in getattr(obj, "PropertiesList", []) and "CajaDestinoLink" in getattr(obj, "PropertiesList", []):
+            a = _endpoint_name(getattr(obj, "CajaOrigen", None))
+            b = _endpoint_name(getattr(obj, "CajaDestinoLink", None))
+        elif "ObjetoOrigen" in getattr(obj, "PropertiesList", []) and "CajaDestino" in getattr(obj, "PropertiesList", []):
+            a = _endpoint_name(getattr(obj, "ObjetoOrigen", None))
+            b = _endpoint_name(getattr(obj, "CajaDestino", None))
+        elif "OrigenName" in getattr(obj, "PropertiesList", []) and "DestinoName" in getattr(obj, "PropertiesList", []):
+            a = _txt(getattr(obj, "OrigenName", "")).strip()
+            b = _txt(getattr(obj, "DestinoName", "")).strip()
+        if a and b and a != b:
+            edges.append((a, b, length))
+
+    adjacency = {}
+    total = 0.0
+    for a, b, length in edges:
+        adjacency.setdefault(a, []).append((b, length))
+        adjacency.setdefault(b, []).append((a, length))
+        total += length
+
+    critical = 0.0
+    if "__PANEL__" in adjacency:
+        import heapq
+        distances = {"__PANEL__": 0.0}
+        queue = [(0.0, "__PANEL__")]
+        while queue:
+            distance, node = heapq.heappop(queue)
+            if distance > distances.get(node, float("inf")) + 1e-12:
+                continue
+            for nxt, weight in adjacency.get(node, []):
+                candidate = distance + weight
+                if candidate + 1e-12 < distances.get(nxt, float("inf")):
+                    distances[nxt] = candidate
+                    heapq.heappush(queue, (candidate, nxt))
+        critical = max(distances.values()) if distances else 0.0
+    return {
+        "dist_critica_m": round(critical, 3),
+        "dist_critica_3d_m": round(critical, 3),
+        "dist_total_3d_m": round(total, 3),
+        "route_count": len(edges),
+    }
+
+
+def _panel_feeder_metrics(doc, cid, downstream_code=""):
+    total = 0.0
+    count = 0
+    for obj in (getattr(doc, "Objects", []) or []):
+        if not _cid_matches(getattr(obj, "CircuitoID", ""), cid):
+            continue
+        generated = _txt(getattr(obj, "GeneradoPor", ""))
+        logical_type = _txt(getattr(obj, "Tipo", ""))
+        if generated != "ConectarTablerosCaraSuperior" and logical_type != "AlimentadorEntreTableros":
+            continue
+        destination = getattr(obj, "TableroDestino", None)
+        code = _txt(getattr(destination, "Codigo", "")).strip()
+        if downstream_code and code and _key(code) != _key(downstream_code):
+            continue
+        length = _axis_length_m(obj)
+        if length > 0.0:
+            total += length
+            count += 1
+    return {
+        "dist_critica_m": round(total, 3),
+        "dist_critica_3d_m": round(total, 3),
+        "dist_total_3d_m": round(total, 3),
+        "route_count": count,
+    }
+
+
 def _build_group_path_index(doc, parent):
     out = {}
     for o in (getattr(doc, "Objects", []) or []):
@@ -1496,6 +1769,57 @@ def _desc_from_equipment_entry(doc, ae):
         if tail:
             return tail
     return _txt(ae.get("item", "")).strip()
+
+
+def _equipment_obj_from_entry(doc, ae):
+    key = _txt(ae.get("key", "")).strip()
+    if not key.startswith("EQ::OBJ::"):
+        return None
+    oname = _txt(key.split("EQ::OBJ::", 1)[1]).strip()
+    return doc.getObject(oname) if oname else None
+
+
+def _equipment_output_type(equipment_obj, item_kind):
+    """Tipo visible de salida segun el sistema servido por el equipo."""
+    if item_kind == "interruptor":
+        return "Equipo"
+    if item_kind != "desconector":
+        return _txt(item_kind).strip() or "Equipo"
+    if equipment_obj is None:
+        return "Desconector"
+    blob = _key(
+        "{} {} {} {} {}".format(
+            getattr(equipment_obj, "SistemaServicio", ""),
+            getattr(equipment_obj, "TipoCarga", ""),
+            getattr(equipment_obj, "UsoDesconector", ""),
+            getattr(equipment_obj, "Subtype", ""),
+            getattr(equipment_obj, "NombreTablero", ""),
+        )
+    )
+    if "hvac" in blob or "aireacondicionado" in blob or "climatizacion" in blob:
+        return "A.A."
+    if "hidroneumatic" in blob or "bombeo" in blob or "bombadeagua" in blob:
+        return "Hidroneumatico"
+    if "incendio" in blob:
+        return "Bomba incendio"
+    if "ascensor" in blob or "elevador" in blob:
+        return "Ascensor"
+    return "Desconector"
+
+
+def _panel_code_from_equipment_entry(doc, ae):
+    key = _txt(ae.get("key", "")).strip()
+    if key.startswith("EQ::OBJ::"):
+        oname = _txt(key.split("EQ::OBJ::", 1)[1]).strip()
+        obj = doc.getObject(oname) if oname else None
+        if obj is not None:
+            for prop in ("Codigo", "Panel", "PanelID", "PanelId", "NombreTablero"):
+                value = _txt(getattr(obj, prop, "")).strip()
+                if value:
+                    return value
+    item = _txt(ae.get("item", "")).strip()
+    match = re.match(r"^([A-Za-z]{1,10})\b", item)
+    return match.group(1).upper() if match else item
 
 
 def _is_main_panel_code(panel, panel_meta):
@@ -1585,8 +1909,10 @@ def _write_panel_detail_sheets(doc, agg, keys, panel_meta, order_by_cid, panel_o
                 round(sh["C"], 2),
                 round(va_total, 2),
                 round(i_nom, 3),
-                _txt(select_breaker(i_nom)).strip(),
-                round(_f(d.get("Dist_Critica_m", d.get("Length_m", 0.0)), 0.0), 2),
+                (
+                    _txt(d.get("_BreakerOverride", "")).strip()
+                    or _txt(select_breaker(i_nom)).strip()
+                ),
                 round(_f(d.get("Dist_Critica_3D_m", 0.0), 0.0), 2),
                 round(_f(d.get("Dist_Total_3D_m", 0.0), 0.0), 2),
                 d.get("Notes", ""),
@@ -1723,11 +2049,10 @@ def build_panel_schedule(doc, assign, panel_filter="", origin_data=None):
         if _txt(getattr(o, "TypeId", "")) == "Spreadsheet::Sheet":
             continue
         kind = _txt(_get_text(o, ("ElectricalClass",), "") or _txt(getattr(getattr(o, "Proxy", None), "Type", ""))).strip()
-        cid_probe = (
-            _get_text(o, CID_PROPS, "")
-            or _cid_from_ancestors(o, member, parent)
-            or _cid_from_text(_txt(getattr(o, "Label", "")))
-            or _cid_from_text(_txt(getattr(o, "Name", "")))
+        cid_probe = _effective_cid(
+            o, member, parent,
+            cid_hint_by_group=cid_hint_by_group,
+            source_rules=source_rules,
         )
         if kind == "ElectricalCircuit":
             circuits.append(o)
@@ -1739,14 +2064,11 @@ def build_panel_schedule(doc, assign, panel_filter="", origin_data=None):
 
     ckt_recs, load_recs = [], []
     for o in circuits:
-        cid = (
-            _get_text(o, CID_PROPS, "")
-            or _cid_from_ancestors(o, member, parent)
-            or _cid_from_text(_txt(getattr(o, "Label", "")))
-            or _cid_from_text(_txt(getattr(o, "Name", "")))
+        cid = _effective_cid(
+            o, member, parent,
+            cid_hint_by_group=cid_hint_by_group,
+            source_rules=source_rules,
         )
-        if not cid:
-            cid = _cid_hint_for_object(o, member, parent, cid_hint_by_group=cid_hint_by_group, source_rules=source_rules)
         if not cid:
             continue
         if not _in_selection(o, include_groups, sel_cids, member, parent, cid, source_rules=source_rules):
@@ -1767,14 +2089,11 @@ def build_panel_schedule(doc, assign, panel_filter="", origin_data=None):
         })
 
     for o in loads + real:
-        cid = (
-            _get_text(o, CID_PROPS, "")
-            or _cid_from_ancestors(o, member, parent)
-            or _cid_from_text(_txt(getattr(o, "Label", "")))
-            or _cid_from_text(_txt(getattr(o, "Name", "")))
+        cid = _effective_cid(
+            o, member, parent,
+            cid_hint_by_group=cid_hint_by_group,
+            source_rules=source_rules,
         )
-        if not cid:
-            cid = _cid_hint_for_object(o, member, parent, cid_hint_by_group=cid_hint_by_group, source_rules=source_rules)
         if not cid:
             continue
         if not _in_selection(o, include_groups, sel_cids, member, parent, cid, source_rules=source_rules):
@@ -1815,9 +2134,11 @@ def build_panel_schedule(doc, assign, panel_filter="", origin_data=None):
             "Description": "",
             "Notes": "",
             "PF": 1.0,
-            "Voltage": max(1.0, _f(pm.get("Voltage", 120.0), 120.0)),
-            "Poles": max(1, min(3, _i(pm.get("Poles", 1), 1))),
-            "Phase": _txt(pm.get("Phase", _default_phase_for_poles(pm.get("Poles", 1)))).upper(),
+            # Circuito derivado normal: monofasico 120 V, 1 polo. Los
+            # alimentadores y circuitos especiales lo sustituyen mas adelante.
+            "Voltage": 120.0,
+            "Poles": 1,
+            "Phase": "A",
             "Length_m": 0.0,
             "Dist_Critica_m": 0.0,
             "Dist_Critica_3D_m": 0.0,
@@ -1864,8 +2185,15 @@ def build_panel_schedule(doc, assign, panel_filter="", origin_data=None):
             agg[k] = base_row(panel, cid)
             seeded += 1
         row = agg[k]
-        if not row.get("Description"):
-            row["Description"] = _txt(ac.get("item", "")).strip() or _txt(ac.get("group_name", "")).strip()
+        assigned_group = _group_from_assign_entry(doc, parent, path_index, ac)
+        lighting_group = _find_lighting_group(doc, cid)
+        description_source = (
+            _txt(getattr(lighting_group, "Label", "")) if lighting_group is not None
+            else _txt(getattr(assigned_group, "Label", "")) if assigned_group is not None
+            else _txt(ac.get("item", ""))
+        )
+        row["Description"] = _rooms_only_description(description_source, cid)
+        row["_DescriptionLocked"] = True
         gkey = _txt(ac.get("group_name", "")).strip() or _txt(ac.get("source", "")).strip()
         dm = dict(distance_by_group.get(gkey, {}))
         if dm:
@@ -1876,12 +2204,59 @@ def build_panel_schedule(doc, assign, panel_filter="", origin_data=None):
             row["Dist_Critica_3D_m"] = max(_f(row.get("Dist_Critica_3D_m", 0.0), 0.0), d2)
             row["Dist_Total_3D_m"] = max(_f(row.get("Dist_Total_3D_m", 0.0), 0.0), d3)
             row["Length_m"] = max(_f(row.get("Length_m", 0.0), 0.0), d1)
+        if lighting_group is not None:
+            count = max(0, _i(getattr(lighting_group, "CantidadLuminarias", 0), 0))
+            installed = max(0.0, _f(getattr(lighting_group, "CargaInstaladaW", 0.0), 0.0))
+            if installed <= 0.0 and count > 0:
+                installed = count * DEFAULT_LIGHTING_VA
+            metrics = _lighting_network_metrics(doc, getattr(lighting_group, "CircuitoID", cid))
+            row["_AuthoritativeLightingVA"] = installed
+            row["_AuthoritativeLightingQty"] = count
+            row["Poles"] = 1
+            row["Voltage"] = 120.0
+            match_num = re.search(r"(\d+)\s*$", _txt(cid))
+            row["Phase"] = "A" if (not match_num or int(match_num.group(1)) % 2 == 1) else "B"
+            row["Dist_Critica_m"] = max(0.0, _f(metrics.get("dist_critica_m", 0.0), 0.0))
+            row["Dist_Critica_3D_m"] = max(0.0, _f(metrics.get("dist_critica_3d_m", 0.0), 0.0))
+            row["Dist_Total_3D_m"] = max(0.0, _f(metrics.get("dist_total_3d_m", 0.0), 0.0))
+            row["Length_m"] = row["Dist_Critica_m"]
+            row["_LightingRouteCount"] = max(0, _i(metrics.get("route_count", 0), 0))
+        elif assigned_group is not None:
+            metrics = _circuit_network_metrics(doc, assigned_group, cid)
+            if _f(metrics.get("dist_total_3d_m", 0.0), 0.0) > 0.0:
+                row["Dist_Critica_m"] = max(0.0, _f(metrics.get("dist_critica_m", 0.0), 0.0))
+                row["Dist_Critica_3D_m"] = max(0.0, _f(metrics.get("dist_critica_3d_m", 0.0), 0.0))
+                row["Dist_Total_3D_m"] = max(0.0, _f(metrics.get("dist_total_3d_m", 0.0), 0.0))
+                row["Length_m"] = row["Dist_Critica_m"]
+            match_num = re.search(r"(\d+)\s*$", _txt(cid))
+            row["Phase"] = "A" if (not match_num or int(match_num.group(1)) % 2 == 1) else "B"
         row["_Fallback_Loads"] = max(_i(row.get("_Fallback_Loads", 0), 0), max(0, _i(ac.get("loads", 0), 0)))
         row["_Fallback_Type"] = _txt(ac.get("item_type", "")).strip() or _txt(row.get("_Fallback_Type", "")).strip()
         if cid not in order_by_cid:
             order_by_cid[cid] = max(1, _i(ac.get("order", 10 ** 9), 10 ** 9))
     if seeded > 0:
         _info("seeded circuits from asignacion={}".format(seeded))
+
+    used_numbers = {}
+    for ac in assigned_circuits:
+        pcode = _txt(ac.get("panel", "")).strip()
+        assigned_cid = (
+            _cid_from_hint(ac.get("cid_hint", ""))
+            or _cid_from_hint(ac.get("item", ""))
+            or _cid_from_hint(_txt(_txt(ac.get("source", "")).split("/")[-1]).strip())
+        )
+        match_num = re.search(r"(\d+)\s*$", _txt(assigned_cid))
+        if pcode and match_num:
+            used_numbers.setdefault(pcode, set()).add(int(match_num.group(1)))
+    # Asignacion_Red puede estar atrasada. Un numero visible en un grupo real
+    # del arbol siempre esta ocupado aunque falte su fila en la hoja.
+    for obj in (getattr(doc, "Objects", []) or []):
+        if not _is_group(obj):
+            continue
+        tree_cid = _cid_from_text(_txt(getattr(obj, "Label", "")))
+        match_tree = re.match(r"^([A-Za-z]{1,10})-(\d+)$", _txt(tree_cid))
+        if match_tree:
+            used_numbers.setdefault(match_tree.group(1).upper(), set()).add(int(match_tree.group(2)))
 
     seeded_eq = 0
     for ae in assigned_equipments:
@@ -1891,19 +2266,82 @@ def build_panel_schedule(doc, assign, panel_filter="", origin_data=None):
         desc = _desc_from_equipment_entry(doc, ae) or _txt(ae.get("key", "")).strip()
         if not desc:
             continue
-        cid = "FDR-{}".format(re.sub(r"[^0-9A-Za-z]+", "", desc)[:24] or "X")
+        item_kind = _key(_txt(ae.get("item_type", "")))
+        requested_slot = _txt(ae.get("circuit_slot", "")).strip()
+        cid = ""
+        slot_number = 0
+        numbered_equipment = item_kind in ("tablero", "desconector", "interruptor")
+        if numbered_equipment:
+            if requested_slot:
+                cid = _cid_from_hint(requested_slot)
+                if not _cid_from_text(cid) and requested_slot.isdigit():
+                    cid = _cid_from_hint("{}-{}".format(panel, requested_slot))
+                requested_match = re.search(r"(\d+)\s*$", _txt(cid))
+                if requested_match and int(requested_match.group(1)) in used_numbers.setdefault(panel, set()):
+                    # Nunca sobreescribir/mezclar un circuito ya existente.
+                    cid = ""
+            if not _cid_from_text(cid):
+                occupied = used_numbers.setdefault(panel, set())
+                slot_number = 1
+                while slot_number in occupied:
+                    slot_number += 1
+                cid = _cid_from_hint("{}-{}".format(panel, slot_number))
+            match_slot = re.search(r"(\d+)\s*$", _txt(cid))
+            if match_slot:
+                slot_number = int(match_slot.group(1))
+                used_numbers.setdefault(panel, set()).add(slot_number)
+            if _i(ae.get("sheet_row", 0), 0) > 0:
+                assignment_sheet = doc.getObject(SHEET_ASSIGN)
+                if assignment_sheet is not None:
+                    _set(assignment_sheet, "K{}".format(_i(ae.get("sheet_row", 0), 0)), cid)
+        if not cid:
+            cid = "FDR-{}".format(re.sub(r"[^0-9A-Za-z]+", "", desc)[:24] or "X")
         k = (panel, cid)
         if k not in agg:
             agg[k] = base_row(panel, cid)
             seeded_eq += 1
         row = agg[k]
-        row["Kind"] = "Feeder"
-        row["Description"] = desc
+        equipment_obj = _equipment_obj_from_entry(doc, ae)
+        is_distribution_panel = item_kind == "tablero"
+        row["Kind"] = "Feeder" if is_distribution_panel else "Branch"
+        if equipment_obj is not None and not is_distribution_panel:
+            equipment_description = _txt(getattr(equipment_obj, "NombreTablero", "")).strip()
+            row["Description"] = equipment_description or desc
+        else:
+            row["Description"] = desc
         row["_Fallback_Type"] = _txt(ae.get("item_type", "")).strip() or "Tablero"
-        if _key(_txt(ae.get("item_type", ""))) == "tablero":
-            row["_DownstreamPanel"] = desc
+        pm = panel_meta.get(panel, _default_panel_meta(panel))
+        row["Poles"] = max(1, min(3, _i(pm.get("Poles", DEFAULT_PROJECT_POLES), DEFAULT_PROJECT_POLES)))
+        row["Voltage"] = max(1.0, _f(pm.get("Voltage", DEFAULT_PROJECT_VOLTAGE), DEFAULT_PROJECT_VOLTAGE))
+        row["Phase"] = _txt(pm.get("Phase", _default_phase_for_poles(row["Poles"]))).strip().upper() or _default_phase_for_poles(row["Poles"])
+        if is_distribution_panel:
+            row["_DownstreamPanel"] = _panel_code_from_equipment_entry(doc, ae)
+            feeder_metrics = _panel_feeder_metrics(doc, cid, row["_DownstreamPanel"])
+            if _f(feeder_metrics.get("dist_total_3d_m", 0.0), 0.0) > 0.0:
+                row["Dist_Critica_m"] = _f(feeder_metrics.get("dist_critica_m", 0.0), 0.0)
+                row["Dist_Critica_3D_m"] = _f(feeder_metrics.get("dist_critica_3d_m", 0.0), 0.0)
+                row["Dist_Total_3D_m"] = _f(feeder_metrics.get("dist_total_3d_m", 0.0), 0.0)
+                row["Length_m"] = row["Dist_Critica_m"]
+        elif item_kind in ("desconector", "interruptor"):
+            row["_TipoSalidaOverride"] = _equipment_output_type(equipment_obj, item_kind)
+            feeder_metrics = _panel_feeder_metrics(doc, cid, "")
+            if _f(feeder_metrics.get("dist_total_3d_m", 0.0), 0.0) > 0.0:
+                row["Dist_Critica_m"] = _f(feeder_metrics.get("dist_critica_m", 0.0), 0.0)
+                row["Dist_Critica_3D_m"] = _f(feeder_metrics.get("dist_critica_3d_m", 0.0), 0.0)
+                row["Dist_Total_3D_m"] = _f(feeder_metrics.get("dist_total_3d_m", 0.0), 0.0)
+                row["Length_m"] = row["Dist_Critica_m"]
+            if equipment_obj is not None:
+                amp = max(0, _i(getattr(equipment_obj, "AmperajeNominal", 0), 0))
+                if amp > 0:
+                    row["_BreakerOverride"] = str(amp)
+                capacity = max(0.0, _f(getattr(equipment_obj, "CapacidadEquipoBTUH", 0.0), 0.0))
+                notes = []
+                if capacity > 0.0:
+                    notes.append("Capacidad termica {:.0f} BTU/h".format(capacity))
+                notes.append("Carga electrica de placa pendiente")
+                row["Notes"] = " | ".join(notes)
         if cid not in order_by_cid:
-            order_by_cid[cid] = max(1, _i(ae.get("order", 10 ** 9), 10 ** 9))
+            order_by_cid[cid] = slot_number if slot_number > 0 else max(1, _i(ae.get("order", 10 ** 9), 10 ** 9))
     if seeded_eq > 0:
         _info("seeded feeder rows from equipos={}".format(seeded_eq))
 
@@ -1922,7 +2360,7 @@ def build_panel_schedule(doc, assign, panel_filter="", origin_data=None):
         row["Load_Qty"] += max(1, _i(ld.get("Qty", 1), 1))
         row["Load_Items"] += 1
         row["PF"] = min(row["PF"], ld["PF"])
-        if not row["Description"]:
+        if not row["Description"] and not bool(row.get("_DescriptionLocked", False)):
             row["Description"] = _txt(ld["Description"]).strip()
         if _txt(ld["Notes"]).strip():
             row["Notes"] = (row["Notes"] + " | " + _txt(ld["Notes"]).strip()).strip(" |")
@@ -1941,13 +2379,32 @@ def build_panel_schedule(doc, assign, panel_filter="", origin_data=None):
         row["Length_m"] = c["Length_m"]
         row["Dist_Critica_m"] = max(_f(row.get("Dist_Critica_m", 0.0), 0.0), _f(c.get("Length_m", 0.0), 0.0))
         row["PF"] = min(row["PF"], c["PF"])
-        if not row["Description"]:
+        if not row["Description"] and not bool(row.get("_DescriptionLocked", False)):
             row["Description"] = _txt(c["Description"]).strip()
         if _txt(c["Notes"]).strip():
             row["Notes"] = (row["Notes"] + " | " + _txt(c["Notes"]).strip()).strip(" |")
         if abs(c["DF"] - 1.0) > 1e-9:
             for f in ("VA_Recp180", "VA_Recp300", "VA_Light", "VA_HVAC", "VA_Equip", "VA_Other", "VA_Total"):
                 row[f] *= c["DF"]
+
+    for _k, row in list(agg.items()):
+        if "_AuthoritativeLightingVA" not in row:
+            continue
+        installed = max(0.0, _f(row.get("_AuthoritativeLightingVA", 0.0), 0.0))
+        count = max(0, _i(row.get("_AuthoritativeLightingQty", 0), 0))
+        for field in ("VA_Recp180", "VA_Recp300", "VA_HVAC", "VA_Equip", "VA_Other"):
+            row[field] = 0.0
+        row["VA_Light"] = installed
+        row["VA_Total"] = installed
+        row["Load_Qty"] = count
+        row["Load_Items"] = count
+        row["Poles"] = 1
+        row["Voltage"] = 120.0
+        note = _txt(row.get("Notes", "")).strip()
+        tag = "Carga de iluminacion desde modelo ({} luminarias; {} rutas 3D)".format(
+            count, max(0, _i(row.get("_LightingRouteCount", 0), 0))
+        )
+        row["Notes"] = (note + " | " + tag).strip(" |")
 
     fallback_used = 0
     for _k, row in list(agg.items()):
@@ -2041,7 +2498,11 @@ def build_panel_schedule(doc, assign, panel_filter="", origin_data=None):
         st["A"] += sh["A"]
         st["B"] += sh["B"]
         st["C"] += sh["C"]
-        breaker_a = _txt(select_breaker(i_nom)).strip() or _txt(pm.get("MainBreaker_A", "")).strip()
+        breaker_a = (
+            _txt(d.get("_BreakerOverride", "")).strip()
+            or _txt(select_breaker(i_nom)).strip()
+            or _txt(pm.get("MainBreaker_A", "")).strip()
+        )
         notes = _txt(d.get("Notes", "")).strip()
         if _txt(pm.get("Notes", "")).strip():
             notes = (notes + " | panel: " + _txt(pm.get("Notes", "")).strip()).strip(" |")

@@ -78,6 +78,9 @@ _ensure_qt_compat()
 
 import re
 import unicodedata
+import math
+import json
+from pathlib import Path
 
 import FreeCAD
 import FreeCADGui
@@ -107,6 +110,25 @@ DEFAULT_DESCRIPTION = "Oficina"
 LUMEN_POR_LUMINARIA = 4000.0
 FACTOR_UTILIZACION = 0.8
 FACTOR_MANTENIMIENTO = 0.7
+
+
+def _load_lighting_registry():
+    here = Path(__file__).resolve()
+    candidates = (
+        here.parent.parent / "Resources" / "registry" / "registry_electric.json",
+        Path(FreeCAD.getUserAppDataDir()) / "Macro" / "Resources" / "registry" / "registry_electric.json",
+    )
+    for path in candidates:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+            if isinstance(data.get("types"), dict):
+                return data.get("types") or {}
+        except Exception:
+            pass
+    return {}
+
+
+LIGHTING_REGISTRY_TYPES = _load_lighting_registry()
 
 DESCRIPTION_LUX = {
     "Oficina": 500.0,
@@ -707,6 +729,81 @@ def _shape_area_m2(obj):
         return 0.0
 
 
+def _required_luminaires(area_m2, description, lumens_per_fixture=LUMEN_POR_LUMINARIA):
+    lux = DESCRIPTION_LUX.get(description, DESCRIPTION_LUX[DEFAULT_DESCRIPTION])
+    useful_lumens = float(lumens_per_fixture or LUMEN_POR_LUMINARIA) * FACTOR_UTILIZACION * FACTOR_MANTENIMIENTO
+    if area_m2 <= 0.0 or useful_lumens <= 0.0:
+        return 0
+    return max(1, int(math.ceil((float(area_m2) * float(lux)) / useful_lumens)))
+
+
+def _best_grid(width_m, depth_m, required):
+    """Choose a balanced rows x columns grid with at least the required count."""
+    required = max(1, int(required))
+    width_m = max(float(width_m), 0.01)
+    depth_m = max(float(depth_m), 0.01)
+    room_ratio = width_m / depth_m
+    best = None
+    max_rows = max(required, int(math.ceil(math.sqrt(required / max(room_ratio, 0.01)))) + 3)
+    for rows in range(1, max_rows + 1):
+        cols = int(math.ceil(required / float(rows)))
+        count = rows * cols
+        grid_ratio = cols / float(rows)
+        ratio_error = abs(math.log(max(grid_ratio, 0.001) / max(room_ratio, 0.001)))
+        spacing_x = width_m / cols
+        spacing_y = depth_m / rows
+        spacing_error = abs(math.log(max(spacing_x, 0.001) / max(spacing_y, 0.001)))
+        excess = count - required
+        score = excess * 1.75 + ratio_error * 1.25 + spacing_error
+        candidate = (score, excess, rows, cols)
+        if best is None or candidate < best:
+            best = candidate
+    return best[2], best[3], best[2] * best[3]
+
+
+def _set_lighting_layout_properties(obj, rows, columns, required, installed, auto_recalculated=False, manual=False):
+    specs = (
+        ("App::PropertyInteger", "Rows", "Filas de la cuadricula de iluminacion"),
+        ("App::PropertyInteger", "Columns", "Columnas de la cuadricula de iluminacion"),
+        ("App::PropertyInteger", "LightingRequiredCount", "Cantidad minima calculada"),
+        ("App::PropertyInteger", "LightingQuantity", "Cantidad distribuida en la cuadricula"),
+        ("App::PropertyBool", "LightingLayoutManual", "Filas y columnas preservadas manualmente"),
+        ("App::PropertyBool", "LightingRecalculateLayout", "Recalcular filas y columnas una sola vez"),
+        ("App::PropertyInteger", "LightingLastAutoRows", "Ultimas filas calculadas automaticamente"),
+        ("App::PropertyInteger", "LightingLastAutoColumns", "Ultimas columnas calculadas automaticamente"),
+    )
+    for prop_type, name, description in specs:
+        try:
+            if name not in obj.PropertiesList:
+                obj.addProperty(prop_type, name, "ElectricCR Iluminacion", description)
+            values = {
+                "Rows": int(rows), "Columns": int(columns),
+                "LightingRequiredCount": int(required), "LightingQuantity": int(installed),
+                "LightingLayoutManual": bool(manual), "LightingRecalculateLayout": False,
+                "LightingLastAutoRows": int(rows) if auto_recalculated else int(getattr(obj, "LightingLastAutoRows", 0) or 0),
+                "LightingLastAutoColumns": int(columns) if auto_recalculated else int(getattr(obj, "LightingLastAutoColumns", 0) or 0),
+            }
+            setattr(obj, name, values[name])
+        except Exception:
+            pass
+
+
+def _layout_for_area(obj, width_m, depth_m, required):
+    """Preserva la cuadricula existente salvo peticion explicita de recalculo."""
+    current_rows = int(getattr(obj, "Rows", 0) or 0)
+    current_cols = int(getattr(obj, "Columns", 0) or 0)
+    force = bool(getattr(obj, "LightingRecalculateLayout", False))
+    if current_rows > 0 and current_cols > 0 and not force:
+        last_rows = int(getattr(obj, "LightingLastAutoRows", 0) or 0)
+        last_cols = int(getattr(obj, "LightingLastAutoColumns", 0) or 0)
+        manual = bool(getattr(obj, "LightingLayoutManual", False))
+        if last_rows <= 0 or last_cols <= 0 or current_rows != last_rows or current_cols != last_cols:
+            manual = True
+        return current_rows, current_cols, current_rows * current_cols, False, manual
+    rows, cols, installed = _best_grid(width_m, depth_m, required)
+    return rows, cols, installed, True, False
+
+
 def _read_existing_descriptions(sheet):
     descriptions = {}
     if sheet is None:
@@ -775,18 +872,43 @@ def _collect_area_rows(area_group, old_descriptions):
         if source == "respaldo":
             _warn("Descripcion no inferida para '{}'; se usa '{}'.".format(label, desc))
         bounds = getattr(getattr(obj, "Shape", None), "BoundBox", None)
-        largo = _to_float(getattr(bounds, "XLength", 0.0), 0.0) / 1000.0 if bounds else 0.0
-        ancho = _to_float(getattr(bounds, "YLength", 0.0), 0.0) / 1000.0 if bounds else 0.0
+        largo = _to_float(getattr(obj, "Length", 0.0), 0.0) / 1000.0
+        ancho = _to_float(getattr(obj, "Height", 0.0), 0.0) / 1000.0
+        if largo <= 0.0:
+            largo = _to_float(getattr(bounds, "XLength", 0.0), 0.0) / 1000.0 if bounds else 0.0
+        if ancho <= 0.0:
+            ancho = _to_float(getattr(bounds, "YLength", 0.0), 0.0) / 1000.0 if bounds else 0.0
         altura = _to_float(getattr(bounds, "ZLength", 0.0), 0.0) / 1000.0 if bounds else 0.0
+        area_m2 = _shape_area_m2(obj)
+        type_key = _safe_text(getattr(obj, "LightingTypeKey", "")).strip()
+        type_info = LIGHTING_REGISTRY_TYPES.get(type_key, {}) if type_key else {}
+        electrical = type_info.get("electrical", {}) if isinstance(type_info, dict) else {}
+        lumens = _to_float(getattr(obj, "LightingLumens", 0.0), 0.0)
+        if lumens <= 0.0:
+            lumens = _to_float(electrical.get("lumens", LUMEN_POR_LUMINARIA), LUMEN_POR_LUMINARIA)
+        power_w = _to_float(getattr(obj, "LightingPowerW", 0.0), 0.0)
+        if power_w <= 0.0:
+            power_w = _to_float(electrical.get("power_w", 0.0), 0.0)
+        required = _required_luminaires(area_m2, desc, lumens)
+        filas, columnas, quantity, auto_recalculated, manual = _layout_for_area(obj, largo, ancho, required)
+        _set_lighting_layout_properties(
+            obj, filas, columnas, required, quantity,
+            auto_recalculated=auto_recalculated, manual=manual,
+        )
         rows.append({
             "recinto": label,
-            "area": round(_shape_area_m2(obj), 2),
+            "area": round(area_m2, 2),
             "largo": round(largo, 2),
             "ancho": round(ancho, 2),
             "altura": round(altura, 2),
-            "filas": _safe_text(getattr(obj, "Rows", 0)),
-            "columnas": _safe_text(getattr(obj, "Columns", 0)),
+            "filas": filas,
+            "columnas": columnas,
+            "cantidad": quantity,
+            "cantidad_requerida": required,
             "descripcion": desc,
+            "tipo_luminaria": type_key or "Luminaria 60x60",
+            "lumens_unitarios": lumens,
+            "potencia_unitaria": power_w,
             "obj": obj,
         })
     return rows, stats
@@ -812,7 +934,7 @@ def update_datos_recintos(doc, area_group, calc_group, datos_sheet_label, review
             raise SystemExit
         stats = {"manual": len(rows)}
 
-    headers = ["Recinto", "Area (m^2)", "Largo (m)", "Ancho (m)", "Altura (m)", "Filas", "Columnas", "Descripcion"]
+    headers = ["Recinto", "Area (m^2)", "Largo (m)", "Ancho (m)", "Altura (m)", "Filas", "Columnas", "Descripcion", "Cantidad Luminarias", "Tipo Luminaria", "Lumens Unitarios", "Potencia Unitaria (W)"]
     _ensure_min_cols(sheet, len(headers))
     _ensure_min_rows(sheet, len(rows) + 1)
     for col, header in enumerate(headers, start=1):
@@ -827,9 +949,13 @@ def update_datos_recintos(doc, area_group, calc_group, datos_sheet_label, review
         _safe_set(sheet, "F{}".format(index), row_data["filas"])
         _safe_set(sheet, "G{}".format(index), row_data["columnas"])
         _safe_set(sheet, "H{}".format(index), row_data["descripcion"])
+        _safe_set(sheet, "I{}".format(index), row_data["cantidad"])
+        _safe_set(sheet, "J{}".format(index), row_data["tipo_luminaria"])
+        _safe_set(sheet, "K{}".format(index), row_data["lumens_unitarios"])
+        _safe_set(sheet, "L{}".format(index), row_data["potencia_unitaria"])
 
     old_rows = int(getattr(sheet, "RowCount", 0) or 0)
-    _clear_rows(sheet, len(rows) + 2, max(old_rows, len(rows) + 30), "H")
+    _clear_rows(sheet, len(rows) + 2, max(old_rows, len(rows) + 30), "L")
     try:
         sheet.recompute()
     except Exception:
@@ -856,6 +982,8 @@ def update_legacy_sheet(doc, datos_sheet, calc_group, legacy_sheet_label):
         "Numero Luminarias",
         "E Final (Lux)",
         "% Iluminacion Recomendada",
+        "Tipo Luminaria",
+        "Potencia Unitaria (W)",
     ]
     for col, header in enumerate(headers, start=1):
         _safe_set(sheet, "{}1".format(chr(64 + col)), header)
@@ -871,12 +999,18 @@ def update_legacy_sheet(doc, datos_sheet, calc_group, legacy_sheet_label):
         lux = DESCRIPTION_LUX.get(desc, DESCRIPTION_LUX[DEFAULT_DESCRIPTION])
         _safe_set(sheet, "H{}".format(row), desc)
         _safe_set(sheet, "I{}".format(row), "=F{}*G{}".format(row, row))
-        _safe_set(sheet, "J{}".format(row), "{:.0f}".format(LUMEN_POR_LUMINARIA))
+        type_key = _sheet_text(datos_sheet, "J{}".format(row)) or "Luminaria 60x60"
+        lumens = _to_float(_sheet_text(datos_sheet, "K{}".format(row)), LUMEN_POR_LUMINARIA)
+        power_w = _to_float(_sheet_text(datos_sheet, "L{}".format(row)), 0.0)
+        _safe_set(sheet, "J{}".format(row), "{:.0f}".format(lumens))
         _safe_set(sheet, "K{}".format(row), "{:.0f}".format(lux))
         _safe_set(sheet, "L{}".format(row), "=B{}*K{}".format(row, row))
-        _safe_set(sheet, "M{}".format(row), "=L{}/J{}".format(row, row))
+        required = _required_luminaires(_to_float(_sheet_text(datos_sheet, "B{}".format(row)), 0.0), desc, lumens)
+        _safe_set(sheet, "M{}".format(row), str(required))
         _safe_set(sheet, "N{}".format(row), "=(I{}*J{}/B{})*{}*{}".format(row, row, row, FACTOR_UTILIZACION, FACTOR_MANTENIMIENTO))
         _safe_set(sheet, "O{}".format(row), "=(N{}/K{})*100".format(row, row))
+        _safe_set(sheet, "P{}".format(row), type_key)
+        _safe_set(sheet, "Q{}".format(row), power_w)
         row += 1
 
     try:
@@ -929,6 +1063,10 @@ def _label_data_from_legacy(sheet):
             "area": _format_area(_sheet_text(sheet, "B{}".format(row))),
             "descripcion": _sheet_text(sheet, "H{}".format(row)),
             "porcentaje": _computed_percent(sheet, row),
+            "cantidad": int(_to_float(_sheet_text(sheet, "I{}".format(row)), 0.0)),
+            "filas": int(_to_float(_sheet_text(sheet, "F{}".format(row)), 0.0)),
+            "columnas": int(_to_float(_sheet_text(sheet, "G{}".format(row)), 0.0)),
+            "tipo_luminaria": _sheet_text(sheet, "P{}".format(row)),
         }
     return data
 
@@ -970,7 +1108,14 @@ def update_labels(doc, area_group, legacy_sheet, label_group_name):
             _remove_leading_apostrophe(getattr(obj, "Label", obj.Name)),
             item["area"],
             item["descripcion"],
+            item.get("tipo_luminaria", ""),
             item["porcentaje"],
+            "{} {} ({}x{})".format(
+                item["cantidad"],
+                "luminaria" if item["cantidad"] == 1 else "luminarias",
+                item["filas"],
+                item["columnas"],
+            ),
         ]
         try:
             center = obj.Shape.BoundBox.Center

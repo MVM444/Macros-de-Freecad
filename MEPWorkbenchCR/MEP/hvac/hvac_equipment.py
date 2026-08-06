@@ -77,6 +77,7 @@ import unicodedata
 import FreeCAD as App
 import Part
 
+from ..utils import draft_text_compat
 from ..utils import selection
 from . import hvac_ports
 from . import hvac_project
@@ -167,6 +168,13 @@ EVAPORATOR_LIBRARY = {
         "StepFile": "PisoCielo_48000.step",
         "Step2DFile": "PisoCielo_48000_2D.step",
     },
+    "PisoCielo_60000": {
+        "Type": "FloorCeiling",
+        "CapacityBTU": 60000.0,
+        "Size": (1650.0, 280.0, 720.0),
+        "StepFile": "PisoCielo_60000.step",
+        "Step2DFile": "PisoCielo_60000_2D.step",
+    },
     "Ducto_36000": {
         "Type": "Duct",
         "CapacityBTU": 36000.0,
@@ -187,7 +195,7 @@ DEFAULT_SYMBOL_SIZE = 450.0
 VISUAL_MODE_OPTIONS = ["Ambos", "Solo2D", "Solo3D", "Ninguno"]
 DEFAULT_VISUAL_MODE = "Ambos"
 MASTER_PREFIX = "HVAC_EvapMaster_"
-EQUIP_DEBUG_REV = "2026-04-13-eq-r14"
+EQUIP_DEBUG_REV = "2026-08-03-eq-r18"
 MASTER_SHAPE_SCHEMA_REV = "2026-04-13-r2"
 STEP_MASTER_AUTO_RELOAD = False
 GROUP_MODEL_PREFIX = "Grupo::"
@@ -908,6 +916,7 @@ def ensure_equipment_properties(obj):
     added_type = False
     added_capacity = False
     added_height = False
+    added_installation_elevation = False
     added_base_level = False
     added_symbol_size = False
     added_show_symbol = False
@@ -942,6 +951,14 @@ def ensure_equipment_properties(obj):
     if "Height" not in obj.PropertiesList:
         obj.addProperty("App::PropertyFloat", "Height", "HVAC Equipment", "Mounting height (m)")
         added_height = True
+    if "InstallationElevation" not in obj.PropertiesList:
+        obj.addProperty(
+            "App::PropertyLength",
+            "InstallationElevation",
+            "BIM",
+            "Relative installation elevation for the 3D equipment; the 2D symbol remains on plan",
+        )
+        added_installation_elevation = True
     if "BaseLevel" not in obj.PropertiesList:
         obj.addProperty("App::PropertyFloat", "BaseLevel", "HVAC Equipment", "Base elevation reference (mm)")
         added_base_level = True
@@ -1044,6 +1061,8 @@ def ensure_equipment_properties(obj):
         obj.CapacityBTU = EVAPORATOR_LIBRARY[DEFAULT_MODEL]["CapacityBTU"]
     if added_height:
         obj.Height = 2.3
+    if added_installation_elevation:
+        obj.InstallationElevation = _sanitize_height_input_m(getattr(obj, "Height", 2.3)) * 1000.0
     if added_base_level:
         obj.BaseLevel = 0.0
     if added_symbol_size:
@@ -1144,9 +1163,12 @@ def _initialize_equipment_defaults(obj):
             guessed_capacity = _model_capacity_guess(model)
             obj.CapacityBTU = guessed_capacity if guessed_capacity > 0 else 12000.0
     normalized_height = _sanitize_height_input_m(getattr(obj, "Height", 0.0))
-    if normalized_height <= 0.0:
-        obj.Height = 2.3
-    elif abs(_to_float(getattr(obj, "Height", 0.0), 0.0) - normalized_height) > 0.0001:
+    if "InstallationElevation" in list(getattr(obj, "PropertiesList", []) or []):
+        installation_mm = max(0.0, _to_float(getattr(obj, "InstallationElevation", 0.0), 0.0))
+        normalized_height = installation_mm / 1000.0
+    elif normalized_height <= 0.0:
+        normalized_height = 2.3
+    if abs(_to_float(getattr(obj, "Height", 0.0), 0.0) - normalized_height) > 0.0001:
         obj.Height = normalized_height
     if _to_float(getattr(obj, "Symbol2DSize", 0.0), 0.0) <= 0:
         obj.Symbol2DSize = DEFAULT_SYMBOL_SIZE
@@ -1220,6 +1242,10 @@ def _is_link_equipment(equipment_obj):
 
 
 def _height_value_m(equipment_obj):
+    props = list(getattr(equipment_obj, "PropertiesList", []) or [])
+    if "InstallationElevation" in props:
+        elevation_mm = _to_float(getattr(equipment_obj, "InstallationElevation", 0.0), 0.0)
+        return max(0.0, float(elevation_mm) / 1000.0)
     return _sanitize_height_input_m(getattr(equipment_obj, "Height", 0.0))
 
 
@@ -1854,13 +1880,15 @@ def _space_from_position(doc, point):
     # Pass 1: strict interior check to avoid ambiguity when rooms share boundaries.
     strict_candidates = _collect_candidates(tol=0.5)
     if strict_candidates:
-        strict_candidates.sort(key=lambda row: (row[0], row[1]))
+        # In overlapping analysis regions, the smallest containing space is
+        # the most specific one; centroid distance is only a tie-breaker.
+        strict_candidates.sort(key=lambda row: (row[1], row[0]))
         return strict_candidates[0][2]
 
     # Pass 2: relaxed tolerance for nearly-on-boundary points.
     relaxed_candidates = _collect_candidates(tol=8.0)
     if relaxed_candidates:
-        relaxed_candidates.sort(key=lambda row: (row[0], row[1]))
+        relaxed_candidates.sort(key=lambda row: (row[1], row[0]))
         return relaxed_candidates[0][2]
 
     # Legacy fallback for unexpected shapes.
@@ -1879,7 +1907,7 @@ def _space_from_position(doc, point):
 def _space_center_point(space_obj):
     if space_obj is None:
         return None
-    base = getattr(space_obj, "BaseSpace", None)
+    base = hvac_space.space_geometry_source(space_obj)
     if base is None or not hasattr(base, "Shape"):
         return None
     try:
@@ -1958,7 +1986,7 @@ def _place_equipment_on_fallback_space(equipment_obj, reason=""):
 def _space_bbox(space_obj):
     if space_obj is None:
         return None
-    base = getattr(space_obj, "BaseSpace", None)
+    base = hvac_space.space_geometry_source(space_obj)
     if base is None or not hasattr(base, "Shape"):
         return None
     try:
@@ -2085,6 +2113,58 @@ def _wall_mount_point_and_rotation(space_obj, equipment_obj, preferred_point=Non
     return point, rotation
 
 
+def _linear_reference_rotation(linear_reference, space_obj=None):
+    """Orient local X along a selected edge and local Y toward its HVAC space."""
+
+    if not isinstance(linear_reference, dict):
+        return None
+    tangent = _coerce_point(linear_reference.get("tangent"))
+    point = _coerce_point(linear_reference.get("point"))
+    if tangent is None:
+        return None
+    tangent.z = 0.0
+    if float(tangent.Length) <= 1e-7:
+        return None
+    tangent.normalize()
+
+    if space_obj is not None and point is not None:
+        left = App.Vector(-float(tangent.y), float(tangent.x), 0.0)
+        inward = None
+        probe_distance = 20.0
+        try:
+            left_inside = hvac_space.space_contains_point(
+                space_obj,
+                point + left * probe_distance,
+                tol=0.5,
+            )
+            right_inside = hvac_space.space_contains_point(
+                space_obj,
+                point - left * probe_distance,
+                tol=0.5,
+            )
+            if bool(left_inside) != bool(right_inside):
+                inward = left if left_inside else -left
+        except Exception:
+            inward = None
+
+        if inward is None:
+            center = _space_center_point(space_obj)
+            if center is not None:
+                to_center = App.Vector(float(center.x) - float(point.x), float(center.y) - float(point.y), 0.0)
+                inward = left if float(left.dot(to_center)) >= 0.0 else -left
+        if inward is None:
+            inward = left
+        try:
+            return App.Rotation(App.Vector(0.0, 1.0, 0.0), inward)
+        except Exception:
+            pass
+
+    try:
+        return App.Rotation(App.Vector(1.0, 0.0, 0.0), tangent)
+    except Exception:
+        return None
+
+
 def _ceiling_mount_height_m(space_obj, equipment_obj, base_z=0.0):
     _sx, _sy, sz = _equipment_size(equipment_obj)
     ceiling_z = _space_ceiling_z(space_obj, floor_z=base_z)
@@ -2092,7 +2172,12 @@ def _ceiling_mount_height_m(space_obj, equipment_obj, base_z=0.0):
     return float(height_mm) / 1000.0
 
 
-def _apply_insert_mount_logic(equipment_obj, selected_space=None, selected_point=None):
+def _apply_insert_mount_logic(
+    equipment_obj,
+    selected_space=None,
+    selected_point=None,
+    linear_reference=None,
+):
     if equipment_obj is None:
         return None
 
@@ -2113,7 +2198,24 @@ def _apply_insert_mount_logic(equipment_obj, selected_space=None, selected_point
         except Exception:
             mount_space = None
 
-    if eq_type == "Wall":
+    use_linear_anchor = eq_type in {"Wall", "FloorCeiling"} and isinstance(linear_reference, dict)
+    if use_linear_anchor:
+        point = _coerce_point(linear_reference.get("point"))
+        if point is not None and mount_space is not None:
+            point.z = _space_floor_z(mount_space, fallback=point.z)
+        rotation = _linear_reference_rotation(linear_reference, space_obj=mount_space)
+        owner = linear_reference.get("object")
+        owner_name = str(getattr(owner, "Label", "") or getattr(owner, "Name", "") or "?")
+        subelement = str(linear_reference.get("subelement", "") or "Edge1")
+        log(
+            "Evaporadora {0} anclada al punto medio de {1}.{2}".format(
+                "de pared" if eq_type == "Wall" else "piso-cielo",
+                owner_name,
+                subelement,
+            )
+        )
+
+    elif eq_type == "Wall":
         if mount_space is not None:
             point, rotation = _wall_mount_point_and_rotation(mount_space, equipment_obj, preferred_point=src_point)
             if point is not None:
@@ -2920,7 +3022,7 @@ def _point_is_already_global(base_obj, bbox, point):
 def _space_area_anchor_point(space_obj):
     if space_obj is None:
         return None
-    base = getattr(space_obj, "BaseSpace", None)
+    base = hvac_space.space_geometry_source(space_obj)
     if base is not None and hasattr(base, "Shape"):
         try:
             shape = base.Shape
@@ -2995,6 +3097,7 @@ def _make_info2d_text(doc, lines, point):
             try:
                 obj = creator()
                 if obj is not None:
+                    draft_text_compat.ensure_text_proxy_state(obj)
                     _set_text_point(obj, point)
                     if not _is_draft_text_obj(obj):
                         # Enforce Draft text only for 2D export reliability.
@@ -3052,6 +3155,7 @@ def _build_info2d_lines(equipment_obj):
 def _ensure_info2d_properties(info_obj, equipment_obj=None):
     if info_obj is None:
         return
+    draft_text_compat.ensure_text_proxy_state(info_obj)
     try:
         props = list(getattr(info_obj, "PropertiesList", []) or [])
         if "MEPType" not in props:
@@ -3479,7 +3583,8 @@ def _sync_visual_mode_visibility(equipment_obj):
     _set_text_visibility(info_obj, show_info2d)
 
 
-def _sync_equipment_geometry(equipment_obj):
+def _sync_equipment_model3d(equipment_obj):
+    """Synchronize only the physical evaporator representation and its ports."""
     if equipment_obj is None:
         return
     _apply_equipment_elevation(equipment_obj)
@@ -3496,11 +3601,113 @@ def _sync_equipment_geometry(equipment_obj):
         _configure_link_for_transform(equipment_obj)
     else:
         equipment_obj.Shape = _build_equipment_shape(equipment_obj)
+    if bool(getattr(equipment_obj, "UsePorts", False)):
+        update_equipment_ports(equipment_obj)
+
+
+def _sync_equipment_geometry(equipment_obj):
+    if equipment_obj is None:
+        return
+    _sync_equipment_model3d(equipment_obj)
     symbol_obj = _sync_symbol2d_for_equipment(equipment_obj)
     _sync_info2d_for_equipment(equipment_obj, symbol_obj=symbol_obj)
     _sync_visual_mode_visibility(equipment_obj)
-    if bool(getattr(equipment_obj, "UsePorts", False)):
-        update_equipment_ports(equipment_obj)
+
+
+def installation_elevation_mm(equipment_obj):
+    """Return canonical 3D installation elevation in millimeters."""
+    if equipment_obj is None:
+        return 0.0
+    props = list(getattr(equipment_obj, "PropertiesList", []) or [])
+    if "InstallationElevation" in props:
+        value = _to_float(getattr(equipment_obj, "InstallationElevation", 0.0), 0.0)
+        return max(0.0, float(value))
+    return _sanitize_height_input_m(getattr(equipment_obj, "Height", 0.0)) * 1000.0
+
+
+def resolve_equipment_owner(candidate, doc=None):
+    """Resolve an evaporator from either its owner, Symbol2D or Info2D object."""
+    if candidate is None:
+        return None
+    if doc is None:
+        doc = getattr(candidate, "Document", None) or App.ActiveDocument
+    if doc is None:
+        return None
+
+    try:
+        if candidate in list(find_equipments(doc) or []):
+            return candidate
+    except Exception:
+        pass
+
+    try:
+        props = list(getattr(candidate, "PropertiesList", []) or [])
+        if "Owner" in props:
+            owner = getattr(candidate, "Owner", None)
+            if owner in list(find_equipments(doc) or []):
+                return owner
+    except Exception:
+        pass
+
+    for equipment_obj in list(find_equipments(doc) or []):
+        if equipment_obj is None:
+            continue
+        props = list(getattr(equipment_obj, "PropertiesList", []) or [])
+        for link_name in ("Symbol2D", "Info2D"):
+            if link_name not in props:
+                continue
+            try:
+                if getattr(equipment_obj, link_name, None) is candidate:
+                    return equipment_obj
+            except Exception:
+                continue
+    return None
+
+
+def equipment_owners_from_objects(objects, doc=None):
+    """Return unique evaporator owners resolved from a mixed selection."""
+    owners = []
+    seen = set()
+    for candidate in list(objects or []):
+        owner = resolve_equipment_owner(candidate, doc=doc)
+        owner_name = _safe_obj_name(owner)
+        if owner is None or not owner_name or owner_name in seen:
+            continue
+        owners.append(owner)
+        seen.add(owner_name)
+    return owners
+
+
+def set_installation_elevation(equipment_obj, elevation_mm):
+    """Set only the evaporator's 3D mounting elevation.
+
+    ``InstallationElevation`` is the canonical BIM property in millimeters.
+    ``Height`` remains synchronized as the legacy meter-based alias.  The
+    Symbol2D and Info2D objects are deliberately not rebuilt or repositioned.
+    """
+    if equipment_obj is None:
+        raise ValueError("Evaporadora no valida")
+    target_mm = max(0.0, _to_float(elevation_mm, 0.0))
+    proxy = getattr(equipment_obj, "Proxy", None)
+    previous_busy = bool(getattr(proxy, "_busy", False)) if proxy is not None else False
+    if proxy is not None:
+        try:
+            proxy._busy = True
+        except Exception:
+            proxy = None
+
+    try:
+        ensure_equipment_properties(equipment_obj)
+        equipment_obj.InstallationElevation = target_mm
+        equipment_obj.Height = target_mm / 1000.0
+        _sync_equipment_model3d(equipment_obj)
+    finally:
+        if proxy is not None:
+            try:
+                proxy._busy = previous_busy
+            except Exception:
+                pass
+    return target_mm
 
 
 def _finalize_insert_visuals(equipment_obj):
@@ -4083,6 +4290,19 @@ def _coerce_point(point):
         return None
 
 
+def _coerce_linear_reference(linear_reference):
+    if not isinstance(linear_reference, dict):
+        return None
+    point = _coerce_point(linear_reference.get("point"))
+    if point is None:
+        return None
+    result = dict(linear_reference)
+    result["point"] = point
+    tangent = _coerce_point(linear_reference.get("tangent"))
+    result["tangent"] = tangent
+    return result
+
+
 def _selected_insert_point():
     try:
         points = list(selection.get_selected_points() or [])
@@ -4096,6 +4316,14 @@ def _selected_insert_point():
         log("Diagnostico seleccion: punto seleccionado invalido")
         return None
     return point
+
+
+def _selected_linear_reference():
+    try:
+        return _coerce_linear_reference(selection.get_selected_linear_reference())
+    except Exception as exc:
+        log("Diagnostico seleccion: no se pudo leer linea/arista seleccionada: {0}".format(exc))
+        return None
 
 
 def _selected_object_count():
@@ -4144,12 +4372,13 @@ def _ensure_hvac_insert_structure(doc):
     return None
 
 
-def diagnose_evaporator_insert_context(doc=None, point=None, space=None):
+def diagnose_evaporator_insert_context(doc=None, point=None, space=None, linear_reference=None):
     """Return and print the minimum context used by robust evaporator insertion."""
     if doc is None:
         doc = App.ActiveDocument
 
-    explicit_point = _coerce_point(point) is not None
+    linear_anchor = _coerce_linear_reference(linear_reference)
+    explicit_point = _coerce_point(point) is not None or linear_anchor is not None
     selected_point = None
 
     report = {
@@ -4203,12 +4432,66 @@ def diagnose_evaporator_insert_context(doc=None, point=None, space=None):
     return report
 
 
-def _resolve_insert_space_and_point(doc, point=None, space=None):
+def _same_document_object(first, second):
+    if first is None or second is None:
+        return False
+    if first is second:
+        return True
+    try:
+        return first.Document is second.Document and str(first.Name) == str(second.Name)
+    except Exception:
+        return False
+
+
+def _space_from_linear_reference(doc, linear_reference):
+    """Resolve an HVAC Space explicitly owning the selected edge, then geometrically."""
+
+    if doc is None or not isinstance(linear_reference, dict):
+        return None
+    owner = linear_reference.get("object")
+    owner_unwrapped = selection.unwrap_link(owner)
+
+    for candidate in (owner, owner_unwrapped):
+        try:
+            if (
+                candidate is not None
+                and "MEPType" in list(getattr(candidate, "PropertiesList", []) or [])
+                and str(getattr(candidate, "MEPType", "") or "") == hvac_space.MEP_TYPE
+            ):
+                return candidate
+        except Exception:
+            continue
+
+    try:
+        spaces = list(hvac_space.find_spaces(doc) or [])
+    except Exception:
+        spaces = []
+    for space_obj in spaces:
+        try:
+            geometry_source = hvac_space.space_geometry_source(space_obj)
+        except Exception:
+            geometry_source = getattr(space_obj, "BaseSpace", None)
+        geometry_source = selection.unwrap_link(geometry_source)
+        if _same_document_object(owner, geometry_source) or _same_document_object(owner_unwrapped, geometry_source):
+            return space_obj
+
+    point = _coerce_point(linear_reference.get("point"))
+    if point is not None:
+        return _space_from_position(doc, point)
+    return None
+
+
+def _resolve_insert_space_and_point(doc, point=None, space=None, linear_reference=None):
     seed_point = _coerce_point(point)
+    linear_anchor = _coerce_linear_reference(linear_reference)
+    if seed_point is None and linear_anchor is not None:
+        seed_point = App.Vector(linear_anchor["point"])
     if seed_point is None:
         seed_point = _selected_insert_point()
 
     selected_space = space
+    if selected_space is None and linear_anchor is not None:
+        selected_space = _space_from_linear_reference(doc, linear_anchor)
     if selected_space is None and seed_point is not None:
         selected_space = _space_from_position(doc, seed_point)
     if selected_space is None:
@@ -4337,7 +4620,7 @@ def _create_evaporator_link(doc, model_name):
     return obj
 
 
-def insert_evaporator_safe(doc=None, point=None, space=None, model_name=None):
+def insert_evaporator_safe(doc=None, point=None, space=None, model_name=None, linear_reference=None):
     """Insert an evaporator with minimum HVAC context, even in empty documents."""
     if doc is None:
         doc = App.ActiveDocument
@@ -4345,7 +4628,12 @@ def insert_evaporator_safe(doc=None, point=None, space=None, model_name=None):
         log("No hay documento activo")
         return None
 
-    diagnose_evaporator_insert_context(doc=doc, point=point, space=space)
+    diagnose_evaporator_insert_context(
+        doc=doc,
+        point=point,
+        space=space,
+        linear_reference=linear_reference,
+    )
     _ensure_hvac_insert_structure(doc)
 
     selected_model = str(model_name or DEFAULT_MODEL)
@@ -4353,6 +4641,10 @@ def insert_evaporator_safe(doc=None, point=None, space=None, model_name=None):
     if selected_model not in model_options:
         log("Modelo evaporadora no disponible: {0}. Usando {1}".format(selected_model, DEFAULT_MODEL))
         selected_model = DEFAULT_MODEL
+    selected_type = str(_model_spec(selected_model).get("Type", "Wall") or "Wall")
+    linear_reference = _coerce_linear_reference(linear_reference)
+    if selected_type not in {"Wall", "FloorCeiling"}:
+        linear_reference = None
 
     log(
         "InsertSafe rev={0} gui={1} module={2} model={3}".format(
@@ -4387,6 +4679,7 @@ def insert_evaporator_safe(doc=None, point=None, space=None, model_name=None):
             doc,
             point=point,
             space=space,
+            linear_reference=linear_reference,
         )
         log("Insertando evaporadora en {0}".format(_fmt_point(seed_point)))
 
@@ -4394,6 +4687,7 @@ def insert_evaporator_safe(doc=None, point=None, space=None, model_name=None):
             obj,
             selected_space=selected_space,
             selected_point=seed_point,
+            linear_reference=linear_reference,
         )
         if placed is None:
             obj.BaseLevel = float(seed_point.z)
@@ -4450,11 +4744,21 @@ def insert_evaporator_from_selection(doc=None, model_name=None):
         )
     )
 
+    # Capture the edge before opening the model dialog; Qt dialogs can change
+    # focus but the insertion reference must remain deterministic.
+    linear_reference = _selected_linear_reference()
     selected_model = model_name if model_name is not None else _pick_model_for_insert(doc=doc)
     if not selected_model:
         log("Insercion evaporadora cancelada")
         return None
-    return insert_evaporator_safe(doc=doc, model_name=str(selected_model))
+    selected_type = str(_model_spec(selected_model).get("Type", "Wall") or "Wall")
+    if selected_type not in {"Wall", "FloorCeiling"}:
+        linear_reference = None
+    return insert_evaporator_safe(
+        doc=doc,
+        model_name=str(selected_model),
+        linear_reference=linear_reference,
+    )
 
 
 def refresh_equipment(equipment_obj):
@@ -4570,6 +4874,7 @@ class HVACEquipmentProxy:
             "SystemType",
             "Space",
             "Height",
+            "InstallationElevation",
             "BaseLevel",
             "Placement",
             "Symbol2DSize",
@@ -4595,6 +4900,14 @@ class HVACEquipmentProxy:
                                 round(float(norm_h), 3),
                             )
                         )
+                    target_mm = norm_h * 1000.0
+                    if abs(_to_float(getattr(obj, "InstallationElevation", 0.0), 0.0) - target_mm) > 0.01:
+                        obj.InstallationElevation = target_mm
+                if prop == "InstallationElevation":
+                    target_mm = max(0.0, _to_float(getattr(obj, "InstallationElevation", 0.0), 0.0))
+                    target_height = target_mm / 1000.0
+                    if abs(_to_float(getattr(obj, "Height", 0.0), 0.0) - target_height) > 0.0001:
+                        obj.Height = target_height
                 if prop == "Placement":
                     placement = getattr(obj, "Placement", App.Placement())
                     inferred_base_level = float(placement.Base.z)
@@ -4607,6 +4920,7 @@ class HVACEquipmentProxy:
                     "Type",
                     "Placement",
                     "Height",
+                    "InstallationElevation",
                     "BaseLevel",
                     "Symbol2DSize",
                     "ShowSymbol2D",
@@ -4616,7 +4930,16 @@ class HVACEquipmentProxy:
                     "UsePorts",
                 }:
                     _sync_equipment_geometry(obj)
-                if prop in {"Model", "CapacityBTU", "Space", "Placement", "AutoDetectSpace", "Height", "BaseLevel"}:
+                if prop in {
+                    "Model",
+                    "CapacityBTU",
+                    "Space",
+                    "Placement",
+                    "AutoDetectSpace",
+                    "Height",
+                    "InstallationElevation",
+                    "BaseLevel",
+                }:
                     update_equipment_coverage(obj)
             except Exception as exc:
                 if _is_access_violation(exc):

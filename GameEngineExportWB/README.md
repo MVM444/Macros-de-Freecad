@@ -137,6 +137,30 @@ Durante la exportacion X3D, cada Link genera sus propios `PointLight` usando su 
 
 La vista previa crea objetos temporales `CGE_TempLightPreview*`, que se excluyen de la geometria exportada.
 
+### Luminarias 3D automaticas
+
+La opcion **Detectar luminarias 3D automaticamente / Auto-detect 3D luminaires** crea una luz para cada instancia `App::Link` de luminaria que tenga un solido con volumen. El origen se calcula con la envolvente de los solidos, no con la envolvente completa del objeto. Asi se ignoran simbolos 2D, lineas y anotaciones incluidos dentro del mismo master.
+
+En distribuciones `Grid`, `Line` o `Ring`, la intensidad configurada representa la potencia total de la luminaria y se reparte entre los puntos generados. Esto evita que un panel de cuatro puntos produzca cuatro veces la intensidad solicitada.
+
+Cuando la lista de exportacion esta vacia, el Workbench crea una seleccion 3D automatica. Si existe una lista explicita guardada, la conserva y aplica la misma politica para completarla con objetos 3D ocultos. Cuando esta activa **Incluir objetos 3D ocultos / Include hidden 3D objects**, incluye cualquier objeto con un solido de volumen positivo o una malla real aunque el objeto o su grupo esten ocultos. Esto cubre cielorrasos, columnas, equipos, mobiliario e instancias `App::Link` sin depender de los nombres usados por un proyecto. Excluye sketches, objetos `Part2DObject`, geometria de solo lineas, objetos identificados como 2D aunque tengan un espesor artificial, textos auxiliares, masters usados por `App::Link` y contenido de grupos de biblioteca, masters, internos, referencias, prototipos o catalogos.
+
+Antes de llamar al exportador GUI, el Workbench activa temporalmente la visibilidad de los objetos seleccionados y sus grupos padre. Esto evita que FreeCAD omita dispositivos de grupos electricos o HVAC ocultos. Al terminar, incluso si ocurre una excepcion, restaura una instantanea completa de `ViewObject.Visibility` sin guardar el documento.
+
+Para excepciones documentales, un objeto o su master enlazado puede tener propiedades booleanas `GameExportInclude` o `GameExportExclude`. La exclusion tiene prioridad. Estas propiedades son opcionales; el Workbench no las agrega ni modifica automaticamente.
+
+La deteccion automatica de luminarias acepta nombres comunes, metadatos semanticos como `IfcType`, `PredefinedType`, `ObjectType`, `Category`, `Role`, `EquipmentType`, `DeviceType` y `GameExportRole`, o una propiedad booleana `IsGameExportLuminaire`, `IsLuminaire` o `IsLightFixture`. Siempre exige un solido 3D con volumen antes de generar una luz.
+
+## Vista previa Web
+
+En **Salida / Output**, el boton **Vista previa Web / Web preview** exporta el X3D con el mismo flujo normal, genera un `index.html` junto al X3D e inicia un servidor HTTP local en segundo plano. El navegador abre siempre `http://127.0.0.1:<puerto>/index.html`; no se utiliza `file://`.
+
+El servidor usa solo librerias estandar de Python, escucha exclusivamente en `127.0.0.1`, busca un puerto libre entre 8000 y 9000 y sirve unicamente la carpeta del HTML. Se reutiliza para vistas de la misma carpeta y se cierra al cambiar de carpeta, tras 15 minutos sin solicitudes, durante la recarga del Workbench o al terminar FreeCAD.
+
+La pagina usa X3DOM estable desde `https://www.x3dom.org/release/`. El `Scene` del X3D se inserta directamente dentro del HTML, conservando `Viewpoint` y `NavigationInfo`. El generador convierte etiquetas X3D autocerradas a cierres explicitos compatibles con HTML y muestra un estado de carga en la barra superior. Los assets relativos, como texturas y cielos en `<BaseName>_assets/`, siguen funcionando. Las referencias locales absolutas o `file://` se convierten a rutas relativas; si apuntan fuera de la carpeta servida, el recurso se copia a `.gee_web_assets/`.
+
+Para evitar interiores oscuros en archivos sin iluminacion, el HTML activa `headlight="true"` en una copia del `NavigationInfo` solo cuando no existen nodos `DirectionalLight`, `PointLight` o `SpotLight`. Si el X3D ya contiene luces, conserva el valor exportado para no sobreexponer la vista previa. Este ajuste no modifica el X3D exportado, el documento FreeCAD ni la iluminacion usada por Castle Game Engine.
+
 ## Archivos incluidos
 
 - `Init.py`, `InitGui.py`: arranque del workbench y registro de comandos.
@@ -159,6 +183,9 @@ La vista previa crea objetos temporales `CGE_TempLightPreview*`, que se excluyen
 - `examples/json/quick_example_house_sample.json`: payload de prueba para importacion JSON.
 - `notes/GameEngineExportWB_chat.md`: registro de conversaciones y decisiones relevantes.
 - `notes/add_light_properties.md`: nota tecnica del comando de propiedades de luz.
+- `notes/web_preview.md`: nota tecnica de la vista previa Web con X3DOM.
+- `notes/puriscal_complete_export.md`: diagnostico y validacion de la exportacion completa de Puriscal.
+- `notes/reusable_export_pipeline.md`: politica general reutilizable de seleccion, visibilidad, luminarias y diagnostico.
 - `notes/environment_skybox.md`: nota tecnica de cielo cubemap X3D.
 - `notes/ground_texture.md`: nota tecnica de textura aplicada a objeto suelo exportado.
 - `../GameEngineExportLoader.FCMacro`: macro para recargar el workbench en FreeCAD sin reiniciar.

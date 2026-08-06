@@ -90,6 +90,29 @@ Notas:
 - Puede recortar lineas largas.
 - El resultado mantiene propiedades y estilo de `AreaPorClick`.
 
+## PoligonosRecintosDesdeArchWalls.FCMacro
+
+Macro automatica e independiente para obtener recintos poligonales directamente
+desde muros `Arch Wall` o muros marcados con `FA_Role = wall`.
+
+Uso:
+
+1. Seleccionar el muro BIM o los muros que delimitan la planta. Si no se selecciona
+   nada, la macro usa los muros BIM visibles.
+2. Ejecutar `Poligonos de recintos desde muros BIM`.
+3. Revisar el grupo `Recintos poligonales desde muros BIM` y la hoja
+   `Cuadro de recintos poligonales`.
+
+El algoritmo une las caras superiores de los muros, donde puertas y ventanas ya no
+interrumpen la huella, y convierte cada hueco interior cerrado en una cara exacta.
+Admite recintos rectangulares, en L y otros contornos poligonales. Los objetos se
+marcan con `ElectricCRTipo = Area`, `FA_Role = room_polygon`, `AreaM2`, perimetro,
+vertices y enlaces a los muros fuente.
+
+La macro no modifica rectangulos, areas por click ni muros. Al ejecutarla otra vez
+solo reemplaza sus propias salidas (`FA_PolygonalRoomsFromArchWalls`). Un poligono
+con varios rotulos distintos se reporta como posible pared abierta o faltante.
+
 ## RectFromBoundaryLines.FCMacro
 
 Macro manual estable para crear rectangulos a partir de 2 a N aristas limite seleccionadas.

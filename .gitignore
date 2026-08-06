@@ -1,8 +1,12 @@
 *.pyc
 __pycache__/
+.codex_tmp/
 .tmp.drivedownload/
 .tmp.driveupload/
 Configuracion del proyecto/_reportes_arbol/
+ElectricCR/logs/tool_events*.jsonl
+ElectricCR/logs/tool_usage-DESKTOP*.json
+Respaldos/*.zip
 Respaldos/Limpieza_raiz_*/
 Respaldos/Reorganizacion_raiz_*/
 Respaldos/*_20*/

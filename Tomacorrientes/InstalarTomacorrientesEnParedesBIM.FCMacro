@@ -1,0 +1,521 @@
+# -*- coding: utf-8 -*-
+# MenuText: Instalar tomacorrientes generales en paredes BIM
+# ToolTip: Distribuye tomacorrientes en caras interiores de muros BIM, evitando puertas y ventanas.
+# Icon: InstalarTomacorrientesEnParedesBIM.svg
+
+"""Distribucion asistida de tomacorrientes generales sobre paredes Arch/BIM.
+
+El criterio geometrico de NEC 210.52(A) para unidades de vivienda permite una
+separacion maxima de 3.6 m entre salidas y considera espacios de pared de 600 mm
+o mas. ElectricCR usa un valor de proyecto mas conservador y editable de 1.8 m
+entre tomacorrientes. Es un auxiliar de diseno, no una certificacion.
+
+Regla de proyecto ElectricCR: las puertas y todo el ancho de las ventanas se
+tratan como intervalos prohibidos, por lo que no se colocan tomas debajo de
+ventanas aunque el antepecho tenga altura suficiente.
+"""
+
+from __future__ import annotations
+
+import importlib
+import math
+import sys
+from pathlib import Path
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+
+try:
+    from PySide6 import QtCore, QtWidgets
+except Exception:
+    try:
+        from PySide2 import QtCore, QtWidgets
+    except Exception:
+        from PySide import QtCore, QtGui as QtWidgets
+
+
+MACRO_ID = "ElectricCR_TomasParedesBIM_v1"
+GROUP_NAME = "Tomacorrientes_BIM"
+GROUP_LABEL = "Tomacorrientes generales BIM"
+DEFAULT_REGISTRY_KEY = "Tomacorriente_120V"
+DEFAULT_HEIGHT_MM = 300.0
+DEFAULT_MAX_SPACING_MM = 1800.0
+DEFAULT_MIN_WALL_SPACE_MM = 600.0
+DEFAULT_OPENING_CLEARANCE_MM = 0.0
+GEOM_TOL = 1.0
+
+
+def log(text):
+    App.Console.PrintMessage("[ElectricCR][TOMAS BIM] %s\n" % text)
+
+
+def warn(text):
+    App.Console.PrintWarning("[ElectricCR][TOMAS BIM] %s\n" % text)
+
+
+def label(obj):
+    return str(getattr(obj, "Label", getattr(obj, "Name", "")) or "")
+
+
+def _text_signature(obj):
+    values = [
+        getattr(obj, "Name", ""), label(obj), getattr(obj, "IfcType", ""),
+        getattr(obj, "FA_Role", ""), getattr(obj, "GEE_Role", ""),
+        getattr(getattr(obj, "Proxy", None), "Type", ""),
+    ]
+    return " ".join(str(v or "") for v in values).lower()
+
+
+def _has_shape(obj):
+    try:
+        return obj.Shape is not None and not obj.Shape.isNull()
+    except Exception:
+        return False
+
+
+def is_wall(obj):
+    if not _has_shape(obj):
+        return False
+    text = _text_signature(obj)
+    return (
+        str(getattr(obj, "IfcType", "")).lower() in ("wall", "wallstandardcase")
+        or str(getattr(obj, "FA_Role", "")).lower() == "wall"
+        or str(getattr(getattr(obj, "Proxy", None), "Type", "")).lower() == "wall"
+        or "arch::wall" in str(getattr(obj, "TypeId", "")).lower()
+        or "muro bim" in text
+    )
+
+
+def opening_kind(obj):
+    text = _text_signature(obj)
+    ifc = str(getattr(obj, "IfcType", "")).strip().lower()
+    role = str(getattr(obj, "FA_Role", getattr(obj, "GEE_Role", "")) or "").strip().lower()
+    if ifc in ("wall", "wallstandardcase") or role == "wall" or "profile" in role:
+        return ""
+    if ifc == "door" or role == "door" or role.startswith("bim_door"):
+        return "Puerta"
+    if ifc == "window" or role == "window" or role.startswith("bim_window"):
+        return "Ventana"
+    # Fallback for imported BIM objects that lack IFC metadata.
+    if not ifc and (text.startswith("door ") or text.startswith("puerta ") or " puerta bim " in " " + text + " "):
+        return "Puerta"
+    if not ifc and (text.startswith("window ") or text.startswith("ventana ") or " ventana bim " in " " + text + " "):
+        return "Ventana"
+    return ""
+
+
+def flatten(objects):
+    result, pending, seen = [], list(objects or []), set()
+    while pending:
+        obj = pending.pop(0)
+        key = str(getattr(obj, "Name", "") or id(obj))
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(obj)
+        for prop in ("Group", "Objects"):
+            try:
+                pending.extend(list(getattr(obj, prop, []) or []))
+            except Exception:
+                pass
+    return result
+
+
+def selected_walls(doc):
+    selected = [o for o in flatten(Gui.Selection.getSelection()) if is_wall(o)]
+    if selected:
+        return selected
+    visible = []
+    for obj in doc.Objects:
+        if not is_wall(obj):
+            continue
+        try:
+            if obj.ViewObject.Visibility:
+                visible.append(obj)
+        except Exception:
+            visible.append(obj)
+    return visible or [o for o in doc.Objects if is_wall(o)]
+
+
+def _xy_distance(a, b):
+    return math.hypot(float(a.x) - float(b.x), float(a.y) - float(b.y))
+
+
+def wall_segments(wall):
+    """Return straight XY axes, preferably from the Arch Wall Base."""
+    source = getattr(wall, "Base", None)
+    shape = getattr(source, "Shape", None) if source is not None else None
+    edges = list(getattr(shape, "Edges", []) or [])
+    if not edges:
+        edges = list(getattr(getattr(wall, "Shape", None), "Edges", []) or [])
+    result, seen = [], set()
+    for edge in edges:
+        try:
+            p0, p1 = edge.Vertexes[0].Point, edge.Vertexes[-1].Point
+            length = _xy_distance(p0, p1)
+        except Exception:
+            continue
+        if length < DEFAULT_MIN_WALL_SPACE_MM - GEOM_TOL:
+            continue
+        # Curved edges are deliberately skipped: a chord could cross openings.
+        try:
+            if abs(float(edge.Length) - length) > max(2.0, length * 0.002):
+                continue
+        except Exception:
+            pass
+        key = tuple(
+            (round(float(x), 1), round(float(y), 1))
+            for x, y in sorted(((p0.x, p0.y), (p1.x, p1.y)))
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append((App.Vector(p0.x, p0.y, 0), App.Vector(p1.x, p1.y, 0), length))
+    return result
+
+
+def _opening_hosts_wall(opening, wall):
+    for prop in ("Host", "Hosts"):
+        try:
+            hosts = getattr(opening, prop)
+            if not isinstance(hosts, (list, tuple)):
+                hosts = [hosts]
+            if wall in hosts:
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def collect_openings(doc, walls):
+    openings = []
+    for obj in doc.Objects:
+        kind = opening_kind(obj)
+        if not kind or not _has_shape(obj):
+            continue
+        hosted = [wall for wall in walls if _opening_hosts_wall(obj, wall)]
+        openings.append((obj, kind, hosted))
+    return openings
+
+
+def _profile_xy_points(opening):
+    """Use the base profile, avoiding the misleading bbox of an open door leaf."""
+    base = getattr(opening, "Base", None)
+    shape = getattr(base, "Shape", None)
+    points = []
+    try:
+        points = [App.Vector(v.Point.x, v.Point.y, 0) for v in shape.Vertexes]
+    except Exception:
+        pass
+    if len(points) >= 2:
+        return points
+    try:
+        bb = opening.Shape.BoundBox
+        return [App.Vector(x, y, 0) for x in (bb.XMin, bb.XMax) for y in (bb.YMin, bb.YMax)]
+    except Exception:
+        return []
+
+
+def _project(point, p0, tangent):
+    dx, dy = point.x - p0.x, point.y - p0.y
+    along = dx * tangent.x + dy * tangent.y
+    across = abs(dx * (-tangent.y) + dy * tangent.x)
+    return along, across
+
+
+def opening_intervals(p0, p1, wall, openings, clearance):
+    length = _xy_distance(p0, p1)
+    tangent = App.Vector((p1.x - p0.x) / length, (p1.y - p0.y) / length, 0)
+    width = float(getattr(getattr(wall, "Width", 120.0), "Value", getattr(wall, "Width", 120.0)) or 120.0)
+    association = max(350.0, width * 0.5 + 250.0)
+    intervals = []
+    for obj, kind, hosts in openings:
+        if hosts and wall not in hosts:
+            continue
+        projected = [_project(p, p0, tangent) for p in _profile_xy_points(obj)]
+        near = [along for along, across in projected if across <= association]
+        if len(near) < 2:
+            continue
+        start, end = min(near) - clearance, max(near) + clearance
+        if end <= 0 or start >= length:
+            continue
+        intervals.append((max(0.0, start), min(length, end), kind, label(obj)))
+    return intervals
+
+
+def merge_intervals(intervals):
+    merged = []
+    for start, end, *_ in sorted(intervals, key=lambda item: item[0]):
+        if end <= start:
+            continue
+        if not merged or start > merged[-1][1] + GEOM_TOL:
+            merged.append([start, end])
+        else:
+            merged[-1][1] = max(merged[-1][1], end)
+    return [(a, b) for a, b in merged]
+
+
+def usable_runs(length, forbidden):
+    runs, cursor = [], 0.0
+    for start, end in merge_intervals(forbidden):
+        if start > cursor + GEOM_TOL:
+            runs.append((cursor, start))
+        cursor = max(cursor, end)
+    if cursor < length - GEOM_TOL:
+        runs.append((cursor, length))
+    return runs
+
+
+def positions_for_run(start, end, max_spacing, minimum):
+    length = end - start
+    if length + GEOM_TOL < minimum:
+        return []
+    # ``max_spacing`` se usa como separacion nominal entre tomas, no para
+    # dividir el tramo en celdas. Con ceil(), un tramo de 1900 mm producia dos
+    # tomas separadas solo 950 mm. Ahora se agrega una nueva toma unicamente
+    # cuando cabe conservando la separacion solicitada, y se centra el conjunto.
+    count = max(1, int(math.floor((length + GEOM_TOL) / max_spacing)))
+    if count == 1:
+        return [start + length * 0.5]
+    occupied = (count - 1) * max_spacing
+    first = start + (length - occupied) * 0.5
+    return [first + i * max_spacing for i in range(count)]
+
+
+def _faces_from_area_object(obj):
+    if not _has_shape(obj) or is_wall(obj) or opening_kind(obj):
+        return []
+    faces = list(getattr(obj.Shape, "Faces", []) or [])
+    if faces:
+        return faces
+    result = []
+    for wire in list(getattr(obj.Shape, "Wires", []) or []):
+        try:
+            if wire.isClosed():
+                result.append(Part.Face(wire))
+        except Exception:
+            pass
+    return result
+
+
+def collect_area_faces(doc):
+    candidates = []
+    group = doc.getObject("Areas")
+    if group is not None:
+        candidates.extend(flatten([group]))
+    for obj in doc.Objects:
+        text = _text_signature(obj)
+        if any(k in text for k in ("area", "recinto", "room", "space")):
+            candidates.append(obj)
+    faces, seen = [], set()
+    for obj in candidates:
+        key = getattr(obj, "Name", str(id(obj)))
+        if key in seen:
+            continue
+        seen.add(key)
+        faces.extend(_faces_from_area_object(obj))
+    return faces
+
+
+def point_in_areas(point, faces):
+    for face in faces:
+        try:
+            z = float(face.BoundBox.ZMin)
+            if face.isInside(App.Vector(point.x, point.y, z), 1.0, True):
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def side_states(midpoint, tangent, wall, area_faces):
+    width = float(getattr(getattr(wall, "Width", 120.0), "Value", getattr(wall, "Width", 120.0)) or 120.0)
+    probe = width * 0.5 + 150.0
+    normal = App.Vector(-tangent.y, tangent.x, 0)
+    left = App.Vector(midpoint.x + normal.x * probe, midpoint.y + normal.y * probe, 0)
+    right = App.Vector(midpoint.x - normal.x * probe, midpoint.y - normal.y * probe, 0)
+    return point_in_areas(left, area_faces), point_in_areas(right, area_faces)
+
+
+def _ensure_group(doc):
+    group = doc.getObject(GROUP_NAME)
+    if group is None:
+        group = doc.addObject("App::DocumentObjectGroup", GROUP_NAME)
+        group.Label = GROUP_LABEL
+        parent = doc.getObject("electrico")
+        if parent is not None and hasattr(parent, "addObject"):
+            parent.addObject(group)
+    return group
+
+
+def _module_roots():
+    here = Path(__file__).resolve().parent
+    yield here.parent / "ElectricCR"
+    yield Path(App.getUserAppDataDir()) / "Mod" / "ElectricCR"
+
+
+def load_toma_module():
+    for root in _module_roots():
+        if root.is_dir() and str(root) not in sys.path:
+            sys.path.insert(0, str(root))
+    return importlib.import_module("electriccr.features.objeto_toma_uno")
+
+
+def _set_prop(obj, prop_type, name, value):
+    if not hasattr(obj, name):
+        obj.addProperty(prop_type, name, "ElectricCR BIM", "Trazabilidad de colocacion BIM")
+    setattr(obj, name, value)
+
+
+def create_toma(doc, module, group, point, tangent, side, wall, index, settings):
+    normal = App.Vector(-tangent.y, tangent.x, 0)
+    if side < 0:
+        normal = App.Vector(-normal.x, -normal.y, 0)
+    width = float(
+        getattr(getattr(wall, "Width", 120.0), "Value", getattr(wall, "Width", 120.0))
+        or 120.0
+    )
+    # El eje BIM normalmente coincide con el centro del muro. Desplazar hasta
+    # su cara evita que el simbolo y el modelo 3D queden embebidos en el centro.
+    face_point = App.Vector(
+        point.x + normal.x * width * 0.5,
+        point.y + normal.y * width * 0.5,
+        point.z,
+    )
+    angle = math.degrees(math.atan2(normal.y, normal.x)) - 90.0
+    placement = App.Placement(face_point, App.Rotation(App.Vector(0, 0, 1), angle))
+    kwargs = dict(
+        doc=doc, name_prefix="TomaBIM_%03d" % index,
+        key_registro=settings["registry"], tipo_logico="Toma",
+        placement=placement, modo_visual="Ambos", altura_rel=settings["height"],
+        orientacion_pared="Vertical", recompute=False, target_group=group,
+    )
+    if not hasattr(module, "crear_toma_link"):
+        raise RuntimeError("La version de objeto_toma_uno no incluye crear_toma_link.")
+    try:
+        obj = module.crear_toma_link(**kwargs)
+    except TypeError:
+        kwargs.pop("recompute", None); kwargs.pop("target_group", None)
+        obj = module.crear_toma_link(**kwargs)
+        group.addObject(obj)
+    _set_prop(obj, "App::PropertyLink", "ECR_SourceWall", wall)
+    _set_prop(obj, "App::PropertyString", "ECR_Environment", "Interior")
+    _set_prop(obj, "App::PropertyString", "ECR_PlacementRule", "NEC 2020 210.52(A) / parametros editables")
+    _set_prop(obj, "App::PropertyBool", "ECR_AvoidsOpenings", True)
+    return obj
+
+
+class SettingsDialog(QtWidgets.QDialog):
+    def __init__(self, wall_count, area_count, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Tomacorrientes generales en paredes BIM")
+        form = QtWidgets.QFormLayout(self)
+        self.environment = QtWidgets.QComboBox()
+        self.environment.addItems(["Interior del edificio", "Exterior del edificio"])
+        self.environment.setCurrentIndex(0)
+        self.registry = QtWidgets.QLineEdit(DEFAULT_REGISTRY_KEY)
+        self.height = QtWidgets.QDoubleSpinBox(); self.height.setRange(0, 3000); self.height.setValue(DEFAULT_HEIGHT_MM); self.height.setSuffix(" mm")
+        self.spacing = QtWidgets.QDoubleSpinBox(); self.spacing.setRange(600, 10000); self.spacing.setValue(DEFAULT_MAX_SPACING_MM); self.spacing.setSuffix(" mm")
+        self.minimum = QtWidgets.QDoubleSpinBox(); self.minimum.setRange(100, 3000); self.minimum.setValue(DEFAULT_MIN_WALL_SPACE_MM); self.minimum.setSuffix(" mm")
+        self.clearance = QtWidgets.QDoubleSpinBox(); self.clearance.setRange(0, 1000); self.clearance.setValue(DEFAULT_OPENING_CLEARANCE_MM); self.clearance.setSuffix(" mm")
+        self.both_sides = QtWidgets.QCheckBox("Colocar en ambas caras de paredes divisorias")
+        self.both_sides.setChecked(True)
+        form.addRow("Ambiente:", self.environment)
+        form.addRow("Tipo del registro:", self.registry)
+        form.addRow("Altura:", self.height)
+        form.addRow("Separacion entre tomas:", self.spacing)
+        form.addRow("Mocheta minima:", self.minimum)
+        form.addRow("Margen junto a aperturas:", self.clearance)
+        form.addRow("", self.both_sides)
+        note = QtWidgets.QLabel(
+            "Muros: %d | caras de recintos: %d\n"
+            "Interior se reconoce con los poligonos del grupo Areas. Puertas y ventanas se excluyen en todo su ancho."
+            % (wall_count, area_count)
+        )
+        note.setWordWrap(True)
+        form.addRow(note)
+        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept); buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
+
+    def values(self):
+        return {
+            "interior": self.environment.currentIndex() == 0,
+            "registry": self.registry.text().strip() or DEFAULT_REGISTRY_KEY,
+            "height": self.height.value(), "spacing": self.spacing.value(),
+            "minimum": self.minimum.value(), "clearance": self.clearance.value(),
+            "both_sides": self.both_sides.isChecked(),
+        }
+
+
+def run():
+    doc = App.ActiveDocument
+    if doc is None:
+        raise RuntimeError("No hay un documento activo.")
+    walls = selected_walls(doc)
+    if not walls:
+        raise RuntimeError("No se encontraron paredes Arch/BIM. Seleccione uno o varios muros.")
+    area_faces = collect_area_faces(doc)
+    dialog = SettingsDialog(len(walls), len(area_faces), Gui.getMainWindow())
+    if dialog.exec() != QtWidgets.QDialog.Accepted:
+        return
+    settings = dialog.values()
+    if settings["interior"] and not area_faces:
+        raise RuntimeError("No hay poligonos en el grupo Areas para reconocer el interior del edificio.")
+
+    module = load_toma_module()
+    openings = collect_openings(doc, walls)
+    created = skipped_short = ambiguous = segment_count = 0
+    doc.openTransaction("ElectricCR: tomacorrientes en paredes BIM")
+    try:
+        group = _ensure_group(doc)
+        for wall in walls:
+            for p0, p1, length in wall_segments(wall):
+                segment_count += 1
+                tangent = App.Vector((p1.x-p0.x)/length, (p1.y-p0.y)/length, 0)
+                forbidden = opening_intervals(p0, p1, wall, openings, settings["clearance"])
+                for start, end in usable_runs(length, forbidden):
+                    positions = positions_for_run(start, end, settings["spacing"], settings["minimum"])
+                    if not positions:
+                        skipped_short += 1
+                        continue
+                    midpoint_s = (start + end) * 0.5
+                    midpoint = App.Vector(p0.x + tangent.x*midpoint_s, p0.y + tangent.y*midpoint_s, 0)
+                    left_inside, right_inside = side_states(midpoint, tangent, wall, area_faces)
+                    if settings["interior"]:
+                        sides = ([1] if left_inside else []) + ([-1] if right_inside else [])
+                    else:
+                        sides = ([] if left_inside else [1]) + ([] if right_inside else [-1])
+                    if len(sides) > 1 and not settings["both_sides"]:
+                        sides = sides[:1]
+                    if not sides:
+                        ambiguous += 1
+                        continue
+                    for side in sides:
+                        for distance in positions:
+                            point = App.Vector(p0.x+tangent.x*distance, p0.y+tangent.y*distance, 0)
+                            create_toma(doc, module, group, point, tangent, side, wall, created+1, settings)
+                            created += 1
+        doc.recompute()
+        doc.commitTransaction()
+    except Exception:
+        doc.abortTransaction()
+        raise
+
+    message = (
+        "Creados: %d | tramos BIM: %d | mochetas menores a %.0f mm: %d | "
+        "tramos sin cara %s reconocible: %d. No se modificaron muros ni aperturas."
+        % (created, segment_count, settings["minimum"], skipped_short,
+           "interior" if settings["interior"] else "exterior", ambiguous)
+    )
+    log(message)
+    QtWidgets.QMessageBox.information(Gui.getMainWindow(), "ElectricCR - resultado", message)
+
+
+if __name__ == "__main__":
+    try:
+        run()
+    except Exception as exc:
+        App.Console.PrintError("[ElectricCR][TOMAS BIM] Error: %s\n" % exc)
+        QtWidgets.QMessageBox.critical(Gui.getMainWindow(), "ElectricCR - error", str(exc))

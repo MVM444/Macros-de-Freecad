@@ -1,286 +1,1195 @@
 # -*- coding: utf-8 -*-
-# Macro: ColocarApagadores_BIM_v4.FCMacro
-# Descripcion (sin acentos):
-#   Coloca un App::Link al prototipo "Simbolo Apagador" junto a cada puerta BIM
-#   seleccionada (Arch::Door o Arch::Window con Role/IfcRole tipo Door).
-#   Reglas:
-#     - 100 mm desde el borde del picaporte (lado opuesto a la bisagra).
-#     - 100 mm hacia el interior + 50 mm (mitad del simbolo de 100x100).
-#     - El simbolo queda en Z=0 y su eje local Y+ apunta hacia el interior.
-#   Nombres: "Apagador-<LabelPuerta>" y todos agrupados en "Apagadores".
-#
-#   Si la puerta no expone bisagra (Hinge/HingeSide/Flip/Reversed), se aplica
-#   una regla por defecto: el lado del picaporte se toma como la perpendicular
-#   a la direccion de interior:
-#       DEFAULT_LATCH_RULE = "R90"  -> latch = rotar 90 grados horario a interior
-#       DEFAULT_LATCH_RULE = "L90"  -> latch = rotar 90 grados antihorario
-#
-# Notas del proyecto:
-#   - Sin acentos en codigo y comentarios.
-#   - Mensajes de depuracion detallados en la consola.
-#   - Objetivo final: integrar esta macro a un Workbench electrico.
-#
-# Version: 2025-08-18 16:25
-# Autor: ChatGPT (Proyecto Programacion en FreeCAD)
-# -------------------------------------------------------------------
+# MenuText: Colocar apagadores junto a puertas BIM
+# Icon: ColocarApagadoresEnPuertas.svg
+
+"""Coloca apagadores junto a puertas BIM y aberturas sin hoja.
+
+Reglas principales:
+- Sin seleccion procesa todas las puertas BIM; con seleccion permite limitar el alcance.
+- En ventanas Arch/BIM basadas en Sketch, el origen local es la bisagra y X+ llega
+  hasta el picaporte. El apagador se busca despues de esa jamba.
+- FA_TargetRoom y el Analisis de Areas definen la cara interior del recinto.
+- Mode1/Mode2 se usa solo como respaldo cuando la puerta no tiene recinto asociado.
+- Las lineas colineales de muros BIM se fusionan para encontrar pared disponible.
+- Se evitan otros vanos y las dos hojas de una puerta doble generan un solo apagador.
+- Las aberturas IFC Opening Element usan sus dos extremos como jambas equivalentes.
+- Crea App::Link desde el registro ElectricCR (Apagador_Simple, 2D/3D).
+- Una segunda ejecucion actualiza los apagadores existentes en lugar de duplicarlos.
+"""
+
+import json
+import math
+import re
+import sys
+import unicodedata
+from pathlib import Path
 
 import FreeCAD as App
 import FreeCADGui as Gui
-import math
 
-DOC = App.ActiveDocument
 
-# -------------------- parametros ajustables --------------------
-OFFSET_LATERAL_MM   = 100.0   # desde el borde libre (picaporte)
-OFFSET_INTERIOR_MM  = 100.0   # hacia el interior del recinto
-HALF_SYMBOL_MM      = 50.0    # mitad del simbolo (100x100)
-GROUP_NAME          = "Apagadores"
-PROTOTYPE_LABEL     = "Simbolo Apagador"
+TAG = "[APAGADORES_PUERTAS_BIM]"
+GENERATED_BY = "ColocarApagadoresEnPuertas"
+PARAM_PATH = "User parameter:BaseApp/Preferences/Mod/ElectricCR/ApagadoresPuertasBIM"
+DEFAULT_REG_KEY = "Apagador_Simple"
+DEFAULT_HEIGHT_MM = 1200.0
+DEFAULT_JAMB_OFFSET_MM = 150.0
+DEFAULT_WALL_SEARCH_MM = 300.0
+DEFAULT_DEVICE_HALF_WIDTH_MM = 50.0
+DEFAULT_OPENING_MARGIN_MM = 25.0
+DEFAULT_SEARCH_STEP_MM = 25.0
+DEFAULT_MAX_ALONG_WALL_MM = 2500.0
+DEFAULT_MODE = "Ambos"
+DEFAULT_SIDE_MODE = "auto"
+GROUP_NAME = "Apagadores_BIM"
+GROUP_LABEL = "Apagadores BIM"
 
-# Regla por defecto si no hay bisagra expuesta por la puerta BIM:
-# "R90" = rotar interior 90 grados horario para obtener el lado del picaporte
-# "L90" = rotar interior 90 grados antihorario
-DEFAULT_LATCH_RULE  = "R90"
 
-# Si tu plantilla tiene interior invertido, cambia este signo:
-# INTERIOR_SIGN = +1 -> interior = -Normal (comun en Arch/BIM)
-# INTERIOR_SIGN = -1 -> interior = +Normal
-INTERIOR_SIGN       = +1
+def _qtwidgets():
+    for candidate in ("PySide6", "PySide2"):
+        try:
+            module = __import__(candidate, fromlist=["QtWidgets"])
+            return module.QtWidgets
+        except Exception:
+            pass
+    try:
+        from PySide import QtGui
+        return QtGui
+    except Exception:
+        return None
 
-# -------------------- utilidades de log --------------------
-def log(msg):  App.Console.PrintMessage("[APAGADOR] " + str(msg) + "\n")
-def warn(msg): App.Console.PrintWarning("[APAGADOR][WARN] " + str(msg) + "\n")
-def err(msg):  App.Console.PrintError("[APAGADOR][ERROR] " + str(msg) + "\n")
 
-# -------------------- prototipo y grupo --------------------
-def find_prototype():
-    objs = DOC.getObjectsByLabel(PROTOTYPE_LABEL)
-    if objs:
-        return objs[0]
-    for o in DOC.Objects:
-        if o.Name == PROTOTYPE_LABEL:
-            return o
+def _log(message):
+    App.Console.PrintMessage(TAG + " " + str(message) + "\n")
+
+
+def _warn(message):
+    App.Console.PrintWarning(TAG + " " + str(message) + "\n")
+
+
+def _error(message):
+    App.Console.PrintError(TAG + " " + str(message) + "\n")
+
+
+def _safe(value):
+    try:
+        return str(value or "")
+    except Exception:
+        return ""
+
+
+def _norm(value):
+    text = unicodedata.normalize("NFD", _safe(value))
+    return "".join(ch for ch in text if unicodedata.category(ch) != "Mn").lower().strip()
+
+
+def _float(value, default=0.0):
+    try:
+        return float(value)
+    except Exception:
+        try:
+            return float(value.Value)
+        except Exception:
+            return float(default)
+
+
+def _unit_xy(vector, fallback=None):
+    result = App.Vector(vector.x, vector.y, 0.0)
+    if result.Length <= 1e-9:
+        result = App.Vector(*(fallback or (1.0, 0.0, 0.0)))
+    result.normalize()
+    return result
+
+
+def _is_group(obj):
+    return obj is not None and hasattr(obj, "Group")
+
+
+def _unwrap_link(obj):
+    current = obj
+    seen = set()
+    while current is not None and _safe(getattr(current, "TypeId", "")) == "App::Link":
+        name = _safe(getattr(current, "Name", ""))
+        if name in seen:
+            break
+        seen.add(name)
+        linked = getattr(current, "LinkedObject", None)
+        if linked is None:
+            break
+        current = linked
+    return current
+
+
+def _ifc_kind(obj):
+    values = []
+    for prop in ("IfcType", "IfcClass", "IfcRole", "Role", "PredefinedType"):
+        try:
+            values.append(_norm(getattr(obj, prop, "")))
+        except Exception:
+            pass
+    text = " ".join(values)
+    if "door" in text:
+        return "door"
+    if "opening" in text or "abertura" in text or "vano" in text:
+        return "opening"
+    if "window" in text:
+        return "window"
+    if "wall" in text:
+        return "wall"
+    return ""
+
+
+def _is_bim_door(obj):
+    base = _unwrap_link(obj)
+    if base is None or _is_group(base):
+        return False
+    if _safe(getattr(base, "TypeId", "")) == "Arch::Door":
+        return True
+    return _ifc_kind(base) in ("door", "opening")
+
+
+def _iter_selection(selection):
+    stack = list(selection or [])
+    seen = set()
+    while stack:
+        obj = stack.pop()
+        name = _safe(getattr(obj, "Name", ""))
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        yield obj
+        if _is_group(obj):
+            stack.extend(list(getattr(obj, "Group", []) or []))
+
+
+def _collect_selected_doors():
+    result = []
+    seen = set()
+    for obj in _iter_selection(Gui.Selection.getSelection() or []):
+        door = _unwrap_link(obj)
+        if _is_bim_door(door) and door.Name not in seen:
+            seen.add(door.Name)
+            result.append(door)
+    return result
+
+
+def _collect_all_doors(doc):
+    result = []
+    for obj in doc.Objects:
+        if _is_bim_door(obj):
+            result.append(_unwrap_link(obj))
+    unique = {obj.Name: obj for obj in result if obj is not None}
+    return sorted(unique.values(), key=lambda obj: _norm(getattr(obj, "Label", obj.Name)))
+
+
+def _door_group_key(door):
+    if _ifc_kind(door) == "opening":
+        return "opening:" + door.Name
+    label = _norm(getattr(door, "Label", door.Name))
+    if "doble hoja" not in label and not re.search(r"\bhoja\s*[ab12]\b", label):
+        return "door:" + door.Name
+    label = re.sub(r"\bdoble\s+hoja\s*[ab12]\b", "doble", label)
+    label = re.sub(r"\bhoja\s*[ab12]\b", "doble", label)
+    label = re.sub(r"\s+", " ", label).strip(" -_")
+    return "double:" + label
+
+
+def _mode_from_door(door):
+    if _ifc_kind(door) == "opening":
+        return "SinHoja"
+    text = _safe(getattr(door, "WindowParts", ""))
+    match = re.search(r"Mode\s*([12])", text, flags=re.IGNORECASE)
+    if match:
+        return "Mode" + match.group(1)
+    return "Unknown"
+
+
+def _door_geometry(door):
+    base = getattr(door, "Base", None)
+    if base is None or not hasattr(base, "Placement"):
+        raise RuntimeError("puerta sin Sketch/Base geometrico")
+    width = _float(getattr(door, "Width", 0.0), 0.0)
+    if width <= 1.0:
+        raise RuntimeError("puerta sin ancho valido")
+
+    origin = base.Placement.multVec(App.Vector(0.0, 0.0, 0.0))
+    axis = _unit_xy(base.Placement.Rotation.multVec(App.Vector(1.0, 0.0, 0.0)))
+    normal = _unit_xy(
+        base.Placement.Rotation.multVec(App.Vector(0.0, 0.0, 1.0)),
+        fallback=(-axis.y, axis.x, 0.0),
+    )
+    kind = _ifc_kind(door)
+    has_leaf = kind == "door"
+    mode = _mode_from_door(door)
+    # En las ventanas Arch de Puriscal: Mode2 gira hacia +normal y Mode1 hacia -normal.
+    swing = normal if mode != "Mode1" else -normal
+    swing = _unit_xy(swing, fallback=(-axis.y, axis.x, 0.0))
+    latch = origin + axis * width
+    return {
+        "door": door,
+        "hinge": origin,
+        "latch": latch,
+        "mid": (origin + latch) * 0.5,
+        "axis": axis,
+        "normal": normal,
+        "swing": swing,
+        "width": width,
+        "mode": mode,
+        "kind": kind,
+        "has_leaf": has_leaf,
+    }
+
+
+def _world_line_segments(doc):
+    segments = []
+    for wall in doc.Objects:
+        if _ifc_kind(wall) != "wall":
+            continue
+        base = getattr(wall, "Base", None)
+        if base is None or not hasattr(base, "Geometry"):
+            continue
+        placement = getattr(base, "Placement", App.Placement())
+        for geometry in list(getattr(base, "Geometry", []) or []):
+            if not hasattr(geometry, "StartPoint") or not hasattr(geometry, "EndPoint"):
+                continue
+            start = placement.multVec(geometry.StartPoint)
+            end = placement.multVec(geometry.EndPoint)
+            delta = _unit_xy(end - start)
+            length = (end - start).Length
+            if length <= 1.0:
+                continue
+            if abs(delta.x) >= 0.98:
+                segments.append({
+                    "kind": "H", "coord": 0.5 * (start.y + end.y),
+                    "lo": min(start.x, end.x), "hi": max(start.x, end.x), "wall": wall,
+                })
+            elif abs(delta.y) >= 0.98:
+                segments.append({
+                    "kind": "V", "coord": 0.5 * (start.x + end.x),
+                    "lo": min(start.y, end.y), "hi": max(start.y, end.y), "wall": wall,
+                })
+    return segments
+
+
+def _merge_wall_runs(segments, coord_tol=2.0, gap_tol=5.0):
+    clusters = []
+    for segment in sorted(segments, key=lambda item: (item["kind"], item["coord"], item["lo"])):
+        cluster = None
+        for candidate in clusters:
+            if candidate["kind"] == segment["kind"] and abs(candidate["coord"] - segment["coord"]) <= coord_tol:
+                cluster = candidate
+                break
+        if cluster is None:
+            cluster = {"kind": segment["kind"], "coord": segment["coord"], "segments": []}
+            clusters.append(cluster)
+        cluster["segments"].append(segment)
+
+    runs = []
+    for cluster in clusters:
+        merged = []
+        for segment in sorted(cluster["segments"], key=lambda item: item["lo"]):
+            if not merged or segment["lo"] > merged[-1]["hi"] + gap_tol:
+                merged.append(dict(segment))
+            else:
+                merged[-1]["hi"] = max(merged[-1]["hi"], segment["hi"])
+        for item in merged:
+            item["kind"] = cluster["kind"]
+            item["coord"] = cluster["coord"]
+            item["dir"] = App.Vector(1.0, 0.0, 0.0) if item["kind"] == "H" else App.Vector(0.0, 1.0, 0.0)
+            runs.append(item)
+    return runs
+
+
+def _scalar_on_run(run, point):
+    return point.x if run["kind"] == "H" else point.y
+
+
+def _point_on_run(run, scalar):
+    if run["kind"] == "H":
+        return App.Vector(scalar, run["coord"], 0.0)
+    return App.Vector(run["coord"], scalar, 0.0)
+
+
+def _distance_to_run_line(run, point):
+    return abs(point.y - run["coord"]) if run["kind"] == "H" else abs(point.x - run["coord"])
+
+
+def _find_wall_run(runs, door_data, max_distance):
+    wanted = "H" if abs(door_data["axis"].x) >= abs(door_data["axis"].y) else "V"
+    mid_scalar = None
+    best = None
+    for run in runs:
+        if run["kind"] != wanted:
+            continue
+        scalar = _scalar_on_run(run, door_data["mid"])
+        if scalar < run["lo"] - door_data["width"] or scalar > run["hi"] + door_data["width"]:
+            continue
+        distance = _distance_to_run_line(run, door_data["mid"])
+        if distance > max_distance:
+            continue
+        if best is None or distance < best[0]:
+            best = (distance, run)
+            mid_scalar = scalar
+    if best is None:
+        return None
+    return {"distance": best[0], "run": best[1], "mid_scalar": mid_scalar}
+
+
+def _opening_interval_on_run(obj, run, max_distance):
+    kind = _ifc_kind(obj)
+    if kind not in ("door", "window", "opening"):
+        return None
+    base = getattr(obj, "Base", None)
+    width = _float(getattr(obj, "Width", 0.0), 0.0)
+    if base is not None and hasattr(base, "Placement") and width > 1.0:
+        start = base.Placement.multVec(App.Vector())
+        axis = _unit_xy(base.Placement.Rotation.multVec(App.Vector(1.0, 0.0, 0.0)))
+        wanted = "H" if abs(axis.x) >= abs(axis.y) else "V"
+        if wanted != run["kind"]:
+            return None
+        end = start + axis * width
+        mid = (start + end) * 0.5
+        if _distance_to_run_line(run, mid) > max_distance + 100.0:
+            return None
+        lo = min(_scalar_on_run(run, start), _scalar_on_run(run, end))
+        hi = max(_scalar_on_run(run, start), _scalar_on_run(run, end))
+        return {"lo": lo, "hi": hi, "object": obj}
+    try:
+        box = obj.Shape.BoundBox
+        # Algunos objetos contenedores conservan IfcType=Window aunque su Shape
+        # sea la envolvente completa del edificio. No deben bloquear todo el muro.
+        if max(box.XLength, box.YLength) > 5000.0 or min(box.XLength, box.YLength) > 2500.0:
+            return None
+        center = App.Vector(box.Center.x, box.Center.y, 0.0)
+        if _distance_to_run_line(run, center) > max_distance + max(box.XLength, box.YLength):
+            return None
+        if run["kind"] == "H":
+            return {"lo": box.XMin, "hi": box.XMax, "object": obj}
+        return {"lo": box.YMin, "hi": box.YMax, "object": obj}
+    except Exception:
+        return None
+
+
+def _opening_intervals(doc, run, max_distance):
+    result = []
+    seen = set()
+    for obj in doc.Objects:
+        if obj.Name in seen:
+            continue
+        interval = _opening_interval_on_run(obj, run, max_distance)
+        if interval is not None:
+            seen.add(obj.Name)
+            result.append(interval)
+    return result
+
+
+def _candidate_is_free(value, run, half_width, intervals, current_door, opening_margin):
+    if value - half_width < run["lo"] or value + half_width > run["hi"]:
+        return False
+    low = value - half_width
+    high = value + half_width
+    for interval in intervals:
+        other = interval["object"]
+        if other is current_door:
+            continue
+        if high > interval["lo"] - opening_margin and low < interval["hi"] + opening_margin:
+            return False
+    return True
+
+
+def _find_free_scalar(run, door_data, cfg, intervals):
+    axis_sign = 1.0 if door_data["axis"].dot(run["dir"]) >= 0.0 else -1.0
+    if door_data.get("has_leaf", True):
+        searches = (
+            (door_data["latch"], axis_sign, "picaporte"),
+            # If the latch is too close to a corner or another opening, search
+            # outside the hinge jamb instead of omitting the whole BIM door.
+            (door_data["hinge"], -axis_sign, "bisagra_respaldo"),
+        )
+    else:
+        searches = (
+            (door_data["latch"], axis_sign, "extremo_B"),
+            (door_data["hinge"], -axis_sign, "extremo_A_respaldo"),
+        )
+    max_steps = int(max(1.0, cfg["max_along_wall"] / cfg["search_step"]))
+    for origin, direction, jamb_rule in searches:
+        origin_scalar = _scalar_on_run(run, origin)
+        start = origin_scalar + direction * cfg["jamb_offset"]
+        for index in range(max_steps + 1):
+            value = start + direction * cfg["search_step"] * index
+            if _candidate_is_free(
+                value, run, cfg["device_half_width"], intervals,
+                door_data["door"], cfg["opening_margin"],
+            ):
+                return value, abs(value - origin_scalar), jamb_rule
+            if value < run["lo"] - cfg["device_half_width"] or value > run["hi"] + cfg["device_half_width"]:
+                break
+    return None, None, ""
+
+
+def _yaw_for_inward(inward):
+    # Rotation Z that maps local Y+ to the side where the door opens.
+    return math.degrees(math.atan2(inward.y, inward.x)) - 90.0
+
+
+def _find_group_by_label(doc, label):
+    wanted = _norm(label)
+    for obj in doc.Objects:
+        if _is_group(obj) and _norm(getattr(obj, "Label", "")) == wanted:
+            return obj
     return None
 
-def ensure_group(name=GROUP_NAME):
-    grp = DOC.getObject(name)
-    if grp is None:
-        grp = DOC.addObject("App::DocumentObjectGroup", name)
-    return grp
 
-# -------------------- helpers de geometria --------------------
-def v2(x, y): return App.Vector(x, y, 0.0)
-
-def rot_from_y_to(vecY):
-    # rotacion que alinea el eje local +Y del simbolo hacia vecY (en XY)
-    try:
-        return App.Rotation(App.Vector(0, 1, 0), vecY)
-    except Exception:
-        ang = math.degrees(math.atan2(vecY.y, vecY.x))
-        return App.Rotation(App.Vector(0, 0, 1), ang)
-
-def rot90_hor(v):   # rotar 90 grados horario alrededor de Z
-    return App.Vector(-v.y, v.x, 0.0)
-
-def rot90_antih(v): # rotar 90 grados antihorario alrededor de Z
-    return App.Vector(v.y, -v.x, 0.0)
-
-# -------------------- resolucion de seleccion --------------------
-def resolve_link(o):
-    # si es App::Link, seguir hasta el objeto base
-    seen = set()
-    cur = o
-    while getattr(cur, "TypeId", "") == "App::Link":
-        if cur in seen: break
-        seen.add(cur)
-        lo = getattr(cur, "LinkedObject", None)
-        if not lo: break
-        cur = lo
-    return cur
-
-def iter_group(o):
-    # iterar recursivamente grupos anidados
-    stack = [o]
-    while stack:
-        cur = stack.pop()
-        yield cur
-        if hasattr(cur, "Group") and cur.Group:
-            for c in cur.Group:
-                stack.append(c)
-
-def _has_ifc_door_props(base):
-    txts = []
-    for p in ("IfcType", "IfcClass", "IfcRole", "Role"):
+def _ensure_group(doc):
+    group = doc.getObject(GROUP_NAME)
+    if group is None or not _is_group(group):
+        group = doc.addObject("App::DocumentObjectGroup", GROUP_NAME)
+    group.Label = GROUP_LABEL
+    parent = _find_group_by_label(doc, "Iluminacion") or doc.getObject("electrico")
+    if parent is not None and _is_group(parent):
         try:
-            v = getattr(base, p, "")
-            if v: txts.append(str(v).lower())
+            if group not in (parent.Group or []):
+                parent.addObject(group)
         except Exception:
             pass
-    return any("door" in t for t in txts)
+    return group
 
-def is_bim_door(base):
-    tid = getattr(base, "TypeId", "")
-    if tid == "Arch::Door":
-        return True
-    if tid == "Arch::Window" and _has_ifc_door_props(base):
-        return True
-    # otros contenedores BIM con props IFC de puerta
-    if _has_ifc_door_props(base):
-        if hasattr(base, "Shape") and base.Shape and not base.Shape.isNull():
-            return True
-    return False
 
-def collect_selected_bim_doors():
-    sel = Gui.Selection.getSelection()
-    if not sel:
+def _candidate_registry_files():
+    found = []
+    here = Path(__file__).resolve()
+    for parent in (here.parent, *here.parents):
+        for path in (
+            parent / "Resources" / "registry" / "registry_electric.json",
+            parent / "registry" / "registry_electric.json",
+        ):
+            if path.is_file() and path not in found:
+                found.append(path)
+    return found
+
+
+def _switch_registry_keys():
+    for path in _candidate_registry_files():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+            types = data.get("types", data) if isinstance(data, dict) else {}
+            keys = []
+            for key, info in types.items():
+                text = _norm(key + " " + _safe((info or {}).get("ifc", "")))
+                if "apagador" in text or "switchingdevice" in text or "switch" in text:
+                    keys.append(key)
+            if keys:
+                keys.sort(key=lambda key: (key != DEFAULT_REG_KEY, _norm(key)))
+                return keys
+        except Exception:
+            pass
+    return [DEFAULT_REG_KEY]
+
+
+def _candidate_electriccr_dirs():
+    result = []
+    here = Path(__file__).resolve()
+    for parent in (here.parent, *here.parents):
+        if (parent / "electriccr" / "features" / "objeto_toma_uno.py").is_file():
+            result.append(parent)
+        package = parent / "ElectricCR"
+        if (package / "electriccr" / "features" / "objeto_toma_uno.py").is_file():
+            result.append(package)
+    return result
+
+
+def _load_device_module():
+    import importlib
+    for name in ("ElectricCR.electriccr.features.objeto_toma_uno", "electriccr.features.objeto_toma_uno"):
+        try:
+            return importlib.import_module(name)
+        except Exception:
+            pass
+    for directory in _candidate_electriccr_dirs():
+        for path in (directory.parent, directory):
+            value = str(path)
+            if value and value not in sys.path:
+                sys.path.insert(0, value)
+        importlib.invalidate_caches()
+        for name in ("ElectricCR.electriccr.features.objeto_toma_uno", "electriccr.features.objeto_toma_uno"):
+            try:
+                return importlib.import_module(name)
+            except Exception:
+                pass
+    return None
+
+
+def _ensure_property(obj, ptype, name, group, description):
+    if name not in getattr(obj, "PropertiesList", []):
+        obj.addProperty(ptype, name, group, description)
+
+
+def _suggest_room(door):
+    text = _safe(getattr(door, "Label", door.Name)).strip()
+    text = re.sub(r"^\s*Puerta\s+BIM\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"^\s*Puerta\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"^\s*frente\s*-?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*-?\s*doble\s+hoja\s*[AB12]\s*$", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*-?\s*sencilla\s*$", "", text, flags=re.IGNORECASE)
+    return text.strip(" -_") or _safe(getattr(door, "Label", door.Name))
+
+
+def _area_records(doc):
+    root = _find_group_by_label(doc, "Areas")
+    if root is None:
         return []
-    doors = []
+    records = []
+    stack = list(getattr(root, "Group", []) or [])
     seen = set()
-    for o in sel:
-        for it in iter_group(o):
-            base = resolve_link(it)
-            if not base or base.Name in seen:
-                continue
-            if is_bim_door(base):
-                doors.append(base)
-                seen.add(base.Name)
-    return doors
-
-# -------------------- lectura de ejes y datos BIM --------------------
-def get_width_bim(door):
-    w = getattr(door, "Width", None)
-    if w is not None:
+    while stack:
+        obj = stack.pop()
+        if obj.Name in seen:
+            continue
+        seen.add(obj.Name)
+        if _is_group(obj):
+            stack.extend(list(getattr(obj, "Group", []) or []))
+            continue
         try:
-            return float(w)
+            box = obj.Shape.BoundBox
+            if box.XLength > 1.0 and box.YLength > 1.0:
+                records.append((box.XLength * box.YLength, obj, box))
         except Exception:
             pass
-    try:
-        bb = door.Shape.BoundBox
-        return max(bb.XLength, bb.YLength)
-    except Exception:
-        warn("Door {} sin Width; usando 900".format(door.Label))
-        return 900.0
+    return sorted(records, key=lambda row: row[0])
 
-def get_axes_bim(door):
-    # x: a lo ancho del hueco; y_out: normal del muro (suele apuntar "afuera")
-    rot = door.Placement.Rotation
-    x = rot.multVec(App.Vector(1, 0, 0))
-    y_prop = getattr(door, "Normal", None)
-    y = y_prop if y_prop else rot.multVec(App.Vector(0, 1, 0))
-    x = v2(x.x, x.y)
-    y = v2(y.x, y.y)
-    if x.Length == 0: x = v2(1, 0)
-    if y.Length == 0: y = v2(0, 1)
-    x.normalize(); y.normalize()
-    return x, y
 
-def hinge_right_bim(door):
-    # intenta varias propiedades comunes
-    h = getattr(door, "Hinge", None)
-    if isinstance(h, str):
-        hl = h.lower()
-        if hl.startswith("l"): return False
-        if hl.startswith("r"): return True
-    for alt in ("HingeSide", "LeftRight", "HingeLR"):
-        v = getattr(door, alt, None)
-        if isinstance(v, str):
-            vl = v.lower()
-            if vl.startswith("l"): return False
-            if vl.startswith("r"): return True
-    # paridad Flip/Reversed (si existen)
-    rev = getattr(door, "Reversed", None)
-    flp = getattr(door, "Flip", None)
-    if (h is None) and (rev is None) and (flp is None):
+def _room_key(value):
+    text = _norm(value)
+    text = re.sub(r"\(\s*fuente\s*\)", " ", text)
+    text = re.sub(r"^(?:etiqueta\s+area|poligono|reticula\s+cielo|cielo\s+600x600)\s*-?\s*", "", text)
+    text = re.sub(r"\s*-\s*\d+\s*$", "", text)
+    text = re.sub(r"\d+\s*$", "", text)
+    return re.sub(r"[^a-z0-9]+", " ", text).strip()
+
+
+def _record_for_object(obj):
+    if obj is None:
         return None
-    score = 0
-    if isinstance(rev, bool) and rev: score += 1
-    if isinstance(flp, bool) and flp: score += 1
-    return (score % 2 == 0)
+    try:
+        box = obj.Shape.BoundBox
+        if box.XLength <= 1.0 or box.YLength <= 1.0:
+            return None
+        return (box.XLength * box.YLength, obj, box)
+    except Exception:
+        return None
 
-def interior_vec_bim(door, y_out):
-    # interior = -Normal si INTERIOR_SIGN=+1; o +Normal si INTERIOR_SIGN=-1
-    iv = (-y_out if INTERIOR_SIGN > 0 else y_out)
-    if iv.Length == 0: iv = v2(0, 1)
-    iv.normalize()
-    return iv
 
-# -------------------- pose para puerta BIM --------------------
-def pose_for_bim(door):
-    base = door.Placement.Base
-    base2 = v2(base.x, base.y)
-    width = get_width_bim(door)
-    x_axis, y_out = get_axes_bim(door)
-    iv = interior_vec_bim(door, y_out)
+def _target_room_record(doc, door, records):
+    """Return the room explicitly linked to the BIM door, even if hidden."""
+    target = getattr(door, "FA_TargetRoom", None)
+    record = _record_for_object(target)
+    if record is not None:
+        return record, "recinto_BIM_FA_TargetRoom"
 
-    hr = hinge_right_bim(door)
-    if hr is None:
-        # regla por defecto si no hay datos de bisagra
-        latch = rot90_hor(iv) if DEFAULT_LATCH_RULE.upper() == "R90" else rot90_antih(iv)
-        latch.normalize()
-        used_rule = "infer-" + DEFAULT_LATCH_RULE.upper()
+    wanted = _room_key(getattr(door, "FA_TargetRoomName", "") or _suggest_room(door))
+    if not wanted:
+        return None, ""
+
+    candidates = list(records)
+    known = {row[1].Name for row in candidates}
+    for obj in doc.Objects:
+        if obj.Name in known:
+            continue
+        if _room_key(getattr(obj, "Label", "")) != wanted:
+            continue
+        record = _record_for_object(obj)
+        if record is not None:
+            candidates.append(record)
+
+    exact = [row for row in candidates if _room_key(getattr(row[1], "Label", "")) == wanted]
+    if not exact:
+        return None, ""
+
+    def rank(row):
+        obj = row[1]
+        type_id = _safe(getattr(obj, "TypeId", ""))
+        is_area_rectangle = "Part2DObject" in type_id or obj.Name.startswith("Rectangle")
+        return (0 if is_area_rectangle else 1, row[0])
+
+    return min(exact, key=rank), "recinto_encontrado_por_nombre"
+
+
+def _point_in_record(record, point, tolerance=2.0):
+    if record is None:
+        return False
+    _area, _obj, box = record
+    return (
+        box.XMin - tolerance <= point.x <= box.XMax + tolerance
+        and box.YMin - tolerance <= point.y <= box.YMax + tolerance
+    )
+
+
+def _area_room_name(obj):
+    for name in ("FA_RoomName", "Recinto", "AreaNombre", "RoomName", "NombreRecinto"):
+        value = _safe(getattr(obj, name, "")).strip()
+        if value:
+            return value
+    label = _safe(getattr(obj, "Label", getattr(obj, "Name", ""))).strip()
+    label = re.sub(r"^\s*(?:Pol[ií]gono|Etiqueta\s+[aá]rea)\s*-?\s*", "", label, flags=re.IGNORECASE)
+    label = re.sub(r"\s*\(\s*fuente\s*\)\s*$", "", label, flags=re.IGNORECASE)
+    return label
+
+
+def _run_normal(run):
+    if run["kind"] == "H":
+        return App.Vector(0.0, 1.0, 0.0)
+    return App.Vector(1.0, 0.0, 0.0)
+
+
+def _wall_half_width(wall):
+    base = getattr(wall, "Base", None)
+    for owner, name in (
+        (wall, "Width"), (wall, "FA_WallThickness"),
+        (base, "FA_WallThickness"), (base, "Width"),
+    ):
+        if owner is None:
+            continue
+        value = _float(getattr(owner, name, 0.0), 0.0)
+        if value > 1.0:
+            return value * 0.5
+    return 60.0
+
+
+def _choose_interior_side(doc, door, data, run, centerline_point, areas):
+    """Choose the wall normal that points into the door's target room."""
+    normal = _run_normal(run)
+    target, target_rule = _target_room_record(doc, door, areas)
+    room_name = (
+        _safe(getattr(door, "FA_TargetRoomName", "")).strip()
+        or _suggest_room(door)
+    )
+
+    if target is not None:
+        _area, area_obj, box = target
+        room_name = room_name or _safe(getattr(area_obj, "Label", area_obj.Name))
+        toward_room = App.Vector(
+            box.Center.x - centerline_point.x,
+            box.Center.y - centerline_point.y,
+            0.0,
+        )
+        signed = toward_room.dot(normal)
+        if abs(signed) > 1.0:
+            inward = normal if signed > 0.0 else -normal
+            return inward, room_name, area_obj, target_rule
+
+    # When there is no explicit target, prefer a known area on only one side.
+    probe_distance = _wall_half_width(run["wall"]) + 250.0
+    plus_probe = centerline_point + normal * probe_distance
+    minus_probe = centerline_point - normal * probe_distance
+    plus = [row for row in areas if _point_in_record(row, plus_probe)]
+    minus = [row for row in areas if _point_in_record(row, minus_probe)]
+    wanted = _room_key(room_name or _suggest_room(door))
+    plus_match = [row for row in plus if _room_key(getattr(row[1], "Label", "")) == wanted]
+    minus_match = [row for row in minus if _room_key(getattr(row[1], "Label", "")) == wanted]
+    if plus_match and not minus_match:
+        row = plus_match[0]
+        return normal, room_name or _safe(row[1].Label), row[1], "analisis_area_nombre"
+    if minus_match and not plus_match:
+        row = minus_match[0]
+        return -normal, room_name or _safe(row[1].Label), row[1], "analisis_area_nombre"
+    if plus and not minus:
+        row = plus[0]
+        return normal, room_name or _safe(row[1].Label), row[1], "analisis_area_lado_unico"
+    if minus and not plus:
+        row = minus[0]
+        return -normal, room_name or _safe(row[1].Label), row[1], "analisis_area_lado_unico"
+
+    # Last resort: preserve the BIM opening direction used by the original macro.
+    inward = normal if data["swing"].dot(normal) >= 0.0 else -normal
+    return inward, room_name or _suggest_room(door), None, "sentido_apertura_respaldo"
+
+
+def _all_room_records(doc, records):
+    result = list(records)
+    seen = {row[1].Name for row in result}
+    for obj in doc.Objects:
+        if obj.Name in seen:
+            continue
+        type_id = _safe(getattr(obj, "TypeId", ""))
+        label = _norm(getattr(obj, "Label", ""))
+        if not (
+            obj.Name.startswith("Rectangle")
+            or obj.Name.startswith("FA_PolygonalRoom")
+            or label.startswith("poligono -")
+            or "Part2DObject" in type_id
+        ):
+            continue
+        record = _record_for_object(obj)
+        if record is not None:
+            result.append(record)
+            seen.add(obj.Name)
+    return sorted(result, key=lambda row: row[0])
+
+
+def _room_on_side(doc, centerline_point, inward, wall, areas, excluded=None):
+    probe = centerline_point + inward * (_wall_half_width(wall) + 250.0)
+    excluded_name = getattr(excluded, "Name", "")
+    matches = [
+        row for row in _all_room_records(doc, areas)
+        if row[1].Name != excluded_name and _point_in_record(row, probe)
+    ]
+    if not matches:
+        return None
+
+    def rank(row):
+        obj = row[1]
+        type_id = _safe(getattr(obj, "TypeId", ""))
+        is_room_geometry = obj.Name.startswith(("Rectangle", "FA_PolygonalRoom"))
+        is_generic_2d = "Part2DObject" in type_id and not is_room_geometry
+        duplicate_suffix = bool(re.search(r"\d{3}\s*$", _safe(getattr(obj, "Label", ""))))
+        return (0 if is_room_geometry else (2 if is_generic_2d else 1), 1 if duplicate_suffix else 0, row[0])
+
+    return min(matches, key=rank)
+
+
+def _choose_side_mode(doc, door, data, run, centerline_point, areas, side_mode):
+    side_mode = _safe(side_mode or DEFAULT_SIDE_MODE).strip().lower()
+    if not data.get("has_leaf", True):
+        normal = _run_normal(run)
+        if side_mode in ("opposite_opening", "opposite_room"):
+            inward = -normal
+            rule = "abertura_sin_hoja_cara_B"
+        else:
+            inward = normal
+            rule = "abertura_sin_hoja_cara_A"
+        room_record = _room_on_side(doc, centerline_point, inward, run["wall"], areas)
+        if room_record is not None:
+            area_obj = room_record[1]
+            room_name = _area_room_name(area_obj)
+        else:
+            area_obj = None
+            room_name = _suggest_room(door)
+        return inward, room_name, area_obj, rule
+
+    automatic = _choose_interior_side(doc, door, data, run, centerline_point, areas)
+    if side_mode == "auto":
+        return automatic
+
+    normal = _run_normal(run)
+    opening_side = normal if data["swing"].dot(normal) >= 0.0 else -normal
+    target_record, _target_rule = _target_room_record(doc, door, areas)
+    target_obj = target_record[1] if target_record is not None else None
+
+    if side_mode == "opening":
+        inward = opening_side
+        rule = "apertura_actual_seleccionada"
+    elif side_mode == "opposite_opening":
+        inward = -opening_side
+        rule = "opuesto_apertura_actual_seleccionado"
+    elif side_mode == "opposite_room":
+        inward = -automatic[0]
+        rule = "opuesto_recinto_BIM_seleccionado"
     else:
-        # lado del picaporte: opuesto a bisagra en el eje local X
-        latch = (-x_axis if hr else x_axis)
-        used_rule = "props"
+        return automatic
 
-    lateral  = latch.multiply((width * 0.5) + OFFSET_LATERAL_MM)
-    interior = iv.multiply(OFFSET_INTERIOR_MM + HALF_SYMBOL_MM)
-    pos = base2 + lateral + interior
-    rot = rot_from_y_to(iv)
+    room_record = _room_on_side(doc, centerline_point, inward, run["wall"], areas, excluded=target_obj)
+    if room_record is not None:
+        room_obj = room_record[1]
+        room_name = _area_room_name(room_obj)
+    else:
+        room_obj = None
+        room_name = _suggest_room(door)
+    return inward, room_name, room_obj, rule
 
-    # depuracion detallada
-    log("BIM {}: width={:.1f} rule={} base=({}, {})".format(
-        door.Label, width, used_rule, round(base2.x,1), round(base2.y,1)))
-    log("  x=({}, {}) y_out=({}, {})".format(
-        round(x_axis.x,3), round(x_axis.y,3), round(y_out.x,3), round(y_out.y,3)))
-    log("  iv=({}, {}) latch=({}, {})".format(
-        round(iv.x,3), round(iv.y,3), round(latch.x,3), round(latch.y,3)))
-    log("  lateral=({}, {}) interior=({}, {})".format(
-        round(lateral.x,1), round(lateral.y,1), round(interior.x,1), round(interior.y,1)))
-    log("  pos=({}, {}, 0)".format(round(pos.x,1), round(pos.y,1)))
-    return pos, rot
 
-# -------------------- insercion del simbolo --------------------
-def insert_switch_link(proto, pos, rot, group, door_label):
-    ln = DOC.addObject("App::Link", "Apagador")
-    ln.LinkedObject = proto
-    ln.Placement = App.Placement(App.Vector(pos.x, pos.y, 0.0), rot)
-    ln.Label = "Apagador-" + str(door_label)
-    if group:
-        group.addObject(ln)
-    return ln
+def _room_for_point(records, point, inward):
+    probe = point + inward * 250.0
+    for _area, obj, box in records:
+        if box.XMin - 2.0 <= probe.x <= box.XMax + 2.0 and box.YMin - 2.0 <= probe.y <= box.YMax + 2.0:
+            return _safe(getattr(obj, "Label", obj.Name))
+    return ""
 
-# -------------------- main --------------------
-def main():
-    if DOC is None:
-        err("No active document.")
-        return
 
-    proto = find_prototype()
-    if proto is None:
-        err('No se encontro prototipo "{}" en el documento.'.format(PROTOTYPE_LABEL))
-        return
+def _label_for_door(door, room, existing=None):
+    if existing is not None:
+        current = _safe(getattr(existing, "Label", ""))
+        # Keep genuinely custom labels, but update labels previously generated
+        # by this macro when the selected room changes.
+        if current and not _norm(current).startswith("apagador -"):
+            return current
+        return "Apagador - " + (room or _suggest_room(door))
+    return "Apagador - " + (room or _suggest_room(door))
 
-    doors = collect_selected_bim_doors()
-    if not doors:
-        warn("La seleccion no contiene puertas BIM reconocibles. Selecciona las puertas (no el sketch) y reintenta.")
-        return
 
-    grp = ensure_group()
-    created = 0
-    for d in doors:
+def _find_existing(doc, door_key, door):
+    legacy = _norm("Apagador-" + _safe(getattr(door, "Label", door.Name)))
+    for obj in doc.Objects:
+        if _safe(getattr(obj, "ECR_DoorKey", "")) == door_key:
+            return obj
         try:
-            pos, rot = pose_for_bim(d)
-            if pos is None:
-                continue
-            insert_switch_link(proto, pos, rot, grp, d.Label)
-            created += 1
-            log("Colocado Apagador para '{}'".format(d.Label))
-        except Exception as ex:
-            err("Fallo con {}: {}".format(d.Label, ex))
+            if getattr(obj, "PuertaOrigen", None) is door:
+                return obj
+        except Exception:
+            pass
+        if _norm(getattr(obj, "Label", "")) == legacy:
+            return obj
+    return None
 
-    DOC.recompute()
-    log("Total de apagadores creados (BIM): {}".format(created))
+
+def _write_metadata(obj, plan, cfg):
+    specifications = (
+        ("App::PropertyString", "ECR_GeneradoPor", "ElectricCR", "Macro generadora"),
+        ("App::PropertyString", "ECR_DoorKey", "ElectricCR", "Clave estable de puerta"),
+        ("App::PropertyLink", "PuertaOrigen", "ElectricCR", "Puerta BIM de origen"),
+        ("App::PropertyLink", "ElementoOrigen", "ElectricCR", "Puerta o abertura BIM de origen"),
+        ("App::PropertyLink", "MuroReferencia", "ElectricCR", "Muro BIM de referencia"),
+        ("App::PropertyLink", "AreaRecinto", "ElectricCR", "Area usada para elegir la cara interior"),
+        ("App::PropertyString", "ReglaUbicacion", "ElectricCR", "Regla aplicada"),
+        ("App::PropertyString", "ReglaCaraInterior", "ElectricCR", "Criterio para elegir el lado del muro"),
+        ("App::PropertyString", "ECR_SideOverride", "ElectricCR", "Correccion manual persistente de cara"),
+        ("App::PropertyString", "SentidoApertura", "ElectricCR", "Modo de apertura BIM"),
+        ("App::PropertyString", "TipoAbertura", "ElectricCR", "Puerta o abertura sin hoja"),
+        ("App::PropertyString", "Recinto", "ElectricCR", "Recinto sugerido"),
+        ("App::PropertyFloat", "DistanciaJamba", "ElectricCR", "Distancia desde la jamba"),
+        ("App::PropertyFloat", "AlturaMontaje", "ElectricCR", "Altura del apagador"),
+    )
+    for spec in specifications:
+        _ensure_property(obj, *spec)
+    obj.ECR_GeneradoPor = GENERATED_BY
+    obj.ECR_DoorKey = plan["door_key"]
+    obj.PuertaOrigen = plan["door"]
+    obj.ElementoOrigen = plan["door"]
+    obj.MuroReferencia = plan["wall"]
+    obj.AreaRecinto = plan.get("area")
+    obj.ReglaUbicacion = "jamba_{}_muro_libre_cara_interior".format(
+        plan.get("jamb_rule", "picaporte")
+    )
+    obj.ReglaCaraInterior = plan.get("side_rule", "")
+    obj.ECR_SideOverride = plan.get("side_override", "")
+    obj.SentidoApertura = plan["mode"]
+    obj.TipoAbertura = "Puerta" if plan.get("has_leaf", True) else "Abertura sin puerta"
+    obj.Recinto = plan["room"]
+    obj.DistanciaJamba = float(plan["actual_offset"])
+    obj.AlturaMontaje = float(cfg["height"])
+    for prop, value in (
+        ("Tipo", "Apagador"), ("TipoLogico", "Apagador"),
+        ("KeyRegistro", cfg["registry_key"]), ("ModoVisual", DEFAULT_MODE),
+        ("AlturaRel", float(cfg["height"])),
+    ):
+        if hasattr(obj, prop):
+            try:
+                setattr(obj, prop, value)
+            except Exception:
+                pass
+
+
+def _create_switch(module, doc, group, plan, cfg):
+    if module is None or not hasattr(module, "crear_toma_link"):
+        raise RuntimeError("No se pudo cargar crear_toma_link de ElectricCR")
+    placement = App.Placement(plan["point"], App.Rotation(App.Vector(0, 0, 1), plan["yaw"]))
+    label = _label_for_door(plan["door"], plan["room"])
+    obj = module.crear_toma_link(
+        doc=doc,
+        name_prefix=label,
+        key_registro=cfg["registry_key"],
+        tipo_logico="Apagador",
+        placement=placement,
+        modo_visual=DEFAULT_MODE,
+        altura_rel=float(cfg["height"]),
+        orientacion_pared="Vertical",
+        recompute=False,
+        target_group=group,
+    )
+    obj.Label = label
+    _write_metadata(obj, plan, cfg)
+    return obj
+
+
+def _update_switch(obj, group, plan, cfg):
+    obj.Placement = App.Placement(plan["point"], App.Rotation(App.Vector(0, 0, 1), plan["yaw"]))
+    obj.Label = _label_for_door(plan["door"], plan["room"], existing=obj)
+    _write_metadata(obj, plan, cfg)
+    try:
+        if obj not in (group.Group or []):
+            group.addObject(obj)
+    except Exception:
+        pass
+    return obj
+
+
+def _default_cfg():
+    param = App.ParamGet(PARAM_PATH)
+    return {
+        "scope": "all",
+        "registry_key": param.GetString("registry_key", DEFAULT_REG_KEY) or DEFAULT_REG_KEY,
+        "height": float(param.GetFloat("height", DEFAULT_HEIGHT_MM)),
+        "jamb_offset": float(param.GetFloat("jamb_offset", DEFAULT_JAMB_OFFSET_MM)),
+        "wall_search": float(param.GetFloat("wall_search", DEFAULT_WALL_SEARCH_MM)),
+        "device_half_width": DEFAULT_DEVICE_HALF_WIDTH_MM,
+        "opening_margin": DEFAULT_OPENING_MARGIN_MM,
+        "search_step": DEFAULT_SEARCH_STEP_MM,
+        "max_along_wall": DEFAULT_MAX_ALONG_WALL_MM,
+        "update_existing": bool(param.GetBool("update_existing", True)),
+        # The side override is deliberately execution-only. A correction made
+        # for one selected door must never become the default for all doors.
+        "side_mode": DEFAULT_SIDE_MODE,
+        "dry_run": False,
+    }
+
+
+def _save_cfg(cfg):
+    param = App.ParamGet(PARAM_PATH)
+    param.SetString("registry_key", cfg["registry_key"])
+    param.SetFloat("height", float(cfg["height"]))
+    param.SetFloat("jamb_offset", float(cfg["jamb_offset"]))
+    param.SetFloat("wall_search", float(cfg["wall_search"]))
+    param.SetBool("update_existing", bool(cfg["update_existing"]))
+
+
+def _dialog(selected_count, all_count):
+    QtWidgets = _qtwidgets()
+    cfg = _default_cfg()
+    cfg["scope"] = "selected" if selected_count else "all"
+    if QtWidgets is None:
+        return cfg
+
+    dialog = QtWidgets.QDialog(Gui.getMainWindow())
+    dialog.setWindowTitle("Apagadores junto a puertas y aberturas BIM")
+    dialog.setMinimumWidth(560)
+    layout = QtWidgets.QVBoxLayout(dialog)
+    layout.addWidget(QtWidgets.QLabel(
+        "Coloca apagadores junto a puertas o vanos abiertos, sobre un tramo libre de pared."
+    ))
+    form = QtWidgets.QFormLayout()
+    layout.addLayout(form)
+
+    scope = QtWidgets.QComboBox()
+    if selected_count:
+        scope.addItem("Puertas/aberturas seleccionadas ({})".format(selected_count), "selected")
+    scope.addItem("Todas las puertas y aberturas BIM ({})".format(all_count), "all")
+    form.addRow("Alcance:", scope)
+
+    registry = QtWidgets.QComboBox()
+    registry.setEditable(True)
+    for key in _switch_registry_keys():
+        registry.addItem(key, key)
+    index = registry.findText(cfg["registry_key"])
+    if index >= 0:
+        registry.setCurrentIndex(index)
+    else:
+        registry.setEditText(cfg["registry_key"])
+    form.addRow("Tipo del registro:", registry)
+
+    height = QtWidgets.QDoubleSpinBox()
+    height.setRange(0.0, 5000.0); height.setDecimals(1); height.setSuffix(" mm")
+    height.setValue(cfg["height"]); height.setSingleStep(50.0)
+    form.addRow("Altura de montaje:", height)
+
+    jamb = QtWidgets.QDoubleSpinBox()
+    jamb.setRange(75.0, 1000.0); jamb.setDecimals(1); jamb.setSuffix(" mm")
+    jamb.setValue(cfg["jamb_offset"]); jamb.setSingleStep(25.0)
+    form.addRow("Desde borde de puerta:", jamb)
+
+    wall_search = QtWidgets.QDoubleSpinBox()
+    wall_search.setRange(50.0, 1000.0); wall_search.setDecimals(1); wall_search.setSuffix(" mm")
+    wall_search.setValue(cfg["wall_search"]); wall_search.setSingleStep(25.0)
+    form.addRow("Tolerancia para encontrar muro:", wall_search)
+
+    side_mode = QtWidgets.QComboBox()
+    side_mode.addItem("Automatica (conservar correcciones anteriores)", "auto")
+    side_mode.addItem("Restablecer: dentro del recinto BIM", "reset_auto")
+    side_mode.addItem("Misma cara que el giro / cara A del vano", "opening")
+    side_mode.addItem("Cara contraria al giro / cara B del vano", "opposite_opening")
+    side_mode.addItem("Lado opuesto al recinto BIM asociado", "opposite_room")
+    side_index = side_mode.findData(cfg.get("side_mode", DEFAULT_SIDE_MODE))
+    side_mode.setCurrentIndex(max(0, side_index))
+    form.addRow("Cara del muro:", side_mode)
+
+    update = QtWidgets.QCheckBox("Actualizar apagadores existentes sin duplicarlos")
+    update.setChecked(cfg["update_existing"])
+    layout.addWidget(update)
+
+    buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+    buttons.accepted.connect(dialog.accept); buttons.rejected.connect(dialog.reject)
+    layout.addWidget(buttons)
+    execute = getattr(dialog, "exec", None) or getattr(dialog, "exec_", None)
+    if execute is None or execute() != QtWidgets.QDialog.Accepted:
+        return None
+
+    cfg.update({
+        "scope": _safe(scope.currentData()) or "all",
+        "registry_key": (_safe(registry.currentData()) or _safe(registry.currentText()) or DEFAULT_REG_KEY).strip(),
+        "height": float(height.value()),
+        "jamb_offset": float(jamb.value()),
+        "wall_search": float(wall_search.value()),
+        "side_mode": _safe(side_mode.currentData()) or DEFAULT_SIDE_MODE,
+        "update_existing": bool(update.isChecked()),
+    })
+    _save_cfg(cfg)
+    return cfg
+
+
+def _build_plans(doc, doors, cfg):
+    runs = _merge_wall_runs(_world_line_segments(doc))
+    if not runs:
+        raise RuntimeError("No se encontraron lineas base de muros BIM")
+    areas = _area_records(doc)
+    plans = []
+    skipped = []
+    processed_keys = set()
+
+    for door in doors:
+        door_key = _door_group_key(door)
+        if door_key in processed_keys:
+            skipped.append((door, "segunda hoja de puerta doble"))
+            continue
+        processed_keys.add(door_key)
+        try:
+            data = _door_geometry(door)
+            found = _find_wall_run(runs, data, cfg["wall_search"])
+            if found is None:
+                raise RuntimeError("no se encontro muro paralelo cercano")
+            run = found["run"]
+            intervals = _opening_intervals(doc, run, cfg["wall_search"])
+            scalar, actual_offset, jamb_rule = _find_free_scalar(run, data, cfg, intervals)
+            if scalar is None:
+                raise RuntimeError("no hay espacio libre de pared en el lado del picaporte")
+
+            centerline_point = _point_on_run(run, scalar)
+            requested_side_mode = cfg.get("side_mode", DEFAULT_SIDE_MODE)
+            existing = _find_existing(doc, door_key, door)
+            saved_override = _safe(getattr(existing, "ECR_SideOverride", "")).strip() if existing else ""
+            if requested_side_mode == "auto" and saved_override:
+                effective_side_mode = saved_override
+                side_override = saved_override
+            elif requested_side_mode == "reset_auto":
+                effective_side_mode = "auto"
+                side_override = ""
+            elif requested_side_mode != "auto":
+                effective_side_mode = requested_side_mode
+                side_override = requested_side_mode
+            else:
+                effective_side_mode = "auto"
+                side_override = ""
+            inward, room, area_obj, side_rule = _choose_side_mode(
+                doc, door, data, run, centerline_point, areas,
+                effective_side_mode,
+            )
+            face_depth = _wall_half_width(run["wall"])
+            point = centerline_point + inward * face_depth
+            point.z = 0.0
+            plans.append({
+                "door": door,
+                "door_key": door_key,
+                "wall": run["wall"],
+                "point": point,
+                "yaw": _yaw_for_inward(inward),
+                "mode": data["mode"],
+                "actual_offset": actual_offset,
+                "jamb_rule": jamb_rule,
+                "room": room,
+                "area": area_obj,
+                "inward": inward,
+                "side_rule": side_rule,
+                "side_override": side_override,
+                "has_leaf": data.get("has_leaf", True),
+            })
+        except Exception as exc:
+            skipped.append((door, _safe(exc)))
+    return plans, skipped
+
+
+def main(doc_override=None, cfg_override=None, doors_override=None):
+    doc = doc_override or App.ActiveDocument
+    if doc is None:
+        _error("No hay documento activo.")
+        return None
+
+    selected = _collect_selected_doors()
+    all_doors = _collect_all_doors(doc)
+    cfg = dict(cfg_override) if cfg_override is not None else _dialog(len(selected), len(all_doors))
+    if cfg is None:
+        _warn("Operacion cancelada.")
+        return None
+    defaults = _default_cfg()
+    defaults.update(cfg)
+    cfg = defaults
+
+    if doors_override is not None:
+        doors = list(doors_override)
+    elif cfg.get("scope") == "selected" and selected:
+        doors = selected
+    else:
+        doors = all_doors
+    if not doors:
+        _warn("No se encontraron puertas BIM en el alcance elegido.")
+        return {"puertas": 0, "planes": 0, "creados": 0, "actualizados": 0, "omitidos": 0}
+
+    try:
+        plans, skipped = _build_plans(doc, doors, cfg)
+    except Exception as exc:
+        _error(exc)
+        return None
+
+    for door, reason in skipped:
+        _warn("{}: {}".format(getattr(door, "Label", door.Name), reason))
+    if cfg.get("dry_run"):
+        result = {
+            "puertas": len(doors), "planes": len(plans), "creados": 0, "actualizados": 0,
+            "omitidos": len(skipped),
+            "detalle": [
+                {"puerta": plan["door"].Name, "x": plan["point"].x, "y": plan["point"].y,
+                 "muro": plan["wall"].Name, "distancia": plan["actual_offset"], "recinto": plan["room"]}
+                for plan in plans
+            ],
+        }
+        _log("Vista previa: " + json.dumps(result, ensure_ascii=False))
+        return result
+
+    module = _load_device_module()
+    if module is None or not hasattr(module, "crear_toma_link"):
+        _error("No se pudo cargar el generador de dispositivos ElectricCR.")
+        return None
+
+    created = updated = existing_skipped = 0
+    doc.openTransaction("ElectricCR: colocar apagadores junto a puertas BIM")
+    try:
+        group = _ensure_group(doc)
+        for plan in plans:
+            existing = _find_existing(doc, plan["door_key"], plan["door"])
+            if existing is not None:
+                if cfg.get("update_existing", True):
+                    _update_switch(existing, group, plan, cfg)
+                    updated += 1
+                else:
+                    existing_skipped += 1
+                continue
+            _create_switch(module, doc, group, plan, cfg)
+            created += 1
+        doc.recompute()
+        doc.commitTransaction()
+    except Exception as exc:
+        try:
+            doc.abortTransaction()
+        except Exception:
+            pass
+        _error("Fallo general: " + _safe(exc))
+        return None
+
+    result = {
+        "puertas": len(doors), "planes": len(plans), "creados": created,
+        "actualizados": updated, "existentes_omitidos": existing_skipped,
+        "omitidos": len(skipped), "grupo": GROUP_LABEL,
+    }
+    _log("Finalizado: " + json.dumps(result, ensure_ascii=False))
+    QtWidgets = _qtwidgets()
+    if QtWidgets is not None and cfg_override is None:
+        try:
+            QtWidgets.QMessageBox.information(
+                Gui.getMainWindow(), "Apagadores BIM",
+                "Creados: {}\nActualizados: {}\nOmitidos: {}\nGrupo: {}".format(
+                    created, updated, len(skipped) + existing_skipped, GROUP_LABEL
+                ),
+            )
+        except Exception:
+            pass
+    return result
+
 
 if __name__ == "__main__":
     main()

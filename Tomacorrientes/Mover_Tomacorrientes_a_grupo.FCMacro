@@ -1,4 +1,8 @@
 # -*- coding: utf-8 -*-
+# MenuText: Mover tomacorrientes a grupo...
+# ToolTip: Mueve tomacorrientes seleccionados o sueltos a un grupo existente o nuevo
+# Icon: Mover_Tomacorrientes_a_grupo.svg
+# Transaction: self
 """
 Herramientas_Varias_Mover.FCMacro
 Version: 2025-09-25 15:10 (CR)
@@ -129,10 +133,10 @@ except Exception:
 # Configuracion
 # ------------------------------------------------------------
 SUBGRUPO_DESTINO = "Circuito"  # Cambiar aqui el nombre por defecto del subgrupo
-SOLO_TOMAS = False  # False: mover todos los componentes ElectricCR reconocidos
-CREAR_SUBGRUPO_NUEVO = True  # siempre crea un subgrupo nuevo (con sufijo)
+SOLO_TOMAS = True  # Esta herramienta mueve exclusivamente tomacorrientes
+CREAR_SUBGRUPO_NUEVO = False  # el dialogo intuitivo permite elegir existente o nuevo
 DESTINO_GRUPO_LABEL = "Tomacorrientes"  # subgrupo bajo 'electrico' donde se crean los circuitos
-FORZAR_DESTINO_ELECTRICO = True  # si True, ignora el padre original y mueve a electrico/DESTINO_GRUPO_LABEL
+FORZAR_DESTINO_ELECTRICO = False  # no mezclar computo con tomacorrientes generales
 
 # ------------------------------------------------------------
 # Log helpers (sin tildes)
@@ -481,8 +485,445 @@ def mover_tomacorrientes_a_subgrupo(nombre_subgrupo=None):
     _info(f"{movidos} objeto(s) movidos segun reglas de subgrupo dentro del mismo grupo o a electrico/{base}.")
 
 # ------------------------------------------------------------
-# Ejecucion directa (puede comentarse si se importa desde otra macro)
+# Dialogo intuitivo: grupo existente (predeterminado) o grupo nuevo
+# ------------------------------------------------------------
+PREF_PATH = "User parameter:BaseApp/Preferences/Mod/ElectricCR/MoverTomacorrientesGrupo"
+
+
+def _direct_group_parents(doc, obj):
+    out = []
+    for candidate in (getattr(doc, "Objects", []) or []):
+        if not _is_group(candidate):
+            continue
+        if obj in (getattr(candidate, "Group", []) or []):
+            out.append(candidate)
+    return out
+
+
+def _group_rows_from(root):
+    """Rutas de grupos bajo una familia de tomas, incluida la raiz."""
+    rows = []
+    seen = set()
+
+    def visit(group, prefix):
+        if group is None or group.Name in seen:
+            return
+        seen.add(group.Name)
+        label = str(getattr(group, "Label", "") or group.Name)
+        if getattr(group, "Name", "") == "Tomacorrientes":
+            label = "Tomacorrientes"
+        path = (prefix + "/" + label) if prefix else label
+        rows.append((path, group.Name))
+        children = []
+        for child in (getattr(group, "Group", []) or []):
+            if not _is_group(child):
+                continue
+            child_text = "{} {}".format(
+                getattr(child, "Name", ""), getattr(child, "Label", "")
+            ).lower()
+            if "conexiones" in child_text:
+                continue
+            children.append(child)
+        children.sort(key=lambda x: str(getattr(x, "Label", x.Name)).lower())
+        for child in children:
+            visit(child, path)
+
+    visit(root, "electrico" if getattr(root, "Name", "") != "electrico" else "")
+    return rows
+
+
+def _normalized_group_text(obj):
+    """Texto comparable, sin depender de tildes ni del Name interno."""
+    import unicodedata
+
+    raw = " ".join(
+        str(value or "")
+        for value in (
+            getattr(obj, "Name", ""),
+            getattr(obj, "Label", ""),
+            getattr(obj, "ECR_GroupRole", ""),
+            getattr(obj, "Sistema", ""),
+        )
+    )
+    value = unicodedata.normalize("NFKD", raw).encode("ascii", "ignore").decode("ascii")
+    return value.lower()
+
+
+def _is_toma_family_root(obj):
+    if not _is_group(obj):
+        return False
+    text = _normalized_group_text(obj)
+    return any(token in text for token in ("tomacorriente", "tomas", "computo"))
+
+
+def _collect_toma_group_rows(doc):
+    """Incluye tomas generales, computo y futuras familias de tomacorrientes."""
+    electrico = _ensure_group_electrico(doc)
+    if electrico is None:
+        return []
+
+    # La familia general siempre debe seguir disponible, aunque el documento
+    # todavia no tenga circuitos dentro de ella.
+    _ensure_child_group_exact(doc, electrico, "Tomacorrientes")
+    roots = [
+        child
+        for child in (getattr(electrico, "Group", []) or [])
+        if _is_toma_family_root(child)
+    ]
+    roots.sort(
+        key=lambda group: (
+            0 if getattr(group, "Name", "") == "Tomacorrientes" else 1,
+            _normalized_group_text(group),
+        )
+    )
+
+    rows = []
+    seen = set()
+    for root in roots:
+        for path, name in _group_rows_from(root):
+            if name in seen:
+                continue
+            seen.add(name)
+            rows.append((path, name))
+    return rows
+
+
+def _collect_tomas_from_selection():
+    try:
+        selection = list(Gui.Selection.getSelection() or [])
+    except Exception:
+        selection = []
+    out = []
+    seen = set()
+
+    def add(obj):
+        if obj is None or obj.Name in seen or not _looks_like_toma(obj):
+            return
+        seen.add(obj.Name)
+        out.append(obj)
+
+    for obj in selection:
+        if _is_group(obj):
+            for child in _iter_objects_in_group(obj):
+                add(child)
+        else:
+            add(obj)
+    return out
+
+
+def _collect_loose_tomas(doc):
+    out = []
+    for obj in (getattr(doc, "Objects", []) or []):
+        if _is_group(obj) or not _looks_like_toma(obj):
+            continue
+        if not _direct_group_parents(doc, obj):
+            out.append(obj)
+    return out
+
+
+class _MoverTomasDialog(QtWidgets.QDialog):
+    def __init__(
+        self, rows, selected_count, loose_count, next_circuit_id,
+        next_compute_id, last_group="", parent=None
+    ):
+        super(_MoverTomasDialog, self).__init__(parent)
+        self._rows = list(rows or [])
+        self._next_general_id = next_circuit_id or "TP-001"
+        self._next_compute_id = next_compute_id or "TCOM-01"
+        self.setWindowTitle("Gestor manual de circuitos de tomacorrientes")
+        self.setMinimumWidth(680)
+        layout = QtWidgets.QVBoxLayout(self)
+
+        intro = QtWidgets.QLabel(
+            "Seleccione de donde tomar los tomacorrientes y el grupo donde deben quedar. "
+            "Usar un grupo existente no crea duplicados ni grupos con sufijos."
+        )
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        source_box = QtWidgets.QGroupBox("1. Tomacorrientes a mover")
+        source_layout = QtWidgets.QVBoxLayout(source_box)
+        self.rb_selected = QtWidgets.QRadioButton(
+            "Selección actual ({} tomacorriente(s))".format(selected_count)
+        )
+        self.rb_loose = QtWidgets.QRadioButton(
+            "Tomacorrientes sin grupo ({} encontrado(s))".format(loose_count)
+        )
+        self.rb_selected.setEnabled(selected_count > 0)
+        self.rb_loose.setEnabled(loose_count > 0)
+        if selected_count > 0:
+            self.rb_selected.setChecked(True)
+        elif loose_count > 0:
+            self.rb_loose.setChecked(True)
+        source_layout.addWidget(self.rb_selected)
+        source_layout.addWidget(self.rb_loose)
+        layout.addWidget(source_box)
+
+        dest_box = QtWidgets.QGroupBox("2. Grupo destino")
+        dest_layout = QtWidgets.QVBoxLayout(dest_box)
+        self.rb_existing = QtWidgets.QRadioButton("Usar grupo existente")
+        self.rb_new = QtWidgets.QRadioButton("Crear grupo nuevo")
+        self.rb_existing.setChecked(bool(self._rows))
+        self.rb_existing.setEnabled(bool(self._rows))
+        self.rb_new.setChecked(not bool(self._rows))
+        dest_layout.addWidget(self.rb_existing)
+        self.cb_existing = QtWidgets.QComboBox()
+        self.cb_existing.setMinimumContentsLength(55)
+        for path, name in self._rows:
+            self.cb_existing.addItem(path, name)
+        if last_group:
+            idx = self.cb_existing.findData(last_group)
+            if idx >= 0:
+                self.cb_existing.setCurrentIndex(idx)
+        dest_layout.addWidget(self.cb_existing)
+        dest_layout.addWidget(self.rb_new)
+
+        new_form = QtWidgets.QFormLayout()
+        self.cb_parent = QtWidgets.QComboBox()
+        for path, name in self._rows:
+            self.cb_parent.addItem(path, name)
+        self.ed_name = QtWidgets.QLineEdit(self._next_general_id)
+        new_form.addRow("Crear dentro de:", self.cb_parent)
+        new_form.addRow("Nombre o código:", self.ed_name)
+        dest_layout.addLayout(new_form)
+        layout.addWidget(dest_box)
+
+        note = QtWidgets.QLabel(
+            "Los objetos se quitan de sus grupos organizativos anteriores y se agregan al destino. "
+            "La geometría, colocación, circuito y enlace al maestro no cambian."
+        )
+        note.setWordWrap(True)
+        layout.addWidget(note)
+
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+        )
+        ok_button = buttons.button(QtWidgets.QDialogButtonBox.Ok)
+        if ok_button is not None:
+            ok_button.setText("Mover")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self.rb_existing.toggled.connect(self._refresh)
+        self.cb_parent.currentIndexChanged.connect(self._parent_changed)
+        self._parent_changed()
+        self._refresh()
+
+    def _parent_changed(self, *_args):
+        import re
+        import unicodedata
+
+        current = str(self.ed_name.text() or "").strip()
+        if current and not re.fullmatch(r"(?:TP|TCOM)[-_ ]?\d+", current, re.I):
+            return
+        path = str(self.cb_parent.currentText() or "")
+        normalized = unicodedata.normalize("NFKD", path).encode("ascii", "ignore").decode("ascii").lower()
+        self.ed_name.setText(
+            self._next_compute_id if "computo" in normalized else self._next_general_id
+        )
+
+    def _refresh(self):
+        existing = self.rb_existing.isChecked()
+        self.cb_existing.setEnabled(existing)
+        self.cb_parent.setEnabled(not existing)
+        self.ed_name.setEnabled(not existing)
+
+    def config(self):
+        return {
+            "source": "selected" if self.rb_selected.isChecked() else "loose",
+            "mode": "existing" if self.rb_existing.isChecked() else "new",
+            "existing": str(self.cb_existing.currentData() or ""),
+            "parent": str(self.cb_parent.currentData() or ""),
+            "new_name": str(self.ed_name.text() or "").strip(),
+        }
+
+
+def _set_group_property(obj, prop_type, name, value):
+    if not hasattr(obj, name):
+        obj.addProperty(prop_type, name, "ElectricCR")
+    setattr(obj, name, value)
+
+
+def _next_manual_circuit_id(root, prefix="TP"):
+    import re
+
+    prefix = str(prefix or "TP").strip().upper()
+    highest = 0
+    pending = list(getattr(root, "Group", []) or [])
+    seen = set()
+    while pending:
+        obj = pending.pop(0)
+        if getattr(obj, "Name", "") in seen:
+            continue
+        seen.add(getattr(obj, "Name", ""))
+        if _is_group(obj):
+            pending.extend(list(getattr(obj, "Group", []) or []))
+        probes = [str(getattr(obj, "CircuitoID", "") or ""), str(getattr(obj, "Label", "") or "")]
+        for probe in probes:
+            match = re.search(r"\b{}[-_ ]?(\d+)\b".format(re.escape(prefix)), probe, re.I)
+            if match:
+                highest = max(highest, int(match.group(1)))
+    width = 2 if prefix == "TCOM" else 3
+    return "{}-{:0{}d}".format(prefix, highest + 1, width)
+
+
+def _belongs_to_compute_family(doc, group):
+    current = group
+    seen = set()
+    while current is not None and getattr(current, "Name", "") not in seen:
+        seen.add(getattr(current, "Name", ""))
+        if "computo" in _normalized_group_text(current):
+            return True
+        if getattr(current, "Name", "") == "electrico":
+            break
+        current = _find_parent_group_linear(doc, current)
+    return False
+
+
+def _direct_tomas(group):
+    return [obj for obj in (getattr(group, "Group", []) or []) if (not _is_group(obj)) and _looks_like_toma(obj)]
+
+
+def _refresh_manual_circuit_group(group):
+    if group is None or not _is_group(group):
+        return
+    cid = str(getattr(group, "CircuitoID", "") or "").strip()
+    if not cid:
+        return
+    count = len(_direct_tomas(group))
+    _set_group_property(group, "App::PropertyInteger", "CantidadTomas", count)
+    _set_group_property(group, "App::PropertyBool", "ECR_ManualCircuitGroup", True)
+    if hasattr(group, "ECR_AutoCircuitGroup"):
+        group.ECR_AutoCircuitGroup = False
+    rooms = str(getattr(group, "Recintos", "") or "").strip()
+    suffix = rooms or "Asignación manual"
+    group.Label = "{} | {} {} | {}".format(cid, count, "toma" if count == 1 else "tomas", suffix)
+
+
+def _move_tomas_intuitive():
+    doc = App.ActiveDocument
+    if doc is None:
+        _error("no hay documento activo")
+        return
+    if QtWidgets is None:
+        _error("PySide no disponible")
+        return
+
+    electrico = _ensure_group_electrico(doc)
+    if electrico is None:
+        return
+    rows = _collect_toma_group_rows(doc)
+    selected = _collect_tomas_from_selection()
+    loose = _collect_loose_tomas(doc)
+    if not selected and not loose:
+        _warn("No hay tomacorrientes seleccionados ni tomacorrientes sueltos.")
+        return
+
+    prefs = App.ParamGet(PREF_PATH)
+    last_group = prefs.GetString("LastDestination", "")
+    main_window = None
+    try:
+        main_window = Gui.getMainWindow()
+    except Exception:
+        pass
+    next_circuit_id = _next_manual_circuit_id(electrico, "TP")
+    next_compute_id = _next_manual_circuit_id(electrico, "TCOM")
+    dialog = _MoverTomasDialog(
+        rows, len(selected), len(loose), next_circuit_id,
+        next_compute_id, last_group, main_window
+    )
+    result = dialog.exec() if hasattr(dialog, "exec") else dialog.exec_()
+    if result != QtWidgets.QDialog.Accepted:
+        _warn("operacion cancelada")
+        return
+    cfg = dialog.config()
+    objects = selected if cfg["source"] == "selected" else loose
+    if not objects:
+        _warn("El origen elegido no contiene tomacorrientes.")
+        return
+
+    doc.openTransaction("ElectricCR: mover tomacorrientes a grupo")
+    try:
+        created = False
+        if cfg["mode"] == "existing":
+            destination = doc.getObject(cfg["existing"])
+            if destination is None or not _is_group(destination):
+                raise RuntimeError("El grupo existente seleccionado ya no esta disponible.")
+        else:
+            new_name = cfg["new_name"] or next_circuit_id
+            parent = doc.getObject(cfg["parent"])
+            if parent is None or not _is_group(parent):
+                raise RuntimeError("Seleccione el grupo padre para el grupo nuevo.")
+            destination = _create_child_group_unique(doc, parent, new_name)
+            if destination is None:
+                raise RuntimeError("No se pudo crear el grupo nuevo.")
+            created = True
+            match = __import__("re").search(
+                r"\b(TCOM|TP)[-_ ]?(\d+)\b", new_name, __import__("re").I
+            )
+            if match:
+                prefix = match.group(1).upper()
+                width = 2 if prefix == "TCOM" else 3
+                circuit_id = "{}-{:0{}d}".format(prefix, int(match.group(2)), width)
+            else:
+                circuit_id = (
+                    next_compute_id if _belongs_to_compute_family(doc, parent)
+                    else next_circuit_id
+                )
+            _set_group_property(destination, "App::PropertyString", "CircuitoID", circuit_id)
+            _set_group_property(destination, "App::PropertyString", "Recintos", "Asignación manual")
+            _set_group_property(destination, "App::PropertyBool", "ECR_ManualCircuitGroup", True)
+
+        moved = 0
+        already = 0
+        source_groups = set()
+        for obj in objects:
+            if obj in (getattr(destination, "Group", []) or []):
+                already += 1
+                continue
+            for source in _direct_group_parents(doc, obj):
+                if source != destination:
+                    source_groups.add(source)
+            _detach_from_any_parent(doc, obj)
+            destination.addObject(obj)
+            destination_circuit = str(getattr(destination, "CircuitoID", "") or "").strip()
+            if not hasattr(obj, "CircuitoID"):
+                obj.addProperty("App::PropertyString", "CircuitoID", "Meta", "Circuito asignado")
+            obj.CircuitoID = destination_circuit
+            if not hasattr(obj, "ECR_CircuitStatus"):
+                obj.addProperty("App::PropertyString", "ECR_CircuitStatus", "ElectricCR BIM")
+            obj.ECR_CircuitStatus = (
+                "Asignado manualmente" if destination_circuit else "Pendiente de asignación manual"
+            )
+            moved += 1
+
+        for source in source_groups:
+            _refresh_manual_circuit_group(source)
+        _refresh_manual_circuit_group(destination)
+        doc.recompute()
+        doc.commitTransaction()
+        prefs.SetString("LastDestination", destination.Name)
+        try:
+            Gui.Selection.clearSelection()
+            Gui.Selection.addSelection(destination)
+        except Exception:
+            pass
+        _info(
+            "Finalizado: {} movido(s), {} ya estaba(n) en '{}', grupo {}.".format(
+                moved, already, destination.Label, "creado" if created else "existente"
+            )
+        )
+    except Exception as ex:
+        try:
+            doc.abortTransaction()
+        except Exception:
+            pass
+        _error("no se pudieron mover los tomacorrientes: {}".format(ex))
+
+
+# ------------------------------------------------------------
+# Ejecucion directa
 # ------------------------------------------------------------
 if __name__ == "__main__":
-    # Usa la constante global; para forzar otro nombre, pase una cadena: mover_tomacorrientes_a_subgrupo("Otro")
-    mover_tomacorrientes_a_subgrupo()
+    _move_tomas_intuitive()

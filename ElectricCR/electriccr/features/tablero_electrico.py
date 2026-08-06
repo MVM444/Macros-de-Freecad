@@ -1875,7 +1875,13 @@ def _ensure_link_properties(
     except Exception:
         pass
     try:
-        obj.AmperajeNominal = _normalize_eaton_amp(amperaje_nominal, default=225)
+        if _normalize_dimension_profile(perfil_dimensiones) == "Eaton_CH_PlugOnNeutral":
+            obj.AmperajeNominal = _normalize_eaton_amp(amperaje_nominal, default=225)
+        else:
+            # El perfil generico tambien representa desconectores e
+            # interruptores. En esos equipos son validos valores como 30 A,
+            # que no deben redondearse al catalogo de tableros Eaton.
+            obj.AmperajeNominal = max(1, int(amperaje_nominal))
     except Exception:
         pass
     try:

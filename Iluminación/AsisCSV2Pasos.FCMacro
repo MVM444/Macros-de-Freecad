@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-# MenuText: Asistente CSV 2 Pasos
-# ToolTip: Paso 1 CSV a Sketch, Paso 2 Sketch a Objetos
-# Icon: ColocarLuminarias.svg
+# MenuText: Asistente CSV eléctrico
+# ToolTip: Importa puntos CSV a sketches editables y crea cualquier dispositivo ElectricCR.
+# Icon: AsistenteCSV.svg
 
 # Qt compatibility for FreeCAD 1.x (PySide6) and older builds.
 def _ensure_qt_compat():
@@ -83,6 +83,7 @@ import collections
 import datetime
 import unicodedata
 import importlib
+import math
 
 import FreeCAD as App
 try:
@@ -99,7 +100,7 @@ except Exception:
         QtWidgets = None
 
 CSV_PATH = ""
-REGISTRY_PATH = r"C:\Users\marco\OneDrive - Caja Costarricense de Seguro Social\Documentos\FreeCAD\Macros\Macros-de-Freecad\Resources\registry\registry_electric.json"
+REGISTRY_PATH = ""  # Vacio = resolver de forma portable dentro del repositorio/Mod.
 
 WORKBENCH_ID = "ElectricCRWorkbench"
 SCALE_DEFAULT = 1000.0
@@ -128,6 +129,8 @@ TARGET_NAME = "CSV_Target"
 TARGET_LABEL = "CSV_Target"
 OUTPUT_GROUP_LABEL = "Luminarias_Importadas"
 OUTPUT_GROUP_NAME = "Luminarias_Importadas"
+CSV_OUTPUT_LABEL = "Importados CSV"
+CSV_OUTPUT_NAME = "Importados_CSV"
 SKETCH_PREFIX = "PtsCSV"
 LINK_PREFIX = "Luminaria"
 SETTINGS_OBJ_NAME = "_CSV_Asis_Config"
@@ -135,14 +138,10 @@ SETTINGS_OBJ_LABEL = "CSV_Asis_Config"
 SETTINGS_PROP_JSON = "ConfigJSON"
 
 CSV_NAME_TO_REGISTRY_KEY = {
-    "lamp emerg": "Luminaria 60x60",
     "panel led p27540-36": "Luminaria 60x60",
-    "luminaria hermetica": "Luminaria 60x60",
-    "cascada": "Luminaria 60x60",
     "apagador sencillo": "Apagador_Simple",
-    "apagador doble": "Apagador_Simple",
-    "sensor pir": "Sensor_Humo",
-    "rotulo salida": "Etiqueta_Circuito",
+    "tomacorriente general": "Tomacorriente_120V",
+    "tomacorriente gfci": "Tomacorriente_GFCI",
 }
 
 ELEMENT_KIND_OPTIONS = [
@@ -515,8 +514,6 @@ def validate_headers(reader):
         miss.append("X")
     if ky is None:
         miss.append("Y")
-    if kz is None:
-        miss.append("Z")
     if miss:
         raise RuntimeError("faltan encabezados: {}".format(",".join(miss)))
     return kn, kx, ky, kz
@@ -529,12 +526,24 @@ def detect_optional_csv_headers(fieldnames):
     k_sx = resolve_header(fields, ["scalex", "escalax"], ["scalex", "escala"])
     k_sy = resolve_header(fields, ["scaley", "escalay"], ["scaley", "escala"])
     k_sz = resolve_header(fields, ["scalez", "escalaz"], ["scalez", "escala"])
+    k_rotation = resolve_header(fields, ["rotation", "rotacion", "angle", "angulo", "giro"], ["rotation", "rotacion", "angulo"])
+    k_height = resolve_header(fields, ["height", "altura", "mountingheight", "alturamontaje"], ["altura", "height"])
+    k_registry = resolve_header(fields, ["registro", "registry", "keyregistro", "tipoelectriccr"], ["keyregistro", "registro"])
+    k_kind = resolve_header(fields, ["clase", "kind", "categoria", "disciplina"], ["categoria", "clase"])
+    k_room = resolve_header(fields, ["recinto", "room", "area"], ["recinto", "room"])
+    k_circuit = resolve_header(fields, ["circuito", "circuit", "circuitoid"], ["circuito", "circuit"])
     return {
         "unit": k_unit,
         "unit_factor": k_unit_factor,
         "sx": k_sx,
         "sy": k_sy,
         "sz": k_sz,
+        "rotation": k_rotation,
+        "height": k_height,
+        "registry": k_registry,
+        "kind": k_kind,
+        "room": k_room,
+        "circuit": k_circuit,
     }
 
 
@@ -828,7 +837,15 @@ def rows_from_sketch_group(g_points):
             continue
         t = extract_type_from_sketch(ch)
         pl = getattr(ch, "Placement", None)
-        for geom in (getattr(ch, "Geometry", []) or []):
+        metadata = []
+        try:
+            raw_meta = str(getattr(ch, "CsvPointMetadata", "") or "")
+            parsed = json.loads(raw_meta) if raw_meta else []
+            if isinstance(parsed, list):
+                metadata = parsed
+        except Exception:
+            metadata = []
+        for geom_index, geom in enumerate((getattr(ch, "Geometry", []) or [])):
             v = vector_from_geom(geom)
             if v is None:
                 continue
@@ -840,7 +857,15 @@ def rows_from_sketch_group(g_points):
                     base = getattr(pl, "Base", None)
                     if base is not None:
                         w = App.Vector(float(v.x) + float(base.x), float(v.y) + float(base.y), float(v.z) + float(base.z))
-            rows.append({"csv_name": t, "x": float(w.x), "y": float(w.y), "z": float(w.z)})
+            item = {
+                "csv_name": t, "x": float(w.x), "y": float(w.y), "z": float(w.z),
+                "source_sketch": str(getattr(ch, "Name", "") or ""),
+                "point_index": int(geom_index),
+            }
+            if geom_index < len(metadata) and isinstance(metadata[geom_index], dict):
+                item.update(metadata[geom_index])
+                item.update({"csv_name": t, "x": float(w.x), "y": float(w.y), "z": float(w.z)})
+            rows.append(item)
     return rows
 
 
@@ -1383,8 +1408,30 @@ def move_import_sketches_by_points(import_token, source_vec, target_vec):
         return False
 
 
+def resolve_registry_path():
+    candidates = []
+    configured = str(REGISTRY_PATH or "").strip()
+    if configured:
+        candidates.append(configured)
+    try:
+        here = os.path.dirname(os.path.abspath(__file__))
+        repo = os.path.dirname(here)
+        candidates.append(os.path.join(repo, "Resources", "registry", "registry_electric.json"))
+        candidates.append(os.path.join(repo, "ElectricCR", "Resources", "registry", "registry_electric.json"))
+    except Exception:
+        pass
+    try:
+        candidates.append(os.path.join(App.getUserAppDataDir(), "Mod", "ElectricCR", "Resources", "registry", "registry_electric.json"))
+    except Exception:
+        pass
+    for path in candidates:
+        if path and os.path.isfile(path):
+            return os.path.normpath(path)
+    return ""
+
+
 def load_registry_keys():
-    p = str(REGISTRY_PATH or "").strip()
+    p = resolve_registry_path()
     if not p or not os.path.isfile(p):
         return []
     try:
@@ -1399,7 +1446,7 @@ def load_registry_keys():
 
 
 def load_registry_types_dict():
-    p = str(REGISTRY_PATH or "").strip()
+    p = resolve_registry_path()
     if not p or not os.path.isfile(p):
         return {}
     try:
@@ -1667,6 +1714,101 @@ def logical_tipo_from_kind(kind_token):
     return "Dispositivo"
 
 
+def is_bim_wall(obj):
+    if obj is None:
+        return False
+    ifc = str(getattr(obj, "IfcType", "") or "").strip().lower()
+    role = str(getattr(obj, "FA_Role", "") or "").strip().lower()
+    ptype = str(getattr(getattr(obj, "Proxy", None), "Type", "") or "").strip().lower()
+    return ifc in ("wall", "wallstandardcase") or role == "wall" or ptype == "wall"
+
+
+def collect_wall_axes(doc):
+    axes = []
+    for wall in getattr(doc, "Objects", []) or []:
+        if not is_bim_wall(wall):
+            continue
+        source = getattr(wall, "Base", None)
+        shape = getattr(source, "Shape", None) if source is not None else None
+        if shape is None:
+            shape = getattr(wall, "Shape", None)
+        width = getattr(getattr(wall, "Width", 120.0), "Value", getattr(wall, "Width", 120.0))
+        try:
+            width = float(width)
+        except Exception:
+            width = 120.0
+        seen = set()
+        candidate_edges = list(getattr(shape, "Edges", []) or [])
+        # Some Arch walls expose their straight base geometry through Sketcher
+        # even when the derived Shape is not yet usable.
+        if not candidate_edges and source is not None:
+            for geom in getattr(source, "Geometry", []) or []:
+                try:
+                    candidate_edges.append(type("CsvWallSegment", (), {
+                        "Vertexes": [
+                            type("CsvWallVertex", (), {"Point": geom.StartPoint})(),
+                            type("CsvWallVertex", (), {"Point": geom.EndPoint})(),
+                        ],
+                        "Length": (geom.EndPoint-geom.StartPoint).Length,
+                    })())
+                except Exception:
+                    continue
+        for edge in candidate_edges:
+            try:
+                p0 = edge.Vertexes[0].Point
+                p1 = edge.Vertexes[-1].Point
+                dx, dy = float(p1.x-p0.x), float(p1.y-p0.y)
+                length = math.hypot(dx, dy)
+                if length < 10.0 or abs(float(edge.Length)-length) > max(2.0, length*0.002):
+                    continue
+            except Exception:
+                continue
+            key = tuple(sorted(((round(p0.x, 1), round(p0.y, 1)), (round(p1.x, 1), round(p1.y, 1)))))
+            if key in seen:
+                continue
+            seen.add(key)
+            axes.append({
+                "wall": wall, "p0": App.Vector(p0.x, p0.y, 0),
+                "tx": dx/length, "ty": dy/length, "length": length, "width": width,
+            })
+    return axes
+
+
+def snap_row_to_wall(row, axes, max_distance=750.0, auto_rotate=True):
+    if not axes:
+        return False
+    px, py = float(row.get("x", 0.0)), float(row.get("y", 0.0))
+    best = None
+    for axis in axes:
+        p0, tx, ty, length = axis["p0"], axis["tx"], axis["ty"], axis["length"]
+        along = (px-p0.x)*tx + (py-p0.y)*ty
+        clamped = max(0.0, min(length, along))
+        qx, qy = p0.x+tx*clamped, p0.y+ty*clamped
+        distance = math.hypot(px-qx, py-qy)
+        if best is None or distance < best[0]:
+            best = (distance, axis, qx, qy)
+    if best is None or best[0] > float(max_distance):
+        return False
+    _, axis, qx, qy = best
+    nx, ny = -axis["ty"], axis["tx"]
+    signed = (px-qx)*nx + (py-qy)*ny
+    if abs(signed) > 5.0:
+        side = 1.0 if signed > 0 else -1.0
+    else:
+        # CAD block rotation disambiguates the face when its insertion point is
+        # exactly on the wall axis. ElectricCR rotation = normal angle - 90°.
+        desired = math.radians(float(row.get("rotation") or 0.0) + 90.0)
+        side = 1.0 if nx*math.cos(desired) + ny*math.sin(desired) >= 0 else -1.0
+    nx, ny = nx*side, ny*side
+    row["x"] = qx + nx*axis["width"]*0.5
+    row["y"] = qy + ny*axis["width"]*0.5
+    if auto_rotate:
+        row["rotation"] = math.degrees(math.atan2(ny, nx)) - 90.0
+    row["_source_wall"] = axis["wall"]
+    row["_wall_snap_distance"] = float(best[0])
+    return True
+
+
 def set_csv_kind_metadata(obj, kind_token):
     if obj is None:
         return
@@ -1714,6 +1856,62 @@ def get_crear_toma_uno():
         except Exception:
             continue
     return None
+
+
+def get_crear_toma_link():
+    if not ensure_electriccr_on_path():
+        return None
+    for mod_name in (
+        "ElectricCR.electriccr.features.objeto_toma_uno",
+        "electriccr.features.objeto_toma_uno",
+    ):
+        try:
+            mod = importlib.import_module(mod_name)
+            fn = getattr(mod, "crear_toma_link", None)
+            if callable(fn):
+                return fn
+        except Exception:
+            continue
+    return None
+
+
+CSV_KIND_GROUPS = {
+    "techo": ("Iluminacion", "Iluminacion"),
+    "toma": ("Tomacorrientes", "Tomacorrientes"),
+    "apagador": ("Apagadores", "Apagadores"),
+    "sensor": ("Sensores", "Sensores"),
+    "rociador": ("Rociadores", "Rociadores"),
+    "altavoz": ("Altavoces", "Altavoces"),
+    "camara": ("Camaras", "Camaras"),
+    "etiqueta": ("Etiquetas", "Etiquetas"),
+    "otro": ("Otros dispositivos", "Otros_Dispositivos"),
+}
+
+
+def ensure_csv_output_group(doc, electric_group, kind_token):
+    parent_label, parent_name = CSV_KIND_GROUPS.get(kind_token, CSV_KIND_GROUPS["otro"])
+    parent = ensure_child_group(doc, electric_group, parent_label, parent_name)
+    child_label = "{} importados CSV".format(parent_label)
+    child_name = "{}_Importados_CSV".format(parent_name)
+    return ensure_child_group(doc, parent, child_label, child_name)
+
+
+def csv_import_id(import_group, row_item):
+    return "{}|{}|{}".format(
+        str(getattr(import_group, "Name", IMPORT_GROUP_NAME) or IMPORT_GROUP_NAME),
+        str(row_item.get("source_sketch", row_item.get("csv_name", "Generico")) or "Generico"),
+        int(row_item.get("point_index", 0) or 0),
+    )
+
+
+def set_csv_trace(obj, import_id, csv_name):
+    ensure_simple_property(obj, "App::PropertyString", "CsvImportId", "CSV", "Identificador estable de importacion")
+    ensure_simple_property(obj, "App::PropertyString", "CsvSourceType", "CSV", "Tipo original del CSV")
+    try:
+        obj.CsvImportId = str(import_id)
+        obj.CsvSourceType = str(csv_name or "")
+    except Exception:
+        pass
 
 
 def ensure_workbench():
@@ -1968,7 +2166,7 @@ def run_step1(params):
             try:
                 x = parse_number(row.get(kx), "X", rn)
                 y = parse_number(row.get(ky), "Y", rn)
-                z = parse_number(row.get(kz), "Z", rn)
+                z = parse_number(row.get(kz), "Z", rn) if kz is not None else 0.0
                 name = (row.get(kn) or "").strip() if kn is not None else ""
 
                 unit_txt = ""
@@ -1991,6 +2189,12 @@ def run_step1(params):
                     "y_raw": y,
                     "z_raw": z,
                     "row_scale": row_scale,
+                    "rotation": parse_number_optional(row.get(hopt["rotation"])) if hopt.get("rotation") else 0.0,
+                    "height": parse_number_optional(row.get(hopt["height"])) if hopt.get("height") else None,
+                    "registry_key": str(row.get(hopt["registry"]) or "").strip() if hopt.get("registry") else "",
+                    "kind": str(row.get(hopt["kind"]) or "").strip() if hopt.get("kind") else "",
+                    "room": str(row.get(hopt["room"]) or "").strip() if hopt.get("room") else "",
+                    "circuit": str(row.get(hopt["circuit"]) or "").strip() if hopt.get("circuit") else "",
                 })
             except Exception as ex:
                 skipped += 1
@@ -2025,6 +2229,12 @@ def run_step1(params):
             "y": float(it["y_raw"]) * scale_used,
             "z": float(it["z_raw"]) * scale_used,
             "row_scale": it.get("row_scale"),
+            "rotation": float(it.get("rotation") or 0.0),
+            "height": it.get("height"),
+            "registry_key": it.get("registry_key", ""),
+            "kind": it.get("kind", ""),
+            "room": it.get("room", ""),
+            "circuit": it.get("circuit", ""),
         })
 
     if row_scale_values:
@@ -2108,10 +2318,24 @@ def run_step1(params):
             clear_group_children(doc, g_ref)
 
         sset = set()
+        metadata_by_sketch = collections.defaultdict(list)
         for it in rows:
             sk = ensure_sketch_for_type(doc, g_pts, it["csv_name"])
             add_point_to_sketch(sk, it["x"], it["y"], it["z"])
+            metadata_by_sketch[sk.Name].append({
+                "rotation": float(it.get("rotation") or 0.0),
+                "height": it.get("height"),
+                "registry_key": str(it.get("registry_key", "") or ""),
+                "kind": str(it.get("kind", "") or ""),
+                "room": str(it.get("room", "") or ""),
+                "circuit": str(it.get("circuit", "") or ""),
+                "row_n": int(it.get("row_n", 0) or 0),
+            })
             sset.add(sk.Name)
+        for sketch_name, metadata in metadata_by_sketch.items():
+            sk = doc.getObject(sketch_name)
+            ensure_simple_property(sk, "App::PropertyString", "CsvPointMetadata", "CSV", "Metadatos por punto en orden geometrico")
+            sk.CsvPointMetadata = json.dumps(metadata, ensure_ascii=True, sort_keys=True)
 
         anchor = anchor_from_rows(rows, anchor_mode)
         if anchor is not None:
@@ -2162,6 +2386,9 @@ def run_step2(params):
     if conv_scale <= 0:
         conv_scale = 1.0
     protect_masters = bool(params.get("protect_masters", True))
+    snap_wall_devices = bool(params.get("snap_wall_devices", True))
+    wall_snap_distance = float(params.get("wall_snap_distance", 750.0) or 750.0)
+    auto_wall_rotation = bool(params.get("auto_wall_rotation", True))
     manual_map_param = params.get("manual_map", {})
     manual_map = {}
     if isinstance(manual_map_param, dict):
@@ -2253,12 +2480,13 @@ def run_step2(params):
 
     need_registry_masters = use_registry_link_for_ceiling
     crear_toma_uno = get_crear_toma_uno() if (use_devices or need_registry_masters) else None
+    crear_toma_link = get_crear_toma_link() if use_devices else None
     if use_devices and crear_toma_uno is None:
         log("[WARN] crear_toma_uno no disponible. Se hara solo Link.")
     if need_registry_masters and crear_toma_uno is None:
         log("[WARN] Motor techo 'registry_link' requiere Insertar_Dispositivo. Se usara motor base.")
         use_registry_link_for_ceiling = False
-    registry_types = load_registry_types_dict() if use_registry_link_for_ceiling else {}
+    registry_types = load_registry_types_dict()
 
     reg_keys = load_registry_keys()
     type_names = sorted(set(it["csv_name"] for it in rows if it["csv_name"]))
@@ -2367,6 +2595,9 @@ def run_step2(params):
         log("[WARN] Tipos sin base: {}".format(", ".join(unresolved)))
 
     created = 0
+    replaced = 0
+    snapped = 0
+    wall_snap_missed = 0
     skipped = 0
     pending_count = 0
     used_names = set(obj.Name for obj in doc.Objects)
@@ -2374,28 +2605,72 @@ def run_step2(params):
     warned_kind_without_key = set()
     warned_registry_master = set()
     used_master_by_name = {}
+    wall_axes = collect_wall_axes(doc) if snap_wall_devices else []
+    if snap_wall_devices:
+        log("[INFO] Ajuste BIM activo: {} tramo(s) de pared; distancia maxima={} mm.".format(
+            len(wall_axes), wall_snap_distance
+        ))
 
     doc.openTransaction("ElectricCR: Sketch a Objetos")
     try:
         g_e = ensure_root_group(doc, ELECTRICO_LABEL, ELECTRICO_NAME)
-        g_i = ensure_child_group(doc, g_e, ILUMINACION_LABEL, ILUMINACION_NAME)
-        g_out = ensure_child_group(doc, g_i, OUTPUT_GROUP_LABEL, OUTPUT_GROUP_NAME)
         g_lib = ensure_link_library_group(doc) if use_registry_link_for_ceiling else None
         registry_master_cache = {}
+        output_groups = {}
+        existing_by_import_id = {}
+        for old_obj in list(getattr(doc, "Objects", []) or []):
+            old_id = str(getattr(old_obj, "CsvImportId", "") or "").strip()
+            if old_id:
+                existing_by_import_id[old_id] = old_obj
+
+        def output_group(kind_token):
+            key = str(kind_token or "otro")
+            if key not in output_groups:
+                output_groups[key] = ensure_csv_output_group(doc, g_e, key)
+            return output_groups[key]
 
         def create_device_instance(row_item, type_name, key_registro, tipo_logico, kind_token):
-            dev = crear_toma_uno(
-                doc,
-                name_prefix=sanitize_name(type_name or key_registro, "Disp") + "_",
-                key_registro=key_registro,
-                tipo_logico=tipo_logico,
-            )
-            if dev is None:
-                raise RuntimeError("crear_toma_uno devolvio None")
+            target_group = output_group(kind_token)
+            info = registry_types.get(key_registro, {}) if isinstance(registry_types, dict) else {}
+            altura_rel = row_item.get("height")
+            if altura_rel is None:
+                altura_rel = altura_from_registry_defaults(info)
+            modo_visual = mode_from_registry_defaults(info)
+            rotation_deg = float(row_item.get("rotation") or 0.0)
             pl = App.Placement(
                 App.Vector(float(row_item["x"]), float(row_item["y"]), float(row_item["z"])),
-                App.Rotation(),
+                App.Rotation(App.Vector(0, 0, 1), rotation_deg),
             )
+            if callable(crear_toma_link):
+                try:
+                    dev = crear_toma_link(
+                        doc=doc,
+                        name_prefix=sanitize_name(type_name or key_registro, "Disp"),
+                        key_registro=key_registro,
+                        tipo_logico=tipo_logico,
+                        placement=pl,
+                        modo_visual=modo_visual,
+                        altura_rel=float(altura_rel),
+                        orientacion_pared="Vertical",
+                        recompute=False,
+                        target_group=target_group,
+                    )
+                except TypeError:
+                    dev = crear_toma_link(
+                        doc=doc, name_prefix=sanitize_name(type_name or key_registro, "Disp"),
+                        key_registro=key_registro, tipo_logico=tipo_logico, placement=pl,
+                        modo_visual=modo_visual, altura_rel=float(altura_rel), orientacion_pared="Vertical",
+                    )
+                    target_group.addObject(dev)
+            else:
+                dev = crear_toma_uno(
+                    doc,
+                    name_prefix=sanitize_name(type_name or key_registro, "Disp") + "_",
+                    key_registro=key_registro,
+                    tipo_logico=tipo_logico,
+                )
+            if dev is None:
+                raise RuntimeError("La fabrica de dispositivos devolvio None")
             try:
                 dev.Placement = pl
             except Exception:
@@ -2408,7 +2683,22 @@ def run_step2(params):
             except Exception:
                 pass
             set_csv_kind_metadata(dev, kind_token)
-            g_out.addObject(dev)
+            set_csv_trace(dev, csv_import_id(g_imp, row_item), type_name)
+            source_wall = row_item.get("_source_wall")
+            if source_wall is not None:
+                ensure_simple_property(dev, "App::PropertyLink", "ECR_SourceWall", "ElectricCR BIM", "Pared BIM ajustada")
+                try:
+                    dev.ECR_SourceWall = source_wall
+                except Exception:
+                    pass
+            ensure_simple_property(dev, "App::PropertyString", "Recinto", "CSV", "Recinto indicado en CSV")
+            ensure_simple_property(dev, "App::PropertyString", "CircuitoID", "Meta", "Circuito indicado en CSV")
+            try:
+                dev.Recinto = str(row_item.get("room", "") or "")
+                dev.CircuitoID = str(row_item.get("circuit", "") or "")
+            except Exception:
+                pass
+            target_group.addObject(dev)
             return dev
 
         def resolve_registry_link_master(type_name, key_registro):
@@ -2438,13 +2728,30 @@ def run_step2(params):
         for it in rows:
             tname = it["csv_name"]
             base = type_map.get(tname)
-            reg_key = reg_map.get(tname, "")
-            kind_token = type_kind_map.get(tname, infer_kind_token(tname, reg_key))
+            reg_key = str(it.get("registry_key", "") or "").strip() or reg_map.get(tname, "")
+            row_kind = normalize_kind_token(it.get("kind", ""))
+            kind_token = row_kind if row_kind != "__AUTO__" else type_kind_map.get(tname, infer_kind_token(tname, reg_key))
             mode_token = type_mode_map.get(tname, "auto")
             if kind_token == "__PENDING__" or mode_token == "pending":
                 pending_count += 1
                 continue
             tipo_logico = logical_tipo_from_kind(kind_token)
+            if snap_wall_devices and kind_token in ("toma", "apagador"):
+                if snap_row_to_wall(
+                    it, wall_axes,
+                    max_distance=wall_snap_distance, auto_rotate=auto_wall_rotation,
+                ):
+                    snapped += 1
+                else:
+                    wall_snap_missed += 1
+            import_id = csv_import_id(g_imp, it)
+            old_obj = existing_by_import_id.get(import_id)
+            if old_obj is not None:
+                try:
+                    doc.removeObject(old_obj.Name)
+                    replaced += 1
+                except Exception as ex:
+                    log("[WARN] No se pudo reemplazar '{}': {}".format(import_id, ex))
 
             if mode_token == "registry_link_ceiling":
                 if reg_key and callable(crear_toma_uno):
@@ -2521,7 +2828,10 @@ def run_step2(params):
                         link.LinkPlacement = App.Placement()
                 except Exception:
                     pass
-                link.Placement = App.Placement(App.Vector(float(it["x"]), float(it["y"]), float(it["z"])), App.Rotation())
+                link.Placement = App.Placement(
+                    App.Vector(float(it["x"]), float(it["y"]), float(it["z"])),
+                    App.Rotation(App.Vector(0, 0, 1), float(it.get("rotation") or 0.0)),
+                )
                 try:
                     vo = getattr(link, "ViewObject", None)
                     if vo is not None:
@@ -2534,7 +2844,22 @@ def run_step2(params):
                 seed = tname if (use_labels and tname) else oname
                 link.Label = unique_value(seed, used_labels)
                 set_csv_kind_metadata(link, kind_token)
-                g_out.addObject(link)
+                set_csv_trace(link, import_id, tname)
+                source_wall = it.get("_source_wall")
+                if source_wall is not None:
+                    ensure_simple_property(link, "App::PropertyLink", "ECR_SourceWall", "ElectricCR BIM", "Pared BIM ajustada")
+                    try:
+                        link.ECR_SourceWall = source_wall
+                    except Exception:
+                        pass
+                ensure_simple_property(link, "App::PropertyString", "Recinto", "CSV", "Recinto indicado en CSV")
+                ensure_simple_property(link, "App::PropertyString", "CircuitoID", "Meta", "Circuito indicado en CSV")
+                try:
+                    link.Recinto = str(it.get("room", "") or "")
+                    link.CircuitoID = str(it.get("circuit", "") or "")
+                except Exception:
+                    pass
+                output_group(kind_token).addObject(link)
                 created += 1
             except Exception as ex:
                 skipped += 1
@@ -2561,7 +2886,9 @@ def run_step2(params):
 
         doc.recompute()
         doc.commitTransaction()
-        log("[INFO] Paso 2 listo. Creados: {} | Omitidos: {} | Pendientes: {}".format(created, skipped, pending_count))
+        log("[INFO] Paso 2 listo. Creados: {} | Reemplazados: {} | Ajustados a pared: {} | Sin pared cercana: {} | Omitidos: {} | Pendientes: {}".format(
+            created, replaced, snapped, wall_snap_missed, skipped, pending_count
+        ))
     except Exception as ex:
         doc.abortTransaction()
         log("[ERROR] Paso 2 cancelado: {}".format(ex))
@@ -2579,7 +2906,7 @@ class AsisCsv2PasosForm(QtWidgets.QWidget):
         self._type_combo_map = {}
         self._type_kind_map = {}
         self._base_options = []
-        self.setWindowTitle("Asistente CSV 2 Pasos")
+        self.setWindowTitle("Asistente CSV eléctrico")
         self.setMinimumWidth(740)
         self._build_ui()
         self.refresh_lists()
@@ -2590,9 +2917,9 @@ class AsisCsv2PasosForm(QtWidgets.QWidget):
         t1 = QtWidgets.QWidget()
         t2 = QtWidgets.QWidget()
         t3 = QtWidgets.QWidget()
-        tabs.addTab(t1, "Paso 1 Importacion")
-        tabs.addTab(t2, "Paso 2 Conversion")
-        tabs.addTab(t3, "Paso 2 Opcional")
+        tabs.addTab(t1, "1. Importar puntos")
+        tabs.addTab(t2, "2. Revisar y crear")
+        tabs.addTab(t3, "Opciones avanzadas")
 
         self.le_csv = QtWidgets.QLineEdit(self._default_csv_guess or CSV_PATH)
         self.le_csv.setPlaceholderText("CSV del proyecto actual")
@@ -2645,7 +2972,7 @@ class AsisCsv2PasosForm(QtWidgets.QWidget):
 
         btn_scan_csv = QtWidgets.QPushButton("Actualizar datos CSV (sin importar)")
         btn_scan_csv.clicked.connect(self.scan_csv_only)
-        btn_run1 = QtWidgets.QPushButton("Ejecutar Paso 1")
+        btn_run1 = QtWidgets.QPushButton("Crear sketches editables")
         btn_run1.clicked.connect(self.run1)
 
         f1 = QtWidgets.QFormLayout()
@@ -2703,6 +3030,14 @@ class AsisCsv2PasosForm(QtWidgets.QWidget):
         self.chk_devices.setChecked(True)
         self.chk_protect_masters = QtWidgets.QCheckBox("Proteger masters tras insertar (no seleccionables)")
         self.chk_protect_masters.setChecked(True)
+        self.chk_snap_walls = QtWidgets.QCheckBox("Ajustar tomas y apagadores a paredes BIM")
+        self.chk_snap_walls.setChecked(True)
+        self.chk_wall_rotation = QtWidgets.QCheckBox("Rotarlos perpendicularmente a la pared")
+        self.chk_wall_rotation.setChecked(True)
+        self.sp_wall_distance = QtWidgets.QDoubleSpinBox()
+        self.sp_wall_distance.setRange(50.0, 5000.0)
+        self.sp_wall_distance.setValue(750.0)
+        self.sp_wall_distance.setSuffix(" mm")
         self.cmb_lum_engine = QtWidgets.QComboBox()
         self.cmb_lum_engine.addItem("Techo: Link a base del documento", "base")
         self.cmb_lum_engine.addItem("Techo: Link con master del registro", "registry_link")
@@ -2756,9 +3091,9 @@ class AsisCsv2PasosForm(QtWidgets.QWidget):
         row_map_btns.addStretch(1)
         gb_map_layout.addLayout(row_map_btns)
 
-        btn_run2 = QtWidgets.QPushButton("Ejecutar Paso 2")
+        btn_run2 = QtWidgets.QPushButton("Crear objetos eléctricos")
         btn_run2.clicked.connect(self.run2)
-        btn_run2_opt = QtWidgets.QPushButton("Ejecutar Paso 2")
+        btn_run2_opt = QtWidgets.QPushButton("Crear objetos eléctricos")
         btn_run2_opt.clicked.connect(self.run2)
         self.btn_protect_masters = QtWidgets.QPushButton("Proteger bases usadas")
         self.btn_protect_masters.clicked.connect(lambda: self.set_current_base_protection(False))
@@ -2774,6 +3109,9 @@ class AsisCsv2PasosForm(QtWidgets.QWidget):
         f2.addRow("Base fallback:", self.cmb_base)
         f2.addRow("Modo base:", self.cmb_base_mode)
         f2.addRow("Si falta tipo:", self.cmb_missing)
+        f2.addRow("", self.chk_snap_walls)
+        f2.addRow("Distancia máxima a pared:", self.sp_wall_distance)
+        f2.addRow("", self.chk_wall_rotation)
         l2 = QtWidgets.QVBoxLayout(t2)
         l2.addLayout(f2)
         l2.addStretch(1)
@@ -2809,6 +3147,14 @@ class AsisCsv2PasosForm(QtWidgets.QWidget):
         foot.addWidget(btn_close)
 
         root = QtWidgets.QVBoxLayout(self)
+        guide = QtWidgets.QLabel(
+            "<b>Flujo:</b> 1) importe el CSV; 2) revise o mueva los puntos; "
+            "3) asigne cada tipo y cree los objetos.<br>"
+            "Los tomacorrientes y apagadores pueden ajustarse automáticamente "
+            "a la cara más cercana de una pared BIM."
+        )
+        guide.setWordWrap(True)
+        root.addWidget(guide)
         root.addWidget(tabs)
         root.addLayout(foot)
 
@@ -2916,6 +3262,12 @@ class AsisCsv2PasosForm(QtWidgets.QWidget):
         self.chk_labels.setChecked(bool(form.get("use_labels", True)))
         self.chk_devices.setChecked(bool(form.get("use_devices", True)))
         self.chk_protect_masters.setChecked(bool(form.get("protect_masters", True)))
+        self.chk_snap_walls.setChecked(bool(form.get("snap_wall_devices", True)))
+        self.chk_wall_rotation.setChecked(bool(form.get("auto_wall_rotation", True)))
+        try:
+            self.sp_wall_distance.setValue(float(form.get("wall_snap_distance", 750.0)))
+        except Exception:
+            pass
         self.le_align_target.setText(str(form.get("align_target", "") or ""))
         svec = list_to_vector(form.get("source_vec", []))
         dvec = list_to_vector(form.get("target_vec", []))
@@ -2952,6 +3304,9 @@ class AsisCsv2PasosForm(QtWidgets.QWidget):
             "use_labels": bool(self.chk_labels.isChecked()),
             "use_devices": bool(self.chk_devices.isChecked()),
             "protect_masters": bool(self.chk_protect_masters.isChecked()),
+            "snap_wall_devices": bool(self.chk_snap_walls.isChecked()),
+            "auto_wall_rotation": bool(self.chk_wall_rotation.isChecked()),
+            "wall_snap_distance": float(self.sp_wall_distance.value()),
             "align_mode": str(self.cmb_align.currentData() or "none"),
             "align_target": self.le_align_target.text().strip(),
             "source_vec": vector_to_list(self._src_vec),
@@ -3578,6 +3933,9 @@ class AsisCsv2PasosForm(QtWidgets.QWidget):
             "use_labels": bool(self.chk_labels.isChecked()),
             "use_devices": bool(self.chk_devices.isChecked()),
             "protect_masters": bool(self.chk_protect_masters.isChecked()),
+            "snap_wall_devices": bool(self.chk_snap_walls.isChecked()),
+            "auto_wall_rotation": bool(self.chk_wall_rotation.isChecked()),
+            "wall_snap_distance": float(self.sp_wall_distance.value()),
             "align_mode": str(self.cmb_align.currentData() or "none"),
             "align_target": self.le_align_target.text().strip(),
             "manual_map": manual_map,
@@ -3645,7 +4003,7 @@ def main():
         except Exception:
             parent = None
     dlg = QtWidgets.QDialog(parent)
-    dlg.setWindowTitle("Asistente CSV 2 Pasos")
+    dlg.setWindowTitle("Asistente CSV eléctrico")
     dlg.setMinimumWidth(860)
     lay = QtWidgets.QVBoxLayout(dlg)
     lay.addWidget(panel.form)

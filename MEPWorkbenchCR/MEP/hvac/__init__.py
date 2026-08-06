@@ -3,6 +3,7 @@
 import FreeCAD as App
 
 from . import hvac_condensing
+from . import hvac_cad_extract
 from . import hvac_equipment
 from . import hvac_label
 from . import hvac_ports

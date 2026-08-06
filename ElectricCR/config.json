@@ -1,13 +1,101 @@
 {
-  "toolbar_order": [
+  "interface_mode": "modes_prototype",
+  "mode_panel_enabled": true,
+  "show_primary_toolbar": true,
+  "show_bim_toolbar": false,
+  "show_draft_toolbars": false,
+  "show_draft_compact_toolbar": true,
+  "show_chat_toolbar": false,
+  "show_usage_stats_on_toolbar": false,
+  "macro_toolbar_mode": "compact",
+  "macro_toolbar_groups": [
+    "Areas",
+    "Objetos",
     "Tomacorrientes",
-    "Iluminación",
+    "Iluminacion",
+    "Deteccion",
+    "Cajas",
+    "Conectar",
+    "Tableros"
+  ],
+  "toolbar_order": [
+    "Areas",
+    "Objetos",
+    "Tomacorrientes",
+    "Iluminacion",
+    "Deteccion",
+    "Cajas",
     "Importar y Exportar",
     "Conectar",
     "Tableros",
     "Configuracion del proyecto",
-    "Organizacion del proyecto",
+    "Organizacion del proyecto"
+  ],
+  "always_visible_toolbars": [
+    "Objetos",
+    "Draft compacto"
+  ],
+  "work_modes": {
+    "areas": [
+      "Areas"
+    ],
+    "iluminacion": [
+      "Iluminacion"
+    ],
+    "deteccion": [
+      "Deteccion"
+    ],
+    "tomacorrientes": [
+      "Tomacorrientes"
+    ],
+    "conexiones": [
+      "Conectar",
+      "Cajas"
+    ],
+    "tableros_calculo": [
+      "Tableros",
+      "Configuracion del proyecto"
+    ],
+    "documentacion": [
+      "Importar y Exportar"
+    ],
+    "organizacion": [
+      "Configuracion del proyecto"
+    ],
+    "personalizado": [
+      "Areas",
+      "Iluminacion",
+      "Deteccion",
+      "Tomacorrientes",
+      "Conectar",
+      "Cajas",
+      "Tableros",
+      "Configuracion del proyecto",
+      "Importar y Exportar"
+    ]
+  },
+  "custom_mode_toolbars": [
     "Areas",
-    "Objetos"
+    "Iluminacion",
+    "Deteccion",
+    "Tomacorrientes",
+    "Conectar",
+    "Cajas",
+    "Tableros",
+    "Configuracion del proyecto",
+    "Importar y Exportar"
+  ],
+  "mode_toolbar_names": [
+    "Areas",
+    "Objetos",
+    "Draft compacto",
+    "Iluminacion",
+    "Deteccion",
+    "Tomacorrientes",
+    "Conectar",
+    "Cajas",
+    "Tableros",
+    "Configuracion del proyecto",
+    "Importar y Exportar"
   ]
 }

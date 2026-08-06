@@ -1,0 +1,537 @@
+# -*- coding: utf-8 -*-
+# MenuText: Sensores de humo en poligonos (NFPA)
+# ToolTip: Calcula y coloca sensores dentro del contorno real de recintos FAPolygonalRoom
+# Icon: Deteccion/ColocarDetectores_Poligonos_NFPA.svg
+# Toolbar: Deteccion
+# Transaction: self
+
+"""
+Distribuye sensores de humo sobre caras poligonales de referencia.
+
+Esta variante complementa, sin sustituir, ColocarDetectores_NFPA.FCMacro:
+- Acepta objetos FAPolygonalRoom o grupos que los contengan.
+- Muestrea solamente el interior y el perimetro real de la cara.
+- En modo NFPA agrega sensores hasta cubrir las muestras con Rcov=0.7*S.
+- En modo A1 usa el area real del poligono para calcular la cantidad.
+"""
+
+from pathlib import Path
+import math
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+
+
+TAG = "[ElectricCR][HUMO-POLIGONOS]"
+BASE_MACRO = "ColocarDetectores_NFPA.FCMacro"
+GENERATED_BY = "ColocarDetectoresPoligonosNFPA"
+
+
+def _log(message):
+    App.Console.PrintMessage("{} {}\n".format(TAG, message))
+
+
+def _warn(message):
+    App.Console.PrintWarning("{} {}\n".format(TAG, message))
+
+
+def _error(message):
+    App.Console.PrintError("{} {}\n".format(TAG, message))
+
+
+def _load_base():
+    path = Path(__file__).resolve().with_name(BASE_MACRO)
+    if not path.exists():
+        raise RuntimeError("No se encontro la macro base: " + str(path))
+    ns = {"__name__": "_electriccr_nfpa_rectangulos", "__file__": str(path)}
+    source = path.read_text(encoding="utf-8-sig")
+    exec(compile(source, str(path), "exec"), ns, ns)
+    return ns
+
+
+_B = _load_base()
+QtWidgets = _B["QtWidgets"]
+MODE_NFPA = _B["MODE_NFPA"]
+MODE_A1 = _B["MODE_A1"]
+
+
+def _is_group(obj):
+    return obj is not None and hasattr(obj, "Group")
+
+
+def _face_for(obj):
+    try:
+        faces = list(getattr(obj, "Shape", None).Faces or [])
+    except Exception:
+        faces = []
+    if not faces:
+        return None
+    return max(faces, key=lambda face: float(face.Area))
+
+
+def _is_polygon_room(obj):
+    if obj is None or _face_for(obj) is None:
+        return False
+    props = set(getattr(obj, "PropertiesList", []) or [])
+    if "FA_RoomName" in props:
+        return True
+    name = "{} {} {}".format(
+        getattr(obj, "Name", ""),
+        getattr(obj, "Label", ""),
+        getattr(obj, "TypeId", ""),
+    ).lower()
+    return ("polygonalroom" in name) or ("poligono -" in name)
+
+
+def _collect_nested(obj, output, branch=None):
+    branch = set(branch or set())
+    name = str(getattr(obj, "Name", "") or "")
+    if name and name in branch:
+        return
+    if name:
+        branch.add(name)
+    if _is_polygon_room(obj):
+        output.append(obj)
+        return
+    if _is_group(obj):
+        for child in list(getattr(obj, "Group", []) or []):
+            _collect_nested(child, output, branch)
+
+
+def collect_polygons_from_selection():
+    output = []
+    for obj in list(Gui.Selection.getSelection() or []):
+        _collect_nested(obj, output)
+    unique = []
+    seen = set()
+    for obj in output:
+        name = str(getattr(obj, "Name", "") or "")
+        if name and name not in seen:
+            seen.add(name)
+            unique.append(obj)
+    return unique
+
+
+def _face_z(face):
+    try:
+        return float(face.BoundBox.Center.z)
+    except Exception:
+        return 0.0
+
+
+def _point(x, y, z):
+    return App.Vector(float(x), float(y), float(z))
+
+
+def _inside(face, x, y, z=None):
+    if z is None:
+        z = _face_z(face)
+    try:
+        return bool(face.isInside(_point(x, y, z), 0.5, True))
+    except Exception:
+        return False
+
+
+def _distance_to_boundary(face, x, y, z=None):
+    if z is None:
+        z = _face_z(face)
+    vertex = Part.Vertex(_point(x, y, z))
+    distances = []
+    for wire in list(getattr(face, "Wires", []) or []):
+        try:
+            distances.append(float(wire.distToShape(vertex)[0]))
+        except Exception:
+            pass
+    return min(distances) if distances else 0.0
+
+
+def _dedupe(points, precision=2):
+    result = []
+    seen = set()
+    for x, y in points:
+        key = (round(float(x), precision), round(float(y), precision))
+        if key not in seen:
+            seen.add(key)
+            result.append((float(x), float(y)))
+    return result
+
+
+def _edge_samples(face, spacing_mm):
+    points = []
+    spacing = max(100.0, float(spacing_mm))
+    for edge in list(getattr(face, "Edges", []) or []):
+        try:
+            count = max(2, int(math.ceil(float(edge.Length) / spacing)) + 1)
+            for point in edge.discretize(Number=count):
+                points.append((float(point.x), float(point.y)))
+        except Exception:
+            pass
+    return points
+
+
+def _coverage_samples(face, rcov_mm):
+    bb = face.BoundBox
+    step = max(250.0, min(1000.0, float(rcov_mm) / 6.0))
+    points = []
+    y = float(bb.YMin)
+    while y <= float(bb.YMax) + 0.01:
+        x = float(bb.XMin)
+        while x <= float(bb.XMax) + 0.01:
+            if _inside(face, x, y):
+                points.append((x, y))
+            x += step
+        y += step
+    points.extend(_edge_samples(face, step))
+    return _dedupe(points)
+
+
+def _filter_luminaires(face, lum_world, use_only_inside, use_band, band_mm):
+    if not use_only_inside and not use_band:
+        return [(float(p.x), float(p.y)) for p in lum_world]
+    z = _face_z(face)
+    result = []
+    for point in lum_world:
+        x, y = float(point.x), float(point.y)
+        inside = _inside(face, x, y, z)
+        if inside:
+            result.append((x, y))
+            continue
+        if use_band:
+            try:
+                distance = float(face.distToShape(Part.Vertex(_point(x, y, z)))[0])
+            except Exception:
+                distance = float("inf")
+            if distance <= float(band_mm):
+                result.append((x, y))
+    return result
+
+
+def _valid_candidate(face, x, y, margin_mm, luminaires, d_lum_mm):
+    if not _inside(face, x, y):
+        return False
+    if margin_mm > 0.0 and _distance_to_boundary(face, x, y) + 0.5 < margin_mm:
+        return False
+    if d_lum_mm > 0.0:
+        limit2 = float(d_lum_mm) ** 2
+        for lx, ly in luminaires:
+            if (x - lx) ** 2 + (y - ly) ** 2 < limit2:
+                return False
+    return True
+
+
+def _candidate_points(face, s_mm, rcov_mm, margin_mm, luminaires, d_lum_mm):
+    bb = face.BoundBox
+    step = max(300.0, min(1500.0, float(s_mm) / 3.0, float(rcov_mm) / 3.0))
+    candidates = []
+    margin_levels = [float(margin_mm)]
+    if margin_mm > 1.0:
+        margin_levels.extend([float(margin_mm) * 0.5, 0.0])
+    for active_margin in margin_levels:
+        y = float(bb.YMin) + step * 0.5
+        while y <= float(bb.YMax) + 0.01:
+            x = float(bb.XMin) + step * 0.5
+            while x <= float(bb.XMax) + 0.01:
+                if _valid_candidate(face, x, y, active_margin, luminaires, d_lum_mm):
+                    candidates.append((x, y))
+                x += step
+            y += step
+        try:
+            center = face.CenterOfMass
+            if _valid_candidate(
+                face, float(center.x), float(center.y),
+                active_margin, luminaires, d_lum_mm,
+            ):
+                candidates.append((float(center.x), float(center.y)))
+        except Exception:
+            pass
+        candidates = _dedupe(candidates)
+        if candidates:
+            return candidates, active_margin
+    return [], 0.0
+
+
+def _distance2(a, b):
+    return (float(a[0]) - float(b[0])) ** 2 + (float(a[1]) - float(b[1])) ** 2
+
+
+def _coverage_sets(candidates, samples, rcov_mm):
+    limit2 = float(rcov_mm) ** 2
+    return [
+        {index for index, sample in enumerate(samples) if _distance2(candidate, sample) <= limit2}
+        for candidate in candidates
+    ]
+
+
+def _prune_redundant(selected, coverage, sample_count):
+    selected = list(selected)
+    changed = True
+    all_samples = set(range(sample_count))
+    while changed and len(selected) > 1:
+        changed = False
+        for candidate in list(reversed(selected)):
+            others = [item for item in selected if item != candidate]
+            covered = set()
+            for item in others:
+                covered.update(coverage[item])
+            if all_samples.issubset(covered):
+                selected.remove(candidate)
+                changed = True
+                break
+    return selected
+
+
+def plan_polygon_nfpa(face, s_mm, rcov_mm, margin_mm, luminaires, d_lum_mm):
+    samples = _coverage_samples(face, rcov_mm)
+    candidates, used_margin = _candidate_points(
+        face, s_mm, rcov_mm, margin_mm, luminaires, d_lum_mm
+    )
+    if not samples or not candidates:
+        return [], {
+            "samples": len(samples),
+            "candidates": len(candidates),
+            "uncovered": len(samples),
+            "margin_used": used_margin,
+            "reason": "sin_muestras_o_candidatos",
+        }
+
+    coverage = _coverage_sets(candidates, samples, rcov_mm)
+    uncovered = set(range(len(samples)))
+    selected = []
+    available = set(range(len(candidates)))
+    while uncovered and available and len(selected) < 500:
+        best = max(
+            available,
+            key=lambda index: (
+                len(coverage[index].intersection(uncovered)),
+                _distance_to_boundary(face, candidates[index][0], candidates[index][1]),
+            ),
+        )
+        gain = coverage[best].intersection(uncovered)
+        if not gain:
+            break
+        selected.append(best)
+        available.remove(best)
+        uncovered.difference_update(gain)
+
+    if not uncovered:
+        selected = _prune_redundant(selected, coverage, len(samples))
+    points = [candidates[index] for index in selected]
+    return points, {
+        "samples": len(samples),
+        "candidates": len(candidates),
+        "uncovered": len(uncovered),
+        "margin_used": used_margin,
+        "reason": "cobertura_nfpa" if not uncovered else "cobertura_incompleta",
+    }
+
+
+def plan_polygon_a1(face, a1_m2, s_mm, rcov_mm, margin_mm, luminaires, d_lum_mm):
+    area_m2 = float(face.Area) / 1e6
+    target = max(1, int(math.ceil(area_m2 / max(0.1, float(a1_m2)))))
+    samples = _coverage_samples(face, rcov_mm)
+    candidates, used_margin = _candidate_points(
+        face, s_mm, rcov_mm, margin_mm, luminaires, d_lum_mm
+    )
+    if not candidates:
+        return [], {
+            "samples": len(samples),
+            "candidates": 0,
+            "target": target,
+            "uncovered": len(samples),
+            "margin_used": used_margin,
+            "reason": "sin_candidatos",
+        }
+
+    coverage = _coverage_sets(candidates, samples, rcov_mm)
+    uncovered = set(range(len(samples)))
+    selected = []
+    available = set(range(len(candidates)))
+    while available and len(selected) < target:
+        def score(index):
+            gain = len(coverage[index].intersection(uncovered))
+            if not selected:
+                separation = _distance_to_boundary(
+                    face, candidates[index][0], candidates[index][1]
+                )
+            else:
+                separation = min(
+                    _distance2(candidates[index], candidates[item]) for item in selected
+                )
+            return gain, separation
+
+        best = max(available, key=score)
+        selected.append(best)
+        available.remove(best)
+        uncovered.difference_update(coverage[best])
+
+    return [candidates[index] for index in selected], {
+        "samples": len(samples),
+        "candidates": len(candidates),
+        "target": target,
+        "uncovered": len(uncovered),
+        "margin_used": used_margin,
+        "reason": "cantidad_por_area_real",
+    }
+
+
+def _ensure_property(obj, ptype, name, group, description):
+    try:
+        if name not in list(getattr(obj, "PropertiesList", []) or []):
+            obj.addProperty(ptype, name, group, description)
+    except Exception:
+        pass
+
+
+def _set_source_metadata(sensor, polygon, method, stats):
+    _ensure_property(sensor, "App::PropertyLink", "AreaPoligonal", "Deteccion", "Poligono de recinto usado")
+    _ensure_property(sensor, "App::PropertyString", "Recinto", "Deteccion", "Nombre del recinto")
+    _ensure_property(sensor, "App::PropertyString", "ECR_GeneradoPor", "ElectricCR", "Macro generadora")
+    _ensure_property(sensor, "App::PropertyString", "MetodoCobertura", "Deteccion", "Metodo de calculo")
+    try:
+        sensor.AreaPoligonal = polygon
+        if "AreaRecinto" in sensor.PropertiesList:
+            sensor.AreaRecinto = polygon
+        sensor.Recinto = str(getattr(polygon, "FA_RoomName", "") or getattr(polygon, "Label", ""))
+        sensor.ECR_GeneradoPor = GENERATED_BY
+        sensor.MetodoCobertura = "{} | muestras={} | sin_cubrir={}".format(
+            method, stats.get("samples", 0), stats.get("uncovered", 0)
+        )
+    except Exception:
+        pass
+
+
+def run():
+    doc = App.ActiveDocument
+    if doc is None:
+        _error("No hay documento activo.")
+        return None
+
+    polygons = collect_polygons_from_selection()
+    if not polygons:
+        _error("Seleccione poligonos FAPolygonalRoom o el grupo Espacios de referencia.")
+        return None
+
+    registry = _B["load_registry"]()
+    if not (registry.get("types") or {}):
+        _error("El registro no tiene tipos definidos.")
+        return None
+
+    dialog = _B["DetectorNFPADialog"](registry, doc, Gui.getMainWindow())
+    dialog.setWindowTitle("Sensores de humo en poligonos")
+    try:
+        dialog.chkSoloInternas.setText("Usar solo luminarias dentro del poligono")
+    except Exception:
+        pass
+    exec_dialog = getattr(dialog, "exec", None) or getattr(dialog, "exec_", None)
+    if exec_dialog() != QtWidgets.QDialog.Accepted:
+        return None
+
+    key = dialog.selected_key() or "Sensor_Humo"
+    name_prefix = dialog.name_prefix()
+    height = float(dialog.selected_altura())
+    calc_mode = dialog.modo_calc()
+    s_m = dialog.S_m()
+    rcov_m = dialog.Rcov_m()
+    a1_m2 = dialog.A1_m2()
+    d_lum_m = dialog.D_lum_m()
+    margin_m = dialog.margen_borde_m()
+    use_only_inside = dialog.use_only_inside()
+    use_band = dialog.use_band()
+    band_m = dialog.band_m()
+
+    type_info = (registry.get("types") or {}).get(key, {}) or {}
+    defaults = type_info.get("defaults", {}) or {}
+    visual_mode = {
+        "Both": "Ambos", "Ambos": "Ambos",
+        "Solo2D": "Solo2D", "Solo 2D": "Solo2D",
+        "Solo3D": "Solo3D", "Solo 3D": "Solo3D",
+    }.get(str(defaults.get("modo", "Both")), "Ambos")
+
+    create_sensor = _B["get_crear_toma_uno"]()
+    if not create_sensor:
+        return None
+
+    group_labels = dialog.group_labels()
+    lum_world, lum_source = _B["collect_luminaires"](doc, group_labels)
+    group_label = (name_prefix.rstrip("_") or name_prefix or "Sensores").strip()
+
+    s_mm = _B["m_to_mm"](s_m)
+    rcov_mm = _B["m_to_mm"](rcov_m)
+    d_lum_mm = _B["m_to_mm"](d_lum_m)
+    margin_mm = _B["m_to_mm"](margin_m)
+    band_mm = _B["m_to_mm"](band_m)
+
+    created = 0
+    failures = 0
+    doc.openTransaction("ElectricCR: sensores de humo en poligonos")
+    try:
+        group = _B["ensure_sensor_group"](doc, group_label)
+        for polygon in polygons:
+            face = _face_for(polygon)
+            if face is None or float(face.Area) <= 0.0:
+                _warn("Sin cara valida: " + str(getattr(polygon, "Label", polygon.Name)))
+                failures += 1
+                continue
+
+            luminaires = _filter_luminaires(
+                face, lum_world, use_only_inside, use_band, band_mm
+            )
+            if calc_mode == MODE_A1:
+                points, stats = plan_polygon_a1(
+                    face, a1_m2, s_mm, rcov_mm, margin_mm, luminaires, d_lum_mm
+                )
+            else:
+                points, stats = plan_polygon_nfpa(
+                    face, s_mm, rcov_mm, margin_mm, luminaires, d_lum_mm
+                )
+
+            room = str(
+                getattr(polygon, "FA_RoomName", "")
+                or getattr(polygon, "Label", polygon.Name)
+            )
+            if not points:
+                _warn("{}: no se encontraron posiciones validas ({})".format(
+                    room, stats.get("reason", "")
+                ))
+                failures += 1
+                continue
+
+            z = _face_z(face)
+            for x, y in points:
+                sensor = _B["insert_sensor"](
+                    doc, create_sensor, key, name_prefix, polygon,
+                    App.Vector(0.0, 0.0, z), App.Rotation(),
+                    x, y, created + 1, group, height, visual_mode,
+                )
+                if sensor is not None:
+                    _set_source_metadata(sensor, polygon, calc_mode, stats)
+                    created += 1
+
+            _log(
+                "{}: area={:.2f} m2 | sensores={} | muestras={} | sin_cubrir={} | "
+                "luminarias={} | margen_usado={:.2f} m".format(
+                    room, float(face.Area) / 1e6, len(points),
+                    stats.get("samples", 0), stats.get("uncovered", 0),
+                    len(luminaires), float(stats.get("margin_used", 0.0)) / 1000.0,
+                )
+            )
+
+        doc.recompute()
+        doc.commitTransaction()
+    except Exception:
+        doc.abortTransaction()
+        raise
+
+    result = {
+        "poligonos": len(polygons),
+        "sensores": created,
+        "fallos": failures,
+        "fuente_luminarias": lum_source,
+    }
+    _log("Finalizado: " + str(result))
+    return result
+
+
+if __name__ == "__main__":
+    run()

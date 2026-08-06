@@ -1,0 +1,597 @@
+# -*- coding: utf-8 -*-
+# MenuText: Conectar Tomas a Cajas Octogonales Sobre Muro...
+# Icon: Cajas/Conectar_Tomas_a_Cajas_Octogonales_Sobre_Muro.svg
+
+"""
+Conecta cajas rectangulares de tomacorriente con cajas EMT octogonales.
+
+Reglas de esta variante:
+- El origen es el centro superior de la geometria solida de la caja rectangular.
+- La cota predeterminada de la octogonal es 3200 mm (sobre muro de 3000 mm).
+- Dos tomas opuestos, separados por el espesor del muro, comparten una octogonal
+  y una sola bajante.
+- Al seleccionar grupos solo se procesan objetos que parecen tomacorrientes.
+
+La macro original Insertar_Cajas_Octogonales_Encima.FCMacro permanece intacta.
+Esta variante carga sus utilidades comunes, pero tiene su propio dialogo y proceso.
+"""
+
+from pathlib import Path
+import json
+import math
+import re
+
+import FreeCAD as App
+
+
+DEFAULT_HEIGHT = 3200.0
+DEFAULT_DIAMETER = 22.2
+DEFAULT_CONNECTION = "EMT_Solido"
+DEFAULT_MERGE = True
+MAX_ANGLE_ERROR = 25.0
+MIN_WALL_THICKNESS = 40.0
+MAX_WALL_THICKNESS = 180.0
+MAX_TANGENTIAL_OFFSET = 35.0
+PARAM_PATH = "User parameter:BaseApp/Preferences/Mod/ElectricCR/CajaRectangularAOctogonal"
+BASE_MACRO_NAME = "Insertar_Cajas_Octogonales_Encima.FCMacro"
+BOX_LABEL_PREFIX = "Caja EMT Octogonal Tomas"
+
+
+def _base_macro_path():
+    try:
+        here = Path(__file__).resolve().parent
+        candidate = here / BASE_MACRO_NAME
+        if candidate.exists():
+            return candidate
+    except Exception:
+        pass
+    try:
+        candidate = (
+            Path(App.getUserMacroDir(True))
+            / "Macros-de-Freecad"
+            / "Cajas"
+            / BASE_MACRO_NAME
+        )
+        if candidate.exists():
+            return candidate
+    except Exception:
+        pass
+    raise RuntimeError("No se encontro la macro base: " + BASE_MACRO_NAME)
+
+
+def _load_base_helpers():
+    path = _base_macro_path()
+    source = path.read_text(encoding="utf-8-sig")
+    source = re.sub(
+        r"\nif\s+__name__\s*==\s*[\"']__main__[\"']\s*:\s*\n\s*main\(\)\s*\Z",
+        "\n",
+        source,
+        flags=re.MULTILINE,
+    )
+    ns = {"__name__": "_electriccr_caja_encima_base", "__file__": str(path)}
+    exec(compile(source, str(path), "exec"), ns, ns)
+    return ns
+
+
+_B = _load_base_helpers()
+Gui = _B.get("Gui")
+GUI_UP = bool(_B.get("GUI_UP", False))
+QtWidgets = _B.get("QtWidgets")
+QtCore = _B.get("QtCore")
+
+
+def _log(message):
+    App.Console.PrintMessage("[CAJA_RECT_A_OCT][INFO] " + str(message) + "\n")
+
+
+def _warn(message):
+    App.Console.PrintWarning("[CAJA_RECT_A_OCT][WARN] " + str(message) + "\n")
+
+
+def _err(message):
+    App.Console.PrintError("[CAJA_RECT_A_OCT][ERROR] " + str(message) + "\n")
+
+
+def _safe_text(value):
+    try:
+        return str(value or "")
+    except Exception:
+        return ""
+
+
+def _prefs():
+    return App.ParamGet(PARAM_PATH)
+
+
+def _default_cfg():
+    p = _prefs()
+    conn = p.GetString("tipo_conexion", DEFAULT_CONNECTION)
+    if conn not in {"Sin", "EMT_Solido", "EMT_Flexible"}:
+        conn = DEFAULT_CONNECTION
+    return {
+        "altura_mm": float(p.GetFloat("altura_mm", DEFAULT_HEIGHT)),
+        "diametro_mm": float(p.GetFloat("diametro_mm", DEFAULT_DIAMETER)),
+        "tipo_conexion": conn,
+        "unir_espalda": bool(p.GetBool("unir_espalda", DEFAULT_MERGE)),
+    }
+
+
+def _save_cfg(cfg):
+    p = _prefs()
+    p.SetFloat("altura_mm", float(cfg["altura_mm"]))
+    p.SetFloat("diametro_mm", float(cfg["diametro_mm"]))
+    p.SetString("tipo_conexion", str(cfg["tipo_conexion"]))
+    p.SetBool("unir_espalda", bool(cfg["unir_espalda"]))
+
+
+def _run_dialog():
+    cfg = _default_cfg()
+    if (not GUI_UP) or QtWidgets is None:
+        return cfg
+
+    parent = None
+    try:
+        parent = Gui.getMainWindow()
+    except Exception:
+        pass
+
+    dlg = QtWidgets.QDialog(parent)
+    dlg.setWindowTitle("Tomas a cajas octogonales sobre muro")
+    dlg.setMinimumWidth(540)
+
+    info = QtWidgets.QLabel(
+        "Conecta el puerto superior de cada caja rectangular con una caja "
+        "octogonal sobre el muro. Los tomas espalda con espalda pueden "
+        "compartir una sola caja y una sola bajante."
+    )
+    info.setWordWrap(True)
+
+    height = QtWidgets.QDoubleSpinBox()
+    height.setRange(3001.0, 20000.0)
+    height.setDecimals(1)
+    height.setSuffix(" mm")
+    height.setValue(max(3001.0, float(cfg["altura_mm"])))
+
+    diameter = QtWidgets.QDoubleSpinBox()
+    diameter.setRange(1.0, 200.0)
+    diameter.setDecimals(1)
+    diameter.setSuffix(" mm")
+    diameter.setValue(float(cfg["diametro_mm"]))
+
+    connection = QtWidgets.QComboBox()
+    connection.addItem("EMT Solido", "EMT_Solido")
+    connection.addItem("EMT Flexible", "EMT_Flexible")
+    connection.addItem("Sin conexion", "Sin")
+    index = connection.findData(str(cfg["tipo_conexion"]))
+    connection.setCurrentIndex(index if index >= 0 else 0)
+
+    merge = QtWidgets.QCheckBox("Una octogonal para tomas espalda con espalda")
+    merge.setChecked(bool(cfg["unir_espalda"]))
+
+    note = QtWidgets.QLabel(
+        "Deteccion: orientacion opuesta y separacion transversal de "
+        "40 a 180 mm. Altura recomendada para muro de 3000 mm: 3200 mm."
+    )
+    note.setWordWrap(True)
+    note.setStyleSheet("color:#4b5563;")
+
+    form = QtWidgets.QFormLayout()
+    form.addRow("Cota centro octogonal:", height)
+    form.addRow("Diametro EMT:", diameter)
+    form.addRow("Conexion:", connection)
+
+    buttons = QtWidgets.QDialogButtonBox(
+        QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+    )
+    buttons.accepted.connect(dlg.accept)
+    buttons.rejected.connect(dlg.reject)
+
+    layout = QtWidgets.QVBoxLayout(dlg)
+    layout.addWidget(info)
+    layout.addLayout(form)
+    layout.addWidget(merge)
+    layout.addWidget(note)
+    layout.addWidget(buttons)
+
+    run_dialog = getattr(dlg, "exec", None) or getattr(dlg, "exec_", None)
+    if run_dialog() != QtWidgets.QDialog.Accepted:
+        return None
+
+    cfg = {
+        "altura_mm": float(height.value()),
+        "diametro_mm": float(diameter.value()),
+        "tipo_conexion": _safe_text(connection.currentData()) or DEFAULT_CONNECTION,
+        "unir_espalda": bool(merge.isChecked()),
+    }
+    _save_cfg(cfg)
+    return cfg
+
+
+def _looks_like_outlet(obj):
+    # Los tomas del flujo ElectricCR son instancias enlazadas. Exigir App::Link
+    # evita confundir rutas, textos y flechas cuyos rótulos también dicen "toma".
+    if _safe_text(getattr(obj, "TypeId", "")) != "App::Link":
+        return False
+    texts = [
+        _safe_text(getattr(obj, "Name", "")),
+        _safe_text(getattr(obj, "Label", "")),
+    ]
+    linked = getattr(obj, "LinkedObject", None)
+    if linked is not None:
+        texts.extend(
+            [
+                _safe_text(getattr(linked, "Name", "")),
+                _safe_text(getattr(linked, "Label", "")),
+            ]
+        )
+    joined = " ".join(texts).lower()
+    return any(token in joined for token in ("toma", "tomacorr", "receptacle"))
+
+
+def _top_rectangular_port(obj):
+    """Centro XY y Z maxima del conjunto de solidos de la caja rectangular."""
+    shape = getattr(obj, "Shape", None)
+    if shape is None or shape.isNull():
+        return _B["_object_anchor_world"](obj)
+
+    solids = list(getattr(shape, "Solids", []) or [])
+    boxes = []
+    for solid in solids:
+        try:
+            if not solid.isNull():
+                boxes.append(solid.BoundBox)
+        except Exception:
+            pass
+    if not boxes:
+        boxes = [shape.BoundBox]
+
+    return App.Vector(
+        0.5 * (min(bb.XMin for bb in boxes) + max(bb.XMax for bb in boxes)),
+        0.5 * (min(bb.YMin for bb in boxes) + max(bb.YMax for bb in boxes)),
+        max(bb.ZMax for bb in boxes),
+    )
+
+
+def _yaw_deg(obj):
+    try:
+        return float(obj.Placement.Rotation.getYawPitchRoll()[0]) % 360.0
+    except Exception:
+        return 0.0
+
+
+def _angle_error_opposite(a, b):
+    delta = abs((float(a) - float(b)) % 360.0)
+    delta = min(delta, 360.0 - delta)
+    return abs(180.0 - delta)
+
+
+def _normal_xy(obj):
+    try:
+        n = obj.Placement.Rotation.multVec(App.Vector(0.0, 1.0, 0.0))
+        length = math.hypot(float(n.x), float(n.y))
+        if length > 1e-9:
+            return (float(n.x) / length, float(n.y) / length)
+    except Exception:
+        pass
+    yaw = math.radians(_yaw_deg(obj))
+    return (-math.sin(yaw), math.cos(yaw))
+
+
+def _are_back_to_back(a, b):
+    if _angle_error_opposite(a["yaw"], b["yaw"]) > MAX_ANGLE_ERROR:
+        return False
+    dx = float(b["port"].x - a["port"].x)
+    dy = float(b["port"].y - a["port"].y)
+    nx, ny = _normal_xy(a["obj"])
+    normal_distance = abs(dx * nx + dy * ny)
+    tangent_distance = abs(-dx * ny + dy * nx)
+    return (
+        MIN_WALL_THICKNESS <= normal_distance <= MAX_WALL_THICKNESS
+        and tangent_distance <= MAX_TANGENTIAL_OFFSET
+    )
+
+
+def _cluster_records(records, merge_back_to_back):
+    if not merge_back_to_back:
+        return [[record] for record in records]
+
+    parent = list(range(len(records)))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(i, j):
+        ri, rj = find(i), find(j)
+        if ri != rj:
+            parent[rj] = ri
+
+    for i in range(len(records)):
+        for j in range(i + 1, len(records)):
+            if _are_back_to_back(records[i], records[j]):
+                union(i, j)
+
+    grouped = {}
+    for i, record in enumerate(records):
+        grouped.setdefault(find(i), []).append(record)
+    return list(grouped.values())
+
+
+def _cluster_center(cluster):
+    return App.Vector(
+        sum(float(r["port"].x) for r in cluster) / len(cluster),
+        sum(float(r["port"].y) for r in cluster) / len(cluster),
+        0.0,
+    )
+
+
+def _pick_ports_for_cluster(box, cluster):
+    ports = _B["_box_ports_world"](box)
+    if not ports:
+        base = box.Placement.Base
+        return [(App.Vector(base), "Centro") for _ in cluster]
+
+    if len(cluster) == 1:
+        bottom = next((p for p in ports if p["name"].lower() == "bottom"), None)
+        chosen = bottom or min(
+            ports,
+            key=lambda p: (p["point"].z, (p["point"] - cluster[0]["port"]).Length),
+        )
+        return [(chosen["point"], chosen["name"])]
+
+    side_ports = [p for p in ports if p["name"].lower() != "bottom"] or list(ports)
+    available = list(side_ports)
+    assignments = []
+    for record in cluster:
+        if available:
+            chosen = min(
+                available,
+                key=lambda p: math.hypot(
+                    float(p["point"].x - record["port"].x),
+                    float(p["point"].y - record["port"].y),
+                ),
+            )
+            available.remove(chosen)
+        else:
+            chosen = min(
+                side_ports,
+                key=lambda p: math.hypot(
+                    float(p["point"].x - record["port"].x),
+                    float(p["point"].y - record["port"].y),
+                ),
+            )
+        assignments.append((chosen["point"], chosen["name"]))
+    return assignments
+
+
+def _set_box_metadata(box, cluster, height, connected):
+    ensure = _B["_ensure_property"]
+    ensure(box, "App::PropertyFloat", "NivelSNPT", "Red", "Cota centro SNPT (mm)")
+    ensure(box, "App::PropertyString", "EstadoConexion", "Red", "Estado de conexion")
+    ensure(box, "App::PropertyString", "ReferenciaObjetoName", "Vinculo", "Referencia primaria")
+    ensure(box, "App::PropertyString", "ReferenciaObjetoLabel", "Vinculo", "Etiqueta primaria")
+    ensure(box, "App::PropertyString", "ReferenciasObjetosJSON", "Vinculo", "Todos los objetos servidos")
+    ensure(box, "App::PropertyString", "ReferenciasEtiquetasJSON", "Vinculo", "Todas las etiquetas servidas")
+    ensure(box, "App::PropertyString", "CircuitosJSON", "Vinculo", "Circuitos atendidos")
+    ensure(box, "App::PropertyBool", "CompartidaEspaldaEspalda", "Vinculo", "Caja compartida")
+
+    names = [_safe_text(r["obj"].Name) for r in cluster]
+    labels = [_safe_text(r["obj"].Label) for r in cluster]
+    circuits = []
+    for r in cluster:
+        label = _safe_text(getattr(r["container"], "Label", ""))
+        if label and label not in circuits:
+            circuits.append(label)
+
+    box.NivelSNPT = float(height)
+    box.EstadoConexion = "Conectado" if connected else "Pendiente"
+    box.ReferenciaObjetoName = names[0]
+    box.ReferenciaObjetoLabel = labels[0]
+    box.ReferenciasObjetosJSON = json.dumps(names, ensure_ascii=False)
+    box.ReferenciasEtiquetasJSON = json.dumps(labels, ensure_ascii=False)
+    box.CircuitosJSON = json.dumps(circuits, ensure_ascii=False)
+    box.CompartidaEspaldaEspalda = len(cluster) > 1
+
+
+def _set_connection_metadata(connection, source_port, box_port, box_port_name):
+    ensure = _B["_ensure_property"]
+    ensure(connection, "App::PropertyString", "PuertoOrigen", "Puertos", "Puerto de caja rectangular")
+    ensure(connection, "App::PropertyString", "PuertoDestino", "Puertos", "Puerto de caja octogonal")
+    ensure(connection, "App::PropertyVector", "PuntoPuertoOrigen", "Puertos", "Punto mundial de salida")
+    ensure(connection, "App::PropertyVector", "PuntoPuertoDestino", "Puertos", "Punto mundial de llegada")
+    connection.PuertoOrigen = "SuperiorCajaRectangular"
+    connection.PuertoDestino = str(box_port_name)
+    connection.PuntoPuertoOrigen = App.Vector(source_port)
+    connection.PuntoPuertoDestino = App.Vector(box_port)
+
+
+def _prepare_records(doc, selected):
+    records = []
+    ignored = 0
+    for obj in selected:
+        if not _looks_like_outlet(obj):
+            ignored += 1
+            continue
+        container = _B["_resolve_container_group"](doc, obj)
+        if container is None:
+            _warn("Sin circuito o contenedor valido: " + _B["_obj_disp_name"](obj))
+            ignored += 1
+            continue
+        records.append(
+            {
+                "obj": obj,
+                "container": container,
+                "port": _top_rectangular_port(obj),
+                "yaw": _yaw_deg(obj),
+            }
+        )
+    return records, ignored
+
+
+def main(selected_override=None, cfg_override=None):
+    doc = App.ActiveDocument
+    if doc is None:
+        _err("No hay documento activo.")
+        return None
+
+    selected = list(selected_override) if selected_override is not None else _B["_selection_objects"](doc)
+    if not selected:
+        _warn("Seleccione tomas, circuitos de tomas o el grupo de tomacorrientes.")
+        return None
+
+    cfg = dict(cfg_override) if cfg_override is not None else _run_dialog()
+    if cfg is None:
+        _warn("Operacion cancelada.")
+        return None
+
+    height = max(3001.0, float(cfg.get("altura_mm", DEFAULT_HEIGHT)))
+    diameter = max(1.0, float(cfg.get("diametro_mm", DEFAULT_DIAMETER)))
+    conn_type = _safe_text(cfg.get("tipo_conexion", DEFAULT_CONNECTION))
+    if conn_type not in {"Sin", "EMT_Solido", "EMT_Flexible"}:
+        conn_type = DEFAULT_CONNECTION
+    merge = bool(cfg.get("unir_espalda", DEFAULT_MERGE))
+
+    records, ignored = _prepare_records(doc, selected)
+    if not records:
+        _warn("La seleccion no contiene tomacorrientes reconocibles.")
+        return None
+
+    high_sources = [record for record in records if float(record["port"].z) >= height]
+    for record in high_sources:
+        _warn(
+            "El puerto de '{}' esta a Z={:.1f} mm, igual o por encima de la "
+            "cota octogonal {:.1f} mm. Se conserva su posicion actual.".format(
+                _safe_text(record["obj"].Label),
+                float(record["port"].z),
+                height,
+            )
+        )
+
+    clusters = _cluster_records(records, merge)
+    shared = sum(1 for cluster in clusters if len(cluster) > 1)
+    merged_devices = len(records) - len(clusters)
+    _log(
+        "Tomas={} | octogonales={} | conjuntos compartidos={} | reduccion={}".format(
+            len(records), len(clusters), shared, merged_devices
+        )
+    )
+
+    try:
+        _mod, insert_box, create_master = _B["_import_caja_feature"]()
+        master = create_master(doc=doc, hide_master=True)
+        bb = master.Shape.BoundBox
+        anchor_local = App.Vector(
+            0.5 * (bb.XMin + bb.XMax),
+            0.5 * (bb.YMin + bb.YMax),
+            0.5 * (bb.ZMin + bb.ZMax),
+        )
+    except Exception as exc:
+        _err("No se pudo preparar la caja EMT: " + str(exc))
+        return None
+
+    boxes = []
+    connections = []
+    try:
+        doc.openTransaction("ElectricCR: tomas a octogonales sobre muro")
+        for cluster in clusters:
+            center = _cluster_center(cluster)
+            rotation = _B["_object_rotation"](cluster[0]["obj"])
+            placement = _B["_build_box_placement"](
+                center, anchor_local, rotation, height
+            )
+            labels = [_safe_text(r["obj"].Label) for r in cluster]
+            circuit_labels = []
+            for record in cluster:
+                circuit = _safe_text(record["container"].Label)
+                if circuit and circuit not in circuit_labels:
+                    circuit_labels.append(circuit)
+            descriptor = " + ".join(labels[:2])
+            if len(labels) > 2:
+                descriptor += " +{}".format(len(labels) - 2)
+
+            box = insert_box(
+                doc=doc,
+                name_prefix=BOX_LABEL_PREFIX + " - " + descriptor,
+                placement=placement,
+                diametro_emt=diameter,
+                recompute=False,
+                hide_master=True,
+            )
+            _set_box_metadata(
+                box,
+                cluster,
+                height,
+                conn_type in {"EMT_Solido", "EMT_Flexible"},
+            )
+
+            primary_group = _B["_ensure_group"](
+                doc, cluster[0]["container"], "Cajas_Octogonales", "CajaOct"
+            )
+            _B["_remove_from_all_groups"](doc, box, keep_group=primary_group)
+            primary_group.addObject(box)
+            boxes.append(box)
+
+            if conn_type in {"EMT_Solido", "EMT_Flexible"}:
+                # Una caja compartida requiere una unica bajante. Los demas tomas
+                # del conjunto quedan asociados mediante ReferenciasObjetosJSON.
+                connection_records = cluster[:1]
+                port_assignments = _pick_ports_for_cluster(box, connection_records)
+                for record, (box_port, box_port_name) in zip(connection_records, port_assignments):
+                    conn = _B["_create_connection"](
+                        doc,
+                        record["obj"],
+                        box,
+                        record["port"],
+                        box_port,
+                        conn_type,
+                    )
+                    if conn is None:
+                        continue
+                    _set_connection_metadata(
+                        conn, record["port"], box_port, box_port_name
+                    )
+                    conn_group = _B["_ensure_group"](
+                        doc, record["container"], "Conexiones_3D", "Conex3D"
+                    )
+                    _B["_remove_from_all_groups"](doc, conn, keep_group=conn_group)
+                    conn_group.addObject(conn)
+                    connections.append(conn)
+
+            _log(
+                "Caja {} | circuitos={} | tomas={} | cota={:.1f} mm".format(
+                    box.Label,
+                    "/".join(circuit_labels),
+                    len(cluster),
+                    height,
+                )
+            )
+
+        doc.recompute()
+        doc.commitTransaction()
+    except Exception as exc:
+        try:
+            doc.abortTransaction()
+        except Exception:
+            pass
+        _err("Fallo general: " + str(exc))
+        return None
+
+    result = {
+        "tomas": len(records),
+        "cajas": len(boxes),
+        "conexiones": len(connections),
+        "compartidas": shared,
+        "reduccion": merged_devices,
+        "bajantes_omitidas": merged_devices,
+        "ignorados": ignored,
+        "tomas_sobre_cota": len(high_sources),
+        "altura_mm": height,
+    }
+    _log("Finalizado: " + json.dumps(result, ensure_ascii=False))
+    return result
+
+
+if __name__ == "__main__":
+    main()

@@ -68,7 +68,7 @@ def _clear_range(sheet, max_rows=500):
         except Exception:
             pass
 
-    columns = ["A", "B", "C", "D", "E", "F", "G", "H"]
+    columns = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"]
     for row in range(1, max_rows + 1):
         for column in columns:
             _set(sheet, "{0}{1}".format(column, row), "")
@@ -104,9 +104,13 @@ def update_quickcalc_sheet(doc=None):
     headers = [
         "Space",
         "Area_m2",
+        "Occupancy_People",
+        "Occupancy_Activity",
         "Mode",
         "Load_BTUh",
-        "Installed_BTUh",
+        "Calculated_Equipment_BTUh",
+        "Selected_Equipment_BTUh",
+        "Selected_Model",
         "Coverage_pct",
         "Equipment_Count",
         "Base_Object",
@@ -120,9 +124,34 @@ def update_quickcalc_sheet(doc=None):
     spaces.sort(key=lambda s: str(getattr(s, "Label", "") or getattr(s, "Name", "")))
     for space_obj in spaces:
         area = _to_float(getattr(space_obj, "Area", 0.0), 0.0)
+        try:
+            occupancy = max(0, int(getattr(space_obj, "Occupancy", 0) or 0))
+        except Exception:
+            occupancy = 0
+        default_activity = str(
+            getattr(hvac_space, "DEFAULT_OCCUPANCY_ACTIVITY", "Oficina") or "Oficina"
+        )
+        occupancy_activity = str(
+            getattr(space_obj, "OccupancyActivity", default_activity) or default_activity
+        )
         mode = str(getattr(space_obj, "Mode", "Rapido"))
         load = _to_float(getattr(space_obj, "CoolingLoadBTU", 0.0), 0.0)
         installed, equipment_count = _space_capacity_and_count(doc, space_obj)
+        calculated = _to_float(
+            getattr(space_obj, "CalculatedEquipmentBTU", load),
+            load,
+        )
+        selected = _to_float(
+            getattr(space_obj, "SelectedEquipmentBTU", installed),
+            installed,
+        )
+        selected_model = str(getattr(space_obj, "SelectedEquipmentModel", "") or "")
+        if not selected_model:
+            selected_model = " + ".join(
+                str(getattr(equipment, "Model", "") or "")
+                for equipment in hvac_equipment.find_equipments(doc)
+                if getattr(equipment, "Space", None) == space_obj
+            )
         coverage = (installed / load * 100.0) if load > 0 else 0.0
         base = getattr(space_obj, "BaseSpace", None)
         base_name = ""
@@ -132,9 +161,13 @@ def update_quickcalc_sheet(doc=None):
         values = [
             _space_display_name(space_obj),
             "{0:.3f}".format(area),
+            str(occupancy),
+            occupancy_activity,
             mode,
             "{0:.2f}".format(load),
-            "{0:.2f}".format(installed),
+            "{0:.2f}".format(calculated),
+            "{0:.2f}".format(selected),
+            selected_model,
             "{0:.2f}".format(coverage),
             str(equipment_count),
             base_name,

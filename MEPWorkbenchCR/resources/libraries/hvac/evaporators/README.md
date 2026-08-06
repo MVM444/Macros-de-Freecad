@@ -21,6 +21,7 @@ Files:
 - `Cassette_36000.step`: 840 x 840 x 350
 - `Ducto_36000.step`: 1200 x 360 x 320
 - `Ducto_60000.step`: 1600 x 450 x 380
+- `PisoCielo_60000.step`: 1650 x 280 x 720; geometria generica de la familia piso-cielo, capacidad nominal 60000 BTU/h
 
 Generator script:
 - `_generate_step_placeholders.py`

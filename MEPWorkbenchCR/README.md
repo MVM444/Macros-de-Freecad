@@ -10,9 +10,10 @@ MEPWorkbenchCR es un Workbench de FreeCAD enfocado inicialmente en HVAC para ofi
 ## Alcance actual
 
 - MVP centrado en flujo de recintos, inspirado en Iluminacion de ElectricCR.
-- Recintos HVAC generados/actualizados desde poligonos o grupo Areas.
+- Espacios HVAC copiados o convertidos desde rectangulos, poligonos o grupos de analisis de areas, con superposicion permitida.
 - Calculo de carga por recinto con actualizacion automatica de etiquetas.
 - Insercion de evaporadoras concretas con asignacion rapida a recinto.
+- Ajuste independiente de altura 3D mediante `InstallationElevation` (mm), conservando sin cambios `Symbol2D` e `Info2D` en planta.
 - Cobertura por recinto visible en etiqueta (capacidad instalada / carga).
 - Condensadoras, rutas y puertos mantenidos como segunda capa operativa.
 
@@ -27,12 +28,17 @@ MEPWorkbenchCR es un Workbench de FreeCAD enfocado inicialmente en HVAC para ofi
 ## Flujo MVP recomendado
 
 1. Seleccionar poligonos o grupo `Areas`.
-2. Crear/actualizar recintos HVAC.
+2. Crear los espacios HVAC conservando las areas fuente o convirtiendolas completamente.
 3. Calcular HVAC en modo rapido (si viene de seleccion de Areas).
 4. Ver etiquetas actualizadas de inmediato sobre recintos.
 5. Revisar hoja `HVAC Quick Calculation` creada dentro del grupo del proyecto.
 6. Insertar evaporadora concreta.
-7. Revisar cobertura por recinto.
+7. Para cambiar su cota de montaje, seleccionar la evaporadora o su simbolo 2D y ejecutar `Ajustar Altura de Evaporadora`.
+8. Revisar cobertura por recinto.
+
+## Flujo desde una referencia CAD
+
+Para dibujos DWG/DXF ya importados, el comando `Extraer inventario HVAC desde CAD` crea registros trazables y la hoja `HVAC - Inventario CAD` sin sustituir la geometria original. Las asociaciones de recinto basadas solo en proximidad quedan marcadas para revision. Consulte [docs/EXTRACCION_HVAC_DESDE_CAD.md](docs/EXTRACCION_HVAC_DESDE_CAD.md).
 
 ## Estructura de proyecto al iniciar
 

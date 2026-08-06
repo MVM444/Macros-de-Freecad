@@ -93,9 +93,13 @@ except Exception:
     from PySide import QtGui as QtWidgets
 
 
-REG_PATH = Path(
-    r"C:\Users\marco\OneDrive - Caja Costarricense de Seguro Social\Documentos\FreeCAD\Macros\Macros-de-Freecad\Resources\registry\registry_electric.json"
+MACRO_FILE = Path(__file__).resolve()
+REPO_ROOT = MACRO_FILE.parent.parent
+REGISTRY_CANDIDATES = (
+    REPO_ROOT / "Resources" / "registry" / "registry_electric.json",
+    Path(App.getUserMacroDir()) / "Resources" / "registry" / "registry_electric.json",
 )
+REG_PATH = REGISTRY_CANDIDATES[0]
 
 
 def _ts():
@@ -116,14 +120,19 @@ def log_e(msg):
 
 
 def load_registry():
-    try:
-        data = json.loads(REG_PATH.read_text(encoding="utf-8-sig"))
-        if isinstance(data, dict) and "types" in data:
-            log_i("Registro cargado: {}".format(REG_PATH))
-            return data
-        log_w("Registro sin 'types': {}".format(REG_PATH))
-    except Exception as ex:
-        log_e("No se pudo leer el registro: {}".format(ex))
+    for path in REGISTRY_CANDIDATES:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+            types = data.get("types") if isinstance(data, dict) else None
+            if isinstance(types, dict) and types:
+                log_i("Registro cargado: {} ({} tipos)".format(path, len(types)))
+                return data
+            log_w("Registro vacío o sin 'types': {}".format(path))
+        except Exception as ex:
+            log_w("No se pudo leer {}: {}".format(path, ex))
+    log_e("No se encontró un registro válido. Rutas revisadas: {}".format(
+        " | ".join(str(path) for path in REGISTRY_CANDIDATES)
+    ))
     return {"schema": "1.0.0", "types": {}}
 
 
@@ -434,6 +443,21 @@ def insert_link_in_cell(doc, master, prefix, rect, rect_pos, rect_rot, x_local, 
     return link
 
 
+def tag_link_ceiling_cell(link, module, row, column, room_label):
+    """Store the modular-ceiling contract consumed by Facil Arquitectura."""
+    ensure_prop(link, "App::PropertyLength", "ECR_CeilingModule", "ElectricCR", "Modulo del cielo")
+    ensure_prop(link, "App::PropertyInteger", "ECR_CeilingRow", "ElectricCR", "Fila de celda")
+    ensure_prop(link, "App::PropertyInteger", "ECR_CeilingColumn", "ElectricCR", "Columna de celda")
+    ensure_prop(link, "App::PropertyString", "ECR_CeilingRoom", "ElectricCR", "Recinto del cielo")
+    ensure_prop(link, "App::PropertyBool", "ECR_CeilingAligned", "ElectricCR", "Alineada al modulo")
+    link.ECR_CeilingModule = float(module)
+    link.ECR_CeilingRow = int(row)
+    link.ECR_CeilingColumn = int(column)
+    link.ECR_CeilingRoom = str(room_label)
+    link.ECR_CeilingAligned = True
+    return link
+
+
 def ensure_group_links_selectable(group_obj):
     if group_obj is None:
         return 0
@@ -540,12 +564,28 @@ class PickTypeDialog(QtWidgets.QDialog):
         self.chk_reuse = QtWidgets.QCheckBox("Reusar master Link existente")
         self.chk_reuse.setChecked(True)
 
+        self.chk_area_type = QtWidgets.QCheckBox("Usar el tipo asignado en cada area")
+        self.chk_area_type.setChecked(True)
+
+        self.chk_ceiling_module = QtWidgets.QCheckBox("Alinear a cielo modular")
+        self.chk_ceiling_module.setChecked(True)
+        self.sp_ceiling_module = QtWidgets.QDoubleSpinBox()
+        self.sp_ceiling_module.setRange(100.0, 2400.0)
+        self.sp_ceiling_module.setDecimals(1)
+        self.sp_ceiling_module.setSingleStep(50.0)
+        self.sp_ceiling_module.setSuffix(" mm")
+        self.sp_ceiling_module.setValue(600.0)
+        self.chk_ceiling_module.toggled.connect(self.sp_ceiling_module.setEnabled)
+
         form = QtWidgets.QFormLayout()
         form.addRow("Tipo (registro):", self.cmb_tipo)
         form.addRow("Prefijo:", self.le_prefix)
         form.addRow("Altura:", self.sp_altura)
         form.addRow("Modo visual:", self.cmb_modo)
+        form.addRow("", self.chk_area_type)
         form.addRow("", self.chk_reuse)
+        form.addRow("", self.chk_ceiling_module)
+        form.addRow("Modulo del cielo:", self.sp_ceiling_module)
 
         btn_ok = QtWidgets.QPushButton("Insertar")
         btn_cancel = QtWidgets.QPushButton("Cancelar")
@@ -577,6 +617,15 @@ class PickTypeDialog(QtWidgets.QDialog):
 
     def reuse_master(self):
         return bool(self.chk_reuse.isChecked())
+
+    def use_assigned_area_type(self):
+        return bool(self.chk_area_type.isChecked())
+
+    def use_ceiling_module(self):
+        return bool(self.chk_ceiling_module.isChecked())
+
+    def ceiling_module(self):
+        return float(self.sp_ceiling_module.value())
 
     def _apply_defaults(self):
         info = (self.reg.get("types") or {}).get(self.selected_key(), {}) or {}
@@ -625,28 +674,58 @@ def run():
     altura_rel = dlg.selected_altura()
     modo_visual = dlg.selected_mode()
     reuse_master = dlg.reuse_master()
+    use_assigned_area_type = dlg.use_assigned_area_type()
+    use_ceiling_module = dlg.use_ceiling_module()
+    ceiling_module = dlg.ceiling_module()
 
     crear_toma_uno = get_crear_toma_uno()
     if not crear_toma_uno:
         return
 
+    modular_grid_positions = None
+    if use_ceiling_module:
+        try:
+            from electriccr.features.ceiling_grid import modular_grid_positions
+        except Exception as ex:
+            log_w("No se pudo cargar la distribucion modular; se usara la rejilla proporcional: {}".format(ex))
+
     created = 0
     doc.openTransaction("ElectricCR: Colocar Luminarias Link")
     try:
-        master = ensure_link_master(
-            doc,
-            crear_toma_uno,
-            key_registro=key,
-            altura_rel=altura_rel,
-            modo_visual=modo_visual,
-            reuse=reuse_master,
-        )
-        if master is None:
-            raise RuntimeError("No se pudo crear/resolver master Link.")
-
-        out_group = ensure_link_output_group(doc, prefix)
+        masters = {}
+        output_groups = {}
 
         for rect in rects:
+            rect_key = str(getattr(rect, "LightingTypeKey", "") or "").strip() if use_assigned_area_type else ""
+            if rect_key and rect_key not in (reg.get("types") or {}):
+                log_w("{}: tipo asignado '{}' no existe; se usa '{}'.".format(rect.Label, rect_key, key))
+                rect_key = ""
+            active_key = rect_key or key
+            active_info = (reg.get("types") or {}).get(active_key, {}) or {}
+            active_defaults = active_info.get("defaults", {}) or {}
+            active_height = float(getattr(rect, "LightingMountHeight", 0.0) or 0.0)
+            if active_height <= 0.0:
+                active_height = float(active_defaults.get("altura", altura_rel) or altura_rel)
+            default_mode = str(active_defaults.get("modo", modo_visual) or modo_visual)
+            active_mode = {"Both": "Ambos", "Solo 2D": "Solo2D", "Solo 3D": "Solo3D"}.get(default_mode, default_mode)
+            if not rect_key:
+                active_mode = modo_visual
+            master_token = (active_key, round(active_height, 3), active_mode)
+            master = masters.get(master_token)
+            if master is None:
+                master = ensure_link_master(
+                    doc, crear_toma_uno, key_registro=active_key, altura_rel=active_height,
+                    modo_visual=active_mode, reuse=reuse_master,
+                )
+                if master is None:
+                    raise RuntimeError("No se pudo crear/resolver master Link para '{}'.".format(active_key))
+                masters[master_token] = master
+            active_prefix = prefix if not rect_key else (_sanitize_token(active_key, "Luminaria") + "_")
+            out_group = output_groups.get(active_prefix)
+            if out_group is None:
+                out_group = ensure_link_output_group(doc, active_prefix)
+                output_groups[active_prefix] = out_group
+
             dims = rect_dims_cols_rows(rect)
             if not dims:
                 log_w("Rectangulo '{}' sin Length/Height/Columns/Rows validos.".format(rect.Label))
@@ -656,33 +735,61 @@ def run():
                 log_w("Rectangulo '{}' con cols/rows invalidos ({}x{}).".format(rect.Label, cols, rows))
                 continue
 
-            dist_x = width / float(cols)
-            dist_y = height / float(rows)
             rect_pl = rect.Placement
             rect_pos = rect_pl.Base
             rect_rot = rect_pl.Rotation
 
-            log_i("Procesando {}: {}x{} | W={:.1f} H={:.1f}".format(rect.Label, cols, rows, width, height))
+            log_i("Procesando {}: {}x{} | tipo={} | W={:.1f} H={:.1f}".format(rect.Label, cols, rows, active_key, width, height))
 
-            for r in range(rows):
-                for c in range(cols):
-                    x = (c + 0.5) * dist_x
-                    y = (r + 0.5) * dist_y
-                    insert_link_in_cell(
+            modular_positions = None
+            if modular_grid_positions is not None:
+                try:
+                    modular_positions = modular_grid_positions(width, height, cols, rows, ceiling_module)
+                    log_i(
+                        "Alineamiento de cielo activo: modulo {:.1f} mm | {} celdas".format(
+                            ceiling_module, len(modular_positions)
+                        )
+                    )
+                except Exception as ex:
+                    log_w("{}: no se pudo modular; se conserva distribucion proporcional ({})".format(rect.Label, ex))
+            if modular_positions is None:
+                dist_x = width / float(cols)
+                dist_y = height / float(rows)
+                modular_positions = [
+                    {
+                        "x": (c + 0.5) * dist_x,
+                        "y": (r + 0.5) * dist_y,
+                        "cell_row": -1,
+                        "cell_column": -1,
+                    }
+                    for r in range(rows)
+                    for c in range(cols)
+                ]
+
+            for position in modular_positions:
+                    link = insert_link_in_cell(
                         doc,
                         master=master,
-                        prefix=prefix,
+                        prefix=active_prefix,
                         rect=rect,
                         rect_pos=rect_pos,
                         rect_rot=rect_rot,
-                        x_local=x,
-                        y_local=y,
+                        x_local=position["x"],
+                        y_local=position["y"],
                         idx_global=created + 1,
                         group=out_group,
                     )
+                    if int(position.get("cell_row", -1)) >= 0:
+                        tag_link_ceiling_cell(
+                            link,
+                            ceiling_module,
+                            position["cell_row"],
+                            position["cell_column"],
+                            rect.Label,
+                        )
                     created += 1
 
-        unlocked = ensure_group_links_selectable(out_group)
+        unlocked = sum(ensure_group_links_selectable(group) for group in output_groups.values())
         if unlocked:
             log_i("Links seleccionables asegurados: {}".format(unlocked))
         unlocked_all = ensure_all_links_selectable(doc)
@@ -699,7 +806,8 @@ def run():
         log_e("Insercion cancelada: {}".format(ex))
         return
 
-    log_i("Insercion Link finalizada. Creados: {} | Tipo: '{}'".format(created, key))
+    used_types = sorted(set(token[0] for token in masters)) if 'masters' in locals() else [key]
+    log_i("Insercion Link finalizada. Creados: {} | Tipos: {}".format(created, ", ".join(used_types)))
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import unicodedata
 from pathlib import Path
@@ -45,6 +46,34 @@ def compute_output_defaults(params, doc_path: Optional[Path]) -> Tuple[str, str,
         return stored_dir or doc_dir, stored_base or doc_base, doc_key
 
     return stored_dir, stored_base, ""
+
+
+def ensure_output_directory(value: str) -> Tuple[str, bool]:
+    """Return a normalized output folder and create it only when missing."""
+    raw_value = str(value or "").strip()
+    if len(raw_value) >= 2 and raw_value[0] == raw_value[-1] and raw_value[0] in {'"', "'"}:
+        raw_value = raw_value[1:-1].strip()
+    if not raw_value:
+        raise ValueError("Output folder is empty")
+
+    normalized = os.path.normpath(os.path.expandvars(os.path.expanduser(raw_value)))
+    output_path = Path(normalized)
+
+    # Do not call mkdir for an existing OneDrive/reparse-point directory.
+    # Windows may return Access Denied instead of File Exists for that call.
+    if output_path.is_dir():
+        return str(output_path), False
+    if output_path.exists():
+        raise NotADirectoryError("Output path exists but is not a directory: " + str(output_path))
+
+    try:
+        output_path.mkdir(parents=True, exist_ok=False)
+    except FileExistsError:
+        # Another process may have created the directory after the first check.
+        if output_path.is_dir():
+            return str(output_path), False
+        raise
+    return str(output_path), True
 
 
 def persist_output_settings(

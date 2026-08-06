@@ -83,6 +83,31 @@
       "version": "1.0",
       "comentario": ""
     },
+    "Luminaria LED Redonda 1000lm": {
+      "ifc": "IfcLightFixture",
+      "categoria": "Cielo",
+      "symbol2D": "Luminaria_LED_Redonda_1000lm_2D.step",
+      "model3D": "Luminaria_LED_Redonda_1000lm_3D.step",
+      "electrical": {
+        "power_w": 12.0,
+        "lumens": 1000.0,
+        "cct_k": 4000,
+        "cri": 80,
+        "voltage": "120-277 V",
+        "beam_angle_deg": 110
+      },
+      "dimensions": {
+        "diameter_mm": 169.0,
+        "height_mm": 30.0
+      },
+      "defaults": {
+        "altura": 2700.0,
+        "modo": "Both",
+        "orient2D_sigue_pared": false
+      },
+      "version": "1.0",
+      "comentario": "Downlight LED redondo generico, empotrable, 1000 lm, 12 W, 4000 K, CRI >= 80"
+    },
     "Sensor_Humo": {
       "ifc": "",
       "categoria": "Cielo",

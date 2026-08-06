@@ -2457,6 +2457,21 @@ def get_repair_hints_for_group(cfg, group_obj, circuit_id):
 def colectar_objetos_circuito(group_obj, include_apagadores=True):
     boxes = []
     devices = []
+    # Los circuitos creados por Asignar_Luminarias_Circuitos guardan
+    # referencias centrales para no mover ni duplicar objetos en el arbol.
+    try:
+        devices.extend(list(getattr(group_obj, "LuminariasAsignadas", []) or []))
+    except Exception:
+        pass
+    if include_apagadores:
+        try:
+            devices.extend(list(getattr(group_obj, "ApagadoresAsignados", []) or []))
+        except Exception:
+            pass
+    try:
+        boxes.extend(list(getattr(group_obj, "CajasOctogonalesAsignadas", []) or []))
+    except Exception:
+        pass
     seen = set()
     for obj in iterar_descendientes(group_obj, seen):
         if es_generado_ramal(obj):
@@ -2570,6 +2585,21 @@ def collect_circuit_objects_backend_compat(backend, group_obj):
     else:
         devices, boxes = a_list, b_list
 
+    # Compatibilidad con grupos de circuito no destructivos: el backend puede
+    # recorrer solo Group y no ver las PropertyLinkList centrales.
+    try:
+        devices.extend(list(getattr(group_obj, "LuminariasAsignadas", []) or []))
+    except Exception:
+        pass
+    try:
+        devices.extend(list(getattr(group_obj, "ApagadoresAsignados", []) or []))
+    except Exception:
+        pass
+    try:
+        boxes.extend(list(getattr(group_obj, "CajasOctogonalesAsignadas", []) or []))
+    except Exception:
+        pass
+
     devices = dedup_devices_semantic(devices)
     boxes = dedup_boxes_semantic(boxes)
     return devices, boxes, "backend_compat"
@@ -2589,7 +2619,11 @@ def procesar_circuito(doc, group_obj, cfg):
         f"Recolector compat: metodo={collect_method} | dispositivos={len(devices)} | cajas={len(boxes)}"
     )
 
-    circuit_id = texto_seguro(getattr(group_obj, "Label", "")) or texto_seguro(getattr(group_obj, "Name", ""))
+    circuit_id = (
+        texto_seguro(getattr(group_obj, "CircuitoID", "")).strip()
+        or texto_seguro(getattr(group_obj, "Label", ""))
+        or texto_seguro(getattr(group_obj, "Name", ""))
+    )
     if not boxes and not devices:
         log_warn(f"Circuito omitido sin objetos: {circuit_id}")
         return 0
@@ -3386,4 +3420,5 @@ def conectar_circuitos_luminarias_auto():
         log_info(f"Proceso terminado | circuitos={len(groups)} | enlaces_generados={total}")
 
 
-conectar_circuitos_luminarias_auto()
+if __name__ == "__main__":
+    conectar_circuitos_luminarias_auto()

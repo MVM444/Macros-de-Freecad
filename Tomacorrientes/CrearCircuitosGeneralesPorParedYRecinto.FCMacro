@@ -1,0 +1,723 @@
+# -*- coding: utf-8 -*-
+# MenuText: Crear circuitos generales por pared y recinto
+# ToolTip: Agrupa tomacorrientes generales priorizando pared y recinto, con circuitos equilibrados.
+# Icon: CrearCircuitosGeneralesPorParedYRecinto.svg
+
+"""Organiza los tomacorrientes generales en circuitos ElectricCR.
+
+Prioridades de agrupacion:
+1. Mantener juntas las tomas de un mismo recinto.
+2. Detectar y conservar juntos los pares espalda con espalda de una pared.
+3. Aproximar el numero objetivo de tomas sin superar el maximo.
+
+Los recintos cuyo nombre contiene "comedor" se separan en circuitos de dos
+tomas como maximo. Los valores son criterios de proyecto editables; esta macro
+no sustituye la clasificacion de cargas ni la revision normativa del circuito.
+"""
+
+from __future__ import annotations
+
+import math
+import re
+import unicodedata
+from collections import defaultdict
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+
+try:
+    from PySide6 import QtWidgets
+except Exception:
+    try:
+        from PySide2 import QtWidgets
+    except Exception:
+        from PySide import QtGui as QtWidgets
+
+
+MACRO_ID = "ElectricCR_CircuitosTomasParedRecinto_v1"
+AUTO_GROUP_PROP = "ECR_AutoCircuitGroup"
+DEFAULT_TARGET = 8
+DEFAULT_MINIMUM = 6
+DEFAULT_MAXIMUM = 10
+DEFAULT_DINING_MAX = 2
+PROBE_MM = 220.0
+EDGE_ASSOCIATION_MM = 450.0
+BACK_TO_BACK_TOLERANCE_MM = 300.0
+
+
+def log(text):
+    App.Console.PrintMessage("[ElectricCR][CIRCUITOS TOMAS] %s\n" % text)
+
+
+def warn(text):
+    App.Console.PrintWarning("[ElectricCR][CIRCUITOS TOMAS] %s\n" % text)
+
+
+def label(obj):
+    return str(getattr(obj, "Label", getattr(obj, "Name", "")) or "").strip()
+
+
+def normalized(text):
+    value = unicodedata.normalize("NFKD", str(text or "").lower())
+    return "".join(ch for ch in value if not unicodedata.combining(ch))
+
+
+def safe_token(text, fallback="Objeto"):
+    value = unicodedata.normalize("NFKD", str(text or ""))
+    value = "".join(ch for ch in value if not unicodedata.combining(ch))
+    value = re.sub(r"[^0-9A-Za-z_]+", "_", value).strip("_")
+    return value[:60] or fallback
+
+
+def is_group(obj):
+    return obj is not None and hasattr(obj, "Group") and hasattr(obj, "addObject")
+
+
+def flatten(group):
+    result, pending, seen = [], list(getattr(group, "Group", []) or []), set()
+    while pending:
+        obj = pending.pop(0)
+        key = str(getattr(obj, "Name", "") or id(obj))
+        if key in seen:
+            continue
+        seen.add(key)
+        if is_group(obj):
+            pending.extend(list(obj.Group or []))
+        else:
+            result.append(obj)
+    return result
+
+
+def is_toma(obj):
+    if obj is None or is_group(obj):
+        return False
+    values = [
+        getattr(obj, "Name", ""), label(obj), getattr(obj, "Tipo", ""),
+        getattr(obj, "TipoLogico", ""), getattr(obj, "KeyRegistro", ""),
+        getattr(obj, "RegistroKey", ""),
+    ]
+    if getattr(obj, "LinkedObject", None) is not None:
+        linked = obj.LinkedObject
+        values.extend([label(linked), getattr(linked, "Tipo", ""), getattr(linked, "KeyRegistro", "")])
+    text = normalized(" ".join(str(v or "") for v in values))
+    return "toma" in text or "receptacle" in text
+
+
+def select_main_group(doc):
+    for obj in Gui.Selection.getSelection():
+        if is_group(obj) and any(is_toma(x) for x in flatten(obj)):
+            return obj
+    for name in ("Tomacorrientes_BIM", "Tomacorrientes"):
+        obj = doc.getObject(name)
+        if is_group(obj) and any(is_toma(x) for x in flatten(obj)):
+            return obj
+    candidates = [o for o in doc.Objects if is_group(o) and "tomacorriente" in normalized(label(o))]
+    candidates = [o for o in candidates if any(is_toma(x) for x in flatten(o))]
+    if len(candidates) == 1:
+        return candidates[0]
+    raise RuntimeError("Seleccione el grupo que contiene los tomacorrientes generales.")
+
+
+def _has_shape(obj):
+    try:
+        return obj.Shape is not None and not obj.Shape.isNull()
+    except Exception:
+        return False
+
+
+def analysis_area_group(doc):
+    exact = doc.getObject("FA_RectangularAreas")
+    if exact is not None:
+        return exact
+    ranked = []
+    for obj in doc.Objects:
+        if not is_group(obj):
+            continue
+        probe = normalized(str(getattr(obj, "Name", "")) + " " + label(obj))
+        score = 0
+        if "analisis de areas rectangulares" in probe:
+            score = 100
+        elif "rectangularareas" in probe:
+            score = 90
+        elif "analisis" in probe and "area" in probe:
+            score = 70
+        if score:
+            ranked.append((score, len(getattr(obj, "Group", []) or []), obj))
+    return max(ranked, key=lambda item: item[:2])[2] if ranked else None
+
+
+def area_source_group(doc):
+    analysis = analysis_area_group(doc)
+    if analysis is not None:
+        return analysis
+    # Legacy documents created before the rectangular analysis group existed.
+    return doc.getObject("Areas") or doc.getObject("PD_Spaces")
+
+
+def area_records(doc):
+    group = area_source_group(doc)
+    return _area_records_from_group(group) if group is not None else []
+
+
+def _area_records_from_group(group):
+    records = []
+    # El grupo oficial sigue siendo autoritativo aunque un modo de ElectricCR
+    # oculte temporalmente sus rectangulos en la vista.
+    authoritative_analysis = getattr(group, "Name", "") == "FA_RectangularAreas"
+    for obj in flatten(group):
+        if not _has_shape(obj):
+            continue
+        # Only the current analysis geometry is authoritative. Companion labels,
+        # illumination labels and hidden superseded areas must not classify rooms.
+        if normalized(label(obj)).startswith("etiqueta area"):
+            continue
+        if not authoritative_analysis:
+            try:
+                if not obj.ViewObject.Visibility:
+                    continue
+            except Exception:
+                pass
+        role = normalized(getattr(obj, "FA_Role", ""))
+        ecr_type = normalized(getattr(obj, "ElectricCRTipo", ""))
+        has_area_identity = any(
+            hasattr(obj, prop)
+            for prop in ("Recinto", "AreaNombre", "AreaID", "FA_RoomName", "RoomName", "NombreRecinto")
+        )
+        is_draft_rectangle = hasattr(obj, "Length") and hasattr(obj, "Height")
+        if not (ecr_type == "area" or role == "room_polygon" or has_area_identity or is_draft_rectangle):
+            continue
+        faces = list(getattr(obj.Shape, "Faces", []) or [])
+        if not faces:
+            for wire in list(getattr(obj.Shape, "Wires", []) or []):
+                try:
+                    if wire.isClosed():
+                        faces.append(Part.Face(wire))
+                except Exception:
+                    pass
+        if faces:
+            room_name = ""
+            for prop in ("Recinto", "AreaNombre", "FA_RoomName", "RoomName", "NombreRecinto", "AreaID"):
+                value = str(getattr(obj, prop, "") or "").strip()
+                if value:
+                    room_name = value
+                    break
+            room_name = room_name or label(obj)
+            room_name = re.sub(r"^Pol[ií]gono\s*[-:]\s*", "", room_name, flags=re.I).strip()
+            room_name = re.sub(r"\s*\(fuente\)\s*$", "", room_name, flags=re.I).strip()
+            records.append((obj, room_name or "Recinto sin nombre", faces))
+    return records
+
+
+def point_rooms(point, records):
+    found = []
+    for obj, name, faces in records:
+        inside = False
+        containing_area = None
+        for face in faces:
+            try:
+                p = App.Vector(point.x, point.y, face.BoundBox.ZMin)
+                if face.isInside(p, 1.0, True):
+                    inside = True
+                    containing_area = float(face.Area)
+                    break
+            except Exception:
+                pass
+        if inside:
+            found.append((containing_area if containing_area is not None else 1e99, name))
+    if not found:
+        return []
+    # Rectangular analyses can overlap slightly at passages and corrected
+    # boundaries. A physical face serves one room: choose the smallest
+    # containing analysis area as the most specific classification.
+    found.sort(key=lambda item: (item[0], normalized(item[1])))
+    return [found[0][1]]
+
+
+def _xy(point):
+    return App.Vector(float(point.x), float(point.y), 0)
+
+
+def object_point(obj):
+    try:
+        return _xy(obj.Placement.Base)
+    except Exception:
+        try:
+            bb = obj.Shape.BoundBox
+            return App.Vector((bb.XMin + bb.XMax) * 0.5, (bb.YMin + bb.YMax) * 0.5, 0)
+        except Exception:
+            return App.Vector()
+
+
+def wall_source(toma):
+    try:
+        wall = toma.ECR_SourceWall
+        if wall is not None:
+            return wall
+    except Exception:
+        pass
+    return None
+
+
+def straight_wall_edges(wall):
+    if wall is None:
+        return []
+    base = getattr(wall, "Base", None)
+    shape = getattr(base, "Shape", None) or getattr(wall, "Shape", None)
+    result, seen = [], set()
+    for edge in list(getattr(shape, "Edges", []) or []):
+        try:
+            p0, p1 = _xy(edge.Vertexes[0].Point), _xy(edge.Vertexes[-1].Point)
+            length = (p1 - p0).Length
+        except Exception:
+            continue
+        if length < 10:
+            continue
+        try:
+            if abs(float(edge.Length) - length) > max(2.0, length * 0.002):
+                continue
+        except Exception:
+            pass
+        ends = sorted(((round(p0.x, 1), round(p0.y, 1)), (round(p1.x, 1), round(p1.y, 1))))
+        key = tuple(ends)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append((p0, p1, length, key))
+    return result
+
+
+def projection_on_segment(point, p0, p1, length):
+    tangent = (p1 - p0) * (1.0 / length)
+    delta = point - p0
+    along = delta.dot(tangent)
+    clamped = max(0.0, min(length, along))
+    closest = p0 + tangent * clamped
+    return (point - closest).Length, clamped, tangent
+
+
+def nearest_wall_segment(toma, edge_cache):
+    wall = wall_source(toma)
+    point = object_point(toma)
+    candidates = edge_cache.get(getattr(wall, "Name", ""), [])
+    best = None
+    for index, (p0, p1, length, key) in enumerate(candidates, 1):
+        distance, along, tangent = projection_on_segment(point, p0, p1, length)
+        score = (distance, abs(along - length * 0.5))
+        if best is None or score < best[0]:
+            best = (score, index, p0, p1, length, key, along, tangent)
+    if best is None or best[0][0] > EDGE_ASSOCIATION_MM:
+        return None
+    _, index, p0, p1, length, key, along, tangent = best
+    wall_name = label(wall) if wall is not None else "Pared sin vinculo"
+    return {
+        "wall": wall, "wall_name": wall_name, "index": index, "p0": p0,
+        "p1": p1, "length": length, "key": key, "along": along, "tangent": tangent,
+    }
+
+
+def wall_side(toma, segment):
+    """Return +1/-1 for the physical face occupied by the receptacle."""
+    if segment is None:
+        return 0
+    point = object_point(toma)
+    p0, tangent = segment["p0"], segment["tangent"]
+    signed = (point.x - p0.x) * (-tangent.y) + (point.y - p0.y) * tangent.x
+    if abs(signed) < 5.0:
+        return 0
+    return 1 if signed > 0 else -1
+
+
+def serving_rooms(toma, segment, records):
+    point = object_point(toma)
+    if segment is None:
+        rooms = point_rooms(point, records)
+        return rooms or ["Recinto no identificado"]
+    tangent = segment["tangent"]
+    normal = App.Vector(-tangent.y, tangent.x, 0)
+    side = wall_side(toma, segment)
+    if side:
+        rooms = point_rooms(point + normal * (PROBE_MM * side), records)
+        if rooms:
+            return rooms
+    # Legacy objects may still be on the wall axis. Probe both faces only as a
+    # fallback; newly generated BIM outlets always have an identifiable face.
+    rooms = []
+    for sign in (1, -1):
+        probe = point + normal * (PROBE_MM * sign)
+        for room in point_rooms(probe, records):
+            if room not in rooms:
+                rooms.append(room)
+    return rooms or ["Recinto no identificado"]
+
+
+def wall_code(segment):
+    if segment is None:
+        return "P00"
+    return "P%02d" % int(segment["index"])
+
+
+def room_key(rooms):
+    return " / ".join(sorted(set(rooms), key=normalized))
+
+
+def is_dining(rooms):
+    return any(
+        "comedor" in normalized(room) or "cocina" in normalized(room)
+        for room in rooms
+    )
+
+
+def split_balanced(items, target, maximum):
+    """Split preserving order, minimizing deviation from target."""
+    items = list(items)
+    if not items:
+        return []
+    count = max(1, int(math.ceil(len(items) / float(maximum))))
+    # Add circuits only when doing so improves the deviation from target.
+    while count < len(items):
+        current = len(items) / float(count)
+        candidate = len(items) / float(count + 1)
+        if abs(candidate - target) + 1e-9 < abs(current - target) and candidate >= 1:
+            count += 1
+        else:
+            break
+    base, remainder = divmod(len(items), count)
+    result, cursor = [], 0
+    for index in range(count):
+        size = base + (1 if index < remainder else 0)
+        result.append(items[cursor:cursor + size])
+        cursor += size
+    return result
+
+
+def build_buckets(tomas, records):
+    walls = {wall_source(t) for t in tomas if wall_source(t) is not None}
+    edge_cache = {wall.Name: straight_wall_edges(wall) for wall in walls}
+    buckets = defaultdict(list)
+    metadata = {}
+    unassociated = 0
+    entries = []
+    for toma in tomas:
+        segment = nearest_wall_segment(toma, edge_cache)
+        if segment is None:
+            unassociated += 1
+        rooms = serving_rooms(toma, segment, records)
+        entries.append({"value": (toma, segment, rooms), "segment": segment, "rooms": rooms,
+                        "side": wall_side(toma, segment), "paired": False})
+
+    # Detect opposite-face outlets at nearly the same station on the same wall.
+    # Each pair becomes one atomic bucket even if the two faces serve different rooms.
+    pair_number = 0
+    for i, first in enumerate(entries):
+        if first["paired"] or first["segment"] is None or not first["side"]:
+            continue
+        best = None
+        for j in range(i + 1, len(entries)):
+            second = entries[j]
+            if second["paired"] or second["segment"] is None:
+                continue
+            if second["segment"]["key"] != first["segment"]["key"] or second["side"] != -first["side"]:
+                continue
+            # Kitchen/dining circuits are room-exclusive. An outlet on the
+            # opposite face belongs to the neighboring room and must not be
+            # pulled into the special circuit by back-to-back detection.
+            if is_dining(first["rooms"]) != is_dining(second["rooms"]):
+                continue
+            delta = abs(second["segment"]["along"] - first["segment"]["along"])
+            if delta <= BACK_TO_BACK_TOLERANCE_MM and (best is None or delta < best[0]):
+                best = (delta, second)
+        if best is None:
+            continue
+        second = best[1]; first["paired"] = True; second["paired"] = True; pair_number += 1
+        pair_rooms = list(first["rooms"])
+        for room in second["rooms"]:
+            if room not in pair_rooms:
+                pair_rooms.append(room)
+        key = ("ESPALDA_%03d" % pair_number, tuple(first["segment"]["key"]))
+        buckets[key].extend([first["value"], second["value"]])
+        metadata[key] = (first["segment"], pair_rooms)
+
+    for entry in entries:
+        if entry["paired"]:
+            continue
+        segment, rooms = entry["segment"], entry["rooms"]
+        key = (room_key(rooms), tuple(segment["key"]) if segment else ("none", label(entry["value"][0])))
+        buckets[key].append(entry["value"])
+        metadata[key] = (segment, rooms)
+    for values in buckets.values():
+        values.sort(key=lambda item: item[1]["along"] if item[1] else object_point(item[0]).x)
+    return buckets, metadata, unassociated
+
+
+def _optimized_partitions(sequence, forbidden_boundaries, target, minimum, maximum):
+    """Dynamic programming: favor target size while keeping room order."""
+    count = len(sequence)
+    if not count:
+        return []
+    # dp[end] = (cost, previous_boundary). A boundary number is the amount of
+    # items already consumed; forbidden boundaries lie inside atomic pairs.
+    dp = {0: (0.0, None)}
+    for end in range(1, count + 1):
+        if end in forbidden_boundaries and end != count:
+            continue
+        best = None
+        for start in range(max(0, end - maximum), end):
+            if start not in dp or (start in forbidden_boundaries and start != 0):
+                continue
+            size = end - start
+            rooms = {room_key(entry[2]) for entry in sequence[start:end]}
+            size_cost = float(size - target) ** 2 * 10.0
+            under_cost = float(max(0, minimum - size)) ** 2 * 4.0
+            room_mix_cost = max(0, len(rooms) - 1) * 3.0
+            candidate = (dp[start][0] + size_cost + under_cost + room_mix_cost, start)
+            if best is None or candidate[0] < best[0]:
+                best = candidate
+        if best is not None:
+            dp[end] = best
+    if count not in dp:
+        return split_balanced(sequence, target, maximum)
+    spans, end = [], count
+    while end > 0:
+        start = dp[end][1]
+        spans.append((start, end)); end = start
+    spans.reverse()
+    return [sequence[start:end] for start, end in spans]
+
+
+def make_circuit_plan(buckets, metadata, target, minimum, maximum, dining_max):
+    dining, regular = [], []
+    for key, values in buckets.items():
+        segment, rooms = metadata[key]
+        if is_dining(rooms):
+            dining.extend(split_balanced(values, dining_max, dining_max))
+            continue
+        primary_rooms = values[0][2] if str(key[0]).startswith("ESPALDA_") else rooms
+        regular.append((room_key(primary_rooms), wall_code(segment), str(key[0]), list(values)))
+
+    # Recintos stay contiguous in the sequence. The optimizer may cross only a
+    # room boundary when needed to complete a circuit near the requested target.
+    regular.sort(key=lambda row: (normalized(row[0]), row[1], row[2]))
+    sequence, forbidden = [], set()
+    for _, _, key_text, values in regular:
+        start = len(sequence)
+        sequence.extend(values)
+        if key_text.startswith("ESPALDA_"):
+            for boundary in range(start + 1, len(sequence)):
+                forbidden.add(boundary)
+    circuits = _optimized_partitions(sequence, forbidden, target, minimum, maximum)
+    circuits.extend(dining)
+    return circuits
+
+
+def circuit_description(entries):
+    walls, rooms = [], []
+    for _, segment, adjacent in entries:
+        code = wall_code(segment)
+        if code not in walls:
+            walls.append(code)
+        for room in adjacent:
+            if room not in rooms:
+                rooms.append(room)
+    wall_text = "+".join(walls[:4]) + ("+" if len(walls) > 4 else "")
+    room_text = " / ".join(rooms[:3]) + (" / ..." if len(rooms) > 3 else "")
+    return wall_text or "P00", room_text or "Recinto no identificado"
+
+
+def set_prop(obj, prop_type, name, group, description, value):
+    if not hasattr(obj, name):
+        obj.addProperty(prop_type, name, group, description)
+    setattr(obj, name, value)
+
+
+def old_auto_groups(main_group):
+    return [g for g in list(main_group.Group or []) if is_group(g) and bool(getattr(g, AUTO_GROUP_PROP, False))]
+
+
+def remove_auto_groups(doc, main_group):
+    removed = 0
+    for group in old_auto_groups(main_group):
+        children = list(group.Group or [])
+        for child in children:
+            try:
+                group.removeObject(child)
+            except Exception:
+                pass
+            try:
+                main_group.addObject(child)
+            except Exception:
+                pass
+        doc.removeObject(group.Name)
+        removed += 1
+    return removed
+
+
+class SettingsDialog(QtWidgets.QDialog):
+    def __init__(self, group, toma_count, room_count, area_source, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Circuitos de tomacorrientes por pared y recinto")
+        form = QtWidgets.QFormLayout(self)
+        self.target = QtWidgets.QSpinBox(); self.target.setRange(1, 30); self.target.setValue(DEFAULT_TARGET)
+        self.minimum = QtWidgets.QSpinBox(); self.minimum.setRange(1, 30); self.minimum.setValue(DEFAULT_MINIMUM)
+        self.maximum = QtWidgets.QSpinBox(); self.maximum.setRange(1, 30); self.maximum.setValue(DEFAULT_MAXIMUM)
+        self.dining = QtWidgets.QSpinBox(); self.dining.setRange(1, 10); self.dining.setValue(DEFAULT_DINING_MAX)
+        self.prefix = QtWidgets.QLineEdit("TG")
+        self.replace = QtWidgets.QCheckBox("Reemplazar circuitos generados anteriormente por esta macro")
+        self.replace.setChecked(True)
+        self.strict_areas = QtWidgets.QCheckBox("Detener si alguna toma queda fuera del analisis de areas")
+        self.strict_areas.setChecked(False)
+        form.addRow("Grupo fuente:", QtWidgets.QLabel(label(group)))
+        source_text = "%s [%s]" % (label(area_source), area_source.Name) if area_source is not None else "No encontrada"
+        form.addRow("Fuente de recintos:", QtWidgets.QLabel(source_text))
+        form.addRow("Tomacorrientes encontrados:", QtWidgets.QLabel(str(toma_count)))
+        form.addRow("Recintos disponibles:", QtWidgets.QLabel(str(room_count)))
+        form.addRow("Promedio objetivo:", self.target)
+        form.addRow("Minimo deseado:", self.minimum)
+        form.addRow("Maximo permitido:", self.maximum)
+        form.addRow("Maximo en comedor:", self.dining)
+        form.addRow("Prefijo de circuito:", self.prefix)
+        form.addRow("", self.replace)
+        form.addRow("", self.strict_areas)
+        note = QtWidgets.QLabel(
+            "Se prioriza el recinto servido. Solo se usa la pared como prioridad para conservar pares "
+            "espalda con espalda (tolerancia 300 mm). El minimo es un objetivo: un recinto pequeno "
+            "puede producir un circuito menor. Comedor nunca supera su maximo especial."
+        )
+        note.setWordWrap(True); form.addRow(note)
+        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept); buttons.rejected.connect(self.reject); form.addRow(buttons)
+
+    def values(self):
+        return {
+            "target": self.target.value(), "minimum": self.minimum.value(),
+            "maximum": self.maximum.value(), "dining": self.dining.value(),
+            "prefix": safe_token(self.prefix.text(), "TG"), "replace": self.replace.isChecked(),
+            "strict_areas": self.strict_areas.isChecked(),
+        }
+
+
+def run():
+    doc = App.ActiveDocument
+    if doc is None:
+        raise RuntimeError("No hay un documento activo.")
+    main_group = select_main_group(doc)
+    tomas = [obj for obj in flatten(main_group) if is_toma(obj)]
+    # Masters and library objects are excluded by requiring a usable placement and visibility/link instance.
+    tomas = [obj for obj in tomas if getattr(obj, "LinkedObject", None) is not None or hasattr(obj, "ECR_SourceWall")]
+    if not tomas:
+        raise RuntimeError("El grupo seleccionado no contiene instancias de tomacorriente generales.")
+    area_source = area_source_group(doc)
+    records = area_records(doc)
+    if not records:
+        raise RuntimeError(
+            "No se encontraron rectangulos o poligonos vigentes del Analisis de areas. "
+            "Ejecute o corrija primero el modulo Analisis de areas."
+        )
+    dialog = SettingsDialog(main_group, len(tomas), len(records), area_source, Gui.getMainWindow())
+    if dialog.exec() != QtWidgets.QDialog.Accepted:
+        return
+    settings = dialog.values()
+    if settings["minimum"] > settings["target"] or settings["target"] > settings["maximum"]:
+        raise RuntimeError("Debe cumplirse: minimo <= promedio objetivo <= maximo.")
+
+    buckets, metadata, unassociated = build_buckets(tomas, records)
+    unidentified = [
+        entry[0] for values in buckets.values() for entry in values
+        if any("no identificado" in normalized(room) for room in entry[2])
+    ]
+    if settings["strict_areas"] and unidentified:
+        examples = ", ".join(label(obj) for obj in unidentified[:8])
+        raise RuntimeError(
+            "%d tomacorriente(s) quedaron fuera de los recintos del Analisis de areas: %s%s. "
+            "Corrija las areas o desactive la validacion estricta."
+            % (len(unidentified), examples, "..." if len(unidentified) > 8 else "")
+        )
+    # In normal mode, keep unmatched outlets pending and outside every automatic
+    # circuit. They are selected at the end so the designer can classify them.
+    unidentified_names = {obj.Name for obj in unidentified}
+    if unidentified_names:
+        for key in list(buckets.keys()):
+            kept = [entry for entry in buckets[key] if entry[0].Name not in unidentified_names]
+            if kept:
+                buckets[key] = kept
+            else:
+                del buckets[key]
+                metadata.pop(key, None)
+    circuits = make_circuit_plan(
+        buckets, metadata, settings["target"], settings["minimum"],
+        settings["maximum"], settings["dining"],
+    )
+    if not circuits:
+        raise RuntimeError("No fue posible formar circuitos.")
+
+    doc.openTransaction("ElectricCR: circuitos generales por pared y recinto")
+    try:
+        removed = remove_auto_groups(doc, main_group) if settings["replace"] else 0
+        created_groups = []
+        for index, entries in enumerate(circuits, 1):
+            cid = "%s-%03d" % (settings["prefix"], index)
+            walls, rooms = circuit_description(entries)
+            internal = "Circuito_%s_%s" % (safe_token(cid), safe_token(walls))
+            group = doc.addObject("App::DocumentObjectGroup", internal)
+            group.Label = "%s | %s | %s" % (cid, walls, rooms)
+            main_group.addObject(group)
+            set_prop(group, "App::PropertyBool", AUTO_GROUP_PROP, "ElectricCR", "Grupo creado automaticamente", True)
+            set_prop(group, "App::PropertyString", "CircuitoID", "ElectricCR", "Identificador del circuito", cid)
+            set_prop(group, "App::PropertyString", "Paredes", "ElectricCR", "Tramos de pared asociados", walls)
+            set_prop(group, "App::PropertyString", "Recintos", "ElectricCR", "Recintos contiguos", rooms)
+            set_prop(group, "App::PropertyInteger", "CantidadTomas", "ElectricCR", "Cantidad de tomacorrientes", len(entries))
+            set_prop(group, "App::PropertyInteger", "Breaker", "ElectricCR", "Proteccion sugerida para revision", 20)
+            set_prop(group, "App::PropertyString", "ConductorAWG", "ElectricCR", "Conductor sugerido para revision", "#12 AWG Cu")
+            for toma, segment, adjacent in entries:
+                group.addObject(toma)
+                set_prop(toma, "App::PropertyString", "CircuitoID", "Meta", "Circuito asignado", cid)
+                set_prop(toma, "App::PropertyString", "ECR_CircuitStatus", "ElectricCR BIM", "Estado del circuitado", "Asignado automaticamente")
+                set_prop(toma, "App::PropertyString", "ECR_WallCode", "ElectricCR BIM", "Tramo de pared", wall_code(segment))
+                set_prop(toma, "App::PropertyString", "ECR_AdjacentRooms", "ElectricCR BIM", "Recintos contiguos", room_key(adjacent))
+            created_groups.append(group)
+        for toma in unidentified:
+            try:
+                main_group.addObject(toma)
+            except Exception:
+                pass
+            set_prop(toma, "App::PropertyString", "CircuitoID", "Meta", "Circuito asignado", "")
+            set_prop(
+                toma, "App::PropertyString", "ECR_CircuitStatus", "ElectricCR BIM",
+                "Estado del circuitado", "Pendiente: fuera del Analisis de areas",
+            )
+            set_prop(
+                toma, "App::PropertyString", "ECR_AdjacentRooms", "ElectricCR BIM",
+                "Recintos contiguos", "Recinto no identificado",
+            )
+        doc.recompute()
+        doc.commitTransaction()
+    except Exception:
+        doc.abortTransaction()
+        raise
+
+    sizes = [len(c) for c in circuits]
+    dining_count = sum(1 for c in circuits if c and is_dining(c[0][2]))
+    message = (
+        "Circuitos creados: %d | tomas: %d | promedio: %.2f | minimo real: %d | "
+        "maximo real: %d | circuitos de comedor: %d | tomas sin pared asociada: %d | "
+        "pendientes fuera de areas: %d | grupos anteriores reemplazados: %d"
+        % (len(circuits), sum(sizes), sum(sizes)/float(len(sizes)), min(sizes), max(sizes),
+           dining_count, unassociated, len(unidentified), removed)
+    )
+    log(message)
+    if unidentified:
+        try:
+            Gui.Selection.clearSelection()
+            for toma in unidentified:
+                Gui.Selection.addSelection(toma)
+        except Exception:
+            pass
+    QtWidgets.QMessageBox.information(Gui.getMainWindow(), "ElectricCR - circuitos creados", message)
+
+
+if __name__ == "__main__":
+    try:
+        run()
+    except Exception as exc:
+        App.Console.PrintError("[ElectricCR][CIRCUITOS TOMAS] Error: %s\n" % exc)
+        QtWidgets.QMessageBox.critical(Gui.getMainWindow(), "ElectricCR - error", str(exc))

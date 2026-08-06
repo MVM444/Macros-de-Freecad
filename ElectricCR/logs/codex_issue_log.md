@@ -105,3 +105,15 @@
   - Ajustes directos de visibilidad Link2D/Link3D: 0.
   - Links retargeted a master de modo correcto: 42.
   - Ajustes fallback por deteccion componente 2D/3D: 0.
+- [2026-07-30 14:59:40] ModoVisual Solo3D aplicado con sincronizacion reforzada
+  - Problema recurrente reportado: objetos seguian viendose en Ambos tras cambiar a Solo3D.
+  - Objetos con ModoVisual actualizados: 114.
+  - Ajustes directos de visibilidad Link2D/Link3D: 0.
+  - Links retargeted a master de modo correcto: 326.
+  - Ajustes fallback por deteccion componente 2D/3D: 22.
+- [2026-07-30 15:01:30] ModoVisual Solo3D aplicado con sincronizacion reforzada
+  - Problema recurrente reportado: objetos seguian viendose en Ambos tras cambiar a Solo3D.
+  - Objetos con ModoVisual actualizados: 0.
+  - Ajustes directos de visibilidad Link2D/Link3D: 0.
+  - Links retargeted a master de modo correcto: 0.
+  - Ajustes fallback por deteccion componente 2D/3D: 2.

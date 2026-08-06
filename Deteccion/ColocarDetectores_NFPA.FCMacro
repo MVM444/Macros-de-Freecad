@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
+# MenuText: Sensores de humo en rectangulos (NFPA)
+# ToolTip: Distribuye sensores de humo usando rectangulos del analisis de areas
 # Icon: Deteccion/ColocarDetectores_NFPA.svg
+# Toolbar: Deteccion
 
 # Qt compatibility for FreeCAD 1.x (PySide6) and older builds.
 def _ensure_qt_compat():

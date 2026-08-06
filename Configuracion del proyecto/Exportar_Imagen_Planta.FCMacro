@@ -1,0 +1,276 @@
+# -*- coding: utf-8 -*-
+# MenuText: Exportar Imagen de Planta
+# Icon: Exportar_Imagen_Planta.svg
+
+"""Exporta una planta ortografica en PNG/JPEG de alta resolucion.
+
+La macro usa el renderizador fuera de pantalla de FreeCAD; la imagen no queda
+limitada al tamano de la ventana. No modifica ni guarda el documento.
+"""
+
+import os
+import re
+import unicodedata
+
+import FreeCAD as App
+import FreeCADGui as Gui
+
+try:
+    from PySide6 import QtWidgets
+except ImportError:
+    try:
+        from PySide2 import QtWidgets
+    except ImportError:
+        from PySide import QtGui as QtWidgets
+
+
+PRESETS = {
+    "4K horizontal (3840 x 2160)": (3840, 2160),
+    "6K horizontal (6144 x 3456)": (6144, 3456),
+    "8K horizontal (7680 x 4320)": (7680, 4320),
+    "8K vertical (4320 x 7680)": (4320, 7680),
+    "Plano tecnico vertical (6000 x 10000)": (6000, 10000),
+    "Plano grande (8000 x 6000)": (8000, 6000),
+    "Personalizada": None,
+}
+
+
+def _safe_name(value):
+    value = re.sub(r"[^0-9A-Za-z_-]+", "_", str(value or "Planta"))
+    return value.strip("_") or "Planta"
+
+
+def _norm(value):
+    value = unicodedata.normalize("NFKD", str(value or ""))
+    return "".join(char for char in value if not unicodedata.combining(char)).lower()
+
+
+class ExportDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Exportar imagen de planta")
+        self.setMinimumWidth(470)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        form = QtWidgets.QFormLayout()
+
+        self.preset = QtWidgets.QComboBox()
+        self.preset.addItems(list(PRESETS.keys()))
+        self.preset.setCurrentText("Plano tecnico vertical (6000 x 10000)")
+        form.addRow("Resolucion:", self.preset)
+
+        size_row = QtWidgets.QHBoxLayout()
+        self.width = QtWidgets.QSpinBox()
+        self.height = QtWidgets.QSpinBox()
+        for spin in (self.width, self.height):
+            spin.setRange(640, 16000)
+        self.width.setValue(6000)
+        self.height.setValue(10000)
+        size_row.addWidget(self.width)
+        size_row.addWidget(QtWidgets.QLabel("x"))
+        size_row.addWidget(self.height)
+        form.addRow("Tamano (pixeles):", size_row)
+
+        self.background = QtWidgets.QComboBox()
+        self.background.addItems(["Blanco", "Actual", "Transparente"])
+        form.addRow("Fondo:", self.background)
+
+        self.discipline = QtWidgets.QComboBox()
+        self.discipline.addItems([
+            "Planta de luminarias",
+            "Planta arquitectonica",
+            "Planta de tomacorrientes",
+            "Planta de sensores",
+            "Visibilidad actual",
+        ])
+        form.addRow("Contenido:", self.discipline)
+
+        self.fit = QtWidgets.QCheckBox("Ajustar toda la planta al encuadre")
+        self.fit.setChecked(True)
+        form.addRow("", self.fit)
+
+        self.plan_mode = QtWidgets.QCheckBox(
+            "Modo plano tecnico (ocultar biblioteca y auxiliares 3D)"
+        )
+        self.plan_mode.setChecked(True)
+        form.addRow("", self.plan_mode)
+
+        layout.addLayout(form)
+        note = QtWidgets.QLabel(
+            "El modo plano conserva elementos constructivos, puertas, ventanas, "
+            "simbolos 2D y rotulos; oculta temporalmente cielos, volumenes de "
+            "referencia, rectangulos de analisis y objetos maestros."
+        )
+        note.setWordWrap(True)
+        layout.addWidget(note)
+
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self.preset.currentTextChanged.connect(self._apply_preset)
+
+    def _apply_preset(self, name):
+        size = PRESETS.get(str(name))
+        custom = size is None
+        self.width.setEnabled(custom)
+        self.height.setEnabled(custom)
+        if size:
+            self.width.setValue(size[0])
+            self.height.setValue(size[1])
+
+
+def _default_path(doc):
+    folder = os.path.dirname(getattr(doc, "FileName", "") or "")
+    if not folder:
+        folder = os.path.expanduser("~/Documents")
+    return os.path.join(folder, _safe_name(getattr(doc, "Label", doc.Name)) + "_Planta_8K.png")
+
+
+def _apply_plan_visibility(doc, discipline):
+    """Prepara una vista 2D sin alterar permanentemente el documento."""
+    hidden_group_terms = (
+        "_lib",
+        "master",
+        "cielos suspendidos",
+        "espacios de referencia",
+        "fuentes y auxiliares",
+        "terreno y obras exteriores",
+    )
+    shown_group_terms = (
+        "elementos constructivos",
+        "puertas y ventanas",
+        "etiquetas",
+    )
+    discipline_terms = ("luminaria", "tomacorr", "toma", "sensor", "detector")
+    selected_terms = ()
+    if discipline == "Planta de luminarias":
+        selected_terms = ("luminaria",)
+    elif discipline == "Planta de tomacorrientes":
+        selected_terms = ("tomacorr", "toma")
+    elif discipline == "Planta de sensores":
+        selected_terms = ("sensor", "detector")
+
+    for obj in doc.Objects:
+        view_obj = getattr(obj, "ViewObject", None)
+        if view_obj is None or not hasattr(obj, "Group"):
+            continue
+        text = _norm(str(getattr(obj, "Name", "")) + " " + str(getattr(obj, "Label", "")))
+        if any(term in text for term in hidden_group_terms):
+            view_obj.Visibility = False
+        elif "etiquetas anal" in text:
+            # Etiqueta general de area; se evita duplicarla con la etiqueta de disciplina.
+            view_obj.Visibility = False
+        elif any(term in text for term in discipline_terms):
+            view_obj.Visibility = bool(selected_terms and any(term in text for term in selected_terms))
+        elif text.strip().endswith("etiquetas") or " etiquetas " in (" " + text + " "):
+            view_obj.Visibility = discipline in ("Planta de luminarias", "Planta arquitectonica")
+        elif any(term in text for term in shown_group_terms):
+            view_obj.Visibility = True
+
+
+def _fit_for_output(view, doc, width, height):
+    """Ajusta la camara al formato del archivo, no al viewport de FreeCAD."""
+    bounds = []
+    for obj in doc.Objects:
+        view_obj = getattr(obj, "ViewObject", None)
+        try:
+            if view_obj is None or not view_obj.isVisible():
+                continue
+            shape = obj.Shape
+            if shape is None or shape.isNull():
+                continue
+            box = shape.BoundBox
+            bounds.append((box.XMin, box.YMin, box.XMax, box.YMax))
+        except Exception:
+            continue
+    view.fitAll()
+    if not bounds:
+        return
+    span_x = max(1.0, max(item[2] for item in bounds) - min(item[0] for item in bounds))
+    span_y = max(1.0, max(item[3] for item in bounds) - min(item[1] for item in bounds))
+    aspect = float(width) / float(max(1, height))
+    required_height = max(span_y, span_x / max(0.01, aspect)) * 1.06
+    try:
+        view.getCameraNode().height = required_height
+    except Exception:
+        pass
+
+
+def export_plan_image():
+    doc = App.ActiveDocument
+    if doc is None:
+        QtWidgets.QMessageBox.warning(None, "ElectricCR", "No hay un documento activo.")
+        return
+
+    dialog = ExportDialog(Gui.getMainWindow())
+    if dialog.exec() != QtWidgets.QDialog.Accepted:
+        return
+
+    filters = "Imagen PNG (*.png);;Imagen JPEG (*.jpg *.jpeg)"
+    path, _ = QtWidgets.QFileDialog.getSaveFileName(
+        Gui.getMainWindow(), "Guardar imagen de planta", _default_path(doc), filters
+    )
+    if not path:
+        return
+    if not os.path.splitext(path)[1]:
+        path += ".png"
+
+    width, height = dialog.width.value(), dialog.height.value()
+    backgrounds = {"Blanco": "White", "Actual": "Current", "Transparente": "Transparent"}
+    background = backgrounds.get(dialog.background.currentText(), "White")
+    view = Gui.activeDocument().activeView()
+    camera = view.getCamera()
+    axis_cross = view.hasAxisCross()
+    visibility = {}
+    for obj in doc.Objects:
+        view_obj = getattr(obj, "ViewObject", None)
+        if view_obj is not None:
+            try:
+                visibility[obj.Name] = bool(view_obj.Visibility)
+            except Exception:
+                pass
+
+    try:
+        if dialog.plan_mode.isChecked() and dialog.discipline.currentText() != "Visibilidad actual":
+            _apply_plan_visibility(doc, dialog.discipline.currentText())
+        view.setAxisCross(False)
+        view.setCameraType("Orthographic")
+        view.viewTop()
+        if dialog.fit.isChecked():
+            _fit_for_output(view, doc, width, height)
+        view.redraw()
+        ok = view.saveImage(path, width, height, background)
+        if ok is False or not os.path.isfile(path):
+            raise RuntimeError("FreeCAD no genero el archivo de imagen.")
+    except Exception as exc:
+        QtWidgets.QMessageBox.critical(
+            Gui.getMainWindow(), "Exportar imagen de planta", "No se pudo exportar:\n" + str(exc)
+        )
+        return
+    finally:
+        try:
+            for name, state in visibility.items():
+                obj = doc.getObject(name)
+                if obj is not None and getattr(obj, "ViewObject", None) is not None:
+                    obj.ViewObject.Visibility = state
+            view.setCamera(camera)
+            view.setAxisCross(axis_cross)
+            view.redraw()
+        except Exception:
+            pass
+
+    App.Console.PrintMessage(
+        "ElectricCR: imagen de planta exportada: {} ({} x {})\n".format(path, width, height)
+    )
+    QtWidgets.QMessageBox.information(
+        Gui.getMainWindow(),
+        "Exportar imagen de planta",
+        "Imagen exportada correctamente:\n{}\n\nResolucion: {} x {} px".format(path, width, height),
+    )
+
+
+export_plan_image()

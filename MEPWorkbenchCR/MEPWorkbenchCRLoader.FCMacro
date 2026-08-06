@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 # Icon: MEPWorkbenchCRLoader.svg
+# Version: 2026-07-14
 
 import importlib
 import os
@@ -102,6 +103,29 @@ __Icon__ = _resolve_icon_path(ICON_NAME)
 __icon__ = __Icon__
 
 
+def install_loader_toolbar():
+    here = os.path.normpath(os.path.abspath(os.path.dirname(__file__)))
+    helper_roots = (os.path.join(here, "Macros-de-Freecad"), os.path.dirname(here), here)
+    for root in helper_roots:
+        if os.path.exists(os.path.join(root, "loader_toolbar.py")) and root not in sys.path:
+            sys.path.insert(0, root)
+    try:
+        from loader_toolbar import install_global_loader_toolbar
+
+        return install_global_loader_toolbar(
+            App,
+            Gui,
+            __file__,
+            __Icon__ or os.path.join(here, ICON_NAME),
+            "MEP Workbench CR Loader",
+            "Carga y recarga el workbench MEPWorkbenchCR",
+            "[MEP-LOADER] ",
+        )
+    except Exception as exc:
+        App.Console.PrintError("[MEP-LOADER] Could not install global loader toolbar: {0}\n".format(exc))
+        return None
+
+
 def _is_complete_package(pkg_dir):
     try:
         return (
@@ -193,5 +217,11 @@ def ensure_path_and_load():
     except Exception as err:
         App.Console.PrintError("MEPWorkbenchCR: Error cargando el workbench: {0}\n".format(err))
 
+def main():
+    toolbar_handle = install_loader_toolbar()
+    ensure_path_and_load()
+    if toolbar_handle is not None:
+        toolbar_handle.refresh()
 
-ensure_path_and_load()
+
+main()

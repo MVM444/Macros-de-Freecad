@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#174f78"/>
+      <stop offset="1" stop-color="#168f91"/>
+    </linearGradient>
+  </defs>
+  <rect x="3" y="3" width="58" height="58" rx="12" fill="url(#g)" stroke="#153047" stroke-width="2"/>
+  <path d="M10 17a7 7 0 1 1 10 6.3V27h-6v-3.7A7 7 0 0 1 10 17Zm17 0a7 7 0 1 1 10 6.3V27h-6v-3.7A7 7 0 0 1 27 17Z" fill="#ffe56d" stroke="#fff" stroke-width="1.8"/>
+  <path d="M15 31h5m12 0h5" stroke="#fff" stroke-width="2.3" stroke-linecap="round"/>
+  <path d="M18 34v8h24M35 34v8" fill="none" stroke="#7cf0dc" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="39" y="35" width="16" height="17" rx="2" fill="#252c40" stroke="#fff" stroke-width="2"/>
+  <path d="M43 40h8m-8 4h8m-8 4h5" stroke="#7cf0dc" stroke-width="2" stroke-linecap="round"/>
+  <text x="20" y="57" font-family="Arial,sans-serif" font-size="9" font-weight="700" fill="#fff">TP-001</text>
+</svg>

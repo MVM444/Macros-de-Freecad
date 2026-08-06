@@ -1,0 +1,41 @@
+# -*- coding: utf-8 -*-
+# Version: 2026-07-31
+# Extrae equipos HVAC desde bloques y textos de un DWG/DXF ya importado.
+
+import importlib
+import os
+import sys
+
+import FreeCAD as App
+
+
+def _ensure_workbench_path():
+    candidates = []
+    macro_file = str(globals().get("__file__", "") or "")
+    if macro_file:
+        candidates.append(os.path.dirname(os.path.abspath(macro_file)))
+    try:
+        macro_path = App.ParamGet("User parameter:BaseApp/Preferences/Macro").GetString("MacroPath", "")
+    except Exception:
+        macro_path = ""
+    for entry in str(macro_path or "").split(";" if os.name == "nt" else ":"):
+        entry = entry.strip()
+        if entry:
+            candidates.extend((entry, os.path.join(entry, "Macros-de-Freecad")))
+    for candidate in candidates:
+        if os.path.isdir(os.path.join(candidate, "MEPWorkbenchCR")):
+            if candidate not in sys.path:
+                sys.path.insert(0, candidate)
+            return candidate
+    raise RuntimeError("No se encontro la carpeta MEPWorkbenchCR desde la ruta de macros.")
+
+
+_ensure_workbench_path()
+
+try:
+    from MEPWorkbenchCR.MEP.hvac import hvac_cad_extract
+except Exception:
+    from MEP.hvac import hvac_cad_extract
+
+importlib.reload(hvac_cad_extract)
+hvac_cad_extract.extract_document(App.ActiveDocument, create_objects=True)

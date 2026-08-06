@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="ground" x1="8" y1="48" x2="56" y2="20" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#496b35"/>
+      <stop offset="1" stop-color="#9bb566"/>
+    </linearGradient>
+    <linearGradient id="slab" x1="18" y1="25" x2="47" y2="42" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f2ddbd"/>
+      <stop offset="1" stop-color="#b98d5a"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="56" height="56" rx="8" fill="#f5efe3" stroke="#24313a" stroke-width="3"/>
+  <path d="M8 43 L20 30 L31 36 L43 22 L56 34 L56 51 L8 51 Z"
+        fill="url(#ground)" stroke="#24313a" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M16 29 L34 20 L49 28 L31 38 Z"
+        fill="#fff1d9" stroke="#24313a" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M16 29 V35 L31 44 V38 Z"
+        fill="#9f7346" stroke="#24313a" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M31 38 V44 L49 34 V28 Z"
+        fill="url(#slab)" stroke="#24313a" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M20 27 L31 33 L44 26" fill="none" stroke="#137f8f" stroke-width="2.5"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

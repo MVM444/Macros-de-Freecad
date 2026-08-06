@@ -1,0 +1,622 @@
+# -*- coding: utf-8 -*-
+# MenuText: Instalar desconectores de aire acondicionado
+# Toolbar: Tableros
+# Icon: Insertar_Desconectores_Aire_Acondicionado.svg
+# Transaction: self
+"""
+Instala un desconector ElectricCR por cada equipo HVAC seleccionado.
+
+Flujo:
+1. Seleccionar condensadoras o evaporadoras HVAC (tambien se admite un grupo).
+2. Ejecutar la macro.
+3. Confirmar codigo, tablero de origen y cota superior.
+
+La geometria y las propiedades base se crean con el mismo backend de
+Insertar_Tablero.FCMacro, usando la clase de equipo "Desconector".
+"""
+
+import importlib
+import math
+import re
+import sys
+from pathlib import Path
+
+import FreeCAD as App
+
+try:
+    import FreeCADGui as Gui
+except Exception:
+    Gui = None
+
+try:
+    from PySide2 import QtCore, QtWidgets
+except Exception:
+    try:
+        from PySide import QtCore
+        from PySide import QtGui as QtWidgets
+    except Exception:
+        QtCore = None
+        QtWidgets = None
+
+
+TOOL_ID = "InsertarDesconectoresAireAcondicionado"
+DEFAULT_PREFIX = "D-AC"
+DEFAULT_TOP_MM = 8000.0
+HVAC_INSTANCE_TYPES = ("HVACCondenser", "HVACEquipment")
+HVAC_EXCLUDED_MARKERS = ("master", "symbol", "info2d", "space")
+
+
+def _log(message):
+    App.Console.PrintMessage("[ElectricCR][DESCONECTORES HVAC] {}\n".format(message))
+
+
+def _warn(message):
+    App.Console.PrintWarning("[ElectricCR][DESCONECTORES HVAC] {}\n".format(message))
+
+
+def _error(message):
+    App.Console.PrintError("[ElectricCR][DESCONECTORES HVAC] {}\n".format(message))
+
+
+def _safe_text(value):
+    try:
+        return str(value or "").strip()
+    except Exception:
+        return ""
+
+
+def _property_names(obj):
+    try:
+        return list(obj.PropertiesList or [])
+    except Exception:
+        return []
+
+
+def _load_tablero_backend():
+    here = Path(__file__).resolve()
+    repo_root = here.parent.parent
+    electriccr_dir = repo_root / "ElectricCR"
+    for candidate in (repo_root, electriccr_dir):
+        text = str(candidate)
+        if text and text not in sys.path:
+            sys.path.insert(0, text)
+
+    importlib.invalidate_caches()
+    errors = []
+    for module_name in (
+        "ElectricCR.electriccr.features.tablero_electrico",
+        "electriccr.features.tablero_electrico",
+    ):
+        try:
+            module = importlib.import_module(module_name)
+            insert_fn = getattr(module, "insertar_tablero", None)
+            if callable(insert_fn):
+                return module, insert_fn
+        except Exception as ex:
+            errors.append("{}: {}".format(module_name, ex))
+    raise ImportError("No se pudo cargar tablero_electrico ({})".format("; ".join(errors)))
+
+
+def _mep_type(obj):
+    return _safe_text(getattr(obj, "MEPType", ""))
+
+
+def _is_hvac_instance(obj):
+    if obj is None:
+        return False
+    mep_type = _mep_type(obj)
+    if mep_type in HVAC_INSTANCE_TYPES:
+        return True
+    lower_type = mep_type.lower()
+    if any(marker in lower_type for marker in HVAC_EXCLUDED_MARKERS):
+        return False
+
+    props = _property_names(obj)
+    if "CapacityBTU" not in props or "Model" not in props:
+        return False
+    probe = "{} {} {}".format(
+        getattr(obj, "Name", ""),
+        getattr(obj, "Label", ""),
+        mep_type,
+    ).lower()
+    return any(token in probe for token in ("hvac", "condens", "evapor", "aire"))
+
+
+def _is_group(obj):
+    if obj is None:
+        return False
+    try:
+        if obj.isDerivedFrom("App::DocumentObjectGroup"):
+            return True
+    except Exception:
+        pass
+    return hasattr(obj, "Group")
+
+
+def _walk_group(group, visited=None):
+    visited = visited if visited is not None else set()
+    key = _safe_text(getattr(group, "Name", "")) or str(id(group))
+    if key in visited:
+        return []
+    visited.add(key)
+    found = []
+    for child in list(getattr(group, "Group", []) or []):
+        if _is_hvac_instance(child):
+            found.append(child)
+        elif _is_group(child):
+            found.extend(_walk_group(child, visited))
+    return found
+
+
+def _unique_objects(objects):
+    output = []
+    seen = set()
+    for obj in objects:
+        key = _safe_text(getattr(obj, "Name", "")) or str(id(obj))
+        if key in seen:
+            continue
+        seen.add(key)
+        output.append(obj)
+    return output
+
+
+def _selected_hvac_units():
+    if Gui is None:
+        return []
+    try:
+        selection = list(Gui.Selection.getSelection() or [])
+    except Exception:
+        selection = []
+
+    direct = [obj for obj in selection if _is_hvac_instance(obj)]
+    expanded = []
+    for obj in selection:
+        if _is_group(obj):
+            expanded.extend(_walk_group(obj))
+
+    direct = _unique_objects(direct)
+    expanded = _unique_objects(expanded)
+    if direct:
+        return _unique_objects(direct + expanded)
+
+    # Al seleccionar un grupo HVAC completo, las condensadoras representan
+    # mejor el punto de alimentacion y evitan duplicar evaporadora+condensadora.
+    condensers = [obj for obj in expanded if _mep_type(obj) == "HVACCondenser"]
+    return condensers or expanded
+
+
+def _global_placement(obj):
+    try:
+        placement = obj.getGlobalPlacement()
+        if placement is not None:
+            return App.Placement(placement)
+    except Exception:
+        pass
+    try:
+        return App.Placement(obj.Placement)
+    except Exception:
+        return App.Placement()
+
+
+def _unit_anchor(obj, offset_x=0.0, offset_y=0.0):
+    x = y = None
+    try:
+        placement = _global_placement(obj)
+        x = float(placement.Base.x)
+        y = float(placement.Base.y)
+        if not (math.isfinite(x) and math.isfinite(y)):
+            x = y = None
+    except Exception:
+        x = y = None
+    try:
+        if x is None or y is None:
+            shape = getattr(obj, "Shape", None)
+            bb = getattr(shape, "BoundBox", None)
+            if bb is not None and not bool(getattr(bb, "IsVoid", False)):
+                x = 0.5 * (float(bb.XMin) + float(bb.XMax))
+                y = 0.5 * (float(bb.YMin) + float(bb.YMax))
+                if not (math.isfinite(x) and math.isfinite(y)):
+                    x = y = None
+    except Exception:
+        x = y = None
+    if x is None or y is None:
+        placement = _global_placement(obj)
+        x = float(placement.Base.x)
+        y = float(placement.Base.y)
+    return App.Vector(float(x) + float(offset_x), float(y) + float(offset_y), 0.0)
+
+
+def _panel_source_options(doc):
+    options = []
+    for obj in list(getattr(doc, "Objects", []) or []):
+        props = _property_names(obj)
+        if "ClaseEquipo" not in props and "Tipo" not in props:
+            continue
+        clase = _safe_text(getattr(obj, "ClaseEquipo", getattr(obj, "Tipo", ""))).lower()
+        if clase != "tablero":
+            continue
+        code = _safe_text(getattr(obj, "Codigo", ""))
+        if not code:
+            code = _safe_text(getattr(obj, "Label", ""))
+        if code and code not in options:
+            options.append(code)
+    options.sort(key=lambda value: (0 if value.upper() == "TP" else 1, value.lower()))
+    if "TP" not in options:
+        options.insert(0, "TP")
+    return options
+
+
+def _next_sequence(doc, prefix):
+    clean_prefix = _safe_text(prefix) or DEFAULT_PREFIX
+    pattern = re.compile(r"^{}\s*[-_]?\s*(\d+)$".format(re.escape(clean_prefix)), re.IGNORECASE)
+    maximum = 0
+    for obj in list(getattr(doc, "Objects", []) or []):
+        for value in (
+            getattr(obj, "Codigo", ""),
+            getattr(obj, "Label", ""),
+        ):
+            code = _safe_text(value).split(" - ", 1)[0].strip()
+            match = pattern.match(code)
+            if match:
+                maximum = max(maximum, int(match.group(1)))
+    return maximum + 1
+
+
+def _format_code(prefix, number):
+    clean = (_safe_text(prefix) or DEFAULT_PREFIX).rstrip("-_ ")
+    return "{}-{:02d}".format(clean, int(number))
+
+
+def _existing_for_unit(doc, unit):
+    unit_name = _safe_text(getattr(unit, "Name", ""))
+    for obj in list(getattr(doc, "Objects", []) or []):
+        props = _property_names(obj)
+        if "EquipoHVAC" in props:
+            try:
+                if getattr(obj, "EquipoHVAC", None) is unit:
+                    return obj
+            except Exception:
+                pass
+        if "ECR_EquipoHVACName" in props:
+            if _safe_text(getattr(obj, "ECR_EquipoHVACName", "")) == unit_name:
+                return obj
+    return None
+
+
+def _add_property(obj, type_name, name, group, description):
+    if name in _property_names(obj):
+        return
+    obj.addProperty(type_name, name, group, description)
+
+
+def _capacity_btu(unit):
+    try:
+        return float(getattr(unit, "CapacityBTU", 0.0) or 0.0)
+    except Exception:
+        return 0.0
+
+
+def _unit_description(unit):
+    model = _safe_text(getattr(unit, "Model", ""))
+    label = _safe_text(getattr(unit, "Label", "")) or _safe_text(getattr(unit, "Name", ""))
+    capacity = _capacity_btu(unit)
+    parts = [label]
+    if model and model.lower() not in label.lower():
+        parts.append(model)
+    if capacity > 0.0:
+        parts.append("{:,.0f} BTU/h".format(capacity))
+    return " | ".join(parts)
+
+
+def _disconnect_name(unit):
+    label = _safe_text(getattr(unit, "Label", "")) or _safe_text(getattr(unit, "Name", ""))
+    probe = label.upper().replace("-", "_").replace(" ", "_")
+    if probe.startswith(("EVAP_", "HVAC_EVAP")):
+        space = getattr(unit, "Space", None)
+        space_label = _safe_text(getattr(space, "Label", ""))
+        if space_label:
+            room = re.sub(r"^HVAC[_\s-]*", "", space_label, flags=re.IGNORECASE).strip()
+            capacity = _capacity_btu(unit)
+            suffix = " | {:,.0f} BTU/h".format(capacity) if capacity > 0.0 else ""
+            return "Desconector AC - {}{}".format(room or space_label, suffix)
+    return "Desconector {}".format(label or "aire acondicionado")
+
+
+def _set_hvac_metadata(disconnector, unit, source, circuit_id=""):
+    group = "Desconector HVAC"
+    _add_property(disconnector, "App::PropertyLink", "EquipoHVAC", group, "Equipo de aire acondicionado alimentado")
+    _add_property(disconnector, "App::PropertyString", "ECR_EquipoHVACName", group, "Nombre interno persistente del equipo HVAC")
+    _add_property(disconnector, "App::PropertyString", "SistemaServicio", group, "Sistema servido por el desconector")
+    _add_property(disconnector, "App::PropertyString", "UsoDesconector", group, "Funcion del desconector")
+    _add_property(disconnector, "App::PropertyFloat", "CapacidadEquipoBTUH", group, "Capacidad nominal asociada en BTU/h")
+    _add_property(disconnector, "App::PropertyString", "CircuitoID", group, "Circuito electrico asignado")
+    _add_property(disconnector, "App::PropertyString", "ECR_GeneradoPor", "ElectricCR", "Herramienta que genero el objeto")
+
+    try:
+        disconnector.EquipoHVAC = unit
+    except Exception:
+        pass
+    disconnector.ECR_EquipoHVACName = _safe_text(getattr(unit, "Name", ""))
+    disconnector.SistemaServicio = "Aire acondicionado"
+    disconnector.UsoDesconector = "Desconexion local y referencia de alimentacion HVAC"
+    disconnector.CapacidadEquipoBTUH = _capacity_btu(unit)
+    disconnector.CircuitoID = _safe_text(circuit_id)
+    disconnector.ECR_GeneradoPor = TOOL_ID
+    try:
+        disconnector.ConectadoA = _safe_text(source)
+    except Exception:
+        pass
+
+
+def _apply_orientation(disconnector, unit):
+    try:
+        current = App.Placement(disconnector.Placement)
+        source_rotation = _global_placement(unit).Rotation
+        direction = source_rotation.multVec(App.Vector(1.0, 0.0, 0.0))
+        plan_length = math.hypot(float(direction.x), float(direction.y))
+        if plan_length <= 1.0e-6:
+            direction = source_rotation.multVec(App.Vector(0.0, 1.0, 0.0))
+            plan_length = math.hypot(float(direction.x), float(direction.y))
+        if plan_length > 1.0e-6:
+            yaw_degrees = math.degrees(math.atan2(float(direction.y), float(direction.x)))
+            current.Rotation = App.Rotation(App.Vector(0.0, 0.0, 1.0), yaw_degrees)
+        disconnector.Placement = current
+    except Exception:
+        pass
+
+
+class DisconnectHVACDialog(QtWidgets.QDialog):
+    def __init__(self, doc, units, parent=None):
+        super(DisconnectHVACDialog, self).__init__(parent)
+        self.doc = doc
+        self.units = list(units)
+        self.setWindowTitle("Instalar desconectores de aire acondicionado")
+        self.setMinimumWidth(560)
+
+        intro = QtWidgets.QLabel(
+            "Se creara o actualizara un desconector ElectricCR por equipo HVAC. "
+            "La altura indicada corresponde a la cota superior del gabinete."
+        )
+        intro.setWordWrap(True)
+
+        self.list_units = QtWidgets.QListWidget()
+        self.list_units.setMinimumHeight(115)
+        for unit in self.units:
+            self.list_units.addItem(_unit_description(unit))
+
+        self.txt_prefix = QtWidgets.QLineEdit(DEFAULT_PREFIX)
+        self.sp_start = QtWidgets.QSpinBox()
+        self.sp_start.setRange(1, 9999)
+        self.sp_start.setValue(_next_sequence(doc, DEFAULT_PREFIX))
+
+        self.cmb_source = QtWidgets.QComboBox()
+        self.cmb_source.setEditable(True)
+        self.cmb_source.addItems(_panel_source_options(doc))
+
+        self.sp_top = QtWidgets.QDoubleSpinBox()
+        self.sp_top.setRange(0.0, 30000.0)
+        self.sp_top.setDecimals(0)
+        self.sp_top.setSingleStep(100.0)
+        self.sp_top.setSuffix(" mm")
+        self.sp_top.setValue(DEFAULT_TOP_MM)
+
+        self.sp_amp = QtWidgets.QSpinBox()
+        self.sp_amp.setRange(1, 1200)
+        self.sp_amp.setSuffix(" A")
+        self.sp_amp.setValue(30)
+
+        self.cmb_mode = QtWidgets.QComboBox()
+        self.cmb_mode.addItems(["Ambos", "Solo2D", "Solo3D"])
+
+        self.sp_offset_x = QtWidgets.QDoubleSpinBox()
+        self.sp_offset_x.setRange(-10000.0, 10000.0)
+        self.sp_offset_x.setDecimals(0)
+        self.sp_offset_x.setSuffix(" mm")
+        self.sp_offset_x.setValue(0.0)
+        self.sp_offset_y = QtWidgets.QDoubleSpinBox()
+        self.sp_offset_y.setRange(-10000.0, 10000.0)
+        self.sp_offset_y.setDecimals(0)
+        self.sp_offset_y.setSuffix(" mm")
+        self.sp_offset_y.setValue(0.0)
+
+        self.chk_align = QtWidgets.QCheckBox("Usar la orientacion en planta del equipo HVAC")
+        self.chk_align.setChecked(True)
+        self.chk_update = QtWidgets.QCheckBox("Actualizar el desconector si el equipo ya tiene uno")
+        self.chk_update.setChecked(True)
+
+        form = QtWidgets.QFormLayout()
+        form.addRow("Prefijo:", self.txt_prefix)
+        form.addRow("Primer consecutivo:", self.sp_start)
+        form.addRow("Conectado a:", self.cmb_source)
+        form.addRow("Cota superior:", self.sp_top)
+        form.addRow("Amperaje de referencia:", self.sp_amp)
+        form.addRow("Representacion:", self.cmb_mode)
+        form.addRow("Desfase X:", self.sp_offset_x)
+        form.addRow("Desfase Y:", self.sp_offset_y)
+
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+        )
+        try:
+            buttons.button(QtWidgets.QDialogButtonBox.Ok).setText("Instalar")
+        except Exception:
+            pass
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addWidget(intro)
+        layout.addWidget(QtWidgets.QLabel("Equipos seleccionados: {}".format(len(self.units))))
+        layout.addWidget(self.list_units)
+        layout.addLayout(form)
+        layout.addWidget(self.chk_align)
+        layout.addWidget(self.chk_update)
+        layout.addWidget(buttons)
+
+    def values(self):
+        return {
+            "prefix": _safe_text(self.txt_prefix.text()) or DEFAULT_PREFIX,
+            "start": int(self.sp_start.value()),
+            "source": _safe_text(self.cmb_source.currentText()) or "TP",
+            "top_mm": float(self.sp_top.value()),
+            "amp": int(self.sp_amp.value()),
+            "mode": _safe_text(self.cmb_mode.currentText()) or "Ambos",
+            "offset_x": float(self.sp_offset_x.value()),
+            "offset_y": float(self.sp_offset_y.value()),
+            "align": bool(self.chk_align.isChecked()),
+            "update": bool(self.chk_update.isChecked()),
+        }
+
+
+def _install(doc, units, backend, insert_fn, settings):
+    created = []
+    updated = []
+    skipped = []
+    next_number = int(settings["start"])
+
+    doc.openTransaction("Instalar desconectores HVAC")
+    transaction_open = True
+    try:
+        for unit in units:
+            existing = _existing_for_unit(doc, unit)
+            if existing is not None:
+                if not settings["update"]:
+                    skipped.append(existing)
+                    continue
+                try:
+                    if abs(float(existing.AlturaSuperiorInstalacion) - float(settings["top_mm"])) > 1.0e-6:
+                        existing.AlturaSuperiorInstalacion = float(settings["top_mm"])
+                except Exception:
+                    pass
+                try:
+                    if int(existing.AmperajeNominal) != int(settings["amp"]):
+                        existing.AmperajeNominal = int(settings["amp"])
+                except Exception:
+                    pass
+                disconnect_name = _disconnect_name(unit)
+                try:
+                    existing.NombreTablero = disconnect_name
+                    code = _safe_text(getattr(existing, "Codigo", ""))
+                    existing.Label = "{} - {}".format(code, disconnect_name) if code else disconnect_name
+                except Exception:
+                    pass
+                _set_hvac_metadata(existing, unit, settings["source"])
+                updated.append(existing)
+                continue
+
+            code = _format_code(settings["prefix"], next_number)
+            next_number += 1
+            anchor = _unit_anchor(unit, settings["offset_x"], settings["offset_y"])
+            disconnector = insert_fn(
+                doc=doc,
+                clase_equipo="Desconector",
+                codigo=code,
+                espacios=2,
+                amperaje_nominal=int(settings["amp"]),
+                main_breaker=False,
+                modo=settings["mode"],
+                montaje="Sobrepuesto",
+                nombre_tablero=_disconnect_name(unit),
+                conectado_a=settings["source"],
+                perfil_dimensiones="Generico",
+                configuracion_catalogo="Auto",
+                caja_eaton="Auto",
+                altura_superior_mm=float(settings["top_mm"]),
+                mostrar_area_trabajo=False,
+                position=anchor,
+                recompute=False,
+                create_text=True,
+                hide_master=True,
+            )
+            _set_hvac_metadata(disconnector, unit, settings["source"])
+            if settings["align"]:
+                _apply_orientation(disconnector, unit)
+            created.append(disconnector)
+
+        sync_texts = getattr(backend, "sync_tablero_texts", None)
+        if callable(sync_texts):
+            sync_texts(doc)
+        doc.recompute()
+        doc.commitTransaction()
+        transaction_open = False
+    except Exception:
+        if transaction_open:
+            try:
+                doc.abortTransaction()
+            except Exception:
+                pass
+        raise
+    return created, updated, skipped
+
+
+def main():
+    if Gui is None or QtWidgets is None:
+        _error("La macro requiere FreeCAD GUI y PySide.")
+        return
+    doc = App.ActiveDocument
+    if doc is None:
+        _error("No hay un documento activo.")
+        return
+
+    units = _selected_hvac_units()
+    if not units:
+        message = (
+            "Seleccione una o varias condensadoras/evaporadoras HVAC, o el grupo que las contiene, "
+            "y vuelva a ejecutar la herramienta."
+        )
+        _warn(message)
+        try:
+            QtWidgets.QMessageBox.information(Gui.getMainWindow(), "Desconectores HVAC", message)
+        except Exception:
+            pass
+        return
+
+    try:
+        backend, insert_fn = _load_tablero_backend()
+    except Exception as ex:
+        _error(str(ex))
+        return
+
+    dialog = DisconnectHVACDialog(doc, units, parent=Gui.getMainWindow())
+    exec_dialog = getattr(dialog, "exec_", None) or getattr(dialog, "exec")
+    if exec_dialog() != QtWidgets.QDialog.Accepted:
+        _log("Operacion cancelada.")
+        return
+
+    try:
+        created, updated, skipped = _install(doc, units, backend, insert_fn, dialog.values())
+    except Exception as ex:
+        _error("No se pudieron instalar los desconectores: {}".format(ex))
+        try:
+            QtWidgets.QMessageBox.critical(
+                Gui.getMainWindow(),
+                "Desconectores HVAC",
+                "No se pudieron instalar los desconectores:\n{}".format(ex),
+            )
+        except Exception:
+            pass
+        return
+
+    summary = "Creados: {} | actualizados: {} | omitidos: {}".format(
+        len(created), len(updated), len(skipped)
+    )
+    _log(summary)
+    try:
+        if created:
+            Gui.Selection.clearSelection()
+            for obj in created:
+                Gui.Selection.addSelection(obj)
+    except Exception:
+        pass
+    try:
+        QtWidgets.QMessageBox.information(
+            Gui.getMainWindow(),
+            "Desconectores HVAC",
+            "{}\nCota superior: {:.0f} mm.".format(summary, dialog.values()["top_mm"]),
+        )
+    except Exception:
+        pass
+
+
+if __name__ == "__main__":
+    main()

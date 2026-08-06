@@ -1,0 +1,114 @@
+# -*- coding: utf-8 -*-
+# MenuText: Asignar Tipo de Luminaria a Areas
+# ToolTip: Guarda en las areas el tipo de luminaria registrado para calculo y colocacion automatica
+# Icon: Asignar_Tipo_Luminaria_Areas.svg
+
+import json
+from pathlib import Path
+
+import FreeCAD as App
+import FreeCADGui as Gui
+
+try:
+    from PySide6 import QtWidgets
+except Exception:
+    try:
+        from PySide2 import QtWidgets
+    except Exception:
+        from PySide import QtGui as QtWidgets
+
+
+def _registry_candidates():
+    here = Path(__file__).resolve()
+    repo = here.parent.parent / "Resources" / "registry" / "registry_electric.json"
+    appdata = Path(App.getUserAppDataDir()) / "Macro" / "Resources" / "registry" / "registry_electric.json"
+    return (repo, appdata)
+
+
+def _load_registry():
+    for path in _registry_candidates():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+            if isinstance(data.get("types"), dict):
+                return data
+        except Exception:
+            pass
+    return {"types": {}}
+
+
+def _is_rectangle(obj):
+    return getattr(getattr(obj, "Proxy", None), "Type", "") == "Rectangle"
+
+
+def _collect(items):
+    found, seen = [], set()
+    def visit(obj):
+        if obj is None or getattr(obj, "Name", "") in seen:
+            return
+        seen.add(getattr(obj, "Name", ""))
+        if _is_rectangle(obj):
+            found.append(obj)
+        for child in getattr(obj, "Group", []) or []:
+            visit(child)
+    for item in items:
+        visit(item)
+    return found
+
+
+def _ensure(obj, ptype, name, description):
+    if name not in (getattr(obj, "PropertiesList", []) or []):
+        obj.addProperty(ptype, name, "ElectricCR Iluminacion", description)
+
+
+def run():
+    doc = App.ActiveDocument
+    if doc is None:
+        QtWidgets.QMessageBox.warning(None, "ElectricCR", "No hay un documento activo.")
+        return
+    areas = _collect(Gui.Selection.getSelection() or [])
+    if not areas:
+        QtWidgets.QMessageBox.warning(None, "ElectricCR", "Seleccione uno o varios rectangulos de areas, o su grupo.")
+        return
+    registry = _load_registry()
+    types = registry.get("types") or {}
+    keys = sorted([k for k in types if "lumin" in k.lower()], key=str.lower)
+    if not keys:
+        QtWidgets.QMessageBox.warning(None, "ElectricCR", "El registro no contiene tipos de luminaria.")
+        return
+    key, ok = QtWidgets.QInputDialog.getItem(
+        Gui.getMainWindow(), "Asignar tipo de luminaria", "Tipo para {} area(s):".format(len(areas)), keys, 0, False
+    )
+    if not ok or not key:
+        return
+    info = types[key] or {}
+    electrical = info.get("electrical") or {}
+    defaults = info.get("defaults") or {}
+    lumens = float(electrical.get("lumens", 4000.0) or 4000.0)
+    power = float(electrical.get("power_w", 0.0) or 0.0)
+    cct = int(electrical.get("cct_k", 0) or 0)
+    height = float(defaults.get("altura", 2700.0) or 2700.0)
+    doc.openTransaction("ElectricCR: Asignar tipo de luminaria")
+    try:
+        for area in areas:
+            _ensure(area, "App::PropertyString", "LightingTypeKey", "Clave del tipo en el registro electrico")
+            _ensure(area, "App::PropertyFloat", "LightingLumens", "Flujo luminoso unitario")
+            _ensure(area, "App::PropertyFloat", "LightingPowerW", "Potencia unitaria")
+            _ensure(area, "App::PropertyInteger", "LightingCCT", "Temperatura de color")
+            _ensure(area, "App::PropertyLength", "LightingMountHeight", "Altura de montaje")
+            area.LightingTypeKey = str(key)
+            area.LightingLumens = lumens
+            area.LightingPowerW = power
+            area.LightingCCT = cct
+            area.LightingMountHeight = height
+        doc.recompute()
+        doc.commitTransaction()
+    except Exception:
+        doc.abortTransaction()
+        raise
+    App.Console.PrintMessage("ElectricCR: '{}' asignada a {} area(s).\n".format(key, len(areas)))
+    QtWidgets.QMessageBox.information(
+        Gui.getMainWindow(), "ElectricCR", "Tipo asignado a {} area(s):\n{}\n{} lm | {} W".format(len(areas), key, lumens, power)
+    )
+
+
+run()

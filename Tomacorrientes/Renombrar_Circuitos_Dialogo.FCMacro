@@ -1,0 +1,426 @@
+# -*- coding: utf-8 -*-
+# MenuText: Renombrar circuitos...
+# ToolTip: Edita los códigos y nombres de los grupos de circuitos de tomacorrientes
+# Icon: Renombrar_Circuitos_Dialogo.svg
+# Transaction: self
+
+"""Editor manual de nombres para circuitos de tomacorrientes ElectricCR."""
+
+import re
+import FreeCAD as App
+import FreeCADGui as Gui
+
+try:
+    from PySide6 import QtWidgets, QtCore
+except Exception:
+    try:
+        from PySide2 import QtWidgets, QtCore
+    except Exception:
+        from PySide import QtGui as QtWidgets
+        from PySide import QtCore
+
+
+TAG = "RENOMBRAR CIRCUITOS"
+
+
+def log(message):
+    App.Console.PrintMessage("[ElectricCR][{}] {}\n".format(TAG, message))
+
+
+def warn(message):
+    App.Console.PrintWarning("[ElectricCR][{}] {}\n".format(TAG, message))
+
+
+def is_group(obj):
+    return obj is not None and getattr(obj, "TypeId", "") == "App::DocumentObjectGroup"
+
+
+def is_toma(obj):
+    if obj is None or is_group(obj):
+        return False
+    values = [getattr(obj, "Name", ""), getattr(obj, "Label", ""), getattr(obj, "Tipo", "")]
+    linked = getattr(obj, "LinkedObject", None)
+    if linked is not None:
+        values.extend([getattr(linked, "Label", ""), getattr(linked, "Tipo", ""), getattr(linked, "KeyRegistro", "")])
+    text = " ".join(str(x or "") for x in values).lower()
+    return "toma" in text or "tomacorriente" in text or "receptacle" in text
+
+
+def direct_tomas(group):
+    return [obj for obj in (getattr(group, "Group", []) or []) if (not is_group(obj)) and is_toma(obj)]
+
+
+def set_prop(obj, prop_type, name, value, description=""):
+    if not hasattr(obj, name):
+        obj.addProperty(prop_type, name, "ElectricCR", description)
+    setattr(obj, name, value)
+
+
+def circuit_groups(doc):
+    root = doc.getObject("Tomacorrientes")
+    if root is None or not is_group(root):
+        candidates = [
+            obj for obj in doc.Objects
+            if is_group(obj) and str(getattr(obj, "Label", "")).strip().lower().startswith("tomacorrientes")
+        ]
+        root = max(candidates, key=lambda obj: len(getattr(obj, "Group", []) or [])) if candidates else None
+    if root is None or not is_group(root):
+        return []
+    result = []
+    seen = set()
+    pending = list(getattr(root, "Group", []) or [])
+    while pending:
+        obj = pending.pop(0)
+        if not is_group(obj) or obj.Name in seen:
+            continue
+        seen.add(obj.Name)
+        cid = str(getattr(obj, "CircuitoID", "") or "").strip()
+        label = str(getattr(obj, "Label", "") or "")
+        if cid or re.match(r"^\s*TP[-_ ]?\d+", label, re.I):
+            result.append(obj)
+        pending.extend([x for x in (getattr(obj, "Group", []) or []) if is_group(x)])
+
+    def key(group):
+        visible = str(getattr(group, "Label", "") or "").split("|")[0].strip()
+        probe = visible if re.fullmatch(r"TP[-_ ]?\d+", visible, re.I) else str(getattr(group, "CircuitoID", "") or visible)
+        match = re.search(r"(\d+)", probe)
+        return (int(match.group(1)) if match else 999999, probe.lower())
+
+    return sorted(result, key=key)
+
+
+def existing_description(group):
+    rooms = str(getattr(group, "Recintos", "") or "").strip()
+    if rooms:
+        return rooms
+    label = str(getattr(group, "Label", "") or "")
+    parts = [part.strip() for part in label.split("|")]
+    return " | ".join(parts[2:]).strip() if len(parts) >= 3 else ""
+
+
+def existing_code(group):
+    """El código visible manda sobre una propiedad antigua desactualizada."""
+    label = str(getattr(group, "Label", "") or "")
+    visible = label.split("|")[0].strip()
+    if re.fullmatch(r"TP[-_ ]?\d+", visible, re.I):
+        return normalized_code(visible)
+    return normalized_code(getattr(group, "CircuitoID", "") or visible)
+
+
+def circuit_number(group):
+    match = re.search(r"(\d+)", existing_code(group))
+    return int(match.group(1)) if match else None
+
+
+def sort_groups_inside_tomacorrientes(doc):
+    root = doc.getObject("Tomacorrientes")
+    if root is None or not is_group(root):
+        return []
+    children = list(getattr(root, "Group", []) or [])
+    circuits = [obj for obj in children if is_group(obj) and circuit_number(obj) is not None]
+    others = [obj for obj in children if obj not in circuits]
+    circuits.sort(key=lambda obj: (circuit_number(obj), existing_code(obj), obj.Name))
+    others.sort(key=lambda obj: ("pendiente" in str(getattr(obj, "Label", "")).lower(), str(getattr(obj, "Label", obj.Name)).lower()))
+    ordered = circuits + others
+    if ordered != children:
+        root.Group = ordered
+    return ordered
+
+
+def normalized_code(value):
+    text = str(value or "").strip().upper()
+    match = re.fullmatch(r"TP[-_ ]?(\d+)", text, re.I)
+    if match:
+        return "TP-{:03d}".format(int(match.group(1)))
+    return text
+
+
+def final_label(code, count, description):
+    suffix = str(description or "").strip() or "Sin descripción"
+    return "{} | {} {} | {}".format(code, count, "toma" if count == 1 else "tomas", suffix)
+
+
+def analysis_area_records(doc):
+    """Áreas oficiales; su visibilidad depende del modo y no invalida su geometría."""
+    root = doc.getObject("FA_RectangularAreas")
+    if root is None or not is_group(root):
+        return []
+    records = []
+    for obj in (getattr(root, "Group", []) or []):
+        if is_group(obj):
+            continue
+        shape = getattr(obj, "Shape", None)
+        try:
+            if shape is None or shape.isNull():
+                continue
+        except Exception:
+            continue
+        kind = str(getattr(obj, "ElectricCRTipo", "") or "").strip().lower()
+        if kind and kind != "area":
+            continue
+        name = str(getattr(obj, "Recinto", "") or getattr(obj, "AreaNombre", "") or obj.Label).strip()
+        if not name or name.lower().startswith("etiqueta"):
+            continue
+        records.append((name, shape))
+    return records
+
+
+def _point_in_area(shape, point):
+    for face in (getattr(shape, "Faces", []) or []):
+        try:
+            if face.isInside(point, 0.75, True):
+                return True
+        except Exception:
+            pass
+    # Los objetos del análisis son rectángulos; este respaldo también funciona
+    # cuando Draft expone solamente el alambre cerrado.
+    try:
+        box = shape.BoundBox
+        return box.XMin-0.75 <= point.x <= box.XMax+0.75 and box.YMin-0.75 <= point.y <= box.YMax+0.75
+    except Exception:
+        return False
+
+
+def adjacent_rooms_for_toma(toma, records, probe=220.0):
+    base = toma.Placement.Base
+    diag = probe * 0.70710678
+    offsets = (
+        (0.0, 0.0), (probe, 0.0), (-probe, 0.0), (0.0, probe), (0.0, -probe),
+        (diag, diag), (diag, -diag), (-diag, diag), (-diag, -diag),
+    )
+    found = []
+    for name, shape in records:
+        if any(_point_in_area(shape, App.Vector(base.x+dx, base.y+dy, 0.0)) for dx, dy in offsets):
+            found.append(name)
+    return found
+
+
+def suggested_rooms_for_group(group, records):
+    counts = {}
+    first_seen = {}
+    order = 0
+    for toma in direct_tomas(group):
+        for room in adjacent_rooms_for_toma(toma, records):
+            if room not in first_seen:
+                first_seen[room] = order
+                order += 1
+            counts[room] = counts.get(room, 0) + 1
+    if not counts:
+        return "Recinto no identificado"
+    rooms = sorted(counts, key=lambda room: (-counts[room], first_seen[room], room.lower()))
+    shown = rooms[:4]
+    return " / ".join(shown) + (" / ..." if len(rooms) > 4 else "")
+
+
+class RenameCircuitsDialog(QtWidgets.QDialog):
+    def __init__(self, groups, room_suggestions=None, selected_names=None, parent=None):
+        super(RenameCircuitsDialog, self).__init__(parent)
+        self.groups = list(groups or [])
+        self.selected_names = set(selected_names or [])
+        self.room_suggestions = dict(room_suggestions or {})
+        self.original = {}
+        self.setWindowTitle("Renombrar circuitos de tomacorrientes")
+        self.resize(900, 520)
+        layout = QtWidgets.QVBoxLayout(self)
+
+        intro = QtWidgets.QLabel(
+            "Edite el código y la descripción de uno o varios circuitos. "
+            "La cantidad de tomas se calcula directamente desde cada grupo."
+        )
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        actions = QtWidgets.QHBoxLayout()
+        actions.addWidget(QtWidgets.QLabel("Inicio:"))
+        self.start_number = QtWidgets.QSpinBox()
+        self.start_number.setRange(1, 999)
+        self.start_number.setValue(5)
+        self.start_number.setToolTip("Primer número reservado para circuitos de tomacorrientes")
+        actions.addWidget(self.start_number)
+        self.btn_renumber = QtWidgets.QPushButton("Renumerar circuitos…")
+        self.btn_rooms = QtWidgets.QPushButton("Nombres desde análisis de áreas")
+        self.btn_both = QtWidgets.QPushButton("Renumerar y nombrar")
+        actions.addWidget(self.btn_renumber)
+        actions.addWidget(self.btn_rooms)
+        actions.addWidget(self.btn_both)
+        layout.addLayout(actions)
+
+        self.table = QtWidgets.QTableWidget(len(self.groups), 4)
+        self.table.setHorizontalHeaderLabels(["Código", "Tomas", "Descripción / recinto", "Rótulo resultante"])
+        self.table.setAlternatingRowColors(True)
+        self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+        self.table.verticalHeader().setVisible(False)
+
+        for row, group in enumerate(self.groups):
+            code = existing_code(group)
+            count = len(direct_tomas(group))
+            desc = existing_description(group)
+            values = (code, str(count), desc, final_label(code, count, desc))
+            self.original[group.Name] = (code, desc)
+            for col, value in enumerate(values):
+                item = QtWidgets.QTableWidgetItem(value)
+                item.setData(QtCore.Qt.UserRole, group.Name)
+                if col in (1, 3):
+                    item.setFlags(item.flags() & ~QtCore.Qt.ItemIsEditable)
+                    item.setBackground(QtCore.Qt.lightGray)
+                self.table.setItem(row, col, item)
+            if group.Name in self.selected_names:
+                self.table.selectRow(row)
+
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(2, QtWidgets.QHeaderView.Stretch)
+        header.setSectionResizeMode(3, QtWidgets.QHeaderView.Stretch)
+        self.table.itemChanged.connect(self.refresh_preview)
+        self.btn_renumber.clicked.connect(self.renumber_rows)
+        self.btn_rooms.clicked.connect(self.fill_room_names)
+        self.btn_both.clicked.connect(self.apply_both)
+        layout.addWidget(self.table)
+
+        self.chk_children = QtWidgets.QCheckBox("Actualizar también CircuitoID en los tomacorrientes")
+        self.chk_children.setChecked(True)
+        layout.addWidget(self.chk_children)
+
+        note = QtWidgets.QLabel(
+            "Solo se aplican las filas modificadas. Los circuitos renombrados se marcan como manuales "
+            "para protegerlos de sustituciones automáticas."
+        )
+        note.setWordWrap(True)
+        layout.addWidget(note)
+
+        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Save | QtWidgets.QDialogButtonBox.Cancel)
+        save = buttons.button(QtWidgets.QDialogButtonBox.Save)
+        if save is not None:
+            save.setText("Aplicar nombres")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        if self.selected_names:
+            for row, group in enumerate(self.groups):
+                if group.Name in self.selected_names:
+                    self.table.scrollToItem(self.table.item(row, 0))
+                    break
+
+    def refresh_preview(self, item):
+        if item is None or item.column() not in (0, 2):
+            return
+        row = item.row()
+        code = normalized_code(self.table.item(row, 0).text())
+        count = int(self.table.item(row, 1).text())
+        desc = self.table.item(row, 2).text().strip()
+        self.table.blockSignals(True)
+        self.table.item(row, 3).setText(final_label(code, count, desc))
+        self.table.blockSignals(False)
+
+    def _refresh_all_previews(self):
+        self.table.blockSignals(True)
+        for row in range(self.table.rowCount()):
+            code = normalized_code(self.table.item(row, 0).text())
+            count = int(self.table.item(row, 1).text())
+            desc = self.table.item(row, 2).text().strip()
+            self.table.item(row, 0).setText(code)
+            self.table.item(row, 3).setText(final_label(code, count, desc))
+        self.table.blockSignals(False)
+
+    def renumber_rows(self):
+        start = int(self.start_number.value())
+        self.table.blockSignals(True)
+        for row in range(self.table.rowCount()):
+            self.table.item(row, 0).setText("TP-{:03d}".format(start + row))
+        self.table.blockSignals(False)
+        self._refresh_all_previews()
+
+    def fill_room_names(self):
+        self.table.blockSignals(True)
+        for row, group in enumerate(self.groups):
+            suggestion = self.room_suggestions.get(group.Name, "Recinto no identificado")
+            self.table.item(row, 2).setText(suggestion)
+        self.table.blockSignals(False)
+        self._refresh_all_previews()
+
+    def apply_both(self):
+        self.renumber_rows()
+        self.fill_room_names()
+
+    def changes(self):
+        rows = []
+        for row, group in enumerate(self.groups):
+            code = normalized_code(self.table.item(row, 0).text())
+            desc = self.table.item(row, 2).text().strip()
+            if (code, desc) != self.original.get(group.Name):
+                rows.append((group, code, desc))
+        return rows, bool(self.chk_children.isChecked())
+
+
+def main():
+    doc = App.ActiveDocument
+    if doc is None:
+        warn("No hay documento activo.")
+        return
+    groups = circuit_groups(doc)
+    if not groups:
+        warn("No se encontraron grupos de circuitos bajo Tomacorrientes.")
+        return
+    selected = {obj.Name for obj in (Gui.Selection.getSelection() or []) if is_group(obj)}
+    records = analysis_area_records(doc)
+    suggestions = {group.Name: suggested_rooms_for_group(group, records) for group in groups}
+    dialog = RenameCircuitsDialog(groups, suggestions, selected, Gui.getMainWindow())
+    result = dialog.exec() if hasattr(dialog, "exec") else dialog.exec_()
+    if result != QtWidgets.QDialog.Accepted:
+        return
+    changes, update_children = dialog.changes()
+    if not changes:
+        log("No se modificó ningún circuito.")
+        return
+
+    codes = [code for _, code, _ in changes]
+    unchanged_codes = {
+        existing_code(group)
+        for group in groups if all(group != changed for changed, _, _ in changes)
+    }
+    if any(not code for code in codes):
+        QtWidgets.QMessageBox.warning(dialog, "Código requerido", "Todos los circuitos editados necesitan un código.")
+        return
+    if len(set(codes)) != len(codes) or any(code in unchanged_codes for code in codes):
+        QtWidgets.QMessageBox.warning(dialog, "Código duplicado", "Cada circuito debe tener un código único.")
+        return
+
+    doc.openTransaction("ElectricCR: renombrar circuitos")
+    try:
+        for group, code, description in changes:
+            count = len(direct_tomas(group))
+            set_prop(group, "App::PropertyString", "CircuitoID", code, "Identificador del circuito")
+            set_prop(group, "App::PropertyString", "Recintos", description, "Descripción o recintos")
+            set_prop(group, "App::PropertyInteger", "CantidadTomas", count, "Cantidad de tomacorrientes")
+            set_prop(group, "App::PropertyBool", "ECR_ManualCircuitGroup", True, "Circuito administrado manualmente")
+            if hasattr(group, "ECR_AutoCircuitGroup"):
+                group.ECR_AutoCircuitGroup = False
+            group.Label = final_label(code, count, description)
+            if update_children:
+                for toma in direct_tomas(group):
+                    set_prop(toma, "App::PropertyString", "CircuitoID", code, "Circuito asignado")
+                    set_prop(toma, "App::PropertyString", "ECR_CircuitStatus", "Asignado manualmente", "Estado del circuitado")
+        sort_groups_inside_tomacorrientes(doc)
+        # Solo cambian grupos y metadatos; un recompute geometrico completo es
+        # innecesario y muy costoso en proyectos grandes como Puriscal.
+        doc.commitTransaction()
+    except Exception:
+        doc.abortTransaction()
+        raise
+
+    Gui.Selection.clearSelection()
+    for group, _, _ in changes:
+        Gui.Selection.addSelection(group)
+    log("Circuitos renombrados: {}".format(len(changes)))
+    QtWidgets.QMessageBox.information(dialog, "ElectricCR", "Se actualizaron {} circuito(s).".format(len(changes)))
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as exc:
+        App.Console.PrintError("[ElectricCR][{}][ERROR] {}\n".format(TAG, exc))
+        QtWidgets.QMessageBox.critical(Gui.getMainWindow(), "ElectricCR - error", str(exc))

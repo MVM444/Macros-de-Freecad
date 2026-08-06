@@ -50,6 +50,11 @@
 
 - Insertar evaporadora concreta (ejemplo: `Pared_12000`, `Cassette_24000`).
 - Si hay recinto seleccionado, asignar evaporadora al recinto seleccionado.
+- Para equipos de pared o piso-cielo, una linea completa o arista seleccionada fija la insercion en su punto medio y orienta el equipo con el borde.
+- Si el modo visual de FreeCAD entrega el clic del contorno como una cara (`Face`), se usa el punto pulsado para resolver automaticamente la arista de borde mas cercana.
+- Si la arista pertenece a un `HVAC_Space` o a su geometria fuente vinculada, el equipo queda asociado directamente a ese espacio. En espacios sobrepuestos esta relacion explicita tiene prioridad sobre la deteccion por coordenadas.
+- Para modificar solamente la cota 3D, seleccionar una o varias evaporadoras —o sus simbolos 2D— y usar `Ajustar Altura de Evaporadora`.
+- La altura se guarda en `InstallationElevation` en milimetros. `Height` se mantiene como alias heredado en metros; `Symbol2D` e `Info2D` conservan exactamente su geometria y colocacion de planta.
 - Si no hay seleccion, detectar recinto por posicion; si falla, asignar manualmente.
 - Revisar cobertura directamente en etiqueta del recinto.
 

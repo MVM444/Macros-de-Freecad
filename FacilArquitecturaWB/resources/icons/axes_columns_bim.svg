@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="column" x1="25" y1="23" x2="43" y2="51" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f2b56d"/>
+      <stop offset="1" stop-color="#a54a1f"/>
+    </linearGradient>
+  </defs>
+  <rect x="5" y="5" width="54" height="54" rx="8" fill="#f4efe4" stroke="#24313a" stroke-width="3"/>
+  <path d="M13 18 H52 M13 33 H52 M13 48 H52 M18 12 V53 M35 12 V53 M50 12 V53"
+        fill="none" stroke="#197d8b" stroke-width="2" stroke-dasharray="4 3"/>
+  <g fill="#f4efe4" stroke="#24313a" stroke-width="1.5">
+    <circle cx="18" cy="12" r="4"/><circle cx="35" cy="12" r="4"/><circle cx="50" cy="12" r="4"/>
+    <circle cx="9" cy="18" r="4"/><circle cx="9" cy="33" r="4"/><circle cx="9" cy="48" r="4"/>
+  </g>
+  <path d="M29 29 L36 25 L43 29 L36 33 Z" fill="#ffd9aa" stroke="#24313a" stroke-width="1.5"/>
+  <path d="M29 29 V45 L36 50 V33 Z" fill="#bd5b29" stroke="#24313a" stroke-width="1.5"/>
+  <path d="M36 33 V50 L43 45 V29 Z" fill="url(#column)" stroke="#24313a" stroke-width="1.5"/>
+</svg>

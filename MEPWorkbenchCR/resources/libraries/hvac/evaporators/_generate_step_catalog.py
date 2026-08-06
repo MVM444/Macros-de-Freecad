@@ -13,6 +13,7 @@ MODELS = {
     "Cassette_36000.step": (840.0, 840.0, 350.0),
     "Ducto_36000.step": (1200.0, 360.0, 320.0),
     "Ducto_60000.step": (1600.0, 450.0, 380.0),
+    "PisoCielo_60000.step": (1650.0, 280.0, 720.0),
 }
 
 for filename, dims in MODELS.items():

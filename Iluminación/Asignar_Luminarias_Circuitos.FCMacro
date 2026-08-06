@@ -1,0 +1,655 @@
+# -*- coding: utf-8 -*-
+# MenuText: Asignar luminarias a circuitos
+# Icon: Asignar_Luminarias_Circuitos.svg
+# Transaction: self
+
+"""Asigna luminarias a circuitos sin moverlas ni duplicarlas en el arbol.
+
+Flujo manual:
+- Seleccione luminarias y un grupo de circuito de iluminacion; ejecute la macro.
+- Si selecciona solo luminarias, el dialogo permite escoger o crear el circuito.
+
+Flujo automatico:
+- Sin seleccion distribuye por carga entre TP-001...TP-004.
+- Mantiene juntas las luminarias controladas por el mismo apagador.
+- Puede conservar asignaciones manuales existentes.
+
+Los grupos de circuito contienen PropertyLinkList, no copias App::Link. Cada
+luminaria recibe CircuitoID para compatibilidad con cajas, conexiones y cuadros.
+"""
+
+import math
+import re
+import unicodedata
+
+import FreeCAD as App
+import FreeCADGui as Gui
+
+
+TAG = "[ElectricCR][CIRCUITOS ILUMINACION]"
+GENERATED_BY = "AsignarLuminariasCircuitos"
+CONTROL_GENERATOR = "AsignarLuminariasApagadores"
+PARAM_PATH = "User parameter:BaseApp/Preferences/Mod/ElectricCR/CircuitosIluminacion"
+DEFAULT_PREFIX = "TP"
+DEFAULT_FIRST = 1
+DEFAULT_COUNT = 4
+DEFAULT_POWER_W = 40.0
+
+
+def _qtwidgets():
+    for candidate in ("PySide6", "PySide2"):
+        try:
+            return __import__(candidate, fromlist=["QtWidgets"]).QtWidgets
+        except Exception:
+            pass
+    try:
+        from PySide import QtGui
+        return QtGui
+    except Exception:
+        return None
+
+
+def _log(message):
+    App.Console.PrintMessage(TAG + " " + str(message) + "\n")
+
+
+def _warn(message):
+    App.Console.PrintWarning(TAG + " " + str(message) + "\n")
+
+
+def _error(message):
+    App.Console.PrintError(TAG + " " + str(message) + "\n")
+
+
+def _safe(value):
+    try:
+        return str(value or "")
+    except Exception:
+        return ""
+
+
+def _norm(value):
+    text = unicodedata.normalize("NFD", _safe(value))
+    return "".join(ch for ch in text if unicodedata.category(ch) != "Mn").lower().strip()
+
+
+def _is_group(obj):
+    return obj is not None and hasattr(obj, "Group")
+
+
+def _unique(objects):
+    out, seen = [], set()
+    for obj in objects or []:
+        name = _safe(getattr(obj, "Name", ""))
+        if name and name not in seen:
+            seen.add(name)
+            out.append(obj)
+    return out
+
+
+def _iter_objects(objects):
+    queue, seen = list(objects or []), set()
+    while queue:
+        obj = queue.pop(0)
+        name = _safe(getattr(obj, "Name", ""))
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        yield obj
+        if _is_group(obj):
+            queue[0:0] = list(getattr(obj, "Group", []) or [])
+
+
+def _source(obj):
+    try:
+        return obj.LinkedObject if _safe(getattr(obj, "TypeId", "")) == "App::Link" else None
+    except Exception:
+        return None
+
+
+def _classification(obj):
+    values = [getattr(obj, "Name", ""), getattr(obj, "Label", "")]
+    for prop in ("Tipo", "KeyRegistro", "IfcType", "IfcClass"):
+        try:
+            values.append(getattr(obj, prop, ""))
+        except Exception:
+            pass
+    src = _source(obj)
+    if src is not None:
+        values.extend((getattr(src, "Name", ""), getattr(src, "Label", ""),
+                       getattr(src, "Tipo", ""), getattr(src, "KeyRegistro", "")))
+    return _norm(" ".join(_safe(value) for value in values))
+
+
+def _is_luminaire(obj):
+    if obj is None or _is_group(obj):
+        return False
+    if _safe(getattr(obj, "ECR_GeneradoPor", "")) in (GENERATED_BY, CONTROL_GENERATOR):
+        return False
+    own_text = _norm(" ".join((_safe(getattr(obj, "Name", "")),
+                               _safe(getattr(obj, "Label", "")),
+                               _safe(getattr(obj, "TypeId", "")))))
+    if any(token in own_text for token in ("tabla iluminacion", "spreadsheet", "master link")):
+        return False
+    text = _classification(obj)
+    return any(token in text for token in ("luminaria", "lampara", "light fixture"))
+
+
+def _is_library(obj):
+    try:
+        parents = list(getattr(obj, "InList", []) or [])
+    except Exception:
+        parents = []
+    for parent in parents:
+        text = _norm(getattr(parent, "Name", "") + " " + getattr(parent, "Label", ""))
+        if "_lib" in text or "libreria" in text or "biblioteca" in text or "master" in text:
+            return True
+    return False
+
+
+def _physical_luminaires(doc):
+    referenced = set()
+    for obj in doc.Objects:
+        src = _source(obj)
+        if src is not None:
+            referenced.add(src.Name)
+    result = []
+    for obj in doc.Objects:
+        if not _is_luminaire(obj) or _is_library(obj):
+            continue
+        if obj.Name in referenced and _safe(getattr(obj, "TypeId", "")) != "App::Link":
+            continue
+        result.append(obj)
+    return _unique(result)
+
+
+def _add_prop(obj, prop_type, name, group, description):
+    try:
+        if name not in obj.PropertiesList:
+            obj.addProperty(prop_type, name, group, description)
+        return True
+    except Exception:
+        return False
+
+
+def _set(obj, name, value):
+    try:
+        setattr(obj, name, value)
+        return True
+    except Exception:
+        return False
+
+
+def _circuit_code(value):
+    text = _safe(value).strip().upper().replace("_", "-").replace(" ", "-")
+    match = re.search(r"\b([A-Z]+)-?0*(\d+)\b", text)
+    if not match:
+        return ""
+    prefix, number = match.group(1), int(match.group(2))
+    return "%s-%03d" % (prefix, number) if prefix == "TP" else "%s-%02d" % (prefix, number)
+
+
+def _group_circuit_id(obj):
+    for prop in ("CircuitoID", "CircuitID", "Circuito"):
+        try:
+            code = _circuit_code(getattr(obj, prop, ""))
+            if code:
+                return code
+        except Exception:
+            pass
+    return _circuit_code(getattr(obj, "Label", "") or getattr(obj, "Name", ""))
+
+
+def _is_lighting_circuit_group(obj):
+    if not _is_group(obj):
+        return False
+    if _safe(getattr(obj, "ECR_TipoCircuito", "")) == "Iluminacion":
+        return True
+    if _safe(getattr(obj, "ECR_GeneradoPor", "")) == GENERATED_BY:
+        return True
+    if not _group_circuit_id(obj):
+        return False
+    try:
+        parents = list(getattr(obj, "InList", []) or [])
+    except Exception:
+        parents = []
+    return any("ilumin" in _norm(getattr(parent, "Name", "") + " " + getattr(parent, "Label", "")) for parent in parents)
+
+
+def _selected():
+    luminaires, circuits = [], []
+    for obj in _iter_objects(Gui.Selection.getSelection() or []):
+        if _is_lighting_circuit_group(obj):
+            circuits.append(obj)
+        elif _is_luminaire(obj):
+            luminaires.append(obj)
+    return _unique(luminaires), _unique(circuits)
+
+
+def _ensure_group(doc, name, label, parent=None):
+    obj = doc.getObject(name)
+    if obj is None:
+        obj = doc.addObject("App::DocumentObjectGroup", name)
+    obj.Label = label
+    if parent is not None and obj not in (getattr(parent, "Group", []) or []):
+        parent.addObject(obj)
+    return obj
+
+
+def _lighting_root(doc):
+    for obj in doc.Objects:
+        if _is_group(obj) and _norm(getattr(obj, "Name", "") + " " + getattr(obj, "Label", "")) == "iluminacion iluminacion":
+            return obj
+    for obj in doc.Objects:
+        if _is_group(obj) and "iluminacion" in _norm(getattr(obj, "Name", "") + " " + getattr(obj, "Label", "")):
+            return obj
+    electrical = doc.getObject("electrico")
+    return _ensure_group(doc, "Iluminacion", "Iluminacion", electrical)
+
+
+def _circuits_root(doc):
+    lighting = _lighting_root(doc)
+    for child in list(getattr(lighting, "Group", []) or []):
+        if _is_group(child) and _norm(getattr(child, "Label", "")) == "circuitos":
+            return child
+    return _ensure_group(doc, "Circuitos_Iluminacion", "Circuitos", lighting)
+
+
+def _circuit_groups(doc):
+    return [obj for obj in doc.Objects if _is_lighting_circuit_group(obj)]
+
+
+def _find_circuit_group(doc, circuit_id):
+    wanted = _circuit_code(circuit_id)
+    for group in _circuit_groups(doc):
+        if _group_circuit_id(group) == wanted:
+            return group
+    return None
+
+
+def _ensure_circuit_group(doc, circuit_id):
+    circuit_id = _circuit_code(circuit_id)
+    if not circuit_id:
+        raise ValueError("Identificador de circuito no valido")
+    group = _find_circuit_group(doc, circuit_id)
+    if group is None:
+        name = "Circuito_Iluminacion_" + circuit_id.replace("-", "_")
+        group = _ensure_group(doc, name, circuit_id, _circuits_root(doc))
+    definitions = (
+        ("App::PropertyString", "ECR_GeneradoPor", "ElectricCR", "Macro generadora"),
+        ("App::PropertyString", "ECR_TipoCircuito", "ElectricCR", "Clasificacion del circuito"),
+        ("App::PropertyString", "CircuitoID", "Circuito", "Identificador de circuito"),
+        ("App::PropertyString", "Tablero", "Circuito", "Tablero alimentador"),
+        ("App::PropertyLinkList", "LuminariasAsignadas", "Circuito", "Luminarias del circuito"),
+        ("App::PropertyLinkList", "ControlesIluminacion", "Circuito", "Controles asociados"),
+        ("App::PropertyLinkList", "ApagadoresAsignados", "Circuito", "Apagadores asociados"),
+        ("App::PropertyInteger", "CantidadLuminarias", "Circuito", "Cantidad de luminarias"),
+        ("App::PropertyFloat", "CargaInstaladaW", "Circuito", "Carga instalada en W"),
+        ("App::PropertyStringList", "Recintos", "Circuito", "Recintos atendidos"),
+    )
+    for definition in definitions:
+        _add_prop(group, *definition)
+    group.ECR_GeneradoPor = GENERATED_BY
+    group.ECR_TipoCircuito = "Iluminacion"
+    group.CircuitoID = circuit_id
+    if not _safe(getattr(group, "Tablero", "")):
+        group.Tablero = "TP"
+    return group
+
+
+def _lum_circuit(obj):
+    for prop in ("CircuitoID", "Circuito", "CircuitID"):
+        try:
+            code = _circuit_code(getattr(obj, prop, ""))
+            if code:
+                return code
+        except Exception:
+            pass
+    return ""
+
+
+def _set_lum_circuit(luminaire, circuit_id, source="Manual"):
+    definitions = (
+        ("App::PropertyString", "CircuitoID", "Circuito", "Circuito electrico asignado"),
+        ("App::PropertyString", "Circuito", "Circuito", "Circuito electrico asignado"),
+        ("App::PropertyString", "ECR_CircuitoIluminacion", "Circuito", "Circuito de iluminacion"),
+        ("App::PropertyString", "ECR_CircuitoAsignadoPor", "Circuito", "Origen de la asignacion"),
+    )
+    for definition in definitions:
+        _add_prop(luminaire, *definition)
+    _set(luminaire, "CircuitoID", circuit_id)
+    _set(luminaire, "Circuito", circuit_id)
+    _set(luminaire, "ECR_CircuitoIluminacion", circuit_id)
+    _set(luminaire, "ECR_CircuitoAsignadoPor", source)
+
+
+def _quantity_value(value):
+    try:
+        return float(value.Value)
+    except Exception:
+        try:
+            return float(value)
+        except Exception:
+            return None
+
+
+def _power_w(obj):
+    names = ("PotenciaUnitaria", "PotenciaW", "Potencia", "Power", "RatedPower", "ElectricalPower", "PowerW")
+    for candidate in (obj, _source(obj)):
+        if candidate is None:
+            continue
+        for name in names:
+            try:
+                value = _quantity_value(getattr(candidate, name))
+                if value is not None and value > 0:
+                    return value
+            except Exception:
+                pass
+    return DEFAULT_POWER_W
+
+
+def _room(obj):
+    for prop in ("Recinto", "AreaRecinto", "AreaNombre", "NombreArea", "Habitacion", "Ambiente", "ORG_Area"):
+        try:
+            value = getattr(obj, prop)
+            if hasattr(value, "Label"):
+                value = value.Label
+            text = _safe(value).strip()
+            if text:
+                return text
+        except Exception:
+            pass
+    label = _safe(getattr(obj, "Label", ""))
+    match = re.match(r"(.+?)[ _-]+Luminaria(?:[ _-]|$)", label, re.I)
+    return match.group(1).replace("_", " ").strip() if match else "Sin recinto"
+
+
+def _control_objects(doc):
+    return [obj for obj in doc.Objects
+            if _safe(getattr(obj, "ECR_GeneradoPor", "")) == CONTROL_GENERATOR and hasattr(obj, "Luminarias")]
+
+
+def _expand_by_control(doc, luminaires):
+    selected = set(obj.Name for obj in luminaires)
+    expanded = list(luminaires)
+    for control in _control_objects(doc):
+        members = list(getattr(control, "Luminarias", []) or [])
+        if any(member.Name in selected for member in members):
+            expanded.extend(members)
+    return _unique(expanded)
+
+
+def _refresh_control_circuits(doc):
+    for control in _control_objects(doc):
+        ids = sorted(set(_lum_circuit(lum) for lum in (getattr(control, "Luminarias", []) or []) if _lum_circuit(lum)))
+        _add_prop(control, "App::PropertyString", "CircuitoID", "Circuito", "Circuito de alimentacion")
+        control.CircuitoID = " / ".join(ids)
+
+
+def _refresh_switch_circuits(doc):
+    for obj in doc.Objects:
+        if _is_group(obj):
+            continue
+        try:
+            control_ids = list(getattr(obj, "ECR_ControlIDs", []) or [])
+        except Exception:
+            continue
+        ids = []
+        for control in _control_objects(doc):
+            if _safe(getattr(control, "ControlID", "")) in control_ids:
+                ids.extend(_lum_circuit(lum) for lum in (getattr(control, "Luminarias", []) or []))
+        ids = sorted(set(item for item in ids if item))
+        _add_prop(obj, "App::PropertyStringList", "ECR_CircuitosIluminacion", "Circuito", "Circuitos controlados")
+        obj.ECR_CircuitosIluminacion = ids
+
+
+def _refresh_groups(doc):
+    luminaires = _physical_luminaires(doc)
+    controls = _control_objects(doc)
+    for group in _circuit_groups(doc):
+        circuit_id = _group_circuit_id(group)
+        if not circuit_id:
+            continue
+        _ensure_circuit_group(doc, circuit_id)
+        members = [lum for lum in luminaires if _lum_circuit(lum) == circuit_id]
+        related_controls = [control for control in controls
+                            if any(lum in members for lum in (getattr(control, "Luminarias", []) or []))]
+        switches = _unique([switch for control in related_controls
+                            for switch in (getattr(control, "Apagadores", []) or [])])
+        rooms = sorted(set(_room(lum) for lum in members if _room(lum)))
+        load = sum(_power_w(lum) for lum in members)
+        group.LuminariasAsignadas = members
+        group.ControlesIluminacion = related_controls
+        group.ApagadoresAsignados = switches
+        group.CantidadLuminarias = len(members)
+        group.CargaInstaladaW = float(load)
+        group.Recintos = rooms
+        room_text = " / ".join(rooms[:4])
+        if len(rooms) > 4:
+            room_text += " / ..."
+        group.Label = "%s | %d luminarias | %.0f W%s" % (
+            circuit_id, len(members), load, (" | " + room_text) if room_text else ""
+        )
+    _refresh_control_circuits(doc)
+    _refresh_switch_circuits(doc)
+
+
+def assign_manual(doc, luminaires, circuit, expand_controls=True):
+    circuit_id = _group_circuit_id(circuit) if _is_group(circuit) else _circuit_code(circuit)
+    if not circuit_id:
+        raise ValueError("No se pudo determinar el CircuitoID")
+    target = _ensure_circuit_group(doc, circuit_id)
+    original = _unique(luminaires)
+    luminaires = _expand_by_control(doc, original) if expand_controls else original
+    if not luminaires:
+        raise ValueError("No hay luminarias seleccionadas")
+    doc.openTransaction("ElectricCR: asignar luminarias a " + circuit_id)
+    try:
+        for luminaire in luminaires:
+            _set_lum_circuit(luminaire, circuit_id, "Manual")
+        _refresh_groups(doc)
+        doc.recompute()
+        doc.commitTransaction()
+    except Exception:
+        doc.abortTransaction()
+        raise
+    return {"circuito": circuit_id, "seleccionadas": len(original), "asignadas": len(luminaires),
+            "expandidas_control": len(luminaires) - len(original), "carga_w": sum(_power_w(lum) for lum in luminaires)}
+
+
+def _automatic_units(doc, luminaires):
+    allowed = set(lum.Name for lum in luminaires)
+    used, units = set(), []
+    for control in _control_objects(doc):
+        members = [lum for lum in (getattr(control, "Luminarias", []) or []) if lum.Name in allowed]
+        if members:
+            units.append({"key": _safe(getattr(control, "ControlID", control.Name)), "luminaires": members,
+                          "load": sum(_power_w(lum) for lum in members), "room": _room(members[0])})
+            used.update(lum.Name for lum in members)
+    by_room = {}
+    for lum in luminaires:
+        if lum.Name not in used:
+            by_room.setdefault(_room(lum), []).append(lum)
+    for room, members in by_room.items():
+        units.append({"key": "room:" + room, "luminaires": members,
+                      "load": sum(_power_w(lum) for lum in members), "room": room})
+    return units
+
+
+def assign_automatic(doc, prefix=DEFAULT_PREFIX, first=DEFAULT_FIRST, count=DEFAULT_COUNT, preserve=True):
+    prefix = re.sub(r"[^A-Za-z]", "", _safe(prefix)).upper() or DEFAULT_PREFIX
+    first, count = int(first), max(1, int(count))
+    circuit_ids = [_circuit_code("%s-%d" % (prefix, first + index)) for index in range(count)]
+    for circuit_id in circuit_ids:
+        _ensure_circuit_group(doc, circuit_id)
+    luminaires = _physical_luminaires(doc)
+    units = _automatic_units(doc, luminaires)
+    loads = {circuit_id: 0.0 for circuit_id in circuit_ids}
+    counts = {circuit_id: 0 for circuit_id in circuit_ids}
+    if preserve:
+        for lum in luminaires:
+            cid = _lum_circuit(lum)
+            if cid in loads:
+                loads[cid] += _power_w(lum)
+                counts[cid] += 1
+    changed = kept = 0
+    doc.openTransaction("ElectricCR: distribuir circuitos de iluminacion")
+    try:
+        pending = []
+        for unit in units:
+            existing = [_lum_circuit(lum) for lum in unit["luminaires"] if _lum_circuit(lum) in circuit_ids]
+            if preserve and existing:
+                chosen = max(set(existing), key=existing.count)
+                for lum in unit["luminaires"]:
+                    if not _lum_circuit(lum):
+                        _set_lum_circuit(lum, chosen, "Automatico por control")
+                        loads[chosen] += _power_w(lum); counts[chosen] += 1; changed += 1
+                    else:
+                        kept += 1
+                continue
+            pending.append(unit)
+        pending.sort(key=lambda unit: (-unit["load"], _norm(unit["room"])))
+        for unit in pending:
+            chosen = min(circuit_ids, key=lambda cid: (loads[cid], counts[cid], cid))
+            for lum in unit["luminaires"]:
+                old = _lum_circuit(lum)
+                if old in loads and not preserve:
+                    loads[old] = max(0.0, loads[old] - _power_w(lum)); counts[old] = max(0, counts[old] - 1)
+                _set_lum_circuit(lum, chosen, "Automatico balanceado")
+                loads[chosen] += _power_w(lum); counts[chosen] += 1; changed += 1
+        _refresh_groups(doc)
+        doc.recompute()
+        doc.commitTransaction()
+    except Exception:
+        doc.abortTransaction()
+        raise
+    return {"circuitos": circuit_ids, "luminarias": len(luminaires), "asignadas": changed,
+            "conservadas": kept, "cargas_w": loads, "cantidades": counts}
+
+
+def _choose_circuit_dialog(doc, selected_count):
+    QtWidgets = _qtwidgets()
+    if QtWidgets is None:
+        return None
+    dialog = QtWidgets.QDialog(Gui.getMainWindow())
+    dialog.setWindowTitle("Asignar luminarias a circuito")
+    dialog.setMinimumWidth(430)
+    combo = QtWidgets.QComboBox()
+    existing = sorted((_group_circuit_id(group), group) for group in _circuit_groups(doc) if _group_circuit_id(group))
+    for circuit_id, group in existing:
+        combo.addItem("%s — %s" % (circuit_id, getattr(group, "Label", circuit_id)), circuit_id)
+    for number in range(1, 5):
+        code = "TP-%03d" % number
+        if not any(item[0] == code for item in existing):
+            combo.addItem(code + " — crear circuito de iluminacion", code)
+    code_edit = QtWidgets.QLineEdit()
+    code_edit.setPlaceholderText("Opcional: TP-001")
+    expand = QtWidgets.QCheckBox("Mantener juntas las luminarias del mismo control/apagador")
+    expand.setChecked(True)
+    form = QtWidgets.QFormLayout()
+    form.addRow(QtWidgets.QLabel("Luminarias seleccionadas: %d" % selected_count))
+    form.addRow("Circuito:", combo)
+    form.addRow("Otro identificador:", code_edit)
+    form.addRow(expand)
+    buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+    buttons.accepted.connect(dialog.accept); buttons.rejected.connect(dialog.reject)
+    layout = QtWidgets.QVBoxLayout(dialog); layout.addLayout(form); layout.addWidget(buttons)
+    if dialog.exec() != QtWidgets.QDialog.Accepted:
+        return None
+    circuit_id = _circuit_code(code_edit.text()) or _safe(combo.currentData())
+    return {"circuit": circuit_id, "expand": expand.isChecked()}
+
+
+def _automatic_dialog():
+    QtWidgets = _qtwidgets()
+    if QtWidgets is None:
+        return None
+    params = App.ParamGet(PARAM_PATH)
+    dialog = QtWidgets.QDialog(Gui.getMainWindow())
+    dialog.setWindowTitle("Distribuir circuitos de iluminacion")
+    dialog.setMinimumWidth(440)
+    prefix = QtWidgets.QLineEdit(params.GetString("Prefix", DEFAULT_PREFIX))
+    first = QtWidgets.QSpinBox(); first.setRange(1, 999); first.setValue(params.GetInt("First", DEFAULT_FIRST))
+    count = QtWidgets.QSpinBox(); count.setRange(1, 24); count.setValue(params.GetInt("Count", DEFAULT_COUNT))
+    preserve = QtWidgets.QCheckBox("Conservar asignaciones manuales existentes")
+    preserve.setChecked(True)
+    info = QtWidgets.QLabel("Se mantendran juntas las luminarias controladas por el mismo apagador y se balanceara la carga instalada.")
+    info.setWordWrap(True)
+    form = QtWidgets.QFormLayout(); form.addRow(info); form.addRow("Prefijo:", prefix); form.addRow("Primer numero:", first); form.addRow("Cantidad de circuitos:", count); form.addRow(preserve)
+    buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+    buttons.accepted.connect(dialog.accept); buttons.rejected.connect(dialog.reject)
+    layout = QtWidgets.QVBoxLayout(dialog); layout.addLayout(form); layout.addWidget(buttons)
+    if dialog.exec() != QtWidgets.QDialog.Accepted:
+        return None
+    params.SetString("Prefix", prefix.text()); params.SetInt("First", first.value()); params.SetInt("Count", count.value())
+    return {"prefix": prefix.text(), "first": first.value(), "count": count.value(), "preserve": preserve.isChecked()}
+
+
+def _show(result, automatic=False):
+    if automatic:
+        lines = ["Distribucion automatica finalizada.", "", "Luminarias: %d" % result["luminarias"]]
+        for circuit_id in result["circuitos"]:
+            lines.append("%s: %d luminarias | %.0f W" % (circuit_id, result["cantidades"][circuit_id], result["cargas_w"][circuit_id]))
+    else:
+        lines = ["Asignacion manual finalizada.", "", "Circuito: " + result["circuito"],
+                 "Luminarias asignadas: %d" % result["asignadas"], "Carga seleccionada: %.0f W" % result["carga_w"]]
+        if result["expandidas_control"]:
+            lines.append("Incluidas por compartir apagador: %d" % result["expandidas_control"])
+    text = "\n".join(lines)
+    QtWidgets = _qtwidgets()
+    if QtWidgets is not None:
+        QtWidgets.QMessageBox.information(Gui.getMainWindow(), "Circuitos de iluminacion", text)
+    _log(text.replace("\n", " | "))
+
+
+def main(doc_override=None, cfg_override=None):
+    doc = doc_override or App.ActiveDocument
+    if doc is None:
+        _error("No hay documento activo")
+        return None
+    luminaires, circuit_groups = _selected()
+    try:
+        if cfg_override is not None:
+            if cfg_override.get("mode") == "manual":
+                target = cfg_override.get("circuit")
+                result = assign_manual(doc, cfg_override.get("luminaires", luminaires), target,
+                                       bool(cfg_override.get("expand_controls", True)))
+                automatic = False
+            else:
+                result = assign_automatic(doc, cfg_override.get("prefix", DEFAULT_PREFIX),
+                                          cfg_override.get("first", DEFAULT_FIRST),
+                                          cfg_override.get("count", DEFAULT_COUNT),
+                                          bool(cfg_override.get("preserve", True)))
+                automatic = True
+        elif luminaires and len(circuit_groups) == 1:
+            result = assign_manual(doc, luminaires, circuit_groups[0], True)
+            automatic = False
+        elif luminaires:
+            if len(circuit_groups) > 1:
+                raise ValueError("Seleccione solo un grupo de circuito")
+            cfg = _choose_circuit_dialog(doc, len(luminaires))
+            if not cfg:
+                return None
+            result = assign_manual(doc, luminaires, cfg["circuit"], cfg["expand"])
+            automatic = False
+        else:
+            cfg = _automatic_dialog()
+            if not cfg:
+                return None
+            result = assign_automatic(doc, cfg["prefix"], cfg["first"], cfg["count"], cfg["preserve"])
+            automatic = True
+    except Exception as exc:
+        _error("No se pudo asignar: " + _safe(exc))
+        QtWidgets = _qtwidgets()
+        if QtWidgets is not None and cfg_override is None:
+            QtWidgets.QMessageBox.critical(Gui.getMainWindow(), "Circuitos de iluminacion", _safe(exc))
+        return None
+    if cfg_override is None:
+        _show(result, automatic)
+    else:
+        _log("Resultado: " + _safe(result))
+    return result
+
+
+if __name__ == "__main__":
+    main()

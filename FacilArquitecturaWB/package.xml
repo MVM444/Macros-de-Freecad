@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<package format="1">
+  <name>FacilArquitecturaWB</name>
+  <description>Workbench para organizar planos existentes y crear base arquitectonica BIM editable en FreeCAD</description>
+  <version>0.7.0</version>
+  <date>2026-08-05</date>
+  <maintainer email="">Marco Vinicio Mora Fallas</maintainer>
+  <license>MIT</license>
+  <content>
+    <workbench>
+      <name>FacilArquitecturaWB</name>
+      <description>Facil Arquitectura</description>
+      <icon>resources/icons/facilarq.svg</icon>
+    </workbench>
+  </content>
+</package>

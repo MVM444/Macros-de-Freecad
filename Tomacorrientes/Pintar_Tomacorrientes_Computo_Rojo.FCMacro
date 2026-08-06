@@ -1,0 +1,121 @@
+# -*- coding: utf-8 -*-
+# MenuText: Pintar tomacorrientes de computo en rojo
+# Icon: Tomacorrientes/Pintar_Tomacorrientes_Computo_Rojo.svg
+
+"""Colorea de rojo solamente las instancias de tomacorrientes de computo."""
+
+import unicodedata
+
+import FreeCAD as App
+
+try:
+    import FreeCADGui as Gui
+except Exception:
+    Gui = None
+
+
+TAG = "[PINTAR_TOMAS_COMPUTO]"
+RED = (1.0, 0.05, 0.05)
+
+
+def _text(value):
+    try:
+        return str(value or "")
+    except Exception:
+        return ""
+
+
+def _normalized(value):
+    value = unicodedata.normalize("NFD", _text(value))
+    return "".join(char for char in value if unicodedata.category(char) != "Mn").lower()
+
+
+def _is_computer_outlet(obj):
+    if obj is None or hasattr(obj, "Group"):
+        return False
+    # Los tomas importados son App::Link. Esta restriccion impide colorear
+    # tablero, grupos, cajas octogonales y rutas cuyos nombres mencionen TCOM.
+    if _text(getattr(obj, "TypeId", "")) != "App::Link" and not hasattr(obj, "LinkedObject"):
+        return False
+    circuit = _normalized(getattr(obj, "CircuitoID", ""))
+    system = " ".join(
+        _normalized(getattr(obj, prop, ""))
+        for prop in ("Sistema", "UsoElectrico", "ClaseCSV")
+    )
+    imported_name = _normalized(getattr(obj, "Name", "")).startswith("toma_computo_dxf_")
+    return circuit.startswith("tcom-") or "computo" in system or imported_name
+
+
+def _paint_red(obj):
+    view = getattr(obj, "ViewObject", None)
+    if view is None:
+        return False
+
+    changed = False
+    for prop in ("ShapeColor", "LineColor", "PointColor"):
+        if hasattr(view, prop):
+            try:
+                setattr(view, prop, RED)
+                changed = True
+            except Exception:
+                pass
+
+    # App::Link usa material sobreescrito por instancia. No se modifica el
+    # objeto maestro porque tambien puede ser usado por tomas generales.
+    if hasattr(view, "ShapeMaterial"):
+        try:
+            material = view.ShapeMaterial
+            material.DiffuseColor = RED
+            material.AmbientColor = (0.35, 0.0, 0.0)
+            material.EmissiveColor = (0.12, 0.0, 0.0)
+            view.ShapeMaterial = material
+            changed = True
+        except Exception:
+            pass
+    if hasattr(view, "OverrideMaterial"):
+        try:
+            view.OverrideMaterial = True
+            changed = True
+        except Exception:
+            pass
+    return changed
+
+
+def main(doc_override=None):
+    doc = doc_override or App.ActiveDocument
+    if doc is None:
+        App.Console.PrintError(TAG + " No hay documento activo.\n")
+        return None
+
+    outlets = [obj for obj in doc.Objects if _is_computer_outlet(obj)]
+    if not outlets:
+        App.Console.PrintWarning(TAG + " No se encontraron tomacorrientes de computo.\n")
+        return {"encontrados": 0, "pintados": 0}
+
+    doc.openTransaction("ElectricCR: pintar tomas de computo en rojo")
+    try:
+        painted = sum(1 for obj in outlets if _paint_red(obj))
+        doc.recompute()
+        doc.commitTransaction()
+    except Exception as exc:
+        try:
+            doc.abortTransaction()
+        except Exception:
+            pass
+        App.Console.PrintError(TAG + " Error: " + _text(exc) + "\n")
+        return None
+
+    if Gui is not None:
+        try:
+            Gui.activeDocument().activeView().redraw()
+        except Exception:
+            pass
+    result = {"encontrados": len(outlets), "pintados": painted}
+    App.Console.PrintMessage(
+        TAG + " {} tomacorrientes de computo pintados de rojo.\n".format(painted)
+    )
+    return result
+
+
+if __name__ == "__main__":
+    main()

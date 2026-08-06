@@ -1,0 +1,594 @@
+# -*- coding: utf-8 -*-
+# MenuText: Conectar desconectores al tablero asignado y actualizar tablas
+# ToolTip: Conecta cada desconector al tablero y circuito ya definidos en Asignacion_Red; reporta los que no tengan asignacion.
+# Toolbar: Conectar
+# Icon: Conectar_Desconectores_HVAC_a_TP.svg
+# Transaction: self
+"""Conectar desconectores ElectricCR al tablero que ya tienen asignado.
+
+El nombre del archivo se conserva por compatibilidad con proyectos y accesos
+anteriores, pero la implementacion es generica. Sirve para desconectores HVAC,
+hidroneumaticos y de otros sistemas.
+
+Fuentes de asignacion, en orden:
+1. Hoja ``Asignacion_Red`` creada por "Asignar tableros y circuitos".
+2. Vínculo ``Panel`` o ``UpstreamEquipment``.
+3. Hoja ``Red_Origenes``.
+4. Alias heredados ``ConectadoA``, ``PanelId`` o ``Panel`` de texto.
+
+La macro nunca inventa un tablero ni un numero de circuito. Los elementos sin
+asignacion se reportan para que el usuario los complete primero.
+"""
+
+import re
+import runpy
+import unicodedata
+from pathlib import Path
+
+import FreeCAD as App
+
+try:
+    import FreeCADGui as Gui
+except Exception:
+    Gui = None
+
+try:
+    from PySide import QtGui
+
+    QtWidgets = QtGui
+    try:
+        from PySide import QtWidgets as _QtWidgets
+
+        QtWidgets = _QtWidgets
+    except Exception:
+        pass
+except Exception:
+    QtWidgets = None
+
+
+TAG = "[ElectricCR][DESCONECTORES->TABLERO]"
+GENERATED_BY = "ConectarDesconectoresATableroAsignado"
+SHEET_ASSIGN = "Asignacion_Red"
+SHEET_ORIGINS = "Red_Origenes"
+
+
+def _txt(value):
+    try:
+        return str(value or "").strip()
+    except Exception:
+        return ""
+
+
+def _key(value):
+    text = unicodedata.normalize("NFKD", _txt(value).lower())
+    return "".join(ch for ch in text if not unicodedata.combining(ch) and ch.isalnum())
+
+
+def _log(message):
+    App.Console.PrintMessage("{} {}\n".format(TAG, message))
+
+
+def _warn(message):
+    App.Console.PrintWarning("{} {}\n".format(TAG, message))
+
+
+def _props(obj):
+    try:
+        return list(obj.PropertiesList or [])
+    except Exception:
+        return []
+
+
+def _ensure(obj, ptype, name, group, description):
+    if name not in _props(obj):
+        obj.addProperty(ptype, name, group, description)
+
+
+def _property_type(obj, name):
+    try:
+        return _txt(obj.getTypeIdOfProperty(name))
+    except Exception:
+        return ""
+
+
+def _is_disconnector(obj):
+    if obj is None:
+        return False
+    blob = _key(
+        "{} {} {} {} {}".format(
+            getattr(obj, "ClaseEquipo", ""),
+            getattr(obj, "Tipo", ""),
+            getattr(obj, "ElementType", ""),
+            getattr(obj, "Subtype", ""),
+            getattr(obj, "IfcType", ""),
+        )
+    )
+    if "desconector" in blob or "disconnectswitch" in blob or "disconnect" in blob:
+        return True
+    return "UsoDesconector" in _props(obj)
+
+
+def _is_panel(obj):
+    if obj is None or _is_disconnector(obj):
+        return False
+    blob = _key(
+        "{} {} {} {}".format(
+            getattr(obj, "ClaseEquipo", ""),
+            getattr(obj, "Tipo", ""),
+            getattr(obj, "ElementType", ""),
+            getattr(obj, "IfcType", ""),
+        )
+    )
+    return "tablero" in blob or "distributionboard" in blob or "panelboard" in blob
+
+
+def _disconnectors(doc):
+    selected = []
+    if Gui is not None:
+        try:
+            selected = [obj for obj in (Gui.Selection.getSelection() or []) if _is_disconnector(obj)]
+        except Exception:
+            selected = []
+    objects = selected or [obj for obj in list(doc.Objects) if _is_disconnector(obj)]
+    unique = []
+    seen = set()
+    for obj in objects:
+        if obj.Name in seen:
+            continue
+        seen.add(obj.Name)
+        unique.append(obj)
+    unique.sort(key=lambda obj: _key(getattr(obj, "Codigo", getattr(obj, "Label", obj.Name))))
+    return unique
+
+
+def _panel_tokens(panel):
+    return [
+        _txt(getattr(panel, "Codigo", "")),
+        _txt(getattr(panel, "Name", "")),
+        _txt(getattr(panel, "Label", "")),
+        _txt(getattr(panel, "NombreTablero", "")),
+        _txt(getattr(panel, "CodigoInterno", "")),
+    ]
+
+
+def _panel_by_token(doc, token):
+    wanted = _key(token)
+    if not wanted:
+        return None
+    exact = []
+    contained = []
+    for obj in list(doc.Objects):
+        if not _is_panel(obj):
+            continue
+        keys = [_key(value) for value in _panel_tokens(obj) if _txt(value)]
+        if wanted in keys:
+            exact.append(obj)
+        elif any(wanted in key or key in wanted for key in keys if key):
+            contained.append(obj)
+    if len(exact) == 1:
+        return exact[0]
+    if not exact and len(contained) == 1:
+        return contained[0]
+    return None
+
+
+def _sheet_get(sheet, cell):
+    try:
+        return _txt(sheet.getContents(cell)).strip("'")
+    except Exception:
+        return ""
+
+
+def _use_enabled(value, has_assignment=False):
+    text = _key(value)
+    if text in ("0", "false", "no", "off"):
+        return False
+    if text in ("1", "true", "si", "yes", "on"):
+        return True
+    return bool(has_assignment)
+
+
+def _assignment_row(doc, disconnector):
+    sheet = doc.getObject(SHEET_ASSIGN)
+    if sheet is None:
+        return {}
+    expected_key = "EQ::OBJ::{}".format(disconnector.Name)
+    code = _key(getattr(disconnector, "Codigo", ""))
+    fallback = {}
+    empty_run = 0
+    for row in range(2, 7000):
+        use = _sheet_get(sheet, "A{}".format(row))
+        panel = _sheet_get(sheet, "B{}".format(row))
+        item = _sheet_get(sheet, "C{}".format(row))
+        item_type = _sheet_get(sheet, "D{}".format(row))
+        key = _sheet_get(sheet, "H{}".format(row))
+        circuit = _sheet_get(sheet, "K{}".format(row))
+        if not any((use, panel, item, item_type, key, circuit)):
+            empty_run += 1
+            if empty_run >= 100:
+                break
+            continue
+        empty_run = 0
+        data = {
+            "row": row,
+            "use": use,
+            "panel": panel,
+            "circuit": circuit,
+            "item": item,
+            "key": key,
+        }
+        if key == expected_key:
+            return data
+        if code and _key(item) == code and "desconector" in _key(item_type):
+            fallback = data
+    return fallback
+
+
+def _origin_row(doc, disconnector):
+    sheet = doc.getObject(SHEET_ORIGINS)
+    if sheet is None:
+        return {}
+    code = _key(getattr(disconnector, "Codigo", ""))
+    fallback = {}
+    empty_run = 0
+    for row in range(2, 4000):
+        use = _sheet_get(sheet, "A{}".format(row))
+        item = _sheet_get(sheet, "B{}".format(row))
+        source = _sheet_get(sheet, "D{}".format(row))
+        object_name = _sheet_get(sheet, "E{}".format(row))
+        if not any((use, item, source, object_name)):
+            empty_run += 1
+            if empty_run >= 100:
+                break
+            continue
+        empty_run = 0
+        data = {"row": row, "use": use, "panel": source}
+        if object_name == disconnector.Name:
+            return data
+        if code and _key(item) == code:
+            fallback = data
+    return fallback
+
+
+def _linked_panel(disconnector):
+    for name in ("Panel", "UpstreamEquipment", "PanelRef", "TableroAsignado"):
+        if name not in _props(disconnector):
+            continue
+        try:
+            value = getattr(disconnector, name)
+        except Exception:
+            continue
+        if _is_panel(value):
+            return value
+    return None
+
+
+def _text_panel_candidates(disconnector):
+    values = []
+    for name in ("ConectadoA", "PanelId", "PanelID", "Tablero", "TableroAsignado", "Panel"):
+        if name not in _props(disconnector):
+            continue
+        try:
+            value = getattr(disconnector, name)
+        except Exception:
+            continue
+        if isinstance(value, str) and _txt(value):
+            values.append(_txt(value))
+    return values
+
+
+def _circuit_from_object(disconnector):
+    try:
+        circuit = getattr(disconnector, "Circuit", None)
+        if circuit is not None:
+            for name in ("CircuitId", "CircuitoID", "Codigo"):
+                value = _txt(getattr(circuit, name, ""))
+                if value:
+                    return value
+    except Exception:
+        pass
+    for name in ("CircuitoID", "CircuitId", "Circuito", "CircuitID"):
+        value = _txt(getattr(disconnector, name, ""))
+        if value:
+            return value
+    return ""
+
+
+def _resolve_assignment(doc, disconnector):
+    assignment = _assignment_row(doc, disconnector)
+    panel_token = ""
+    source = ""
+    if assignment and _use_enabled(assignment.get("use", ""), bool(assignment.get("panel"))):
+        panel_token = _txt(assignment.get("panel", ""))
+        source = SHEET_ASSIGN
+
+    panel = _panel_by_token(doc, panel_token) if panel_token else None
+    linked = _linked_panel(disconnector)
+    if panel is None and linked is not None:
+        panel = linked
+        panel_token = _txt(getattr(linked, "Codigo", getattr(linked, "Label", "")))
+        source = "PropertyLink"
+
+    origin = _origin_row(doc, disconnector)
+    if panel is None and origin and _use_enabled(origin.get("use", ""), bool(origin.get("panel"))):
+        panel_token = _txt(origin.get("panel", ""))
+        panel = _panel_by_token(doc, panel_token)
+        source = SHEET_ORIGINS
+
+    if panel is None:
+        for token in _text_panel_candidates(disconnector):
+            candidate = _panel_by_token(doc, token)
+            if candidate is not None:
+                panel = candidate
+                panel_token = token
+                source = "Alias heredado"
+                break
+
+    circuit_id = _txt(assignment.get("circuit", "")) or _circuit_from_object(disconnector)
+    return {
+        "object": disconnector,
+        "panel": panel,
+        "panel_token": panel_token,
+        "circuit_id": circuit_id,
+        "source": source,
+        "assignment_row": int(assignment.get("row", 0) or 0),
+        "origin_row": int(origin.get("row", 0) or 0),
+    }
+
+
+def analyze_assignments(doc=None, disconnectors=None):
+    doc = doc or App.ActiveDocument
+    if doc is None:
+        return []
+    items = list(disconnectors) if disconnectors is not None else _disconnectors(doc)
+    return [_resolve_assignment(doc, obj) for obj in items]
+
+
+def _panel_code(panel):
+    return _txt(getattr(panel, "Codigo", "")) or _txt(getattr(panel, "Label", panel.Name))
+
+
+def _service_subtype(disconnector):
+    blob = _key(
+        "{} {} {} {}".format(
+            getattr(disconnector, "SistemaServicio", ""),
+            getattr(disconnector, "TipoCarga", ""),
+            getattr(disconnector, "UsoDesconector", ""),
+            getattr(disconnector, "NombreTablero", ""),
+        )
+    )
+    if "hvac" in blob or "aireacondicionado" in blob or "climatizacion" in blob:
+        return "HVAC"
+    if "hidroneumatic" in blob or "bombeo" in blob or "bombadeagua" in blob:
+        return "Hydropneumatic"
+    if "incendio" in blob:
+        return "FirePump"
+    return "DisconnectSwitch"
+
+
+def _sync_relationship(disconnector, panel, circuit_id):
+    panel_code = _panel_code(panel)
+    group = "ElectricCR Conexion"
+    _ensure(disconnector, "App::PropertyLink", "UpstreamEquipment", group, "Equipo o tablero aguas arriba")
+    _ensure(disconnector, "App::PropertyString", "PanelId", group, "Codigo derivado del tablero asignado")
+    _ensure(disconnector, "App::PropertyString", "CircuitoID", group, "Codigo derivado del circuito asignado")
+    _ensure(disconnector, "App::PropertyString", "ECR_ConexionGeneradaPor", "ElectricCR", "Herramienta que actualizo la conexion")
+    _ensure(disconnector, "App::PropertyString", "Discipline", "CRBIM", "Disciplina del elemento")
+    _ensure(disconnector, "App::PropertyString", "ElementType", "CRBIM", "Tipo logico comun")
+    _ensure(disconnector, "App::PropertyString", "Subtype", "CRBIM", "Subtipo de disciplina")
+    _ensure(disconnector, "App::PropertyString", "ConectadoA", "Tablero", "Alias heredado del tablero aguas arriba")
+
+    disconnector.UpstreamEquipment = panel
+    disconnector.PanelId = panel_code
+    disconnector.CircuitoID = circuit_id
+    disconnector.ConectadoA = panel_code
+    disconnector.ECR_ConexionGeneradaPor = GENERATED_BY
+    if not _txt(getattr(disconnector, "Discipline", "")):
+        disconnector.Discipline = "Electrical"
+    if not _txt(getattr(disconnector, "ElementType", "")):
+        disconnector.ElementType = "DisconnectSwitch"
+    disconnector.Subtype = _service_subtype(disconnector)
+
+    if "Panel" not in _props(disconnector):
+        disconnector.addProperty("App::PropertyLink", "Panel", group, "Tablero electrico asignado")
+    panel_type = _property_type(disconnector, "Panel")
+    try:
+        if "PropertyLink" in panel_type:
+            disconnector.Panel = panel
+        elif "PropertyString" in panel_type:
+            disconnector.Panel = panel_code
+    except Exception:
+        pass
+
+
+def _next_empty_origin_row(sheet, start=2, limit=4000):
+    for row in range(start, limit):
+        if not _sheet_get(sheet, "E{}".format(row)) and not _sheet_get(sheet, "B{}".format(row)):
+            return row
+    return 0
+
+
+def _sync_origin_sheet(doc, record):
+    sheet = doc.getObject(SHEET_ORIGINS)
+    if sheet is None:
+        return
+    obj = record["object"]
+    panel_code = _panel_code(record["panel"])
+    row = record.get("origin_row", 0) or _next_empty_origin_row(sheet)
+    if row <= 0:
+        return
+    values = (
+        "1",
+        _txt(getattr(obj, "Codigo", "")) or _txt(getattr(obj, "Label", obj.Name)),
+        "Desconector",
+        panel_code,
+        obj.Name,
+        _txt(getattr(obj, "Label", obj.Name)),
+    )
+    for index, value in enumerate(values):
+        sheet.set("{}{}".format(chr(65 + index), row), _txt(value))
+
+
+def _natural_key(value):
+    parts = re.split(r"(\d+)", _txt(value))
+    return tuple((0, int(part)) if part.isdigit() else (1, _key(part)) for part in parts)
+
+
+def _slot_plan(doc):
+    """Asigna ranuras estables considerando todos los desconectores del panel.
+
+    Esto evita que actualizar una seleccion parcial vuelva a colocar sus rutas
+    en el centro o cambie la separacion respecto a las conexiones no elegidas.
+    """
+    all_disconnectors = [obj for obj in list(doc.Objects) if _is_disconnector(obj)]
+    records = analyze_assignments(doc, all_disconnectors)
+    by_panel = {}
+    for record in records:
+        panel = record.get("panel")
+        if panel is None or not record.get("circuit_id"):
+            continue
+        by_panel.setdefault(panel.Name, []).append(record)
+
+    plan = {}
+    for panel_name, panel_records in by_panel.items():
+        panel_records.sort(
+            key=lambda record: (
+                _natural_key(record.get("circuit_id", "")),
+                _natural_key(_display_name(record)),
+                record["object"].Name,
+            )
+        )
+        count = len(panel_records)
+        for index, record in enumerate(panel_records):
+            plan[record["object"].Name] = (index, count, panel_name)
+    return plan
+
+
+def _run_connection(record, slot=None):
+    route_macro = Path(__file__).resolve().parent / "Conectar_Tableros_Cara_Superior.FCMacro"
+    namespace = runpy.run_path(str(route_macro), run_name="electriccr_connect_assigned_disconnect_backend")
+    slot_index, slot_count = (slot[0], slot[1]) if slot else (None, None)
+    return namespace["run"](
+        source=record["panel"],
+        destination=record["object"],
+        circuit_id=record["circuit_id"],
+        source_slot_index=slot_index,
+        source_slot_count=slot_count,
+    )
+
+
+def _update_schedule(doc):
+    schedule_macro = (
+        Path(__file__).resolve().parent.parent
+        / "Configuracion del proyecto"
+        / "Calculo_Circuitos_PanelSchedule.FCMacro"
+    )
+    namespace = runpy.run_path(str(schedule_macro), run_name="electriccr_assigned_disconnect_schedule")
+    doc.openTransaction("ElectricCR: actualizar tablas de desconectores")
+    try:
+        namespace["run"]()
+        doc.recompute()
+        doc.commitTransaction()
+    except Exception:
+        doc.abortTransaction()
+        raise
+
+
+def _display_name(record):
+    obj = record["object"]
+    return _txt(getattr(obj, "Codigo", "")) or _txt(getattr(obj, "Label", obj.Name))
+
+
+def _show_summary(result):
+    lines = ["Conexiones creadas o actualizadas: {}".format(len(result["routes"]))]
+    if result["unassigned"]:
+        lines.append("Sin tablero asignado: {}".format(", ".join(result["unassigned"])))
+    if result["unresolved"]:
+        lines.append("Tablero indicado pero no encontrado: {}".format(", ".join(result["unresolved"])))
+    if result["without_circuit"]:
+        lines.append("Sin circuito asignado: {}".format(", ".join(result["without_circuit"])))
+    if result["errors"]:
+        lines.append("Errores: {}".format("; ".join(result["errors"])))
+    text = "\n".join(lines)
+    if QtWidgets is not None and Gui is not None:
+        try:
+            kind = QtWidgets.QMessageBox.Warning if any(
+                result[key] for key in ("unassigned", "unresolved", "without_circuit", "errors")
+            ) else QtWidgets.QMessageBox.Information
+            box = QtWidgets.QMessageBox(kind, "Conectar desconectores", text, parent=Gui.getMainWindow())
+            box.exec_()
+        except Exception:
+            pass
+    return text
+
+
+def run(doc=None, show_dialog=True):
+    doc = doc or App.ActiveDocument
+    result = {
+        "routes": [],
+        "unassigned": [],
+        "unresolved": [],
+        "without_circuit": [],
+        "errors": [],
+    }
+    if doc is None:
+        _warn("No hay documento activo")
+        return result
+
+    disconnectors = _disconnectors(doc)
+    if not disconnectors:
+        _warn("No se encontraron desconectores. Seleccione algunos o revise el grupo Tableros.")
+        if show_dialog:
+            _show_summary(result)
+        return result
+
+    records = analyze_assignments(doc, disconnectors)
+    valid = []
+    for record in records:
+        name = _display_name(record)
+        if not record["panel_token"] and record["panel"] is None:
+            result["unassigned"].append(name)
+        elif record["panel"] is None:
+            result["unresolved"].append("{} -> {}".format(name, record["panel_token"]))
+        elif not record["circuit_id"]:
+            result["without_circuit"].append(name)
+        else:
+            valid.append(record)
+
+    if valid:
+        doc.openTransaction("ElectricCR: vincular desconectores a tableros asignados")
+        try:
+            for record in valid:
+                _sync_relationship(record["object"], record["panel"], record["circuit_id"])
+                _sync_origin_sheet(doc, record)
+            doc.recompute()
+            doc.commitTransaction()
+        except Exception:
+            doc.abortTransaction()
+            raise
+
+    slot_plan = _slot_plan(doc)
+    for record in valid:
+        try:
+            route = _run_connection(record, slot=slot_plan.get(record["object"].Name))
+            if route is not None:
+                result["routes"].append(route)
+        except Exception as exc:
+            result["errors"].append("{}: {}".format(_display_name(record), exc))
+
+    if result["routes"]:
+        try:
+            _update_schedule(doc)
+        except Exception as exc:
+            result["errors"].append("Tablas: {}".format(exc))
+
+    summary = _show_summary(result) if show_dialog else ""
+    if summary:
+        _log(summary.replace("\n", " | "))
+    else:
+        _log("{} conexiones actualizadas".format(len(result["routes"])))
+    return result
+
+
+if __name__ == "__main__":
+    run()

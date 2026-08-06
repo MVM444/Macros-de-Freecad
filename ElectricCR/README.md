@@ -1,6 +1,75 @@
 # ElectricCR
 
+## Barra de herramientas compacta
+
+ElectricCR arranca en modo compacto: muestra una barra principal con el
+panel de macros y recarga, mientras el catalogo completo de macros queda
+en los menus del workbench.
+
+Opciones en `ElectricCR/config.json`:
+
+- `macro_toolbar_mode: "compact"` muestra solo los grupos listados en
+  `macro_toolbar_groups`.
+- `macro_toolbar_mode: "full"` restaura una barra por cada grupo de macros.
+- `macro_toolbar_mode: "menu_only"` deja todas las macros solo en menus.
+- `show_bim_toolbar: true` muestra una barra BIM/Arch minima, separada de Draft.
+- `show_draft_toolbars: true` vuelve a mostrar las barras Draft dentro del
+  workbench.
+
+## Registro de uso
+
+ElectricCR mantiene dos registros:
+
+- `ElectricCR/logs/tool_usage.json`: acumulado rapido por herramienta.
+- `ElectricCR/logs/tool_events.jsonl`: historial evento por evento para
+  analizar sesiones, cambios de flujo, grupos usados consecutivamente y
+  herramientas que se usan juntas.
+
+Cada evento guarda sesion, timestamp, herramienta anterior, grupo anterior,
+segundos desde el evento anterior, grupo/barra inferido, macro relativa,
+documento activo y workbench activo cuando FreeCAD expone esos datos.
+
+## Prototipo de modos manuales
+
+`interface_mode: "modes_prototype"` activa una prueba reversible de modos
+manuales dentro del mismo workbench ElectricCR. El panel `ElectricCR Modos`
+permite elegir:
+
+- `Areas`
+- `Iluminacion`
+- `Tomacorrientes`
+- `Conexiones`
+- `Personalizado`
+
+El modo se puede cambiar desde una lista desplegable en la barra `ElectricCR`
+o desde el panel acoplable. El modo seleccionado se guarda en parametros de
+FreeCAD. Para volver al comportamiento anterior, cambiar `interface_mode` a
+`"legacy"` en `ElectricCR/config.json`.
+
+`Objetos` y `Draft compacto` son barras permanentes. El modo `Personalizado`
+lee su seleccion desde `custom_mode_toolbars` en `config.json`.
+
 ## Insertar Tablero
+
+## Luminarias sobre cielo modular
+
+`Iluminación/ColocarLuminarias_Link.FCMacro` ofrece la opcion `Alinear a cielo
+modular`, activa por defecto con modulo de 600 mm. En ese modo conserva la
+cantidad de filas y columnas calculada por ElectricCR, pero elige centros de
+celdas completas y equilibradas dentro del recinto en vez de dividir el largo y
+el ancho proporcionalmente.
+
+Cada `App::Link` creado guarda el contrato que consume Facil Arquitectura:
+
+- `ECR_CeilingModule`
+- `ECR_CeilingRow`
+- `ECR_CeilingColumn`
+- `ECR_CeilingRoom`
+- `ECR_CeilingAligned`
+
+Si el recinto no contiene suficientes celdas completas para la cantidad pedida,
+la macro informa la incompatibilidad y conserva para ese recinto la distribucion
+proporcional anterior.
 
 Archivos activos:
 

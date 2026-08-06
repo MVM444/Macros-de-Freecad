@@ -11,6 +11,8 @@
 - `ARQUITECTURA.md`: Describe la arquitectura conceptual, modulos principales y relacion entre objetos HVAC.
 - `REGLAS_HVAC.md`: Define reglas funcionales de calculo, cobertura, equipos, rutas, puertos y etiquetas.
 - `FLUJO_DE_TRABAJO.md`: Detalla el flujo operativo recomendado dentro de FreeCAD.
+- `EXTRACCION_HVAC_DESDE_CAD.md`: Describe la extraccion trazable de equipos y recintos candidatos desde referencias DWG/DXF importadas.
+- `ESPACIOS_HVAC_DESDE_AREAS.md`: Define copia, conversion, trazabilidad y superposicion de espacios HVAC creados desde areas 2D.
 - `CONVENCIONES.md`: Establece reglas de nombres, estructura, depuracion y modularidad.
 - `PROBLEMAS_RECURRENTES.md`: Documenta riesgos frecuentes en FreeCAD y estrategias de mitigacion.
 - `ROADMAP.md`: Ordena las fases de evolucion del proyecto desde MVP HVAC hacia MEP.
@@ -24,10 +26,12 @@
 3. `REGLAS_HVAC.md`
 4. `FLUJO_DE_TRABAJO.md`
 5. `CONVENCIONES.md`
-6. `ESTRUCTURA_DE_ARCHIVOS.md`
-7. `PROBLEMAS_RECURRENTES.md`
-8. `ROADMAP.md`
-9. `GLOSARIO.md`
+6. `EXTRACCION_HVAC_DESDE_CAD.md`
+7. `ESPACIOS_HVAC_DESDE_AREAS.md`
+8. `ESTRUCTURA_DE_ARCHIVOS.md`
+9. `PROBLEMAS_RECURRENTES.md`
+10. `ROADMAP.md`
+11. `GLOSARIO.md`
 
 ## Uso de esta carpeta
 

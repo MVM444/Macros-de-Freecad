@@ -222,15 +222,15 @@ def _placement_orientation(placement) -> Sequence[float]:
         return (0.0, 1.0, 0.0, 0.0)
 
     length = float(getattr(axis, "Length", 0.0) or 0.0)
-    angle_deg = float(getattr(rotation, "Angle", 0.0) or 0.0)
-    if length <= 0.0 or abs(angle_deg) < 1e-9:
+    angle_rad = float(getattr(rotation, "Angle", 0.0) or 0.0)
+    if length <= 0.0 or abs(angle_rad) < 1e-9:
         return (0.0, 1.0, 0.0, 0.0)
 
     return (
         float(getattr(axis, "x", 0.0)),
         float(getattr(axis, "y", 0.0)),
         float(getattr(axis, "z", 0.0)),
-        math.radians(angle_deg),
+        angle_rad,
     )
 
 

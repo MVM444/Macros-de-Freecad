@@ -1,0 +1,749 @@
+# -*- coding: utf-8 -*-
+# MenuText: Asignar luminarias a apagadores
+# Icon: Asignar_Luminarias_Apagadores.svg
+# Transaction: self
+
+"""Asigna luminarias a uno o dos apagadores y marca el tipo en planta.
+
+Uso rapido:
+- Seleccione una o mas luminarias y un apagador: control sencillo.
+- Seleccione una o mas luminarias y dos apagadores: control tri-way.
+- Ejecuciones sucesivas sobre un apagador crean doble o triple tecla.
+- Sin una seleccion valida ofrece asignacion automatica por recinto.
+
+Las relaciones reales viven en objetos ``Control iluminacion``. Los equipos
+guardan solo identificadores de texto para evitar ciclos en el grafo DAG de
+FreeCAD. ``ApagadorID`` se mantiene por compatibilidad con las macros antiguas.
+"""
+
+import math
+import re
+import unicodedata
+
+import FreeCAD as App
+import FreeCADGui as Gui
+
+
+TAG = "[ElectricCR][CONTROL ILUMINACION]"
+GENERATED_BY = "AsignarLuminariasApagadores"
+CONTROL_PREFIX = "ILC"
+CONTROL_GROUP_NAME = "Controles_Iluminacion"
+CONTROL_GROUP_LABEL = "Controles de iluminacion"
+MARKER_GROUP_NAME = "Simbolos_Control_Iluminacion"
+MARKER_GROUP_LABEL = "Simbolos 2D de control"
+PARAM_PATH = "User parameter:BaseApp/Preferences/Mod/ElectricCR/ControlIluminacion"
+
+
+def _qtwidgets():
+    for candidate in ("PySide6", "PySide2"):
+        try:
+            module = __import__(candidate, fromlist=["QtWidgets"])
+            return module.QtWidgets
+        except Exception:
+            pass
+    try:
+        from PySide import QtGui
+        return QtGui
+    except Exception:
+        return None
+
+
+def _log(message):
+    App.Console.PrintMessage(TAG + " " + str(message) + "\n")
+
+
+def _warn(message):
+    App.Console.PrintWarning(TAG + " " + str(message) + "\n")
+
+
+def _error(message):
+    App.Console.PrintError(TAG + " " + str(message) + "\n")
+
+
+def _safe(value):
+    try:
+        return str(value or "")
+    except Exception:
+        return ""
+
+
+def _norm(value):
+    text = unicodedata.normalize("NFD", _safe(value))
+    return "".join(ch for ch in text if unicodedata.category(ch) != "Mn").lower().strip()
+
+
+def _is_group(obj):
+    return obj is not None and hasattr(obj, "Group")
+
+
+def _iter_objects(objects):
+    stack = list(objects or [])
+    seen = set()
+    while stack:
+        obj = stack.pop(0)
+        name = _safe(getattr(obj, "Name", ""))
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        yield obj
+        if _is_group(obj):
+            stack[0:0] = list(getattr(obj, "Group", []) or [])
+
+
+def _linked_source(obj):
+    try:
+        return obj.LinkedObject if _safe(getattr(obj, "TypeId", "")) == "App::Link" else None
+    except Exception:
+        return None
+
+
+def _classification_text(obj):
+    values = [getattr(obj, "Name", ""), getattr(obj, "Label", "")]
+    for prop in ("Tipo", "KeyRegistro", "IfcType", "IfcClass", "ObjectType"):
+        try:
+            values.append(getattr(obj, prop, ""))
+        except Exception:
+            pass
+    source = _linked_source(obj)
+    if source is not None:
+        values.extend((getattr(source, "Name", ""), getattr(source, "Label", "")))
+        for prop in ("Tipo", "KeyRegistro"):
+            try:
+                values.append(getattr(source, prop, ""))
+            except Exception:
+                pass
+    return _norm(" ".join(_safe(v) for v in values))
+
+
+def _is_switch(obj):
+    if obj is None or _is_group(obj):
+        return False
+    if _safe(getattr(obj, "ECR_GeneradoPor", "")) == GENERATED_BY:
+        return False
+    text = _classification_text(obj)
+    return any(token in text for token in ("apagador", "interruptor", "switch"))
+
+
+def _is_luminaire(obj):
+    if obj is None or _is_group(obj) or _is_switch(obj):
+        return False
+    if _safe(getattr(obj, "ECR_GeneradoPor", "")) == GENERATED_BY:
+        return False
+    text = _classification_text(obj)
+    return any(token in text for token in ("luminaria", "lumin", "lampara", "light fixture"))
+
+
+def _is_library_object(obj):
+    try:
+        parents = list(getattr(obj, "InList", []) or [])
+    except Exception:
+        parents = []
+    for parent in parents:
+        probe = _norm(getattr(parent, "Name", "") + " " + getattr(parent, "Label", ""))
+        if "_lib" in probe or "libreria" in probe or "biblioteca" in probe:
+            return True
+    return False
+
+
+def _physical_objects(doc, predicate):
+    referenced = set()
+    for obj in doc.Objects:
+        source = _linked_source(obj)
+        if source is not None:
+            referenced.add(source.Name)
+    result = []
+    for obj in doc.Objects:
+        if not predicate(obj) or _is_library_object(obj):
+            continue
+        if obj.Name in referenced and _safe(getattr(obj, "TypeId", "")) != "App::Link":
+            continue
+        result.append(obj)
+    return result
+
+
+def _selected_devices():
+    switches, luminaires = [], []
+    for obj in _iter_objects(Gui.Selection.getSelection() or []):
+        if _is_switch(obj):
+            switches.append(obj)
+        elif _is_luminaire(obj):
+            luminaires.append(obj)
+    return _unique(luminaires), _unique(switches)
+
+
+def _unique(objects):
+    result, seen = [], set()
+    for obj in objects or []:
+        name = _safe(getattr(obj, "Name", ""))
+        if name and name not in seen:
+            seen.add(name)
+            result.append(obj)
+    return result
+
+
+def _point(obj):
+    try:
+        return obj.getGlobalPlacement().Base
+    except Exception:
+        try:
+            return obj.Placement.Base
+        except Exception:
+            return App.Vector()
+
+
+def _distance2(a, b):
+    pa, pb = _point(a), _point(b)
+    return (pa.x - pb.x) ** 2 + (pa.y - pb.y) ** 2
+
+
+def _add_prop(obj, prop_type, name, group, description):
+    try:
+        if name not in obj.PropertiesList:
+            obj.addProperty(prop_type, name, group, description)
+        return True
+    except Exception:
+        return False
+
+
+def _set_prop(obj, name, value):
+    try:
+        setattr(obj, name, value)
+        return True
+    except Exception:
+        return False
+
+
+def _ensure_device_metadata(obj, kind):
+    group = "Control de iluminacion"
+    _add_prop(obj, "App::PropertyString", "ECR_ControlID", group, "Control principal asignado")
+    _add_prop(obj, "App::PropertyString", "ECR_TipoControl", group, "Sencillo, doble, triple o tri-way")
+    if kind == "luminaire":
+        _add_prop(obj, "App::PropertyStringList", "ECR_Apagadores", group, "Nombres internos de apagadores")
+        _add_prop(obj, "App::PropertyString", "ApagadorID", group, "Compatibilidad ElectricCR")
+    else:
+        _add_prop(obj, "App::PropertyStringList", "ECR_ControlIDs", group, "Controles asociados")
+        _add_prop(obj, "App::PropertyStringList", "ECR_Luminarias", group, "Luminarias controladas")
+        _add_prop(obj, "App::PropertyInteger", "ECR_NumeroTeclas", group, "Numero de teclas requeridas")
+
+
+def _ensure_group(doc, name, label, parent=None):
+    group = doc.getObject(name)
+    if group is None:
+        group = doc.addObject("App::DocumentObjectGroup", name)
+    group.Label = label
+    if parent is not None and group not in (getattr(parent, "Group", []) or []):
+        try:
+            parent.addObject(group)
+        except Exception:
+            pass
+    return group
+
+
+def _find_parent_group(doc):
+    wanted = ("iluminacion", "lighting")
+    for obj in doc.Objects:
+        if not _is_group(obj):
+            continue
+        if getattr(obj, "Name", "") in (CONTROL_GROUP_NAME, MARKER_GROUP_NAME):
+            continue
+        probe = _norm(getattr(obj, "Name", "") + " " + getattr(obj, "Label", ""))
+        if any(token == probe or token in probe for token in wanted):
+            return obj
+    for name in ("electrico", "Electrico"):
+        obj = doc.getObject(name)
+        if obj is not None and _is_group(obj):
+            return obj
+    return None
+
+
+def _control_objects(doc):
+    result = []
+    for obj in doc.Objects:
+        if _safe(getattr(obj, "ECR_GeneradoPor", "")) == GENERATED_BY and hasattr(obj, "Luminarias"):
+            result.append(obj)
+    return result
+
+
+def _next_control_id(doc):
+    used = set()
+    for obj in _control_objects(doc):
+        match = re.search(r"(\d+)$", _safe(getattr(obj, "ControlID", "")))
+        if match:
+            used.add(int(match.group(1)))
+    number = 1
+    while number in used:
+        number += 1
+    return "%s-%03d" % (CONTROL_PREFIX, number)
+
+
+def _control_by_id(doc, control_id):
+    for obj in _control_objects(doc):
+        if _safe(getattr(obj, "ControlID", "")) == _safe(control_id):
+            return obj
+    return None
+
+
+def _make_control(doc, group, control_id=None):
+    control_id = control_id or _next_control_id(doc)
+    name = "Control_Iluminacion_" + re.sub(r"[^0-9A-Za-z_]+", "_", control_id)
+    obj = doc.getObject(name)
+    if obj is None:
+        obj = doc.addObject("App::FeaturePython", name)
+    obj.Label = "Control iluminacion " + control_id
+    definitions = (
+        ("App::PropertyString", "ECR_GeneradoPor", "ElectricCR", "Macro generadora"),
+        ("App::PropertyString", "ControlID", "Control", "Identificador unico"),
+        ("App::PropertyString", "TipoControl", "Control", "Sencillo o tri-way"),
+        ("App::PropertyString", "Recinto", "Control", "Recinto asociado"),
+        ("App::PropertyLinkList", "Luminarias", "Control", "Luminarias controladas"),
+        ("App::PropertyLinkList", "Apagadores", "Control", "Estaciones de control"),
+        ("App::PropertyInteger", "CantidadLuminarias", "Control", "Cantidad de luminarias"),
+        ("App::PropertyInteger", "CantidadApagadores", "Control", "Cantidad de estaciones"),
+        ("App::PropertyString", "Descripcion", "Control", "Resumen legible"),
+    )
+    for definition in definitions:
+        _add_prop(obj, *definition)
+    obj.ECR_GeneradoPor = GENERATED_BY
+    obj.ControlID = control_id
+    if obj not in (getattr(group, "Group", []) or []):
+        group.addObject(obj)
+    return obj
+
+
+def _room_value(obj):
+    for prop in ("Recinto", "AreaRecinto", "AreaNombre", "NombreArea", "Habitacion", "Ambiente", "ORG_Area"):
+        try:
+            value = getattr(obj, prop)
+        except Exception:
+            continue
+        if hasattr(value, "Label"):
+            value = value.Label
+        text = _safe(value).strip()
+        if text and _norm(text) not in ("none", "sin recinto", "sin area"):
+            return text
+    return ""
+
+
+def _area_candidates(doc):
+    groups = []
+    for obj in doc.Objects:
+        if not _is_group(obj):
+            continue
+        probe = _norm(getattr(obj, "Name", "") + " " + getattr(obj, "Label", ""))
+        if probe == "areas" or "analisis de area" in probe:
+            groups.append(obj)
+    objects = []
+    for group in groups:
+        objects.extend(o for o in _iter_objects([group]) if not _is_group(o))
+    return _unique(objects)
+
+
+def _inside_area(area, point):
+    try:
+        placement = area.getGlobalPlacement()
+    except Exception:
+        placement = getattr(area, "Placement", App.Placement())
+    try:
+        length = float(area.Length.Value if hasattr(area.Length, "Value") else area.Length)
+        height = float(area.Height.Value if hasattr(area.Height, "Value") else area.Height)
+        local = placement.inverse().multVec(point)
+        if -1.0 <= local.x <= length + 1.0 and -1.0 <= local.y <= height + 1.0:
+            return True
+    except Exception:
+        pass
+    try:
+        shape = area.Shape
+        test = App.Vector(point.x, point.y, shape.BoundBox.Center.z)
+        if shape.isInside(test, 1.0, True):
+            return True
+    except Exception:
+        pass
+    try:
+        box = area.Shape.BoundBox
+        return box.XMin - 1.0 <= point.x <= box.XMax + 1.0 and box.YMin - 1.0 <= point.y <= box.YMax + 1.0
+    except Exception:
+        return False
+
+
+def _room_for(obj, areas):
+    direct = _room_value(obj)
+    if direct:
+        return direct
+    point = _point(obj)
+    inside = [area for area in areas if _inside_area(area, point)]
+    if not inside:
+        return ""
+    try:
+        inside.sort(key=lambda area: area.Shape.BoundBox.XLength * area.Shape.BoundBox.YLength)
+    except Exception:
+        pass
+    return _safe(getattr(inside[0], "Label", inside[0].Name)).strip()
+
+
+def _detach_luminaires(doc, luminaires, keep_control=None):
+    selected = set(obj.Name for obj in luminaires)
+    empty = []
+    for control in _control_objects(doc):
+        if control is keep_control:
+            continue
+        remaining = [obj for obj in list(getattr(control, "Luminarias", []) or []) if obj.Name not in selected]
+        if len(remaining) != len(list(getattr(control, "Luminarias", []) or [])):
+            control.Luminarias = remaining
+            control.CantidadLuminarias = len(remaining)
+        if not remaining:
+            empty.append(control)
+    for control in empty:
+        try:
+            doc.removeObject(control.Name)
+        except Exception:
+            pass
+
+
+def _existing_common_control(doc, luminaires):
+    ids = set(_safe(getattr(obj, "ECR_ControlID", "")) for obj in luminaires)
+    ids.discard("")
+    if len(ids) == 1:
+        return _control_by_id(doc, next(iter(ids)))
+    return None
+
+
+def _set_control(control, luminaires, switches, room):
+    mode = "Tri-way" if len(switches) == 2 else "Sencillo"
+    control.TipoControl = mode
+    control.Recinto = room or "Sin recinto"
+    control.Luminarias = list(luminaires)
+    control.Apagadores = list(switches)
+    control.CantidadLuminarias = len(luminaires)
+    control.CantidadApagadores = len(switches)
+    control.Descripcion = "%s | %d luminaria(s) | %s" % (
+        mode, len(luminaires), " / ".join(getattr(obj, "Label", obj.Name) for obj in switches)
+    )
+    control.Label = "%s - %s - %s" % (control.ControlID, room or "Sin recinto", mode)
+    switch_names = [obj.Name for obj in switches]
+    switch_labels = [getattr(obj, "Label", obj.Name) for obj in switches]
+    for luminaire in luminaires:
+        _ensure_device_metadata(luminaire, "luminaire")
+        luminaire.ECR_ControlID = control.ControlID
+        luminaire.ECR_TipoControl = mode
+        luminaire.ECR_Apagadores = switch_names
+        _set_prop(luminaire, "ApagadorID", " / ".join(switch_labels))
+
+
+def _refresh_switch_metadata(doc):
+    controls = _control_objects(doc)
+    switches = _physical_objects(doc, _is_switch)
+    summary = {}
+    for switch in switches:
+        entries = [control for control in controls if switch in (getattr(control, "Apagadores", []) or [])]
+        _ensure_device_metadata(switch, "switch")
+        ids = [control.ControlID for control in entries]
+        lums = _unique([lum for control in entries for lum in (getattr(control, "Luminarias", []) or [])])
+        triway = any(_safe(getattr(control, "TipoControl", "")) == "Tri-way" for control in entries)
+        keys = len(entries)
+        if keys <= 0:
+            kind = "Sin asignar"
+        elif keys == 1 and triway:
+            kind = "Tri-way"
+        elif keys == 1:
+            kind = "Sencillo"
+        elif keys == 2:
+            kind = "Doble + tri-way" if triway else "Doble"
+        else:
+            kind = "Triple + tri-way" if triway else "Triple"
+        switch.ECR_ControlIDs = ids
+        switch.ECR_Luminarias = [lum.Name for lum in lums]
+        switch.ECR_NumeroTeclas = keys
+        switch.ECR_TipoControl = kind
+        switch.ECR_ControlID = " / ".join(ids)
+        summary[switch.Name] = (kind, keys, triway)
+    return summary
+
+
+def _digit_edges(char, x, y, size):
+    import Part
+    segments = {
+        "2": ((0, 1), (1, 1), (1, .5), (0, 0), (1, 0)),
+        "3": ((0, 1), (1, 1), (.55, .5), (1, .5), (1, 0), (0, 0)),
+        "W": ((0, 1), (.2, 0), (.5, .55), (.8, 0), (1, 1)),
+        "+": ((0, .5), (1, .5), (.5, .5), (.5, 1), (.5, 0)),
+    }
+    points = segments.get(char, ())
+    edges = []
+    if char == "+":
+        pairs = ((points[0], points[1]), (points[3], points[4]))
+    else:
+        pairs = zip(points[:-1], points[1:])
+    for p1, p2 in pairs:
+        a = App.Vector(x + p1[0] * size, y + p1[1] * size, 0.0)
+        b = App.Vector(x + p2[0] * size, y + p2[1] * size, 0.0)
+        edges.append(Part.makeLine(a, b))
+    return edges
+
+
+def _marker_text(kind):
+    if kind == "Tri-way":
+        return "3W"
+    if kind == "Doble":
+        return "2"
+    if kind == "Triple":
+        return "3"
+    if kind == "Doble + tri-way":
+        return "2+3W"
+    if kind == "Triple + tri-way":
+        return "3+3W"
+    return ""
+
+
+def _marker_shape(text, size, offset):
+    import Part
+    edges = []
+    x = float(offset)
+    for char in text:
+        edges.extend(_digit_edges(char, x, float(offset), float(size)))
+        x += float(size) * 1.35
+    return Part.makeCompound(edges) if edges else Part.Shape()
+
+
+def _update_markers(doc, switch_summary, size=90.0, offset=140.0):
+    import Part
+    parent = _find_parent_group(doc)
+    marker_group = _ensure_group(doc, MARKER_GROUP_NAME, MARKER_GROUP_LABEL, parent)
+    updated = 0
+    for switch in _physical_objects(doc, _is_switch):
+        marker_name = "ECR_ControlMarker_" + re.sub(r"[^0-9A-Za-z_]+", "_", switch.Name)
+        marker = doc.getObject(marker_name)
+        kind = switch_summary.get(switch.Name, ("Sin asignar", 0, False))[0]
+        code = _marker_text(kind)
+        if not code:
+            if marker is not None:
+                marker.Shape = Part.Shape()
+                marker.ViewObject.Visibility = False
+            continue
+        if marker is None:
+            marker = doc.addObject("Part::Feature", marker_name)
+            marker_group.addObject(marker)
+        definitions = (
+            ("App::PropertyString", "ECR_GeneradoPor", "ElectricCR", "Macro generadora"),
+            ("App::PropertyLink", "Apagador", "Control", "Apagador representado"),
+            ("App::PropertyString", "TextoPlano", "Control", "Codigo mostrado en planta"),
+        )
+        for definition in definitions:
+            _add_prop(marker, *definition)
+        marker.ECR_GeneradoPor = GENERATED_BY
+        marker.Apagador = switch
+        marker.TextoPlano = code
+        marker.Label = "Indicador %s - %s" % (code, getattr(switch, "Label", switch.Name))
+        marker.Shape = _marker_shape(code, size, offset)
+        try:
+            marker.Placement = switch.getGlobalPlacement()
+        except Exception:
+            marker.Placement = switch.Placement
+        try:
+            marker.ViewObject.LineColor = (1.0, 0.2, 0.75)
+            marker.ViewObject.PointColor = (1.0, 0.2, 0.75)
+            marker.ViewObject.LineWidth = 3.0
+            marker.ViewObject.Visibility = True
+        except Exception:
+            pass
+        updated += 1
+    return updated
+
+
+def _assign_one(doc, control_group, luminaires, switches, room, overwrite=True):
+    luminaires, switches = _unique(luminaires), _unique(switches)
+    if not luminaires or len(switches) not in (1, 2):
+        raise ValueError("Se requieren luminarias y uno o dos apagadores.")
+    existing = _existing_common_control(doc, luminaires) if overwrite else None
+    for switch in switches:
+        ids = list(getattr(switch, "ECR_ControlIDs", []) or [])
+        existing_id = _safe(getattr(existing, "ControlID", "")) if existing is not None else ""
+        if len(ids) >= 3 and existing_id not in ids:
+            raise ValueError("El apagador '%s' ya tiene tres teclas asignadas." % getattr(switch, "Label", switch.Name))
+    control = existing or _make_control(doc, control_group)
+    if overwrite:
+        _detach_luminaires(doc, luminaires, keep_control=control)
+    _set_control(control, luminaires, switches, room)
+    return control
+
+
+def assign_manual(doc, luminaires, switches, marker_size=90.0, marker_offset=140.0):
+    if len(switches) not in (1, 2):
+        raise ValueError("Seleccione exactamente uno o dos apagadores.")
+    areas = _area_candidates(doc)
+    rooms = [_room_for(obj, areas) for obj in luminaires]
+    room = max(set(rooms), key=rooms.count) if rooms else ""
+    parent = _find_parent_group(doc)
+    control_group = _ensure_group(doc, CONTROL_GROUP_NAME, CONTROL_GROUP_LABEL, parent)
+    doc.openTransaction("ElectricCR: asignar luminarias a apagadores")
+    try:
+        control = _assign_one(doc, control_group, luminaires, switches, room, overwrite=True)
+        summary = _refresh_switch_metadata(doc)
+        markers = _update_markers(doc, summary, marker_size, marker_offset)
+        doc.recompute()
+        doc.commitTransaction()
+    except Exception:
+        doc.abortTransaction()
+        raise
+    return {"controles": 1, "luminarias": len(luminaires), "apagadores": len(switches),
+            "triway": len(switches) == 2, "marcadores": markers, "id": control.ControlID}
+
+
+def assign_automatic(doc, preserve=True, marker_size=90.0, marker_offset=140.0):
+    areas = _area_candidates(doc)
+    luminaires = _physical_objects(doc, _is_luminaire)
+    switches = _physical_objects(doc, _is_switch)
+    if preserve:
+        luminaires = [obj for obj in luminaires if not _safe(getattr(obj, "ECR_ControlID", ""))]
+    by_room_lum, by_room_sw = {}, {}
+    for obj in luminaires:
+        room = _room_for(obj, areas)
+        if room:
+            by_room_lum.setdefault(_norm(room), [room, []])[1].append(obj)
+    for obj in switches:
+        room = _room_for(obj, areas)
+        if room:
+            by_room_sw.setdefault(_norm(room), [room, []])[1].append(obj)
+    parent = _find_parent_group(doc)
+    control_group = _ensure_group(doc, CONTROL_GROUP_NAME, CONTROL_GROUP_LABEL, parent)
+    created = assigned = triways = 0
+    missing = []
+    doc.openTransaction("ElectricCR: asignacion automatica de iluminacion")
+    try:
+        for key, pair in by_room_lum.items():
+            room, room_lums = pair
+            room_switches = by_room_sw.get(key, [room, []])[1]
+            if not room_switches:
+                missing.append(room)
+                continue
+            if len(room_switches) == 1:
+                _assign_one(doc, control_group, room_lums, room_switches, room, overwrite=not preserve)
+                created += 1
+                assigned += len(room_lums)
+            elif len(room_switches) == 2:
+                _assign_one(doc, control_group, room_lums, room_switches, room, overwrite=not preserve)
+                created += 1
+                triways += 1
+                assigned += len(room_lums)
+            else:
+                buckets = {sw.Name: [sw, []] for sw in room_switches}
+                for lum in room_lums:
+                    sw = min(room_switches, key=lambda item: _distance2(lum, item))
+                    buckets[sw.Name][1].append(lum)
+                for sw, bucket in buckets.values():
+                    if bucket:
+                        _assign_one(doc, control_group, bucket, [sw], room, overwrite=not preserve)
+                        created += 1
+                        assigned += len(bucket)
+        summary = _refresh_switch_metadata(doc)
+        markers = _update_markers(doc, summary, marker_size, marker_offset)
+        doc.recompute()
+        doc.commitTransaction()
+    except Exception:
+        doc.abortTransaction()
+        raise
+    return {"controles": created, "luminarias": assigned, "apagadores": len(switches),
+            "triway": triways, "marcadores": markers, "sin_apagador": sorted(set(missing))}
+
+
+def _automatic_dialog(doc, selected_luminaires=0, selected_switches=0):
+    QtWidgets = _qtwidgets()
+    if QtWidgets is None:
+        return None
+    params = App.ParamGet(PARAM_PATH)
+    dialog = QtWidgets.QDialog(Gui.getMainWindow())
+    dialog.setWindowTitle("Asignar luminarias a apagadores")
+    dialog.setMinimumWidth(430)
+    info = QtWidgets.QLabel(
+        "La seleccion actual no forma una asignacion manual.\n"
+        "Luminarias detectadas: %d | Apagadores detectados: %d" %
+        (selected_luminaires, selected_switches)
+    )
+    info.setWordWrap(True)
+    auto = QtWidgets.QCheckBox("Asignar automaticamente todo el dibujo por recinto")
+    auto.setChecked(True)
+    preserve = QtWidgets.QCheckBox("Conservar asignaciones existentes")
+    preserve.setChecked(True)
+    size = QtWidgets.QDoubleSpinBox()
+    size.setRange(25.0, 500.0); size.setSuffix(" mm"); size.setValue(params.GetFloat("MarkerSize", 90.0))
+    offset = QtWidgets.QDoubleSpinBox()
+    offset.setRange(0.0, 1000.0); offset.setSuffix(" mm"); offset.setValue(params.GetFloat("MarkerOffset", 140.0))
+    form = QtWidgets.QFormLayout()
+    form.addRow(info)
+    form.addRow(auto)
+    form.addRow(preserve)
+    form.addRow("Tamano codigo 2D:", size)
+    form.addRow("Separacion del simbolo:", offset)
+    buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+    buttons.accepted.connect(dialog.accept); buttons.rejected.connect(dialog.reject)
+    layout = QtWidgets.QVBoxLayout(dialog); layout.addLayout(form); layout.addWidget(buttons)
+    if dialog.exec() != QtWidgets.QDialog.Accepted:
+        return None
+    params.SetFloat("MarkerSize", size.value()); params.SetFloat("MarkerOffset", offset.value())
+    return {"automatic": auto.isChecked(), "preserve": preserve.isChecked(),
+            "marker_size": size.value(), "marker_offset": offset.value()}
+
+
+def _show_result(result, manual):
+    missing = result.get("sin_apagador", [])
+    text = (
+        "Asignacion %s finalizada.\n\nControles: %d\nLuminarias: %d\n"
+        "Tri-way: %d\nIndicadores 2D: %d" %
+        ("manual" if manual else "automatica", result.get("controles", 0),
+         result.get("luminarias", 0), int(result.get("triway", 0)), result.get("marcadores", 0))
+    )
+    if manual and result.get("id"):
+        text += "\nControl: " + result["id"]
+    if missing:
+        text += "\n\nRecintos sin apagador:\n- " + "\n- ".join(missing)
+    QtWidgets = _qtwidgets()
+    if QtWidgets is not None:
+        QtWidgets.QMessageBox.information(Gui.getMainWindow(), "Control de iluminacion", text)
+    _log(text.replace("\n", " | "))
+
+
+def main(doc_override=None, cfg_override=None):
+    doc = doc_override or App.ActiveDocument
+    if doc is None:
+        _error("No hay documento activo.")
+        return None
+    luminaires, switches = _selected_devices()
+    params = App.ParamGet(PARAM_PATH)
+    marker_size = params.GetFloat("MarkerSize", 90.0)
+    marker_offset = params.GetFloat("MarkerOffset", 140.0)
+    manual = bool(luminaires and len(switches) in (1, 2))
+    try:
+        if cfg_override is not None:
+            mode = cfg_override.get("mode", "manual" if manual else "automatic")
+            marker_size = float(cfg_override.get("marker_size", marker_size))
+            marker_offset = float(cfg_override.get("marker_offset", marker_offset))
+            if mode == "manual":
+                result = assign_manual(doc, cfg_override.get("luminaires", luminaires),
+                                       cfg_override.get("switches", switches), marker_size, marker_offset)
+                manual = True
+            else:
+                result = assign_automatic(doc, bool(cfg_override.get("preserve", True)), marker_size, marker_offset)
+                manual = False
+        elif manual:
+            result = assign_manual(doc, luminaires, switches, marker_size, marker_offset)
+        else:
+            cfg = _automatic_dialog(doc, len(luminaires), len(switches))
+            if not cfg or not cfg.get("automatic"):
+                _warn("Operacion cancelada. Para modo manual seleccione luminarias y uno o dos apagadores.")
+                return None
+            result = assign_automatic(doc, cfg["preserve"], cfg["marker_size"], cfg["marker_offset"])
+            manual = False
+    except Exception as exc:
+        _error("No se pudo completar la asignacion: " + _safe(exc))
+        QtWidgets = _qtwidgets()
+        if QtWidgets is not None and cfg_override is None:
+            QtWidgets.QMessageBox.critical(Gui.getMainWindow(), "Control de iluminacion", _safe(exc))
+        return None
+    if cfg_override is None:
+        _show_result(result, manual)
+    else:
+        _log("Resultado: " + _safe(result))
+    return result
+
+
+if __name__ == "__main__":
+    main()

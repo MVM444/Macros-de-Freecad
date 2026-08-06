@@ -1,0 +1,533 @@
+# -*- coding: utf-8 -*-
+# MenuText: Poligonos de recintos desde muros BIM
+# ToolTip: Genera areas poligonales desde los huecos cerrados de muros Arch/BIM.
+# Icon: PoligonosRecintosDesdeArchWalls.svg
+
+"""Create independent polygonal room areas from Arch/BIM wall footprints.
+
+The macro never edits rectangular areas or source walls.  It writes exact Part
+faces into its own group and tags them as ElectricCR areas for downstream HVAC,
+smoke-detector and suspended-ceiling workflows.
+"""
+
+from __future__ import annotations
+
+import math
+import re
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+
+
+MACRO_ID = "FA_PolygonalRoomsFromArchWalls"
+GROUP_NAME = "FA_PolygonalRooms"
+GROUP_LABEL = "Recintos poligonales desde muros BIM"
+SHEET_NAME = "Spreadsheet_PolygonalRooms"
+MIN_ROOM_AREA_M2 = 1.0
+DISPLAY_ELEVATION_MM = 20.0
+GEOMETRY_TOLERANCE_MM = 0.1
+
+
+def log(message):
+    App.Console.PrintMessage("[FACILARQ][POLIGONOS] " + str(message) + "\n")
+
+
+def warn(message):
+    App.Console.PrintWarning("[FACILARQ][POLIGONOS] " + str(message) + "\n")
+
+
+def error(message):
+    App.Console.PrintError("[FACILARQ][POLIGONOS] " + str(message) + "\n")
+
+
+def set_property(obj, property_type, name, group, description, value):
+    if not hasattr(obj, name):
+        obj.addProperty(property_type, name, group, description)
+    try:
+        setattr(obj, name, value)
+    except Exception as exc:
+        warn("No se pudo asignar %s en %s: %s" % (name, object_label(obj), exc))
+
+
+def object_label(obj):
+    return str(getattr(obj, "Label", getattr(obj, "Name", "")) or "")
+
+
+def flatten_objects(objects):
+    pending = list(objects or [])
+    result = []
+    seen = set()
+    while pending:
+        obj = pending.pop(0)
+        identity = str(getattr(obj, "Name", "") or id(obj))
+        if identity in seen:
+            continue
+        seen.add(identity)
+        result.append(obj)
+        for attribute in ("Group", "Objects"):
+            try:
+                pending.extend(list(getattr(obj, attribute, []) or []))
+            except Exception:
+                pass
+    return result
+
+
+def has_shape(obj):
+    try:
+        return obj.Shape is not None and not obj.Shape.isNull() and bool(obj.Shape.Faces)
+    except Exception:
+        return False
+
+
+def is_arch_wall(obj):
+    if obj is None or not has_shape(obj):
+        return False
+    role = str(getattr(obj, "FA_Role", "") or "").strip().lower()
+    ifc_type = str(getattr(obj, "IfcType", "") or "").strip().lower()
+    proxy_type = str(getattr(getattr(obj, "Proxy", None), "Type", "") or "").strip().lower()
+    type_id = str(getattr(obj, "TypeId", "") or "").lower()
+    text = (str(getattr(obj, "Name", "")) + " " + object_label(obj)).lower()
+    return bool(
+        role == "wall"
+        or ifc_type in ("wall", "wallstandardcase")
+        or proxy_type == "wall"
+        or "arch::wall" in type_id
+        or ("muro bim" in text and "wall" in str(getattr(obj, "Name", "")).lower())
+    )
+
+
+def collect_walls(doc):
+    selected = [obj for obj in flatten_objects(Gui.Selection.getSelection()) if is_arch_wall(obj)]
+    if selected:
+        return unique_objects(selected), True
+
+    visible = []
+    for obj in list(getattr(doc, "Objects", []) or []):
+        if not is_arch_wall(obj):
+            continue
+        try:
+            if obj.ViewObject.Visibility:
+                visible.append(obj)
+        except Exception:
+            pass
+    if visible:
+        return unique_objects(visible), False
+
+    all_walls = [obj for obj in list(getattr(doc, "Objects", []) or []) if is_arch_wall(obj)]
+    if len(all_walls) == 1:
+        return all_walls, False
+    if len(all_walls) > 1:
+        raise RuntimeError(
+            "Hay varios muros BIM ocultos. Seleccione el muro o conjunto de muros que delimita los recintos."
+        )
+    raise RuntimeError("No se encontraron objetos Arch Wall o muros con FA_Role='wall'.")
+
+
+def unique_objects(objects):
+    result = []
+    seen = set()
+    for obj in objects:
+        name = str(getattr(obj, "Name", "") or id(obj))
+        if name in seen:
+            continue
+        seen.add(name)
+        result.append(obj)
+    return result
+
+
+def face_is_horizontal_top(face, top_z):
+    bounds = face.BoundBox
+    if abs(float(bounds.ZMin) - float(top_z)) > GEOMETRY_TOLERANCE_MM:
+        return False
+    if abs(float(bounds.ZMax) - float(top_z)) > GEOMETRY_TOLERANCE_MM:
+        return False
+    try:
+        u0, u1, v0, v1 = face.ParameterRange
+        normal = face.normalAt((u0 + u1) * 0.5, (v0 + v1) * 0.5)
+        return float(normal.z) > 0.999
+    except Exception:
+        return False
+
+
+def projected_top_faces(wall):
+    shape = wall.Shape
+    solids = list(shape.Solids)
+    sources = solids if solids else [shape]
+    result = []
+    for solid in sources:
+        top_z = float(solid.BoundBox.ZMax)
+        top_faces = [face for face in solid.Faces if face_is_horizontal_top(face, top_z)]
+        for face in top_faces:
+            projected = face.copy()
+            projected.translate(App.Vector(0.0, 0.0, -top_z))
+            result.append(projected)
+    if not result:
+        raise RuntimeError("El muro %s no tiene caras superiores horizontales." % object_label(wall))
+    return result
+
+
+def fuse_wall_footprints(walls):
+    faces = []
+    for wall in walls:
+        faces.extend(projected_top_faces(wall))
+    if not faces:
+        raise RuntimeError("No fue posible obtener la huella superior de los muros.")
+    footprint = faces[0]
+    for face in faces[1:]:
+        footprint = footprint.fuse(face)
+    try:
+        footprint = footprint.removeSplitter()
+    except Exception:
+        pass
+    if footprint.isNull() or not footprint.Faces:
+        raise RuntimeError("La union de huellas de muro no produjo caras planas.")
+    return footprint, len(faces)
+
+
+def same_wire(first, second):
+    try:
+        return bool(first.isSame(second))
+    except Exception:
+        return first.hashCode() == second.hashCode()
+
+
+def room_faces_from_footprint(footprint, minimum_area_m2):
+    minimum_area = float(minimum_area_m2) * 1000000.0
+    rooms = []
+    seen = set()
+    for wall_face in footprint.Faces:
+        outer = wall_face.OuterWire
+        for wire in wall_face.Wires:
+            if same_wire(wire, outer):
+                continue
+            try:
+                room = Part.Face(wire)
+            except Exception as exc:
+                warn("Contorno interior omitido: %s" % exc)
+                continue
+            if not room.isValid() or float(room.Area) < minimum_area:
+                continue
+            center = room.CenterOfMass
+            key = (
+                int(round(float(center.x) * 10.0)),
+                int(round(float(center.y) * 10.0)),
+                int(round(float(room.Area))),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            rooms.append(room)
+    rooms.sort(key=lambda face: (-float(face.CenterOfMass.y), float(face.CenterOfMass.x)))
+    return rooms
+
+
+def text_lines(obj):
+    if not hasattr(obj, "Text"):
+        return []
+    try:
+        value = obj.Text
+    except Exception:
+        return []
+    if isinstance(value, (list, tuple)):
+        lines = [str(item).strip() for item in value]
+    else:
+        lines = [line.strip() for line in str(value).replace("\r", "\n").split("\n")]
+    return [line for line in lines if line]
+
+
+def clean_room_name(value):
+    name = " ".join(str(value or "").strip().split())
+    name = re.sub(r"(?<=\D)00\d$", "", name).strip()
+    return name
+
+
+def object_point(obj):
+    try:
+        point = obj.getGlobalPlacement().Base
+        return float(point.x), float(point.y)
+    except Exception:
+        pass
+    try:
+        point = obj.Placement.Base
+        return float(point.x), float(point.y)
+    except Exception:
+        return None
+
+
+def shape_center(obj):
+    try:
+        shape = obj.Shape
+        if shape.Faces:
+            center = shape.CenterOfMass
+            return float(center.x), float(center.y)
+        bounds = shape.BoundBox
+        return (float(bounds.XMin + bounds.XMax) * 0.5, float(bounds.YMin + bounds.YMax) * 0.5)
+    except Exception:
+        return None
+
+
+def collect_name_candidates(doc):
+    candidates = []
+    seen = set()
+    for obj in list(getattr(doc, "Objects", []) or []):
+        lines = text_lines(obj)
+        label = object_label(obj)
+        type_id = str(getattr(obj, "TypeId", "") or "").lower()
+        if lines and ("text" in type_id or label.lower().startswith(("etiqueta", "rotulo", "rótulo"))):
+            name = clean_room_name(lines[0])
+            point = object_point(obj)
+            if name and point and len(name) <= 120 and not re.match(r"^[\d.,+-]+$", name):
+                key = (name.upper(), round(point[0], 1), round(point[1], 1))
+                if key not in seen:
+                    seen.add(key)
+                    candidates.append({"name": name, "x": point[0], "y": point[1], "priority": 0})
+
+    for obj in list(getattr(doc, "Objects", []) or []):
+        generated = str(getattr(obj, "FA_GeneratedBy", "") or "")
+        role = str(getattr(obj, "FA_Role", "") or "").lower()
+        electric_type = str(getattr(obj, "ElectricCRTipo", "") or "").lower()
+        if generated == MACRO_ID:
+            continue
+        if generated != "FA_RectangularAreaAnalysis" and role not in ("room", "area", "room_area") and electric_type != "area":
+            continue
+        point = shape_center(obj)
+        if point is None:
+            continue
+        name = ""
+        for prop in ("FA_RoomName", "RoomName", "NombreRecinto"):
+            name = clean_room_name(getattr(obj, prop, ""))
+            if name:
+                break
+        name = name or clean_room_name(object_label(obj))
+        if not name or name.lower().startswith(("area_", "rectangle", "wire")):
+            continue
+        key = (name.upper(), round(point[0], 1), round(point[1], 1))
+        if key not in seen:
+            seen.add(key)
+            candidates.append({"name": name, "x": point[0], "y": point[1], "priority": 1})
+    return candidates
+
+
+def candidates_inside(face, candidates):
+    result = []
+    center = face.CenterOfMass
+    for candidate in candidates:
+        point = App.Vector(float(candidate["x"]), float(candidate["y"]), float(face.BoundBox.ZMin))
+        try:
+            inside = face.isInside(point, GEOMETRY_TOLERANCE_MM, True)
+        except Exception:
+            inside = False
+        if inside:
+            item = dict(candidate)
+            item["distance"] = math.hypot(float(center.x) - item["x"], float(center.y) - item["y"])
+            result.append(item)
+    result.sort(key=lambda item: (item["priority"], item["distance"], item["name"]))
+    return result
+
+
+def ensure_group(doc):
+    group = doc.getObject(GROUP_NAME)
+    if group is None:
+        group = doc.addObject("App::DocumentObjectGroup", GROUP_NAME)
+    group.Label = GROUP_LABEL
+    parent = doc.getObject("FA_Areas")
+    if parent is None:
+        for obj in doc.Objects:
+            if object_label(obj).strip().lower() in ("04_areas", "areas"):
+                parent = obj
+                break
+    if parent is not None:
+        try:
+            if group not in list(getattr(parent, "Group", []) or []):
+                parent.addObject(group)
+        except Exception:
+            pass
+    return group
+
+
+def remove_previous_outputs(doc):
+    removed = 0
+    for obj in list(doc.Objects):
+        if str(getattr(obj, "FA_GeneratedBy", "") or "") != MACRO_ID:
+            continue
+        if str(getattr(obj, "Name", "") or "") == GROUP_NAME:
+            continue
+        try:
+            doc.removeObject(obj.Name)
+            removed += 1
+        except Exception as exc:
+            warn("No se pudo reemplazar %s: %s" % (object_label(obj), exc))
+    return removed
+
+
+def unique_label(doc, base):
+    existing = {object_label(obj) for obj in doc.Objects}
+    if base not in existing:
+        return base
+    index = 2
+    while "%s %02d" % (base, index) in existing:
+        index += 1
+    return "%s %02d" % (base, index)
+
+
+def create_room_object(doc, group, room_face, walls, name_candidates, index):
+    matches = candidates_inside(room_face, name_candidates)
+    room_name = matches[0]["name"] if matches else "Recinto poligonal %02d" % index
+    display_face = room_face.copy()
+    display_face.translate(App.Vector(0.0, 0.0, DISPLAY_ELEVATION_MM))
+    obj = doc.addObject("Part::Feature", "FA_PolygonalRoom")
+    obj.Label = unique_label(doc, "Poligono - " + room_name)
+    obj.Shape = display_face
+    area_m2 = float(room_face.Area) / 1000000.0
+    perimeter = float(room_face.OuterWire.Length)
+    set_property(obj, "App::PropertyString", "ElectricCRTipo", "ElectricCR", "Tipo logico", "Area")
+    set_property(obj, "App::PropertyString", "GeneratedBy", "ElectricCR", "Macro generadora", MACRO_ID)
+    set_property(obj, "App::PropertyFloat", "AreaM2", "ElectricCR", "Area del recinto", area_m2)
+    set_property(obj, "App::PropertyInteger", "VirtualClosures", "ElectricCR", "Cierres virtuales", 0)
+    set_property(obj, "App::PropertyFloat", "Confidence", "ElectricCR", "Confianza geometrica", 1.0)
+    set_property(obj, "App::PropertyString", "FA_GeneratedBy", "FacilArquitectura", "Macro generadora", MACRO_ID)
+    set_property(obj, "App::PropertyString", "FA_Role", "FacilArquitectura", "Rol", "room_polygon")
+    set_property(obj, "App::PropertyString", "FA_RoomName", "FacilArquitectura", "Nombre del recinto", room_name)
+    set_property(obj, "App::PropertyArea", "FA_Area", "FacilArquitectura", "Area exacta", float(room_face.Area))
+    set_property(obj, "App::PropertyLength", "FA_Perimeter", "FacilArquitectura", "Perimetro interior", perimeter)
+    set_property(obj, "App::PropertyInteger", "FA_VertexCount", "FacilArquitectura", "Vertices del poligono", len(room_face.OuterWire.Vertexes))
+    set_property(obj, "App::PropertyInteger", "FA_NameCandidateCount", "FacilArquitectura", "Rotulos dentro del recinto", len(matches))
+    set_property(obj, "App::PropertyStringList", "FA_NameCandidates", "FacilArquitectura", "Nombres candidatos", [item["name"] for item in matches])
+    set_property(obj, "App::PropertyLinkList", "FA_SourceWalls", "FacilArquitectura", "Muros fuente", list(walls))
+    set_property(obj, "App::PropertyString", "FA_SourceMethod", "FacilArquitectura", "Metodo geometrico", "Huecos de huella superior Arch Wall")
+    set_property(obj, "App::PropertyString", "FA_UsableFor", "FacilArquitectura", "Flujos consumidores", "HVAC; sensores de humo; cielo suspendido; ElectricCR")
+    try:
+        group.addObject(obj)
+        obj.ViewObject.LineColor = (0.85, 0.30, 0.00)
+        obj.ViewObject.ShapeColor = (1.00, 0.65, 0.15)
+        obj.ViewObject.Transparency = 75
+        obj.ViewObject.LineWidth = 2.0
+    except Exception:
+        pass
+    return obj, matches
+
+
+def column_name(index):
+    result = ""
+    while index:
+        index, remainder = divmod(index - 1, 26)
+        result = chr(65 + remainder) + result
+    return result
+
+
+def write_schedule(doc, group, room_objects):
+    sheet = doc.getObject(SHEET_NAME)
+    if sheet is None:
+        sheet = doc.addObject("Spreadsheet::Sheet", SHEET_NAME)
+    sheet.Label = "Cuadro de recintos poligonales"
+    try:
+        sheet.clearAll()
+    except Exception:
+        pass
+    headers = ("Recinto", "Area_m2", "Perimetro_m", "Vertices", "Rotulos_encontrados", "Muros_fuente")
+    for column, value in enumerate(headers, 1):
+        cell = column_name(column) + "1"
+        sheet.set(cell, value)
+        try:
+            sheet.setStyle(cell, "bold", "add")
+        except Exception:
+            pass
+    for row, obj in enumerate(room_objects, 2):
+        values = (
+            str(getattr(obj, "FA_RoomName", obj.Label)),
+            "%.3f" % float(obj.AreaM2),
+            "%.3f" % (float(obj.FA_Perimeter.Value) / 1000.0),
+            str(int(obj.FA_VertexCount)),
+            str(int(obj.FA_NameCandidateCount)),
+            ", ".join(object_label(wall) for wall in list(obj.FA_SourceWalls or [])),
+        )
+        for column, value in enumerate(values, 1):
+            sheet.set(column_name(column) + str(row), str(value))
+    for column, width in zip("ABCDEF", (220, 90, 100, 75, 125, 260)):
+        try:
+            sheet.setColumnWidth(column, width)
+        except Exception:
+            pass
+    set_property(sheet, "App::PropertyString", "FA_GeneratedBy", "FacilArquitectura", "Macro generadora", MACRO_ID)
+    set_property(sheet, "App::PropertyString", "FA_Role", "FacilArquitectura", "Rol", "room_polygon_schedule")
+    try:
+        group.addObject(sheet)
+    except Exception:
+        pass
+    return sheet
+
+
+def generate_polygonal_rooms(doc=None, walls=None, minimum_area_m2=MIN_ROOM_AREA_M2):
+    doc = doc or App.ActiveDocument
+    if doc is None:
+        raise RuntimeError("No hay documento activo.")
+    selected_mode = False
+    if walls is None:
+        walls, selected_mode = collect_walls(doc)
+    walls = unique_objects([wall for wall in list(walls or []) if is_arch_wall(wall)])
+    if not walls:
+        raise RuntimeError("La seleccion no contiene muros Arch/BIM validos.")
+
+    footprint, source_face_count = fuse_wall_footprints(walls)
+    room_faces = room_faces_from_footprint(footprint, minimum_area_m2)
+    if not room_faces:
+        raise RuntimeError(
+            "Los muros no forman huecos interiores cerrados. Revise uniones, extremos y continuidad del Arch Wall."
+        )
+    name_candidates = collect_name_candidates(doc)
+    doc.openTransaction("FA crear recintos poligonales desde muros BIM")
+    try:
+        removed = remove_previous_outputs(doc)
+        group = ensure_group(doc)
+        created = []
+        ambiguous = []
+        unnamed = []
+        for index, room_face in enumerate(room_faces, 1):
+            obj, matches = create_room_object(doc, group, room_face, walls, name_candidates, index)
+            created.append(obj)
+            if not matches:
+                unnamed.append(obj)
+            elif len({item["name"].upper() for item in matches}) > 1:
+                ambiguous.append(obj)
+        sheet = write_schedule(doc, group, created)
+        doc.recompute()
+        doc.commitTransaction()
+    except Exception:
+        try:
+            doc.abortTransaction()
+        except Exception:
+            pass
+        raise
+
+    log(
+        "Completado: recintos=%d | muros=%d | caras superiores=%d | reemplazados=%d | sin rotulo=%d | ambiguos=%d | origen=%s"
+        % (
+            len(created), len(walls), source_face_count, removed, len(unnamed), len(ambiguous),
+            "seleccion" if selected_mode else "muros visibles",
+        )
+    )
+    if ambiguous:
+        warn(
+            "Hay %d poligonos con varios rotulos distintos. Esto suele indicar que falta cerrar una pared."
+            % len(ambiguous)
+        )
+    return {
+        "walls": walls,
+        "footprint": footprint,
+        "rooms": created,
+        "sheet": sheet,
+        "unnamed": unnamed,
+        "ambiguous": ambiguous,
+    }
+
+
+def main():
+    try:
+        return generate_polygonal_rooms()
+    except Exception as exc:
+        error(str(exc))
+        return None
+
+
+FA_POLYGONAL_ROOMS_RESULT = main()

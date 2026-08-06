@@ -89,9 +89,14 @@ from typing import List, Optional
 
 from PySide import QtCore, QtGui
 
-from ..core import exporter_x3d, gamestart, persist, lights
+from ..core import exporter_x3d, gamestart, persist, lights, web_preview
 from . import panel_info
-from .output_defaults import compute_output_defaults, normalize_base_name, persist_output_settings
+from .output_defaults import (
+    compute_output_defaults,
+    ensure_output_directory,
+    normalize_base_name,
+    persist_output_settings,
+)
 
 
 def _git_last_update_label() -> str:
@@ -116,7 +121,10 @@ FreeCAD = __import__("FreeCAD")
 FreeCADGui = __import__("FreeCADGui")
 
 PARAM_GROUP = "User parameter:Plugins/GameEngineExportWB"
-DEBUG_VERSION = "2026-07-08-ground-texture-fallback"
+DEBUG_VERSION = "2026-08-03-existing-output-folder-v3"
+ARCHITECTURAL_PROFILE_VERSION = "architectural-complete-v2"
+ARCHITECTURAL_CGE_LIGHT_RADIUS_M = 4.0
+ARCHITECTURAL_GLOBAL_AMBIENT = 0.12
 
 
 def _qt_button_mask(*buttons) -> int:
@@ -251,6 +259,24 @@ class ExportTaskPanel:
 
         main_layout.addLayout(layout)
 
+        self.chk_include_hidden_3d_objects = QtGui.QCheckBox(
+            "Incluir objetos 3D ocultos / Include hidden 3D objects"
+        )
+        self.chk_include_hidden_3d_objects.setToolTip(
+            "ES: Incluye temporalmente solidos y mallas ocultos, como cielorrasos, columnas, equipos y mobiliario.\n"
+            "EN: Temporarily includes hidden solids and meshes such as ceilings, columns, equipment and furniture."
+        )
+        main_layout.addWidget(self.chk_include_hidden_3d_objects)
+
+        self.chk_automatic_3d_scene = QtGui.QCheckBox(
+            "Usar escena 3D automatica / Use automatic 3D scene"
+        )
+        self.chk_automatic_3d_scene.setToolTip(
+            "ES: Usa la politica completa del Workbench y evita listas antiguas con simbolos 2D o masters.\n"
+            "EN: Uses the complete Workbench policy and ignores stale lists containing 2D symbols or masters."
+        )
+        main_layout.addWidget(self.chk_automatic_3d_scene)
+
         actions_layout = QtGui.QHBoxLayout()
         btn_add_selection = QtGui.QPushButton("Agregar seleccion / Add selection")
         btn_add_selection.setToolTip(
@@ -335,6 +361,15 @@ class ExportTaskPanel:
             "ES: Marca luminarias para exportarlas como PointLight.\nEN: Mark fixtures to export as PointLight."
         )
         layout.addWidget(self.chk_pointlights)
+
+        self.chk_auto_detect_luminaires = QtGui.QCheckBox(
+            "Detectar luminarias 3D automaticamente / Auto-detect 3D luminaires"
+        )
+        self.chk_auto_detect_luminaires.setToolTip(
+            "ES: Crea una PointLight por cada App::Link de luminaria con solido 3D. Ignora simbolos 2D.\n"
+            "EN: Creates one PointLight per 3D luminaire App::Link. Ignores 2D symbols."
+        )
+        layout.addWidget(self.chk_auto_detect_luminaires)
 
         render_row = QtGui.QHBoxLayout()
         self.chk_pointlight_shadows = QtGui.QCheckBox(
@@ -429,16 +464,52 @@ class ExportTaskPanel:
         self.launch_checkbox = QtGui.QCheckBox("Lanzar Castle Engine al exportar")
         grid.addWidget(self.launch_checkbox, 2, 0, 1, 3)
 
+        self.btn_web_preview = QtGui.QPushButton("Vista previa Web / Web preview")
+        self.btn_web_preview.setToolTip(
+            "ES: Exporta X3D, genera index.html y abre el navegador predeterminado.\n"
+            "EN: Exports X3D, generates index.html and opens the default browser."
+        )
+        self.btn_web_preview.clicked.connect(self._export_web_preview)
+        grid.addWidget(self.btn_web_preview, 3, 0, 1, 3)
+
         return group
 
     def _build_lighting_tab(self):
         tab = QtGui.QWidget()
         layout = QtGui.QVBoxLayout(tab)
+        layout.addWidget(self._build_lighting_profile_group())
         layout.addWidget(self._build_global_light_group())
         layout.addWidget(self._build_scene_lights_group())
         layout.addWidget(self._build_materials_group())
         layout.addStretch()
         return tab
+
+    def _build_lighting_profile_group(self):
+        group = QtGui.QGroupBox("Perfil / Profile")
+        layout = QtGui.QHBoxLayout(group)
+        self.btn_architectural_profile = QtGui.QPushButton(
+            "Aplicar perfil arquitectonico completo / Apply complete architectural profile"
+        )
+        icon_path = os.path.abspath(
+            os.path.join(
+                os.path.dirname(__file__),
+                "..",
+                "resources",
+                "icons",
+                "add_light_properties.svg",
+            )
+        )
+        self.btn_architectural_profile.setIcon(QtGui.QIcon(icon_path))
+        self.btn_architectural_profile.setToolTip(
+            "ES: Configura una escena completa, luces 3D sin duplicados, atenuacion interior y materiales Soft.\n"
+            "EN: Configures a complete scene, non-duplicated 3D lights, interior falloff and Soft materials."
+        )
+        self.btn_architectural_profile.clicked.connect(
+            lambda: self._apply_architectural_profile(log=True)
+        )
+        layout.addWidget(self.btn_architectural_profile)
+        layout.addStretch()
+        return group
 
     def _build_materials_group(self):
         group = QtGui.QGroupBox("Materiales X3D / X3D Materials")
@@ -622,6 +693,20 @@ class ExportTaskPanel:
         self.global_light_color = self._color_from_param_string(color_string, self.global_light_color)
         self._update_global_color_button()
         self.chk_pointlights.setChecked(bool(self.params.GetBool("export_pointlights", False)))
+        self.chk_auto_detect_luminaires.setChecked(
+            bool(self.params.GetBool("auto_detect_luminaires", True))
+        )
+        self.chk_include_hidden_3d_objects.setChecked(
+            bool(
+                self.params.GetBool(
+                    "include_hidden_3d_objects",
+                    self.params.GetBool("include_hidden_3d_links", True),
+                )
+            )
+        )
+        self.chk_automatic_3d_scene.setChecked(
+            bool(self.params.GetBool("automatic_3d_scene", True))
+        )
         shadow_version = self.params.GetString("pointlight_shadow_version", "")
         self.chk_pointlight_shadows.setChecked(
             bool(self.params.GetBool("pointlight_shadows", False)) and shadow_version == "limited-v1"
@@ -647,6 +732,8 @@ class ExportTaskPanel:
         self.gamestart_line.setText(gamestart_label)
         self.root_names = []
         self._load_sidecar()
+        if not self.sidecar_data:
+            self._apply_architectural_profile(log=False)
         self._update_gamestart_state()
         self._update_global_color_button()
 
@@ -725,8 +812,24 @@ class ExportTaskPanel:
         if "export_pointlights" in data:
             self.chk_pointlights.setChecked(bool(data.get("export_pointlights", False)))
 
+        scene_selection = data.get("scene_selection")
+        if isinstance(scene_selection, dict):
+            automatic_setting = scene_selection.get("automatic_3d_scene")
+            if automatic_setting is not None:
+                self.chk_automatic_3d_scene.setChecked(bool(automatic_setting))
+            hidden_setting = scene_selection.get(
+                "include_hidden_3d_objects",
+                scene_selection.get("include_hidden_3d_links"),
+            )
+            if hidden_setting is not None:
+                self.chk_include_hidden_3d_objects.setChecked(bool(hidden_setting))
+
         point_options = data.get("point_light_options")
         if isinstance(point_options, dict):
+            if "auto_detect_luminaires" in point_options:
+                self.chk_auto_detect_luminaires.setChecked(
+                    bool(point_options.get("auto_detect_luminaires", True))
+                )
             if "shadows" in point_options:
                 has_safe_limit = "max_shadow_lights" in point_options
                 self.chk_pointlight_shadows.setChecked(bool(point_options.get("shadows", False)) and has_safe_limit)
@@ -793,6 +896,8 @@ class ExportTaskPanel:
                         resolved_names.add(obj.Name)
         self.light_names = resolved_names
         lights.apply_light_names(doc, self.light_names)
+        if str(data.get("export_profile_version", "") or "") != ARCHITECTURAL_PROFILE_VERSION:
+            self._apply_architectural_profile(log=True)
 
     def _apply_export_selection(self):
         """Move saved export items from available list into export list."""
@@ -859,16 +964,23 @@ class ExportTaskPanel:
         data["gamestart_label"] = gamestart_label
         data["output"] = {"dir": output_dir, "base_name": base_name}
 
-        global_color_ints = [int(max(0, min(255, round(c * 255.0)))) for c in self.global_light_color]
         data["global_light"] = {
             "enabled": bool(self.chk_global_light.isChecked()),
             "yaw": float(self.spin_gl_yaw.value()),
             "pitch": float(self.spin_gl_pitch.value()),
             "intensity": float(self.spin_gl_intensity.value()),
-            "color": global_color_ints,
+            "color": [float(value) for value in self.global_light_color],
+            "ambient_intensity": self._global_light_ambient_intensity(),
             "shadows": bool(self.chk_gl_shadows.isChecked()),
         }
         data["navigation"] = self._navigation_config()
+        data["scene_selection"] = {
+            "automatic_3d_scene": bool(self.chk_automatic_3d_scene.isChecked()),
+            "include_hidden_3d_objects": bool(
+                self.chk_include_hidden_3d_objects.isChecked()
+            )
+        }
+        data["export_profile_version"] = ARCHITECTURAL_PROFILE_VERSION
         data["materials"] = self._material_lighting_config()
         data["environment"] = self._environment_config_for_sidecar()
         data["point_light_options"] = self._point_light_options_config()
@@ -1596,8 +1708,22 @@ class ExportTaskPanel:
             "pitch": float(self.spin_gl_pitch.value()),
             "intensity": float(self.spin_gl_intensity.value()),
             "color": self.global_light_color,
+            "ambient_intensity": self._global_light_ambient_intensity(),
             "shadows": bool(self.chk_gl_shadows.isChecked()),
         }
+
+    def _architectural_profile_is_active(self) -> bool:
+        if not isinstance(self.sidecar_data, dict):
+            return False
+        return (
+            str(self.sidecar_data.get("export_profile_version", "") or "")
+            == ARCHITECTURAL_PROFILE_VERSION
+        )
+
+    def _global_light_ambient_intensity(self) -> float:
+        if self._architectural_profile_is_active():
+            return ARCHITECTURAL_GLOBAL_AMBIENT
+        return 0.18
 
     def _navigation_config(self) -> dict:
         speed = self._normalize_nav_speed(float(self.spin_nav_speed.value()))
@@ -1716,17 +1842,45 @@ class ExportTaskPanel:
         falloff = self._point_light_falloff_mode()
         max_shadow_lights = max(0, min(4, int(self.spin_max_shadow_lights.value())))
         attenuation = {
-            "Interior": "1 0.25 0.04",
+            "Interior": "1 0.30 0.06",
             "Soft": "1 0.08 0.01",
             "Constant": "1 0 0",
-        }.get(falloff, "1 0.25 0.04")
+        }.get(falloff, "1 0.30 0.06")
         return {
+            "auto_detect_luminaires": bool(self.chk_auto_detect_luminaires.isChecked()),
             "shadows": shadows,
             "max_shadow_lights": max_shadow_lights,
             "falloff": falloff,
             "attenuation": attenuation,
-            "ambient_intensity": 0.04 if falloff == "Interior" else 0.10,
+            "ambient_intensity": 0.02 if falloff == "Interior" else 0.10,
         }
+
+    def _apply_architectural_profile(self, log: bool = False) -> None:
+        """Apply the reusable settings validated with architectural projects."""
+        self.chk_automatic_3d_scene.setChecked(True)
+        self.chk_include_hidden_3d_objects.setChecked(True)
+        self.chk_pointlights.setChecked(False)
+        self.chk_auto_detect_luminaires.setChecked(True)
+        self.chk_pointlight_shadows.setChecked(False)
+        self.spin_max_shadow_lights.setValue(0)
+        self._set_point_light_falloff_mode("Interior")
+        self.chk_global_light.setChecked(True)
+        self.spin_gl_yaw.setValue(-30.0)
+        self.spin_gl_pitch.setValue(-45.0)
+        self.spin_gl_intensity.setValue(0.35)
+        self.global_light_color = (1.0, 0.95, 0.85)
+        self._update_global_color_button()
+        self.chk_gl_shadows.setChecked(True)
+        self.chk_improve_interior_lighting.setChecked(True)
+        self._set_material_lighting_mode("Soft")
+        if isinstance(self.sidecar_data, dict):
+            self.sidecar_data["export_profile_version"] = ARCHITECTURAL_PROFILE_VERSION
+        if log:
+            FreeCAD.Console.PrintMessage(
+                "[GAMEEXPORT] Architectural complete profile applied: "
+                "automatic_scene=true, hidden_3d=true, manual_lights=false, "
+                "auto_luminaires=true, point_shadows=false, materials=Soft\n"
+            )
 
     def _point_light_falloff_mode(self) -> str:
         mode = str(self.combo_pointlight_falloff.currentText() or "Interior")
@@ -1918,9 +2072,26 @@ class ExportTaskPanel:
                 debug_records.append({"event": "cge_fallback_full_document_scan"})
             cge_data = lights.gather_cge_light_data(doc, None, debug_records)
         cge_count = 0
+        architectural_profile = self._architectural_profile_is_active()
         for data in cge_data:
-            entries.append(self._point_light_entry_dict(data))
+            entry = self._point_light_entry_dict(data)
+            if architectural_profile:
+                entry["radius"] = ARCHITECTURAL_CGE_LIGHT_RADIUS_M
+            entries.append(entry)
             cge_count += 1
+        auto_count = 0
+        if self.chk_auto_detect_luminaires.isChecked():
+            blocked_sources = set()
+            for entry in entries:
+                name = str(entry.get("name", "") or "")
+                blocked_sources.add(name.split("_CGE_", 1)[0])
+            for data in lights.gather_auto_luminaire_data(doc, export_objects, debug_records):
+                source_name = str(data.name or "").split("_CGE_", 1)[0]
+                if source_name in blocked_sources:
+                    continue
+                entries.append(self._point_light_entry_dict(data))
+                blocked_sources.add(source_name)
+                auto_count += 1
         point_options = self._point_light_options_config()
         shadow_indices = set()
         if point_options["shadows"] and point_options["max_shadow_lights"] > 0:
@@ -1936,6 +2107,13 @@ class ExportTaskPanel:
             entry["attenuation"] = point_options["attenuation"]
             entry["ambient_intensity"] = point_options["ambient_intensity"]
         if entries:
+            if architectural_profile and cge_count:
+                FreeCAD.Console.PrintMessage(
+                    "[GAMEEXPORT] Architectural profile normalized "
+                    + str(cge_count)
+                    + " configured CGE light ranges to "
+                    + f"{ARCHITECTURAL_CGE_LIGHT_RADIUS_M:.1f} m.\n"
+                )
             shadowed_count = len(shadow_indices)
             if point_options["shadows"] and shadowed_count < len(entries):
                 FreeCAD.Console.PrintWarning(
@@ -1947,7 +2125,7 @@ class ExportTaskPanel:
                 )
             FreeCAD.Console.PrintMessage(
                 "[GAMEEXPORT] PointLight entries prepared: "
-                + f"manual={manual_count}, cge={cge_count}, total={len(entries)}, "
+                + f"manual={manual_count}, cge={cge_count}, auto3d={auto_count}, total={len(entries)}, "
                 + "shadowed="
                 + str(shadowed_count)
                 + ", falloff="
@@ -2058,11 +2236,21 @@ class ExportTaskPanel:
             if obj is not None and obj is not gamestart_obj:
                 export_objects.append(obj)
 
-        if not export_objects:
+        automatic_scene = bool(self.chk_automatic_3d_scene.isChecked())
+        include_hidden = bool(self.chk_include_hidden_3d_objects.isChecked())
+        if automatic_scene:
+            FreeCAD.Console.PrintMessage(
+                "[GAMEEXPORT] Automatic 3D scene enabled; using reusable scene policy\n"
+            )
+        elif not export_objects:
             FreeCAD.Console.PrintMessage("[GAMEEXPORT] Export list empty, using entire document\n")
-            export_objects = [obj for obj in doc.Objects if obj is not gamestart_obj]
-
-        return export_objects
+        return exporter_x3d.resolve_scene_objects(
+            doc,
+            export_objects,
+            excluded_objects=[gamestart_obj] if gamestart_obj is not None else [],
+            automatic_3d_scene=automatic_scene,
+            include_hidden_objects=include_hidden,
+        )
 
     def _diagnose_export_selection(self):
         doc = FreeCAD.ActiveDocument
@@ -2085,7 +2273,10 @@ class ExportTaskPanel:
             f"Diagnostico: {exportable}/{total} exportables, {skipped} omitidos (ver consola)."
         )
 
-    def _export_scene(self):
+    def _export_web_preview(self):
+        self._export_scene(web_preview_enabled=True)
+
+    def _export_scene(self, web_preview_enabled: bool = False):
         doc = FreeCAD.ActiveDocument
         if doc is None:
             FreeCAD.Console.PrintError("[GAMEEXPORT] No active document to export\n")
@@ -2109,11 +2300,25 @@ class ExportTaskPanel:
 
         safe_base_name = normalize_base_name(base_name)
 
+        requested_output_dir = output_dir
         try:
-            os.makedirs(output_dir, exist_ok=True)
-        except OSError as exc:
-            FreeCAD.Console.PrintError("[GAMEEXPORT] Cannot create output folder: " + str(exc) + "\n")
+            output_dir, output_dir_created = ensure_output_directory(output_dir)
+        except (OSError, ValueError) as exc:
+            FreeCAD.Console.PrintError(
+                "[GAMEEXPORT][ERROR] Cannot prepare output folder: requested="
+                + repr(requested_output_dir)
+                + ", error="
+                + type(exc).__name__
+                + ": "
+                + str(exc)
+                + "\n"
+            )
             return False
+        self.output_dir_line.setText(output_dir)
+        output_action = "created" if output_dir_created else "using existing"
+        FreeCAD.Console.PrintMessage(
+            "[GAMEEXPORT] Output folder " + output_action + ": " + output_dir + "\n"
+        )
 
         file_path = Path(output_dir) / (safe_base_name + ".x3d")
         gamestart_meta = gamestart.get_metadata(gamestart_obj) if gamestart_obj else None
@@ -2166,6 +2371,17 @@ class ExportTaskPanel:
         self.params.SetBool("gl_shadows", bool(self.chk_gl_shadows.isChecked()))
         self.params.SetString("gl_color", self._color_to_param_string(self.global_light_color))
         self.params.SetBool("export_pointlights", bool(self.chk_pointlights.isChecked()))
+        self.params.SetBool(
+            "auto_detect_luminaires", bool(self.chk_auto_detect_luminaires.isChecked())
+        )
+        self.params.SetBool(
+            "include_hidden_3d_objects",
+            bool(self.chk_include_hidden_3d_objects.isChecked()),
+        )
+        self.params.SetBool(
+            "automatic_3d_scene",
+            bool(self.chk_automatic_3d_scene.isChecked()),
+        )
         self.params.SetBool("pointlight_shadows", bool(self.chk_pointlight_shadows.isChecked()))
         self.params.SetInt("pointlight_max_shadows", int(self.spin_max_shadow_lights.value()))
         self.params.SetString("pointlight_shadow_version", "limited-v1")
@@ -2186,10 +2402,32 @@ class ExportTaskPanel:
         self._update_export_names()
         self._save_sidecar(output_dir, base_name, gamestart_label)
 
-        if self.launch_checkbox.isChecked():
+        if web_preview_enabled:
+            try:
+                html_path = web_preview.generate_x3dom_preview(file_path)
+                FreeCAD.Console.PrintMessage("[GAMEEXPORT] Web preview HTML generated at " + str(html_path) + "\n")
+                browser_opened = web_preview.open_preview(html_path)
+                preview_url = web_preview.get_active_preview_url()
+                if browser_opened:
+                    FreeCAD.Console.PrintMessage(
+                        "[GAMEEXPORT] Opening web preview in default browser: "
+                        + str(preview_url or "HTTP URL unavailable")
+                        + "\n"
+                    )
+                else:
+                    FreeCAD.Console.PrintWarning("[GAMEEXPORT][WARN] Browser did not confirm web preview open\n")
+                self.status_label.setText(
+                    "Vista previa Web: " + str(preview_url or html_path)
+                )
+            except Exception as exc:
+                FreeCAD.Console.PrintError("[GAMEEXPORT] Web preview failed: " + str(exc) + "\n")
+                self.status_label.setText("No se pudo generar la vista previa Web.")
+                return False
+        elif self.launch_checkbox.isChecked():
             self._launch_castle_engine(str(file_path))
 
-        self.status_label.setText("Exportacion completada: " + str(file_path))
+        if not web_preview_enabled:
+            self.status_label.setText("Exportacion completada: " + str(file_path))
         return True
 
     def _launch_castle_engine(self, file_path):

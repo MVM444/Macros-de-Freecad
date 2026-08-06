@@ -8,10 +8,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+import unicodedata
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 
 LOG_PREFIX = "[GAMEEXPORT] "
+DEBUG_VERSION = "2026-07-30-solid-only-light-origin-v2"
 PROPERTY_GROUP = "GameEngineExport"
 CGE_PROPERTY_GROUP = "GameEngineLight"
 DEFAULT_INTENSITY = 1.0
@@ -25,6 +27,34 @@ CGE_LIGHT_ORIGINS = ["AutoFaceCenter", "ManualLocalPoint", "ReferenceMarker"]
 MAX_POINTS_PER_LUMINAIRE = 25
 PREVIEW_GROUP_NAME = "CGE_TempLightPreview"
 REFERENCE_MARKER_PREFIX = "CGE_LightOrigin_"
+AUTO_LUMINAIRE_KEYWORDS = (
+    "luminaria",
+    "luminaire",
+    "lampara",
+    "lamp",
+    "light fixture",
+    "lightfixture",
+)
+AUTO_LUMINAIRE_BOOL_PROPERTIES = (
+    "IsGameExportLuminaire",
+    "IsLuminaire",
+    "IsLightFixture",
+)
+AUTO_LUMINAIRE_ROLE_PROPERTIES = (
+    "GameExportRole",
+    "IfcType",
+    "PredefinedType",
+    "ObjectType",
+    "Category",
+    "Role",
+    "EquipmentType",
+    "DeviceType",
+)
+AUTO_LUMINAIRE_INTENSITY = 0.55
+AUTO_LUMINAIRE_RADIUS_M = 6.0
+AUTO_LUMINAIRE_COLOR = (1.0, 0.95, 0.88)
+AUTO_LUMINAIRE_OFFSET_MM = 40.0
+_SOLID_BBOX_LOGGED = set()
 
 
 @dataclass
@@ -580,6 +610,73 @@ def gather_cge_light_data(
     return entries
 
 
+def gather_auto_luminaire_data(
+    doc,
+    source_objects: Optional[Iterable[object]] = None,
+    debug_records: Optional[List[Dict[str, object]]] = None,
+) -> List[PointLightData]:
+    """Generate one default PointLight for each unconfigured 3D luminaire Link."""
+    if doc is None:
+        return []
+    raw_sources = list(source_objects) if source_objects is not None else list(getattr(doc, "Objects", []) or [])
+    source_list = _expand_source_objects(raw_sources)
+    entries: List[PointLightData] = []
+    seen_sources = set()
+
+    for obj in source_list:
+        if obj is None or not _is_link(obj) or _is_auxiliary_object(obj):
+            continue
+        source_name = str(getattr(obj, "Name", "") or "")
+        if not source_name or source_name in seen_sources:
+            continue
+        seen_sources.add(source_name)
+        master = resolve_master_object(obj)
+        if master is None or has_cge_light_properties(master):
+            continue
+        if not _looks_like_luminaire(obj, master):
+            continue
+
+        # Requiring a real solid prevents Draft symbols, wires, and planar
+        # annotations from becoming lights merely because their labels match.
+        if _get_solid_bbox(master) is None:
+            _log_debug("Auto luminaire rejected without 3D solid: " + _object_ref(obj))
+            continue
+
+        definition = LightDefinition(
+            master_obj=master,
+            source_obj=obj,
+            effective_placement=get_global_placement(obj),
+            light_properties={
+                "enabled": True,
+                "type": "Point",
+                "pattern": "Single",
+                "direction": "Down",
+                "origin_mode": "AutoFaceCenter",
+                "offset_mm": AUTO_LUMINAIRE_OFFSET_MM,
+                "intensity": AUTO_LUMINAIRE_INTENSITY,
+                "range_m": AUTO_LUMINAIRE_RADIUS_M,
+                "color": AUTO_LUMINAIRE_COLOR,
+                "rows": 1,
+                "cols": 1,
+                "count": 1,
+            },
+        )
+        generated = generate_light_points_for_definition(definition, debug_records)
+        entries.extend(generated)
+        if debug_records is not None:
+            debug_records.append(
+                {
+                    "event": "auto_luminaire_detected",
+                    "source": _debug_object_info(obj),
+                    "master": _debug_object_info(master),
+                    "generated_entries": len(generated),
+                }
+            )
+
+    _log_info("Auto-detected 3D luminaires: " + str(len(entries)))
+    return entries
+
+
 def generate_light_points_for_definition(
     definition: LightDefinition,
     debug_records: Optional[List[Dict[str, object]]] = None,
@@ -592,6 +689,8 @@ def generate_light_points_for_definition(
     results: List[PointLightData] = []
     label = getattr(definition.source_obj, "Label", "") or getattr(definition.source_obj, "Name", "Light")
     source_name = getattr(definition.source_obj, "Name", "Light")
+    total_intensity = max(0.0, float(props.get("intensity", 1.0)))
+    point_intensity = total_intensity / float(len(local_points))
     for index, local_point in enumerate(local_points):
         world_point = _placement_mult_vec(placement, local_point)
         _log_debug(
@@ -617,7 +716,8 @@ def generate_light_points_for_definition(
                     "local_point_mm": _vector_tuple(local_point),
                     "placement_base_mm": _placement_base_tuple(placement),
                     "world_point_mm": _vector_tuple(world_point),
-                    "intensity": float(props.get("intensity", 1.0)),
+                    "intensity": point_intensity,
+                    "total_intensity": total_intensity,
                     "range_m": float(props.get("range_m", 8.0)),
                 }
             )
@@ -626,7 +726,7 @@ def generate_light_points_for_definition(
                 name=f"{source_name}_CGE_{index + 1}",
                 label=f"{label} CGE {index + 1}",
                 position_mm=(world_point.x, world_point.y, world_point.z),
-                intensity=float(props.get("intensity", 1.0)),
+                intensity=point_intensity,
                 color_rgb=tuple(props.get("color", (1.0, 0.95, 0.85))),
                 radius=float(props.get("range_m", 8.0)),
             )
@@ -734,12 +834,108 @@ def _get_local_bbox(obj):
         shape = getattr(obj, "Shape", None)
         if shape is None or (hasattr(shape, "isNull") and shape.isNull()):
             return None
-        bbox = shape.BoundBox
+        solid_bbox = _get_solid_bbox(obj)
+        if solid_bbox is not None:
+            bbox = solid_bbox
+            whole_bbox = shape.BoundBox
+            name = str(getattr(obj, "Name", "") or "")
+            if name and name not in _SOLID_BBOX_LOGGED and _bbox_differs(whole_bbox, bbox):
+                _SOLID_BBOX_LOGGED.add(name)
+                _log_debug(
+                    "Using solid-only light bbox to ignore 2D geometry: "
+                    + _object_ref(obj)
+                    + ", whole_z="
+                    + _format_range(whole_bbox.ZMin, whole_bbox.ZMax)
+                    + ", solid_z="
+                    + _format_range(bbox.ZMin, bbox.ZMax)
+                )
+        else:
+            bbox = shape.BoundBox
         if bbox is None:
             return None
         return bbox
     except Exception:
         return None
+
+
+class _Bounds:
+    """Minimal immutable bounds object used by light point generators."""
+
+    def __init__(self, x_min, y_min, z_min, x_max, y_max, z_max):
+        self.XMin = float(x_min)
+        self.YMin = float(y_min)
+        self.ZMin = float(z_min)
+        self.XMax = float(x_max)
+        self.YMax = float(y_max)
+        self.ZMax = float(z_max)
+
+
+def _get_solid_bbox(obj):
+    """Return bounds of positive-volume solids, excluding 2D edges and faces."""
+    try:
+        shape = getattr(obj, "Shape", None)
+        if shape is None or (hasattr(shape, "isNull") and shape.isNull()):
+            return None
+        solid_boxes = []
+        for solid in list(getattr(shape, "Solids", []) or []):
+            if float(getattr(solid, "Volume", 0.0) or 0.0) <= 1e-6:
+                continue
+            bbox = getattr(solid, "BoundBox", None)
+            if bbox is not None:
+                solid_boxes.append(bbox)
+        if not solid_boxes:
+            return None
+        return _Bounds(
+            min(float(box.XMin) for box in solid_boxes),
+            min(float(box.YMin) for box in solid_boxes),
+            min(float(box.ZMin) for box in solid_boxes),
+            max(float(box.XMax) for box in solid_boxes),
+            max(float(box.YMax) for box in solid_boxes),
+            max(float(box.ZMax) for box in solid_boxes),
+        )
+    except Exception:
+        return None
+
+
+def _bbox_differs(first, second, tolerance: float = 1e-6) -> bool:
+    for name in ("XMin", "YMin", "ZMin", "XMax", "YMax", "ZMax"):
+        if abs(float(getattr(first, name)) - float(getattr(second, name))) > tolerance:
+            return True
+    return False
+
+
+def _format_range(minimum, maximum) -> str:
+    return "{0:.3f}..{1:.3f}".format(float(minimum), float(maximum))
+
+
+def _looks_like_luminaire(obj, master) -> bool:
+    for candidate in (obj, master):
+        for property_name in AUTO_LUMINAIRE_BOOL_PROPERTIES:
+            try:
+                if hasattr(candidate, property_name) and bool(
+                    getattr(candidate, property_name)
+                ):
+                    return True
+            except Exception:
+                pass
+
+    text_parts = []
+    for candidate in (obj, master):
+        text_parts.extend(
+            (
+                str(getattr(candidate, "Name", "") or ""),
+                str(getattr(candidate, "Label", "") or ""),
+            )
+        )
+        for property_name in AUTO_LUMINAIRE_ROLE_PROPERTIES:
+            try:
+                if hasattr(candidate, property_name):
+                    text_parts.append(str(getattr(candidate, property_name) or ""))
+            except Exception:
+                pass
+    text = " ".join(text_parts)
+    normalized = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii").lower()
+    return any(keyword in normalized for keyword in AUTO_LUMINAIRE_KEYWORDS)
 
 
 def _face_center(bbox, direction):
@@ -1108,6 +1304,7 @@ __all__: List[str] = [
     "create_temp_light_preview",
     "ensure_cge_light_properties",
     "gather_cge_light_data",
+    "gather_auto_luminaire_data",
     "gather_point_light_data",
     "generate_light_points_for_definition",
     "get_global_placement",

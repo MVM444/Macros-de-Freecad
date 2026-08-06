@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 # MenuText: Insertar Tablero
+# Toolbar: Tableros
 # Icon: Insertar_Tablero.svg
 
 # Qt compatibility for FreeCAD 1.x (PySide6) and older builds.

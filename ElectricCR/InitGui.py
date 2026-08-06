@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""InitGui del workbench ElectricCR.
-
-Registra el WB “Eléctrico CR”, agrega barras/menús con comandos Draft
-disponibles y agrupa macros del repositorio. Pensado para cargarse
-desde la carpeta `Macros` mediante un macro loader.
+"""Module: ElectricCR.InitGui
+Purpose: Register the ElectricCR workbench, menus, toolbars, and mode panel.
+Important: Keep ElectricCR as one workbench. Manual modes must not switch from
+object selection. Keep all macros reachable through menus and launchers.
+Modified: 2026-07-07 09:18 Costa Rica.
+Target: FreeCAD 1.1.1.
 """
 
 # Qt compatibility for FreeCAD 1.x (PySide6) and older builds.
@@ -132,6 +133,28 @@ def _cfg_bool(cfg: dict, key: str, default: bool) -> bool:
     return bool(default)
 
 
+def _cfg_str(cfg: dict, key: str, default: str) -> str:
+    try:
+        value = cfg.get(key, default)
+    except Exception:
+        return str(default)
+    if value is None:
+        return str(default)
+    return str(value).strip()
+
+
+def _cfg_list(cfg: dict, key: str, default: list) -> list:
+    try:
+        value = cfg.get(key, default)
+    except Exception:
+        value = default
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",") if item.strip()]
+    return [str(item).strip() for item in default if str(item).strip()]
+
+
 def _normalize_toolbar_key(text: str) -> str:
     s = str(text or "").strip().lower()
     if not s:
@@ -140,6 +163,48 @@ def _normalize_toolbar_key(text: str) -> str:
     s = "".join(ch for ch in s if not unicodedata.combining(ch))
     s = " ".join(s.split())
     return s
+
+
+def _group_name_in(title: str, names: list) -> bool:
+    wanted = _normalize_toolbar_key(title)
+    if not wanted:
+        return False
+    return any(_normalize_toolbar_key(name) == wanted for name in names)
+
+
+def _merge_command_groups(groups: list) -> list:
+    merged = []
+    index_by_key = {}
+    for title, cmds in groups or []:
+        key = _normalize_toolbar_key(title)
+        if not key:
+            continue
+        clean_cmds = [cmd for cmd in (cmds or []) if cmd]
+        if not clean_cmds:
+            continue
+        if key in index_by_key:
+            idx = index_by_key[key]
+            group_title, group_cmds = merged[idx]
+            seen = set(group_cmds)
+            for cmd in clean_cmds:
+                if cmd not in seen:
+                    group_cmds.append(cmd)
+                    seen.add(cmd)
+            merged[idx] = (group_title, group_cmds)
+        else:
+            index_by_key[key] = len(merged)
+            merged.append((title, clean_cmds))
+    return merged
+
+
+def _should_show_macro_toolbar(title: str, cfg: dict) -> bool:
+    mode = _cfg_str(cfg, "macro_toolbar_mode", "compact").lower()
+    if mode in {"full", "all", "todos"}:
+        return True
+    if mode in {"off", "none", "menu_only", "menu-only", "solo_menu", "solo-menu"}:
+        return False
+    visible_groups = _cfg_list(cfg, "macro_toolbar_groups", [])
+    return _group_name_in(title, visible_groups)
 
 
 _WRAPPED_COMMANDS = {}
@@ -477,6 +542,14 @@ class ElectricCRWorkbench(Gui.Workbench):
             return
         _register_icon_path()
 
+        # Comandos contextuales propios de objetos ElectricCR.
+        wall_side_cmd = None
+        try:
+            from .commands import wall_side as _wall_side
+            wall_side_cmd = _wall_side.register_command()
+        except Exception as e:
+            App.Console.PrintWarning(f"[ElectricCR][Context] wall_side_warning={e}\n")
+
         # Asegurar que Draft registre sus comandos si está disponible
         try:
             import Draft  # noqa: F401
@@ -496,13 +569,28 @@ class ElectricCRWorkbench(Gui.Workbench):
             pass
 
         available = set(Gui.listCommands())
+        cfg = load_config()
+        show_bim_toolbar = _cfg_bool(cfg, "show_bim_toolbar", False)
+        show_draft_toolbars = _cfg_bool(cfg, "show_draft_toolbars", False)
+        mode_manager = None
+        mode_panel = None
+        modes_enabled = False
+        try:
+            from .ui import mode_manager as _mode_manager
+            from .ui import mode_panel as _mode_panel
+            mode_manager = _mode_manager
+            mode_panel = _mode_panel
+            modes_enabled = mode_manager.is_enabled(cfg)
+        except Exception as e:
+            App.Console.PrintWarning(f"[ElectricCR][Mode] import_warning={e}\n")
 
         # BIM/Arch tools (e.g., Wall/Muro)
         try:
             bim_wall_candidates = ["BIM_Wall", "Arch_Wall"]
             bim_cmds = [c for c in bim_wall_candidates if c in available]
             if bim_cmds:
-                self.appendToolbar("BIM", bim_cmds)
+                if show_bim_toolbar:
+                    self.appendToolbar("BIM", bim_cmds)
                 self.appendMenu("BIM", bim_cmds)
         except Exception:
             pass
@@ -530,10 +618,11 @@ class ElectricCRWorkbench(Gui.Workbench):
             "Draft_AddToGroup", "Draft_MoveToGroup", "Draft_SelectGroup",
         ]
         try:
-            from draftutils import init_tools as _draft_tools
-            snap_cmds = [c for c in _draft_tools.get_draft_snap_commands() if c in available]
-            if snap_cmds:
-                _draft_tools.init_toolbar(self, "Draft snap", snap_cmds)
+            if show_draft_toolbars:
+                from draftutils import init_tools as _draft_tools
+                snap_cmds = [c for c in _draft_tools.get_draft_snap_commands() if c in available]
+                if snap_cmds:
+                    _draft_tools.init_toolbar(self, "Draft snap", snap_cmds)
         except Exception:
             pass
 
@@ -546,13 +635,41 @@ class ElectricCRWorkbench(Gui.Workbench):
 
         for title, cmds in groups:
             if cmds:
-                self.appendToolbar(title, cmds)
+                if show_draft_toolbars:
+                    self.appendToolbar(title, cmds)
                 self.appendMenu(title, cmds)
 
+        draft_compact = [
+            "Draft_Line",
+            "Draft_Wire",
+            "Draft_Rectangle",
+            "Draft_Circle",
+            "Draft_Polygon",
+            "Draft_Move",
+            "Draft_Rotate",
+            "Draft_AddToGroup",
+            "Draft_SelectGroup",
+            "Draft_Snap_Endpoint",
+            "Draft_Snap_Midpoint",
+            "Draft_Snap_Center",
+            "Draft_Snap_Intersection",
+            "Draft_Snap_Perpendicular",
+            "Draft_Snap_Ortho",
+        ]
+        try:
+            show_draft_compact = _cfg_bool(cfg, "show_draft_compact_toolbar", True)
+            draft_compact_cmds = [c for c in draft_compact if c in available]
+            if show_draft_compact and draft_compact_cmds:
+                self.appendToolbar("Draft compacto", draft_compact_cmds)
+        except Exception:
+            pass
+
         # Grupos de macros ElectricCR
+        primary_toolbar_cmds = []
         try:
             from .commands.macros import register_predefined_macros
             macro_groups = register_predefined_macros(BASE_DIR)
+            macro_groups = _merge_command_groups(macro_groups)
             # Orden personalizado desde config
             cfg = load_config()
             order = cfg.get('toolbar_order', [])
@@ -560,17 +677,58 @@ class ElectricCRWorkbench(Gui.Workbench):
                 # ordenar según 'order', dejando el resto al final
                 order_index = {_normalize_toolbar_key(name): i for i, name in enumerate(order)}
                 macro_groups.sort(key=lambda g: order_index.get(_normalize_toolbar_key(g[0]), 10_000))
+            try:
+                from .commands import macro_launcher as _launcher
+                launcher_cmd = _launcher.register_macro_launcher(macro_groups)
+                primary_toolbar_cmds.append(launcher_cmd)
+                self.appendMenu("ElectricCR", [launcher_cmd])
+            except Exception:
+                pass
             for title, cmds in macro_groups:
                 if cmds:
-                    self.appendToolbar(title, cmds)
+                    if modes_enabled and mode_manager is not None:
+                        show_toolbar = mode_manager.should_create_toolbar(title, cfg)
+                    else:
+                        show_toolbar = _should_show_macro_toolbar(title, cfg)
+                    if show_toolbar:
+                        self.appendToolbar(title, cmds)
                     self.appendMenu(title, cmds)
+
+            # Mantener el acceso principal al flujo de deteccion junto al
+            # selector de modos. En algunas sesiones de FreeCAD las barras
+            # creadas dinamicamente despues de recargar quedan registradas,
+            # pero Qt no llega a dibujarlas.
+            detector_prefixes = (
+                "ElectricCR_Deteccion_ColocarDetectores_NFPA_",
+                "ElectricCR_Deteccion_ColocarDetectores_Poligonos_NFPA_",
+            )
+            for prefix in detector_prefixes:
+                detector_cmds = [
+                    name for name in Gui.listCommands() if name.startswith(prefix)
+                ]
+                if not detector_cmds:
+                    continue
+                detector_cmds.sort(
+                    key=lambda name: int(name.rsplit("_", 1)[-1])
+                    if name.rsplit("_", 1)[-1].isdigit() else 0
+                )
+                primary_toolbar_cmds.append(detector_cmds[-1])
         except Exception as e:
             App.Console.PrintError(f"ElectricCR: error registrando macros: {e}\n")
+
+        # Manual mode panel command
+        try:
+            if modes_enabled and mode_panel is not None and mode_manager.panel_enabled(cfg):
+                mode_panel_cmd = mode_panel.register_mode_panel_command()
+                self.appendMenu("ElectricCR", [mode_panel_cmd])
+        except Exception as e:
+            App.Console.PrintWarning(f"[ElectricCR][Mode] command_warning={e}\n")
 
         # Comandos de chat/log
         try:
             from .commands import chatlog_cmds as _chat
-            self.appendToolbar("Chat", [_chat.SAVE_CMD, _chat.OPEN_CMD, _chat.PRINT_CMD])
+            if _cfg_bool(cfg, "show_chat_toolbar", False):
+                self.appendToolbar("Chat", [_chat.SAVE_CMD, _chat.OPEN_CMD, _chat.PRINT_CMD])
             self.appendMenu("Chat", [_chat.SAVE_CMD, _chat.OPEN_CMD, _chat.PRINT_CMD])
         except Exception:
             pass
@@ -578,6 +736,8 @@ class ElectricCRWorkbench(Gui.Workbench):
         # Estadisticas de uso
         try:
             from .commands import usage_stats_cmds as _stats
+            if _cfg_bool(cfg, "show_usage_stats_on_toolbar", False):
+                primary_toolbar_cmds.append(_stats.STATS_CMD)
             self.appendMenu("ElectricCR", [_stats.STATS_CMD])
         except Exception:
             pass
@@ -585,12 +745,26 @@ class ElectricCRWorkbench(Gui.Workbench):
         # Comando para recargar el workbench sin reiniciar FreeCAD
         try:
             from .commands.reload import COMMAND_NAME as RELOAD_CMD
-            self.appendToolbar("ElectricCR", [RELOAD_CMD])
+            primary_toolbar_cmds.append(RELOAD_CMD)
             self.appendMenu("ElectricCR", [RELOAD_CMD])
         except Exception:
             pass
 
+        if wall_side_cmd:
+            self.appendMenu("ElectricCR", [wall_side_cmd])
+
+        if primary_toolbar_cmds and _cfg_bool(cfg, "show_primary_toolbar", True):
+            self.appendToolbar("ElectricCR", primary_toolbar_cmds)
+
         self._built = True
+
+    def ContextMenu(self, recipient):
+        """Keep object actions visible; FreeCAD may update selection after popup creation."""
+        try:
+            from .commands import wall_side as _wall_side
+            self.appendContextMenu("ElectricCR", [_wall_side.COMMAND_NAME])
+        except Exception as e:
+            App.Console.PrintWarning(f"[ElectricCR][Context] menu_warning={e}\n")
 
     def Activated(self):
         global _LOG_ENABLED
@@ -599,6 +773,20 @@ class ElectricCRWorkbench(Gui.Workbench):
         cfg = load_config()
         _install_windows_qt_layered_filter(cfg)
         _disable_windows_qt_ui_effects(cfg)
+        try:
+            from .ui import mode_manager as _mode_manager
+            from .ui import mode_combo as _mode_combo
+            from .ui import mode_panel as _mode_panel
+            if _mode_manager.is_enabled(cfg):
+                _mode_combo.ensure_mode_combo(cfg)
+                if _mode_manager.panel_enabled(cfg):
+                    _mode_panel.ensure_panel(show=False, cfg=cfg)
+                _mode_manager.apply_mode(None, cfg)
+            else:
+                _mode_panel.hide_panel()
+                _mode_manager.restore_legacy_visibility(cfg)
+        except Exception as e:
+            App.Console.PrintWarning(f"[ElectricCR][Mode] activate_warning={e}\n")
         # En Windows, el overlay de Snapper puede disparar spam de
         # UpdateLayeredWindowIndirect en ciertas combinaciones Qt/GPU.
         snapper_default = False if os.name == "nt" else True
@@ -643,6 +831,11 @@ class ElectricCRWorkbench(Gui.Workbench):
         _LOG_ENABLED = False
         cfg = load_config()
         enable_statusbar = _cfg_bool(cfg, "draft_statusbar", True)
+        try:
+            from .ui import mode_panel as _mode_panel
+            _mode_panel.hide_panel()
+        except Exception:
+            pass
         # Ocultar snap/estado cuando se sale del WB
         try:
             if hasattr(Gui, "draftToolBar"):

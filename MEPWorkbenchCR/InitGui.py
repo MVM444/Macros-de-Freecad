@@ -94,6 +94,8 @@ except Exception:  # pragma: no cover
 
 try:
     from .MEP.i18n import tr
+    from .MEP.utils import draft_text_compat
+    from .MEP.hvac import hvac_cad_extract
     # Preferred path when loaded as package: MEPWorkbenchCR.InitGui
     from .MEP.hvac import hvac_condensing
     from .MEP.hvac import hvac_equipment
@@ -105,6 +107,8 @@ try:
     from .MEP.hvac import hvac_validate
 except Exception:
     from MEP.i18n import tr
+    from MEP.utils import draft_text_compat
+    from MEP.hvac import hvac_cad_extract
     # Fallback path for direct module loading from workbench folder.
     from MEP.hvac import hvac_condensing
     from MEP.hvac import hvac_equipment
@@ -118,13 +122,22 @@ except Exception:
 LOG_PREFIX = "[MEP-HVAC] "
 WORKBENCH_ID = "MEPWorkbenchCR"
 ICONS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "resources", "icons"))
-RELOAD_DEBUG_REV = "2026-03-30-r2"
+RELOAD_DEBUG_REV = "2026-08-03-r5"
+
+# Install the Draft Text compatibility guard as soon as the workbench module is
+# imported, before an opened document can restore HVAC vector annotations.
+try:
+    draft_text_compat.patch_draft_text_class()
+except Exception:
+    pass
 COMMAND_NAMES_CLEANUP = [
     "MEP_HVAC_CreateProject",
     "MEP_HVAC_CreateSpace",
     "MEP_HVAC_Calculate",
+    "MEP_HVAC_ExtractCAD",
     "MEP_HVAC_AlignObjects",
     "MEP_HVAC_InsertEvaporator",
+    "MEP_HVAC_AdjustEvaporatorElevation",
     "MEP_HVAC_PlaceCeilingUnits",
     "MEP_HVAC_AssignEvaporatorSpace",
     "MEP_HVAC_AssignSpace",
@@ -161,8 +174,10 @@ ICON_PATH = _icon("hvac.svg")
 ICON_PROJECT = _icon("hvac_project.svg")
 ICON_SPACE = _icon("hvac_space.svg")
 ICON_CALCULATE = _icon("hvac_calculate.svg")
+ICON_EXTRACT_CAD = _icon("hvac_extract_cad.svg", "hvac_evaporator.svg")
 ICON_VALIDATE = _icon("hvac_validate.svg", "hvac_calculate.svg")
 ICON_EVAPORATOR = _icon("hvac_evaporator.svg")
+ICON_ELEVATION = _icon("hvac_elevation.svg", "hvac_evaporator.svg")
 ICON_CONDENSER = _icon("hvac_condenser.svg")
 ICON_ASSIGN = _icon("hvac_assign.svg", "hvac_condenser.svg")
 ICON_ROUTE = _icon("hvac_route.svg")
@@ -297,6 +312,10 @@ def _ensure_draft_commands_loaded():
             importlib.import_module(module_name)
         except Exception:
             continue
+    try:
+        draft_text_compat.patch_draft_text_class()
+    except Exception:
+        pass
 
 
 def _available_draft_commands():
@@ -458,7 +477,40 @@ def _reload_workbench():
     FreeCADGui.activateWorkbench(WORKBENCH_ID)
 
 
+def _reload_shared_runtime_dependencies():
+    """Reload small shared MEP helpers before discipline command modules."""
+
+    candidates = (
+        "MEPWorkbenchCR.MEP.utils.draft_text_compat",
+        "MEPWorkbenchCR.MEP.utils.selection",
+        "MEP.utils.draft_text_compat",
+        "MEP.utils.selection",
+    )
+    loaded = [name for name in candidates if name in sys.modules]
+    if not loaded:
+        for module_name in candidates:
+            try:
+                importlib.import_module(module_name)
+                loaded = [module_name]
+                break
+            except Exception:
+                continue
+
+    refreshed = []
+    for module_name in loaded:
+        module = sys.modules.get(module_name)
+        if module is None:
+            continue
+        try:
+            importlib.reload(module)
+            refreshed.append(module_name)
+        except Exception:
+            continue
+    return refreshed
+
+
 def _load_hvac_runtime_module(module_basename):
+    _reload_shared_runtime_dependencies()
     existing = globals().get(str(module_basename), None)
     if existing is not None:
         try:
@@ -484,6 +536,7 @@ def _load_hvac_runtime_module(module_basename):
 
 
 def _load_hvac_runtime_package():
+    _reload_shared_runtime_dependencies()
     candidates = (
         "MEPWorkbenchCR.MEP.hvac",
         "MEP.hvac",
@@ -494,6 +547,7 @@ def _load_hvac_runtime_package():
             module = importlib.reload(module)
             for submodule_name in (
                 "hvac_space",
+                "hvac_cad_extract",
                 "hvac_label",
                 "hvac_equipment",
                 "hvac_ports",
@@ -535,6 +589,10 @@ def _load_hvac_route_runtime():
 
 def _load_hvac_validate_runtime():
     return _load_hvac_runtime_module("hvac_validate")
+
+
+def _load_hvac_cad_extract_runtime():
+    return _load_hvac_runtime_module("hvac_cad_extract")
 
 
 def _load_hvac_ports_runtime():
@@ -949,6 +1007,7 @@ def _enforce_hvac_visual_modes(doc):
 class _HVACEquipmentObserver:
     WATCHED_EVAP_PROPS = {
         "Height",
+        "InstallationElevation",
         "BaseLevel",
         "Model",
         "Type",
@@ -981,6 +1040,12 @@ class _HVACEquipmentObserver:
     def slotChangedObject(self, obj, prop):  # noqa: N802 (FreeCAD callback)
         if self._busy or obj is None:
             return
+        doc = getattr(obj, "Document", None)
+        try:
+            if doc is not None and bool(getattr(doc, "Restoring", False)):
+                return
+        except Exception:
+            pass
         prop_name = str(prop or "")
 
         self._busy = True
@@ -1014,7 +1079,19 @@ class _HVACEquipmentObserver:
                         handled = True
             elif _is_hvac_evaporator_link(obj) and prop_name in self.WATCHED_EVAP_PROPS:
                 runtime_equipment = hvac_equipment
-                runtime_equipment.refresh_equipment(obj)
+                if prop_name == "Height" and hasattr(runtime_equipment, "set_installation_elevation"):
+                    height_m = runtime_equipment._sanitize_height_input_m(getattr(obj, "Height", 0.0))
+                    runtime_equipment.set_installation_elevation(obj, height_m * 1000.0)
+                elif prop_name == "InstallationElevation" and hasattr(
+                    runtime_equipment,
+                    "set_installation_elevation",
+                ):
+                    runtime_equipment.set_installation_elevation(
+                        obj,
+                        runtime_equipment._to_float(getattr(obj, "InstallationElevation", 0.0), 0.0),
+                    )
+                else:
+                    runtime_equipment.refresh_equipment(obj)
                 handled = True
             elif _is_hvac_condenser_link(obj) and prop_name in self.WATCHED_COND_PROPS:
                 runtime_condensing = hvac_condensing
@@ -1113,7 +1190,10 @@ class CmdCreateHVACSpace(_BaseCommand):
                     getattr(runtime_label, "DEBUG_LABEL_POSITION", "n/a"),
                 )
             )
-            spaces = runtime_space.create_spaces_from_selection(FreeCAD.ActiveDocument)
+            if hasattr(runtime_space, "create_spaces_interactive"):
+                spaces = runtime_space.create_spaces_interactive(FreeCAD.ActiveDocument)
+            else:
+                spaces = runtime_space.create_spaces_from_selection(FreeCAD.ActiveDocument)
             if spaces:
                 runtime_label.update_all_labels(FreeCAD.ActiveDocument, ensure_visible=True)
             _update_document_after_command(
@@ -1217,6 +1297,80 @@ class CmdInsertEvaporator(_BaseCommand):
             _update_document_after_command(FreeCAD.ActiveDocument, update_labels=True, sanitize_ports=True)
         except Exception as exc:
             _log(tr("cmd.insert_evaporator.error", error=exc))
+
+
+class CmdAdjustEvaporatorElevation(_BaseCommand):
+    CommandName = "MEP_HVAC_AdjustEvaporatorElevation"
+    MenuText = tr("cmd.adjust_evaporator_elevation.menu")
+    ToolTip = tr("cmd.adjust_evaporator_elevation.tooltip")
+    IconPath = ICON_ELEVATION
+
+    def Activated(self):  # noqa: N802
+        _log(tr("cmd.adjust_evaporator_elevation.run"))
+        doc = FreeCAD.ActiveDocument
+        if doc is None:
+            return
+        transaction_open = False
+        observer_removed = False
+        try:
+            runtime_module = _load_hvac_equipment_runtime() or hvac_equipment
+            selected = list(FreeCADGui.Selection.getSelection() or [])
+            owners = runtime_module.equipment_owners_from_objects(selected, doc=doc)
+            if not owners:
+                _log(tr("cmd.adjust_evaporator_elevation.no_selection"))
+                if QtGui is not None:
+                    try:
+                        QtGui.QMessageBox.warning(
+                            None,
+                            tr("cmd.adjust_evaporator_elevation.title"),
+                            tr("cmd.adjust_evaporator_elevation.no_selection"),
+                        )
+                    except Exception:
+                        pass
+                return
+
+            current_mm = runtime_module.installation_elevation_mm(owners[0])
+            if QtGui is None:
+                raise RuntimeError("Qt no disponible para solicitar la altura")
+            elevation_mm, accepted = QtGui.QInputDialog.getDouble(
+                None,
+                tr("cmd.adjust_evaporator_elevation.title"),
+                tr("cmd.adjust_evaporator_elevation.prompt", count=len(owners)),
+                float(current_mm),
+                0.0,
+                50000.0,
+                0,
+            )
+            if not accepted:
+                _log(tr("cmd.adjust_evaporator_elevation.cancelled"))
+                return
+
+            doc.openTransaction(tr("cmd.adjust_evaporator_elevation.transaction"))
+            transaction_open = True
+            _remove_hvac_equipment_observer()
+            observer_removed = True
+            for equipment_obj in owners:
+                runtime_module.set_installation_elevation(equipment_obj, elevation_mm)
+            doc.recompute()
+            doc.commitTransaction()
+            transaction_open = False
+            _log(
+                tr(
+                    "cmd.adjust_evaporator_elevation.applied",
+                    count=len(owners),
+                    elevation=int(round(float(elevation_mm))),
+                )
+            )
+        except Exception as exc:
+            if transaction_open:
+                try:
+                    doc.abortTransaction()
+                except Exception:
+                    pass
+            _log(tr("cmd.adjust_evaporator_elevation.error", error=exc))
+        finally:
+            if observer_removed:
+                _ensure_hvac_equipment_observer()
 
 
 class CmdPlaceCeilingUnits(_BaseCommand):
@@ -1605,6 +1759,31 @@ class CmdExportHVAC2D(_BaseCommand):
             _log(tr("cmd.export_2d.error", error=exc))
 
 
+class CmdExtractCADHVAC(_BaseCommand):
+    CommandName = "MEP_HVAC_ExtractCAD"
+    MenuText = tr("cmd.extract_cad.menu")
+    ToolTip = tr("cmd.extract_cad.tooltip")
+    IconPath = ICON_EXTRACT_CAD
+
+    def Activated(self):  # noqa: N802
+        _log(tr("cmd.extract_cad.run"))
+        try:
+            runtime_extract = _load_hvac_cad_extract_runtime() or hvac_cad_extract
+            analysis = runtime_extract.extract_document(FreeCAD.ActiveDocument, create_objects=True)
+            counts = analysis.get("counts", {})
+            _log(
+                tr(
+                    "cmd.extract_cad.summary",
+                    evaporators=counts.get("evaporators", 0),
+                    fans=counts.get("fans", 0),
+                    review=counts.get("room_review", 0),
+                    outliers=counts.get("outliers", 0),
+                )
+            )
+        except Exception as exc:
+            _log(tr("cmd.extract_cad.error", error=exc))
+
+
 class CmdReloadWorkbench(_BaseCommand):
     CommandName = "MEP_HVAC_ReloadWorkbench"
     MenuText = tr("cmd.reload.menu")
@@ -1642,8 +1821,10 @@ def _build_command_instances():
         CmdCreateHVACProject(),
         CmdCreateHVACSpace(),
         CmdCalculateHVAC(),
+        CmdExtractCADHVAC(),
         CmdAlignObjects(),
         CmdInsertEvaporator(),
+        CmdAdjustEvaporatorElevation(),
         CmdPlaceCeilingUnits(),
         CmdAssignEvaporatorSpace(),
         CmdToggleHVACLabels(),
@@ -1662,10 +1843,12 @@ def _main_command_names():
     return [
         CmdCreateHVACSpace.CommandName,
         CmdCalculateHVAC.CommandName,
+        CmdExtractCADHVAC.CommandName,
         CmdAlignObjects.CommandName,
         CmdToggleHVACLabels.CommandName,
         CmdSetHVACVisualModeAll.CommandName,
         CmdInsertEvaporator.CommandName,
+        CmdAdjustEvaporatorElevation.CommandName,
         CmdPlaceCeilingUnits.CommandName,
         CmdAssignEvaporatorSpace.CommandName,
     ]
@@ -1682,6 +1865,69 @@ def _system_command_names():
         CmdExportHVAC2D.CommandName,
         CmdReloadWorkbench.CommandName,
     ]
+
+
+def _sync_command_action_resources(command_instances):
+    """Refresh cached Qt actions after a hot reload of stable FreeCAD commands."""
+
+    if QtGui is None:
+        return 0
+    try:
+        main_window = FreeCADGui.getMainWindow()
+        action_type = getattr(QtGui, "QAction", None)
+        if main_window is None or action_type is None:
+            return 0
+    except Exception:
+        return 0
+
+    resources_by_name = {}
+    for command in list(command_instances or []):
+        command_name = str(getattr(command, "CommandName", "") or "")
+        if not command_name:
+            continue
+        try:
+            resources_by_name[command_name] = dict(command.GetResources() or {})
+        except Exception:
+            continue
+
+    changed = 0
+    for action in list(main_window.findChildren(action_type) or []):
+        command_name = str(getattr(action, "objectName", lambda: "")() or "")
+        if command_name not in resources_by_name:
+            try:
+                command_name = str(action.data() or "")
+            except Exception:
+                command_name = ""
+        resources = resources_by_name.get(command_name)
+        if resources is None:
+            continue
+
+        menu_text = str(resources.get("MenuText", "") or command_name)
+        tool_tip = str(resources.get("ToolTip", "") or menu_text)
+        rich_tooltip = (
+            "<p style='white-space:pre; margin-bottom:0.5em;'><b>{0}</b></p>"
+            "<p style='white-space:pre; margin:0;'>{1}</p>"
+            "<p style='white-space:pre; margin-top:0.5em;'><i>{2}</i></p>"
+        ).format(menu_text, tool_tip, command_name)
+        try:
+            if str(action.text() or "") != menu_text:
+                action.setText(menu_text)
+                changed += 1
+            action.setToolTip(rich_tooltip)
+            action.setStatusTip(tool_tip)
+        except Exception:
+            continue
+    return changed
+
+
+def _schedule_command_action_sync(command_instances):
+    commands = list(command_instances or [])
+    try:
+        from PySide2 import QtCore
+
+        QtCore.QTimer.singleShot(0, lambda: _sync_command_action_resources(commands))
+    except Exception:
+        _sync_command_action_resources(commands)
 
 
 class MEPWorkbenchCR(FreeCADGui.Workbench):
@@ -1747,6 +1993,7 @@ class MEPWorkbenchCR(FreeCADGui.Workbench):
         if draft_commands:
             self.appendMenu([tr("wb.menu"), tr("wb.menu.draft")], draft_commands)
             self._draft_menu_registered = True
+        _schedule_command_action_sync(commands)
 
     def Activated(self):  # noqa: N802
         _log(tr("wb.log.activated"))
@@ -1758,7 +2005,7 @@ class MEPWorkbenchCR(FreeCADGui.Workbench):
                 _log("Draft tools integrated on activation (late load)")
             else:
                 _log("Draft tools still unavailable on activation")
-        _ensure_hvac_equipment_observer()
+        _schedule_command_action_sync(_build_command_instances())
         doc = FreeCAD.ActiveDocument
         if doc is not None:
             try:
@@ -1770,6 +2017,9 @@ class MEPWorkbenchCR(FreeCADGui.Workbench):
                 )
             except Exception as exc:
                 _log("Post-activate HVAC update skipped: {0}".format(exc))
+        # Register only after restored links and the initial organization pass
+        # have settled, so callbacks cannot duplicate 2D representations.
+        _ensure_hvac_equipment_observer()
 
     def Deactivated(self):  # noqa: N802
         _remove_hvac_equipment_observer()

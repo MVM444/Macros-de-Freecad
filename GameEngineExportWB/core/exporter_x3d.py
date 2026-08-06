@@ -14,6 +14,8 @@ import gzip
 import math
 import re
 import shutil
+import unicodedata
+from contextlib import contextmanager
 from io import BytesIO
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
@@ -21,12 +23,18 @@ import xml.etree.ElementTree as ET
 
 
 LOG_PREFIX = "[GAMEEXPORT] "
+DEBUG_VERSION = "2026-07-30-automatic-complete-scene-v2"
 SCALE_VECTOR = "0.001 0.001 0.001"
 ROTATION_VECTOR = "1 0 0 -1.57079632679"
 TRANSFORM_DEF = "FreeCAD_mm_to_m"
 X3D_DOCTYPE = '<!DOCTYPE X3D PUBLIC "ISO//Web3D//DTD X3D 3.2//EN" "http://www.web3d.org/specifications/x3d-3.2.dtd">'
 DEFAULT_NAV_SPEED = 2.0
 DEFAULT_EYE_HEIGHT_MM = 1600.0
+DEFAULT_STEP_HEIGHT_MM = 350.0
+DEFAULT_GROUND_ELEVATION_MM = 0.0
+DEFAULT_GROUND_MARGIN_MM = 1000.0
+DEFAULT_GROUND_THICKNESS_MM = 200.0
+GROUND_COLLISION_DEF = "GameExport_WalkGroundCollision"
 LIGHT_DEF_PREFIX = "GameExport_"
 DEFAULT_POINT_LIGHT_AMBIENT_INTENSITY = 0.18
 MAX_POINT_LIGHT_SHADOWS = 4
@@ -74,6 +82,33 @@ SKYBOX_FACE_SUFFIXES = {
     "topUrl": "top",
 }
 SKYBOX_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+PLANAR_HELPER_KEYWORDS = (
+    "(plano)",
+    "_plano",
+    "2d symbol",
+    "simbolo 2d",
+    "symbol2d",
+    "simbolo2d",
+    "_2d",
+    "2d_",
+    "info2d",
+)
+INTERNAL_CONTAINER_KEYWORDS = (
+    " master",
+    "masters",
+    "library",
+    "biblioteca",
+    "_lib",
+    "lib_",
+    " internal",
+    "interno",
+    "reference",
+    "referencia",
+    "prototype",
+    "prototipo",
+    "catalog",
+    "catalogo",
+)
 
 
 def export_to_x3d(
@@ -106,7 +141,15 @@ def export_to_x3d(
     FreeCAD.Console.PrintMessage(
         LOG_PREFIX + f"Exporting {len(exportable)} objects to {out_path}\n"
     )
-    FreeCADGui.export(exportable, str(out_path))
+    export_function = getattr(FreeCADGui, "export", None)
+    export_backend = "FreeCADGui.export"
+    if not callable(export_function):
+        ImportGui = __import__("ImportGui")
+        export_function = ImportGui.export
+        export_backend = "ImportGui.export"
+    FreeCAD.Console.PrintMessage(LOG_PREFIX + "X3D export backend: " + export_backend + "\n")
+    with _temporary_export_visibility(exportable):
+        export_function(exportable, str(out_path))
     decorate_x3d(
         out_path,
         gamestart_meta,
@@ -131,6 +174,287 @@ def diagnose_export_candidates(
         "exportable": exportable,
         "skipped": skipped,
     }
+
+
+@contextmanager
+def _temporary_export_visibility(objects: Iterable[object]):
+    """Expose selected geometry during export and restore every view state.
+
+    FreeCAD GUI exporters can omit an explicitly supplied object when its
+    ViewObject or a parent group is hidden. Device links often live in hidden
+    drafting groups, so the export must temporarily expose the complete parent
+    chain. Only GUI visibility changes in memory; document properties and the
+    FCStd file are not saved or modified.
+    """
+    changed = []
+    seen = set()
+    candidates = []
+    documents = []
+
+    def add_candidate(obj) -> None:
+        if obj is None or id(obj) in seen:
+            return
+        seen.add(id(obj))
+        candidates.append(obj)
+        for parent in list(getattr(obj, "InList", []) or []):
+            add_candidate(parent)
+
+    for obj in list(objects or []):
+        add_candidate(obj)
+
+    for obj in candidates:
+        doc = getattr(obj, "Document", None)
+        if doc is not None and all(doc is not known for known in documents):
+            documents.append(doc)
+
+    snapshot_objects = []
+    for doc in documents:
+        snapshot_objects.extend(list(getattr(doc, "Objects", []) or []))
+    if not snapshot_objects:
+        snapshot_objects = list(candidates)
+
+    visibility_snapshot = []
+    snapshot_seen = set()
+    for obj in snapshot_objects:
+        if obj is None or id(obj) in snapshot_seen:
+            continue
+        snapshot_seen.add(id(obj))
+        view = getattr(obj, "ViewObject", None)
+        if view is None or not hasattr(view, "Visibility"):
+            continue
+        try:
+            visibility_snapshot.append((view, bool(view.Visibility)))
+        except Exception:
+            continue
+
+    try:
+        for obj in candidates:
+            view = getattr(obj, "ViewObject", None)
+            if view is None or not hasattr(view, "Visibility"):
+                continue
+            try:
+                original = bool(view.Visibility)
+                if not original:
+                    view.Visibility = True
+                    changed.append((view, original, str(getattr(obj, "Name", "") or "Unknown")))
+            except Exception:
+                continue
+        if changed:
+            FreeCAD = __import__("FreeCAD")
+            FreeCAD.Console.PrintMessage(
+                LOG_PREFIX
+                + "Temporary export visibility enabled: "
+                + str(len(changed))
+                + " objects/groups\n"
+            )
+        yield
+    finally:
+        # Parent group visibility can change child states as a side effect.
+        # Repeat restoration passes over the complete document snapshot until
+        # every direct ViewObject.Visibility value matches its original value.
+        for _pass_index in range(5):
+            restore_count = 0
+            for view, original in visibility_snapshot:
+                try:
+                    if bool(view.Visibility) != original:
+                        view.Visibility = original
+                        restore_count += 1
+                except Exception:
+                    pass
+            if restore_count == 0:
+                break
+        if changed:
+            try:
+                FreeCAD = __import__("FreeCAD")
+                FreeCAD.Console.PrintMessage(
+                    LOG_PREFIX
+                    + "Temporary export visibility restored: "
+                    + str(len(changed))
+                    + " objects/groups\n"
+                )
+            except Exception:
+                pass
+
+
+def collect_default_scene_objects(
+    doc,
+    excluded_objects: Optional[Iterable[object]] = None,
+    include_hidden_objects: bool = True,
+    include_hidden_links: Optional[bool] = None,
+) -> List[object]:
+    """Collect a reusable default 3D scene without relying on object names.
+
+    Visible exportable geometry is always included. Hidden objects with a real
+    solid or mesh are included when requested because projects commonly hide
+    ceilings, columns, device groups or furniture while keeping them part of
+    the deliverable. Linked library masters remain excluded to avoid duplicate
+    geometry.
+
+    GameExportInclude and GameExportExclude boolean properties provide explicit
+    per-object overrides when a document needs a special case.
+    """
+    if doc is None:
+        return []
+    if include_hidden_links is not None:
+        # Backward-compatible alias used by Workbench versions before the
+        # policy expanded from linked instances to every hidden 3D object.
+        include_hidden_objects = bool(include_hidden_links)
+    excluded_ids = {id(obj) for obj in list(excluded_objects or []) if obj is not None}
+    objects = list(getattr(doc, "Objects", []) or [])
+    linked_master_ids = _linked_master_ids(objects)
+    selected = []
+    skipped_2d = 0
+    skipped_hidden = 0
+    skipped_masters = 0
+    skipped_internal = 0
+    selected_hidden_objects = 0
+    selected_forced = 0
+    skipped_forced = 0
+
+    for obj in objects:
+        if obj is None or id(obj) in excluded_ids:
+            continue
+        override = _object_export_override(obj)
+        if override is False:
+            skipped_forced += 1
+            continue
+        if id(obj) in linked_master_ids and override is not True:
+            skipped_masters += 1
+            continue
+        if _is_internal_container_member(obj) and override is not True:
+            skipped_internal += 1
+            continue
+        ok, reason = _is_exportable_object(obj)
+        if not ok:
+            if "2D" in reason or "planar" in reason or "wire" in reason:
+                skipped_2d += 1
+            continue
+        if override is True:
+            selected.append(obj)
+            selected_forced += 1
+            continue
+        if not _is_object_visible(obj):
+            if include_hidden_objects and _has_solid_or_mesh_geometry(obj):
+                selected.append(obj)
+                selected_hidden_objects += 1
+                continue
+            skipped_hidden += 1
+            continue
+        selected.append(obj)
+
+    FreeCAD = __import__("FreeCAD")
+    FreeCAD.Console.PrintMessage(
+        LOG_PREFIX
+        + "Default 3D scene selection: selected="
+        + str(len(selected))
+        + ", skipped_2d="
+        + str(skipped_2d)
+        + ", skipped_hidden="
+        + str(skipped_hidden)
+        + ", skipped_linked_masters="
+        + str(skipped_masters)
+        + ", skipped_internal_library="
+        + str(skipped_internal)
+        + ", selected_hidden_3d_objects="
+        + str(selected_hidden_objects)
+        + ", selected_forced="
+        + str(selected_forced)
+        + ", skipped_forced="
+        + str(skipped_forced)
+        + "\n"
+    )
+    return selected
+
+
+def complete_scene_objects_with_hidden_3d(
+    doc,
+    selected_objects: Optional[Iterable[object]] = None,
+    excluded_objects: Optional[Iterable[object]] = None,
+) -> List[object]:
+    """Append valid hidden 3D geometry to an explicit scene selection.
+
+    Saved sidecars often contain an explicit export list. That list must not
+    disable scene completion because ceilings, columns and equipment may have
+    been hidden after the list was created. Existing explicit entries remain
+    untouched and only hidden candidates from the reusable default policy are
+    appended.
+    """
+    excluded_ids = {
+        id(obj) for obj in list(excluded_objects or []) if obj is not None
+    }
+    completed = []
+    seen_ids = set()
+    for obj in list(selected_objects or []):
+        if obj is None or id(obj) in excluded_ids or id(obj) in seen_ids:
+            continue
+        completed.append(obj)
+        seen_ids.add(id(obj))
+
+    appended = 0
+    candidates = collect_default_scene_objects(
+        doc,
+        excluded_objects=excluded_objects,
+        include_hidden_objects=True,
+    )
+    for obj in candidates:
+        if id(obj) in seen_ids or _is_object_visible(obj):
+            continue
+        completed.append(obj)
+        seen_ids.add(id(obj))
+        appended += 1
+
+    FreeCAD = __import__("FreeCAD")
+    FreeCAD.Console.PrintMessage(
+        LOG_PREFIX
+        + "Explicit scene completion: base="
+        + str(len(completed) - appended)
+        + ", hidden_3d_added="
+        + str(appended)
+        + ", total="
+        + str(len(completed))
+        + "\n"
+    )
+    return completed
+
+
+def resolve_scene_objects(
+    doc,
+    selected_objects: Optional[Iterable[object]] = None,
+    excluded_objects: Optional[Iterable[object]] = None,
+    automatic_3d_scene: bool = True,
+    include_hidden_objects: bool = True,
+) -> List[object]:
+    """Resolve automatic or explicit panel selection through one API."""
+    explicit = [obj for obj in list(selected_objects or []) if obj is not None]
+    if automatic_3d_scene:
+        return collect_default_scene_objects(
+            doc,
+            excluded_objects=excluded_objects,
+            include_hidden_objects=include_hidden_objects,
+        )
+    if not explicit:
+        return collect_default_scene_objects(
+            doc,
+            excluded_objects=excluded_objects,
+            include_hidden_objects=include_hidden_objects,
+        )
+    if include_hidden_objects:
+        return complete_scene_objects_with_hidden_3d(
+            doc,
+            explicit,
+            excluded_objects=excluded_objects,
+        )
+    excluded_ids = {
+        id(obj) for obj in list(excluded_objects or []) if obj is not None
+    }
+    resolved = []
+    seen_ids = set()
+    for obj in explicit:
+        if id(obj) in excluded_ids or id(obj) in seen_ids:
+            continue
+        resolved.append(obj)
+        seen_ids.add(id(obj))
+    return resolved
 
 
 def decorate_x3d(
@@ -192,10 +516,12 @@ def decorate_x3d(
         return
 
     _remove_gameexport_light_nodes(scene)
+    _remove_walk_ground_collision(scene, q)
     navigation_cfg = _normalize_navigation_cfg(lighting_cfg)
     _apply_environment_background(scene, q, file_path, environment_cfg)
     _ensure_navigation(scene, q, navigation_cfg)
     _apply_mm_to_m_axis_transform(scene, q)
+    _ensure_walk_ground_collision(scene, q, navigation_cfg)
     _insert_viewpoint(scene, q, gamestart_meta, navigation_cfg)
     light_count = _insert_lights(scene, q, lighting_cfg)
     emitter_material_count = _apply_light_source_emissive_materials(scene, q, material_cfg)
@@ -288,7 +614,7 @@ def _apply_mm_to_m_axis_transform(scene, q) -> None:
     scene.append(transform)
 
 
-def _normalize_navigation_cfg(lighting_cfg: Optional[Dict[str, object]]) -> Dict[str, float]:
+def _normalize_navigation_cfg(lighting_cfg: Optional[Dict[str, object]]) -> Dict[str, object]:
     nav = {}
     if isinstance(lighting_cfg, dict):
         candidate = lighting_cfg.get("navigation")
@@ -296,9 +622,127 @@ def _normalize_navigation_cfg(lighting_cfg: Optional[Dict[str, object]]) -> Dict
             nav = candidate
     speed = float(nav.get("speed", DEFAULT_NAV_SPEED))
     eye_height_mm = float(nav.get("eye_height_mm", DEFAULT_EYE_HEIGHT_MM))
+    step_height_mm = float(nav.get("step_height_mm", DEFAULT_STEP_HEIGHT_MM))
+    ground_elevation_mm = float(
+        nav.get("ground_elevation_mm", DEFAULT_GROUND_ELEVATION_MM)
+    )
+    ground_margin_mm = float(nav.get("ground_margin_mm", DEFAULT_GROUND_MARGIN_MM))
+    ground_thickness_mm = float(
+        nav.get("ground_thickness_mm", DEFAULT_GROUND_THICKNESS_MM)
+    )
     speed = max(0.1, min(10000.0, speed))
     eye_height_mm = max(100.0, min(5000.0, eye_height_mm))
-    return {"speed": speed, "eye_height_mm": eye_height_mm}
+    step_height_mm = max(0.0, min(2000.0, step_height_mm))
+    ground_elevation_mm = max(-1000000.0, min(1000000.0, ground_elevation_mm))
+    ground_margin_mm = max(0.0, min(100000.0, ground_margin_mm))
+    ground_thickness_mm = max(1.0, min(10000.0, ground_thickness_mm))
+    return {
+        "speed": speed,
+        "eye_height_mm": eye_height_mm,
+        "step_height_mm": step_height_mm,
+        "walk_only": bool(nav.get("walk_only", True)),
+        "ground_collision": bool(nav.get("ground_collision", True)),
+        "ground_elevation_mm": ground_elevation_mm,
+        "ground_margin_mm": ground_margin_mm,
+        "ground_thickness_mm": ground_thickness_mm,
+    }
+
+
+def _remove_walk_ground_collision(scene, q) -> None:
+    """Remove an earlier generated ground proxy before redecorating the file."""
+    for child in list(scene):
+        if child.tag == q("Collision") and child.attrib.get("DEF") == GROUND_COLLISION_DEF:
+            scene.remove(child)
+
+
+def _ensure_walk_ground_collision(scene, q, nav_cfg: Dict[str, object]) -> None:
+    """Add an invisible flat proxy so WALK terrain-following has a reliable floor.
+
+    FreeCAD exports millimetres with Z-up.  The main scene transform maps this
+    to metres with Y-up, so the proxy is emitted directly in final X3D metres.
+    It complements the detailed slab and wall collision mesh without being
+    rendered.
+    """
+    _remove_walk_ground_collision(scene, q)
+    if not bool(nav_cfg.get("ground_collision", True)):
+        return
+
+    transform = None
+    for child in list(scene):
+        if child.tag == q("Transform") and child.attrib.get("DEF") == TRANSFORM_DEF:
+            transform = child
+            break
+    if transform is None:
+        return
+
+    bounds = _freecad_xy_bounds_from_coordinates(transform, q)
+    if bounds is None:
+        return
+    min_x, max_x, min_y, max_y = bounds
+
+    margin_mm = float(nav_cfg.get("ground_margin_mm", DEFAULT_GROUND_MARGIN_MM))
+    elevation_mm = float(
+        nav_cfg.get("ground_elevation_mm", DEFAULT_GROUND_ELEVATION_MM)
+    )
+    thickness_mm = float(
+        nav_cfg.get("ground_thickness_mm", DEFAULT_GROUND_THICKNESS_MM)
+    )
+    size_x_m = max(0.001, (max_x - min_x + 2.0 * margin_mm) * 0.001)
+    size_z_m = max(0.001, (max_y - min_y + 2.0 * margin_mm) * 0.001)
+    thickness_m = max(0.001, thickness_mm * 0.001)
+    center_x_m = (min_x + max_x) * 0.0005
+    center_z_m = -(min_y + max_y) * 0.0005
+    center_y_m = elevation_mm * 0.001 - thickness_m * 0.5
+
+    collision = ET.Element(
+        q("Collision"), {"DEF": GROUND_COLLISION_DEF, "enabled": "true"}
+    )
+    proxy = ET.SubElement(
+        collision,
+        q("Transform"),
+        {
+            "containerField": "proxy",
+            "translation": _format_vec((center_x_m, center_y_m, center_z_m)),
+        },
+    )
+    shape = ET.SubElement(proxy, q("Shape"))
+    ET.SubElement(
+        shape,
+        q("Box"),
+        {"size": _format_vec((size_x_m, thickness_m, size_z_m))},
+    )
+
+    geometry_index = len(scene)
+    for index, child in enumerate(scene):
+        if child is transform:
+            geometry_index = index
+            break
+    scene.insert(geometry_index, collision)
+
+
+def _freecad_xy_bounds_from_coordinates(node, q) -> Optional[Tuple[float, float, float, float]]:
+    min_x = min_y = float("inf")
+    max_x = max_y = float("-inf")
+    found = False
+    for coordinate in node.iter(q("Coordinate")):
+        point_text = coordinate.attrib.get("point", "")
+        if not point_text:
+            continue
+        try:
+            values = [float(value) for value in point_text.replace(",", " ").split()]
+        except ValueError:
+            continue
+        for index in range(0, len(values) - 2, 3):
+            x_value = values[index]
+            y_value = values[index + 1]
+            min_x = min(min_x, x_value)
+            max_x = max(max_x, x_value)
+            min_y = min(min_y, y_value)
+            max_y = max(max_y, y_value)
+            found = True
+    if not found:
+        return None
+    return min_x, max_x, min_y, max_y
 
 
 def _ensure_background(scene, q) -> None:
@@ -424,14 +868,15 @@ def _x3d_mfstring_url(url: str) -> str:
     return '"' + clean + '"'
 
 
-def _ensure_navigation(scene, q, nav_cfg: Dict[str, float]) -> None:
-    eye_height_m = nav_cfg["eye_height_mm"] * 0.001
+def _ensure_navigation(scene, q, nav_cfg: Dict[str, object]) -> None:
+    eye_height_m = float(nav_cfg["eye_height_mm"]) * 0.001
+    step_height_m = float(nav_cfg["step_height_mm"]) * 0.001
     attrs = {
         "DEF": "GameExport_Navigation",
-        "avatarSize": f"0.25 {eye_height_m:.3f} 0.75",
-        "speed": f"{nav_cfg['speed']:.3f}",
+        "avatarSize": f"0.25 {eye_height_m:.3f} {step_height_m:.3f}",
+        "speed": f"{float(nav_cfg['speed']):.3f}",
         "headlight": "false",
-        "type": '"WALK" "ANY"',
+        "type": '"WALK"' if bool(nav_cfg.get("walk_only", True)) else '"WALK" "ANY"',
     }
 
     existing = None
@@ -446,12 +891,15 @@ def _ensure_navigation(scene, q, nav_cfg: Dict[str, float]) -> None:
         existing.attrib.update(attrs)
 
 
-def _insert_viewpoint(scene, q, meta: Optional[Dict[str, object]], nav_cfg: Dict[str, float]) -> None:
+def _insert_viewpoint(scene, q, meta: Optional[Dict[str, object]], nav_cfg: Dict[str, object]) -> None:
     FreeCAD = __import__("FreeCAD")
 
     eye_height_mm = float(nav_cfg.get("eye_height_mm", DEFAULT_EYE_HEIGHT_MM))
     position_mm = (0.0, -6000.0, 0.0)
-    orientation = (0.0, 0.0, 1.0, 0.0)
+    # A walking camera in FreeCAD must look horizontally with Z as up. After
+    # the global -90 X conversion this becomes an identity X3D viewpoint,
+    # preserving X3D/Castle's default +Y gravity-up direction.
+    orientation = (1.0, 0.0, 0.0, math.radians(90.0))
     description = "GameStart"
     fov_rad = math.radians(60.0)
 
@@ -487,7 +935,8 @@ def _insert_viewpoint(scene, q, meta: Optional[Dict[str, object]], nav_cfg: Dict
         axis = FreeCAD.Vector(0, 1, 0)
     else:
         axis.normalize()
-    final_angle_rad = math.radians(final_rot.Angle)
+    # FreeCAD.Rotation.Angle is already expressed in radians.
+    final_angle_rad = float(final_rot.Angle)
 
     attrs = {
         "DEF": "GameExport_Viewpoint",
@@ -1375,6 +1824,155 @@ def _split_exportables(objects: Iterable[object]) -> Tuple[List[object], List[Tu
     return exportable, skipped
 
 
+def _linked_master_ids(objects: Iterable[object]) -> set:
+    result = set()
+    for obj in objects:
+        if str(getattr(obj, "TypeId", "") or "") != "App::Link":
+            continue
+        target = obj
+        seen = set()
+        while str(getattr(target, "TypeId", "") or "") == "App::Link":
+            marker = id(target)
+            if marker in seen:
+                target = None
+                break
+            seen.add(marker)
+            target = getattr(target, "LinkedObject", None)
+            if target is None:
+                break
+        if target is not None:
+            result.add(id(target))
+    return result
+
+
+def _normalized_object_text(obj) -> str:
+    try:
+        linked = getattr(obj, "LinkedObject", None) if obj is not None else None
+    except Exception:
+        linked = None
+    text = " ".join(
+        (
+            str(getattr(obj, "Name", "") or ""),
+            str(getattr(obj, "Label", "") or ""),
+            str(getattr(linked, "Name", "") or ""),
+            str(getattr(linked, "Label", "") or ""),
+        )
+    )
+    return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii").lower()
+
+
+def _object_export_override(obj) -> Optional[bool]:
+    """Return an explicit export choice from object or linked master metadata."""
+    try:
+        linked = getattr(obj, "LinkedObject", None)
+    except Exception:
+        linked = None
+    for candidate in (obj, linked):
+        if candidate is None:
+            continue
+        try:
+            if hasattr(candidate, "GameExportExclude") and bool(candidate.GameExportExclude):
+                return False
+        except Exception:
+            pass
+    for candidate in (obj, linked):
+        if candidate is None:
+            continue
+        try:
+            if hasattr(candidate, "GameExportInclude") and bool(candidate.GameExportInclude):
+                return True
+        except Exception:
+            pass
+    return None
+
+
+def _has_solid_or_mesh_geometry(obj) -> bool:
+    """Return True for an object or linked target with solid or mesh geometry."""
+    candidate = obj
+    seen = set()
+    while candidate is not None and id(candidate) not in seen:
+        seen.add(id(candidate))
+        shape = getattr(candidate, "Shape", None)
+        if shape is not None:
+            try:
+                solids = list(getattr(shape, "Solids", []) or [])
+                if any(
+                    float(getattr(solid, "Volume", 0.0) or 0.0) > 1e-6
+                    for solid in solids
+                ):
+                    return True
+            except Exception:
+                pass
+        mesh = getattr(candidate, "Mesh", None)
+        if mesh is not None:
+            try:
+                if int(getattr(mesh, "CountFacets", 0) or 0) > 0:
+                    return True
+            except Exception:
+                pass
+        try:
+            candidate = getattr(candidate, "LinkedObject", None)
+        except Exception:
+            candidate = None
+    return False
+
+
+def _is_object_visible(obj, _visited=None) -> bool:
+    if obj is None:
+        return True
+    if _visited is None:
+        _visited = set()
+    marker = id(obj)
+    if marker in _visited:
+        return True
+    _visited.add(marker)
+
+    view = getattr(obj, "ViewObject", None)
+    if view is not None:
+        try:
+            if not bool(getattr(view, "Visibility", True)):
+                return False
+        except Exception:
+            pass
+
+    # Only inspect actual group membership. InList may also contain dependency
+    # owners whose visibility must not affect the exported object.
+    for parent in list(getattr(obj, "InList", []) or []):
+        members = getattr(parent, "Group", None)
+        if members is None:
+            continue
+        try:
+            is_member = any(member is obj for member in list(members or []))
+        except Exception:
+            continue
+        if is_member and not _is_object_visible(parent, _visited):
+            return False
+    return True
+
+
+def _is_planar_helper_object(obj) -> bool:
+    text = _normalized_object_text(obj)
+    return any(keyword in text for keyword in PLANAR_HELPER_KEYWORDS)
+
+
+def _is_internal_container_member(obj) -> bool:
+    """Detect geometry stored in library, master or reference containers."""
+    for parent in list(getattr(obj, "InList", []) or []):
+        members = getattr(parent, "Group", None)
+        if members is None:
+            continue
+        try:
+            is_member = any(member is obj for member in list(members or []))
+        except Exception:
+            continue
+        if not is_member:
+            continue
+        text = " " + _normalized_object_text(parent)
+        if any(keyword in text for keyword in INTERNAL_CONTAINER_KEYWORDS):
+            return True
+    return False
+
+
 def _log_skipped_objects(skipped: List[Tuple[str, str, str]], max_rows: int = 25) -> None:
     FreeCAD = __import__("FreeCAD")
     FreeCAD.Console.PrintWarning(
@@ -1391,6 +1989,11 @@ def _is_exportable_object(obj: object) -> Tuple[bool, str]:
         return False, "GameEngineExport helper object"
 
     type_id = str(getattr(obj, "TypeId", "") or "")
+
+    if "Part2DObject" in type_id:
+        return False, "2D drafting/symbol geometry"
+    if _is_planar_helper_object(obj):
+        return False, "named 2D helper geometry"
 
     non_geo_prefixes = (
         "App::DocumentObjectGroup",
@@ -1409,7 +2012,15 @@ def _is_exportable_object(obj: object) -> Tuple[bool, str]:
         try:
             shape = getattr(obj, "Shape")
             if shape is not None and hasattr(shape, "isNull") and not shape.isNull():
-                return True, ""
+                solids = list(getattr(shape, "Solids", []) or [])
+                if any(float(getattr(solid, "Volume", 0.0) or 0.0) > 1e-6 for solid in solids):
+                    return True, ""
+                faces = list(getattr(shape, "Faces", []) or [])
+                if faces:
+                    return True, ""
+                edges = list(getattr(shape, "Edges", []) or [])
+                if edges:
+                    return False, "wire-only 2D geometry"
         except Exception:
             pass
 
@@ -1447,6 +2058,7 @@ def _is_auxiliary_export_object(obj: object) -> bool:
 
 
 __all__: List[str] = [
+    "collect_default_scene_objects",
     "export_to_x3d",
     "decorate_x3d",
     "diagnose_export_candidates",

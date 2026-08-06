@@ -626,6 +626,7 @@ def _read_existing_assign(sheet):
         "panel_by_source": {},
         "use_by_source": {},
         "order_by_key": {},
+        "circuit_slot_by_key": {},
     }
     if sheet is None:
         return data
@@ -636,6 +637,7 @@ def _read_existing_assign(sheet):
         source = _get(sheet, "E{}".format(r))
         key = _get(sheet, "H{}".format(r))
         order_txt = _get(sheet, "J{}".format(r))
+        circuit_slot = _get(sheet, "K{}".format(r))
         use_txt = _get(sheet, "A{}".format(r))
 
         if not (panel or source or key):
@@ -655,6 +657,8 @@ def _read_existing_assign(sheet):
         ordv = _i(order_txt, 0) if order_txt else 0
         if ordv > 0:
             data["order_by_key"][key] = ordv
+        if circuit_slot:
+            data["circuit_slot_by_key"][key] = circuit_slot
         if source:
             prev_src_use = bool(data["use_by_source"].get(source, False))
             data["use_by_source"][source] = bool(prev_src_use or use_flag)
@@ -977,6 +981,7 @@ def _write_assign_sheet(doc, sheet, items, tableros, assign_map, dup_map, existi
     _clear(sheet)
     existing_assign = dict(existing_assign or {})
     existing_order = dict(existing_assign.get("order_by_key", {}) or {})
+    existing_slots = dict(existing_assign.get("circuit_slot_by_key", {}) or {})
     headers = [
         "Use",
         "Tablero",
@@ -988,6 +993,7 @@ def _write_assign_sheet(doc, sheet, items, tableros, assign_map, dup_map, existi
         "ItemKey",
         "Observaciones",
         "Orden",
+        "CircuitoTablero",
     ]
     for i, h in enumerate(headers, 1):
         _set(sheet, "{}1".format(_col(i)), h)
@@ -1028,6 +1034,7 @@ def _write_assign_sheet(doc, sheet, items, tableros, assign_map, dup_map, existi
             key,
             obs,
             _txt(ordv),
+            _txt(existing_slots.get(key, "")),
         ]
         for c, v in enumerate(vals, 1):
             _set(sheet, "{}{}".format(_col(c), r), v)
@@ -1042,7 +1049,7 @@ def _write_assign_sheet(doc, sheet, items, tableros, assign_map, dup_map, existi
         _set(sheet, "N{}".format(2 + i), t)
 
     _set(sheet, "P1", "Nota")
-    _set(sheet, "P2", "Editar Use/Tablero/Orden para definir inclusion y orden final.")
+    _set(sheet, "P2", "Editar Use/Tablero/Orden/CircuitoTablero para definir inclusion y posicion final.")
     _set(sheet, "P3", "Esta hoja la usa el exportador de calculo por tablero.")
 
 

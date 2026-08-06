@@ -85,6 +85,8 @@ _ensure_qt_compat()
 import os
 import json
 import shutil
+import os
+import sys
 from pathlib import Path
 
 import FreeCAD as App
@@ -101,17 +103,13 @@ except Exception:
 # -------------------------------
 # RUTAS DEL REGISTRO Y RECURSOS
 # -------------------------------
-PATH_ONEDRIVE_REG = Path(
-    r"C:\Users\marco\OneDrive - Caja Costarricense de Seguro Social\Documentos\FreeCAD\Macros\Macros-de-Freecad\Resources\registry\registry_electric.json"
-)
-PATH_APPDATA_REG = Path(
-    r"C:\Users\marco\AppData\Roaming\FreeCAD\Macro\Resources\registry\registry_electric.json"
-)
+MACRO_FILE = Path(__file__).resolve()
+REPO_ROOT = MACRO_FILE.parent.parent
+PATH_ONEDRIVE_REG = REPO_ROOT / "Resources" / "registry" / "registry_electric.json"
+PATH_APPDATA_REG = Path(App.getUserAppDataDir()) / "Macro" / "Resources" / "registry" / "registry_electric.json"
 
 # Raíz de recursos (prototypes) bajo OneDrive del proyecto
-RES_ROOT = Path(
-    r"C:\Users\marco\OneDrive - Caja Costarricense de Seguro Social\Documentos\FreeCAD\Macros\Macros-de-Freecad\Resources\prototypes"
-)
+RES_ROOT = REPO_ROOT / "Resources" / "prototypes"
 RES_2D = RES_ROOT / "2d"
 RES_3D = RES_ROOT / "3d"
 
@@ -201,24 +199,49 @@ def load_registry() -> dict:
     _warn("No se encontró un registro válido; creando uno nuevo.")
     return {"schema": DEFAULT_SCHEMA, "types": {}}
 
+def _atomic_write(path: Path, text: str):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(text, encoding="utf-8")
+    os.replace(str(temporary), str(path))
+    check = json.loads(path.read_text(encoding="utf-8-sig"))
+    if not isinstance(check, dict) or not isinstance(check.get("types"), dict):
+        raise ValueError("El archivo escrito no contiene un registro válido")
+
+
+def _refresh_loaded_registry(payload):
+    refreshed = []
+    for name, module in list(sys.modules.items()):
+        if not name or ("electric" not in name.lower() and "objeto_toma" not in name.lower()):
+            continue
+        if hasattr(module, "REGISTRY"):
+            try:
+                module.REGISTRY = json.loads(json.dumps(payload, ensure_ascii=False))
+                refreshed.append(name)
+            except Exception:
+                pass
+    if refreshed:
+        _log("Registro actualizado en módulos cargados: {}".format(", ".join(refreshed)))
+
+
 def save_registry(payload: dict):
     """
     Guarda el JSON en OneDrive y lo replica a %APPDATA% (doble ruta).
     """
     ensure_dirs()
     text = json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default)
-    try:
-        PATH_ONEDRIVE_REG.write_text(text, encoding="utf-8")
-        _log(f"Registro guardado en {PATH_ONEDRIVE_REG}")
-    except Exception as ex:
-        _err(f"No se pudo escribir {PATH_ONEDRIVE_REG}: {ex}")
-
-    try:
-        PATH_APPDATA_REG.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(str(PATH_ONEDRIVE_REG), str(PATH_APPDATA_REG))
-        _log(f"Registro replicado en {PATH_APPDATA_REG}")
-    except Exception as ex:
-        _warn(f"No se pudo replicar a {PATH_APPDATA_REG}: {ex}")
+    errors = []
+    for destination in (PATH_ONEDRIVE_REG, PATH_APPDATA_REG):
+        try:
+            _atomic_write(destination, text)
+            _log(f"Registro guardado y verificado en {destination}")
+        except Exception as ex:
+            errors.append("{}: {}".format(destination, ex))
+            _err(f"No se pudo escribir {destination}: {ex}")
+    if errors:
+        raise IOError(" | ".join(errors))
+    _refresh_loaded_registry(payload)
+    return (PATH_ONEDRIVE_REG, PATH_APPDATA_REG)
 
 
 # -------------------------------
@@ -360,7 +383,7 @@ class RegistryDialog(QtWidgets.QDialog):
         self.btn_new = QtWidgets.QPushButton("Nuevo")
         self.btn_save = QtWidgets.QPushButton("Guardar / Actualizar")
         self.btn_del = QtWidgets.QPushButton("Eliminar")
-        self.btn_export = QtWidgets.QPushButton("Guardar Registro (DOS rutas)")
+        self.btn_export = QtWidgets.QPushButton("Guardar Registro")
 
         # Layouts
         grid = QtWidgets.QGridLayout()
@@ -466,6 +489,7 @@ class RegistryDialog(QtWidgets.QDialog):
         types = self.reg.setdefault("types", {})
         if key in types:
             del types[key]
+            save_registry(self.reg)
             _log(f"Tipo '{key}' eliminado.")
             self.refresh_table()
             self.new_type()
@@ -537,9 +561,9 @@ class RegistryDialog(QtWidgets.QDialog):
             }
             entry = _sanitize_entry(entry)
             types[key] = entry
-
+            save_registry(self.reg)
             self.refresh_table()
-            _log(f"Tipo '{key}' guardado. (recuerde 'Guardar Registro')")
+            _log(f"Tipo '{key}' guardado y disponible para ElectricCR.")
         except Exception as ex:
             _err(f"No se pudo guardar el tipo '{key or ''}': {ex}")
 

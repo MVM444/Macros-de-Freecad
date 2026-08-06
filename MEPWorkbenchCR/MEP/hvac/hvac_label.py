@@ -4,6 +4,7 @@ import os
 
 import FreeCAD as App
 
+from ..utils import draft_text_compat
 from . import hvac_equipment
 from . import hvac_project
 from . import hvac_space
@@ -15,7 +16,7 @@ ICON_PATH = os.path.abspath(
 ).replace(os.sep, "/")
 DEFAULT_LABEL_SIZE = 200.0
 DEBUG_LABEL_POSITION = False
-LABEL_DEBUG_REV = "2026-04-01-label-r2"
+LABEL_DEBUG_REV = "2026-08-01-label-r3"
 
 
 def log(message):
@@ -91,6 +92,16 @@ def _build_label_lines(doc, space_obj):
     coverage = 0.0
     if load > 0:
         coverage = (capacity / load) * 100.0
+
+    calculated = _to_float(getattr(space_obj, "CalculatedEquipmentBTU", 0.0), 0.0)
+    selected = _to_float(getattr(space_obj, "SelectedEquipmentBTU", 0.0), 0.0)
+    if calculated > 0.0 and selected > 0.0:
+        return [
+            "{0}".format(space_name),
+            "CARGA: {0:.0f} BTU/h".format(load),
+            "CALC: {0:.0f} BTU/h".format(calculated),
+            "SEL: {0:.0f} BTU/h ({1:.0f}%)".format(selected, coverage),
+        ]
 
     line_1 = "{0}".format(space_name)
     line_2 = "{0:.0f} BTU/h".format(load)
@@ -428,6 +439,7 @@ def _make_draft_text(doc, lines, point):
         try:
             obj = call()
             if obj is not None:
+                draft_text_compat.ensure_text_proxy_state(obj)
                 return obj
         except Exception as exc:
             last_error = exc
@@ -442,7 +454,7 @@ def _make_draft_text(doc, lines, point):
 
 
 def _label_position(space_obj):
-    base = getattr(space_obj, "BaseSpace", None)
+    base = hvac_space.space_geometry_source(space_obj)
     if base is not None and hasattr(base, "Shape"):
         try:
             shape = base.Shape
@@ -564,6 +576,7 @@ def create_or_update_label(space_obj, doc=None):
         if getattr(label_obj, "Space", None) != space_obj:
             label_obj.Space = space_obj
 
+    draft_text_compat.ensure_text_proxy_state(label_obj)
     _set_label_text(label_obj, lines)
     _set_label_style(label_obj)
     _set_space_room_label(space_obj, None)

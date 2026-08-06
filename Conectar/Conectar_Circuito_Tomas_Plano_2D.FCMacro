@@ -1,0 +1,1242 @@
+# -*- coding: utf-8 -*-
+# MenuText: Conectar circuito de tomas en plano 2D...
+# ToolTip: Conecta los tomacorrientes de un grupo desde el centro de su simbolo 2D, a Z=0, y crea flecha y etiqueta
+# Icon: Conectar_Circuito_Tomas_Plano_2D.svg
+# Transaction: self
+
+"""Circuito grafico estable de tomacorrientes para plantas ElectricCR.
+
+La geometria se guarda como Part::Feature normal. No se crean proxies Python ni
+dependencias persistentes de la macro, por lo que el documento puede abrirse en
+otra computadora sin los errores de restauracion de FeaturePython.
+"""
+
+import math
+import os
+import re
+import sys
+import unicodedata
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+
+try:
+    from PySide6 import QtCore, QtWidgets
+except Exception:
+    try:
+        from PySide2 import QtCore, QtWidgets
+    except Exception:
+        from PySide import QtCore
+        from PySide import QtGui as QtWidgets
+
+
+TAG = "CIRCUITO TOMAS PLANO"
+EPS = 1.0e-6
+PLANE_Z = 0.0
+PARAMS = App.ParamGet(
+    "User parameter:BaseApp/Preferences/Macros/ElectricCR/ConectarCircuitoTomasPlano"
+)
+
+
+def log(message):
+    App.Console.PrintMessage("[ElectricCR][{}] {}\n".format(TAG, message))
+
+
+def warn(message):
+    App.Console.PrintWarning("[ElectricCR][{}] {}\n".format(TAG, message))
+
+
+def is_group(obj):
+    if obj is None:
+        return False
+    try:
+        return obj.isDerivedFrom("App::DocumentObjectGroup") or obj.isDerivedFrom("App::Part")
+    except Exception:
+        return hasattr(obj, "Group")
+
+
+def is_toma(obj):
+    if obj is None or is_group(obj):
+        return False
+    values = [
+        getattr(obj, "Name", ""),
+        getattr(obj, "Label", ""),
+        getattr(obj, "Tipo", ""),
+        getattr(obj, "KeyRegistro", ""),
+    ]
+    linked = getattr(obj, "LinkedObject", None)
+    if linked is not None:
+        values.extend(
+            [
+                getattr(linked, "Name", ""),
+                getattr(linked, "Label", ""),
+                getattr(linked, "Tipo", ""),
+                getattr(linked, "KeyRegistro", ""),
+            ]
+        )
+    text = " ".join(str(value or "") for value in values).lower()
+    return "toma" in text or "tomacorriente" in text or "receptacle" in text
+
+
+def direct_tomas(group):
+    result = []
+    seen = set()
+    for obj in list(getattr(group, "Group", []) or []):
+        if not is_toma(obj) or obj.Name in seen:
+            continue
+        seen.add(obj.Name)
+        result.append(obj)
+    return result
+
+
+def circuit_id(group):
+    cid = str(getattr(group, "CircuitoID", "") or "").strip()
+    if cid:
+        return cid
+    label = str(getattr(group, "Label", "") or "")
+    match = re.search(r"\b(TP|TC|T)[-_ ]?(\d+)\b", label, re.I)
+    if match:
+        return "{}-{:03d}".format(match.group(1).upper(), int(match.group(2)))
+    return label.split("|")[0].strip() or group.Name
+
+
+def circuit_groups(doc):
+    result = []
+    for obj in doc.Objects:
+        if not is_group(obj):
+            continue
+        tomas = direct_tomas(obj)
+        raw_cid = str(getattr(obj, "CircuitoID", "") or "").strip()
+        label = str(getattr(obj, "Label", "") or "").strip()
+        looks_like_circuit = bool(raw_cid or re.match(r"^(TP|TC|T)[-_ ]?\d+\b", label, re.I))
+        if len(tomas) >= 1 and looks_like_circuit:
+            result.append(obj)
+
+    def key(group):
+        cid = circuit_id(group)
+        match = re.search(r"(\d+)", cid)
+        return (int(match.group(1)) if match else 999999, cid.lower(), group.Name)
+
+    return sorted(result, key=key)
+
+
+def selected_circuit(doc, candidates):
+    selected = list(Gui.Selection.getSelection() or [])
+    if not selected:
+        return None
+    for obj in selected:
+        for candidate in candidates:
+            if obj is candidate or obj in list(getattr(candidate, "Group", []) or []):
+                return candidate
+            for child in list(getattr(candidate, "Group", []) or []):
+                if is_group(child) and obj in list(getattr(child, "Group", []) or []):
+                    return candidate
+    return None
+
+
+def _shape_source(obj):
+    """Devuelve la geometria local que contiene el simbolo del objeto."""
+    linked = getattr(obj, "LinkedObject", None)
+    if linked is not None and hasattr(linked, "Shape") and not linked.Shape.isNull():
+        return linked
+    if hasattr(obj, "Shape") and not obj.Shape.isNull():
+        return obj
+    return None
+
+
+def _global_placement(obj):
+    try:
+        return obj.getGlobalPlacement()
+    except Exception:
+        return getattr(obj, "Placement", App.Placement())
+
+
+def _local_2d_center(obj, tolerance=0.10):
+    """Centro de la caja de las aristas locales que viven en Z=0.
+
+    Los prototipos ElectricCR combinan el simbolo 2D en Z=0 con el modelo 3D a
+    la altura de montaje. Usar la caja de toda la Shape o Placement.Base mezcla
+    ambas representaciones y produce conexiones desplazadas.
+    """
+    source = _shape_source(obj)
+    if source is None:
+        return None, "sin geometria"
+    shape = source.Shape
+    edges = []
+    for edge in list(shape.Edges or []):
+        bb = edge.BoundBox
+        if abs(bb.ZMin) <= tolerance and abs(bb.ZMax) <= tolerance:
+            edges.append(edge)
+    if edges:
+        xs = []
+        ys = []
+        for edge in edges:
+            bb = edge.BoundBox
+            xs.extend([bb.XMin, bb.XMax])
+            ys.extend([bb.YMin, bb.YMax])
+        return App.Vector((min(xs) + max(xs)) * 0.5, (min(ys) + max(ys)) * 0.5, 0.0), "aristas 2D"
+
+    # Compatibilidad con simbolos planos dibujados en otra cota local: se toma
+    # el estrato horizontal mas cercano a Z=0, nunca la caja del modelo 3D.
+    strata = {}
+    for edge in list(shape.Edges or []):
+        bb = edge.BoundBox
+        if abs(bb.ZMax - bb.ZMin) > tolerance:
+            continue
+        z = round((bb.ZMin + bb.ZMax) * 0.5, 3)
+        strata.setdefault(z, []).append(edge)
+    if strata:
+        z = min(strata, key=lambda value: abs(value))
+        xs = []
+        ys = []
+        for edge in strata[z]:
+            bb = edge.BoundBox
+            xs.extend([bb.XMin, bb.XMax])
+            ys.extend([bb.YMin, bb.YMax])
+        return App.Vector((min(xs) + max(xs)) * 0.5, (min(ys) + max(ys)) * 0.5, z), "estrato plano"
+    return None, "sin aristas planas"
+
+
+def toma_center_2d(obj):
+    local, method = _local_2d_center(obj)
+    if local is not None:
+        try:
+            world = _global_placement(obj).multVec(local)
+            return App.Vector(world.x, world.y, PLANE_Z), method
+        except Exception as exc:
+            warn("No se pudo transformar el centro 2D de '{}': {}".format(obj.Label, exc))
+    try:
+        base = _global_placement(obj).Base
+        return App.Vector(base.x, base.y, PLANE_Z), "punto de insercion (respaldo)"
+    except Exception:
+        return None, "sin posicion"
+
+
+def nearest_order(items):
+    if len(items) < 3:
+        return list(items)
+    remaining = list(items[1:])
+    ordered = [items[0]]
+    while remaining:
+        point = ordered[-1][1]
+        index = min(
+            range(len(remaining)),
+            key=lambda i: point.distanceToPoint(remaining[i][1]),
+        )
+        ordered.append(remaining.pop(index))
+    return ordered
+
+
+def snake_order(items, row_tolerance):
+    if len(items) < 3:
+        return list(items)
+    rows = []
+    for item in sorted(items, key=lambda pair: (-pair[1].y, pair[1].x)):
+        placed = False
+        for row in rows:
+            mean_y = sum(pair[1].y for pair in row) / float(len(row))
+            if abs(item[1].y - mean_y) <= row_tolerance:
+                row.append(item)
+                placed = True
+                break
+        if not placed:
+            rows.append([item])
+    result = []
+    for index, row in enumerate(rows):
+        row.sort(key=lambda pair: pair[1].x, reverse=bool(index % 2))
+        result.extend(row)
+    return result
+
+
+def ordered_items(tomas, order_mode, row_tolerance):
+    items = []
+    for toma in tomas:
+        center, method = toma_center_2d(toma)
+        if center is None:
+            warn("Se omitio '{}': no se encontro su centro 2D.".format(toma.Label))
+            continue
+        items.append((toma, center, method))
+    simple = [(item[0], item[1]) for item in items]
+    if order_mode == "nearest":
+        simple = nearest_order(simple)
+    elif order_mode == "snake":
+        simple = snake_order(simple, row_tolerance)
+    methods = dict((item[0].Name, item[2]) for item in items)
+    return [(obj, point, methods.get(obj.Name, "")) for obj, point in simple]
+
+
+def _append_point(points, point):
+    point = App.Vector(point.x, point.y, PLANE_Z)
+    if not points or points[-1].distanceToPoint(point) > EPS:
+        points.append(point)
+
+
+def route_points(centers, route_mode):
+    if not centers:
+        return []
+    result = []
+    _append_point(result, centers[0])
+    for point in centers[1:]:
+        previous = result[-1]
+        if route_mode == "xy":
+            _append_point(result, App.Vector(point.x, previous.y, PLANE_Z))
+        elif route_mode == "yx":
+            _append_point(result, App.Vector(previous.x, point.y, PLANE_Z))
+        _append_point(result, point)
+    return result
+
+
+def _normalized_room_name(value):
+    text = unicodedata.normalize("NFKD", str(value or ""))
+    text = "".join(char for char in text if not unicodedata.combining(char))
+    text = re.sub(r"\(fuente\)", "", text, flags=re.I)
+    text = re.sub(r"\d+$", "", text.strip())
+    return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+
+
+def relevant_area_rectangles(group):
+    """Rectangulos del modulo Analisis de areas citados por el circuito."""
+    doc = group.Document
+    room_names = [
+        _normalized_room_name(part)
+        for part in re.split(r"\s*/\s*|\s*;\s*", str(getattr(group, "Recintos", "") or ""))
+        if _normalized_room_name(part)
+    ]
+    analysis_names = set()
+    for parent in doc.Objects:
+        if not is_group(parent):
+            continue
+        if "analisis de areas rectangulares" not in _normalized_room_name(
+            getattr(parent, "Label", "")
+        ):
+            continue
+        analysis_names.update(
+            child.Name for child in list(getattr(parent, "Group", []) or [])
+        )
+    result = []
+    for obj in doc.Objects:
+        if not hasattr(obj, "Shape") or obj.Shape.isNull():
+            continue
+        if obj.Name not in analysis_names:
+            continue
+        bb = obj.Shape.BoundBox
+        if bb.XLength <= 100.0 or bb.YLength <= 100.0:
+            continue
+        name = _normalized_room_name(obj.Label)
+        if room_names and name not in room_names:
+            continue
+        order = room_names.index(name) if name in room_names else len(room_names)
+        result.append((order, obj, (bb.XMin, bb.XMax, bb.YMin, bb.YMax)))
+    result.sort(key=lambda entry: (entry[0], entry[1].Label.lower()))
+    return result
+
+
+def _distance_to_rectangle(point, bounds):
+    xmin, xmax, ymin, ymax = bounds
+    dx = max(xmin - point.x, 0.0, point.x - xmax)
+    dy = max(ymin - point.y, 0.0, point.y - ymax)
+    outside = math.hypot(dx, dy)
+    if outside > EPS:
+        return outside
+    return min(abs(point.x - xmin), abs(point.x - xmax), abs(point.y - ymin), abs(point.y - ymax))
+
+
+def _rectangle_side_and_parameter(point, bounds):
+    xmin, xmax, ymin, ymax = bounds
+    width = max(xmax - xmin, EPS)
+    height = max(ymax - ymin, EPS)
+    distances = [
+        abs(point.y - ymin),
+        abs(point.x - xmax),
+        abs(point.y - ymax),
+        abs(point.x - xmin),
+    ]
+    side = min(range(4), key=lambda index: distances[index])
+    if side == 0:  # inferior, izquierda -> derecha
+        parameter = max(0.0, min(width, point.x - xmin))
+    elif side == 1:  # derecha, abajo -> arriba
+        parameter = width + max(0.0, min(height, point.y - ymin))
+    elif side == 2:  # superior, derecha -> izquierda
+        parameter = width + height + max(0.0, min(width, xmax - point.x))
+    else:  # izquierda, arriba -> abajo
+        parameter = 2.0 * width + height + max(0.0, min(height, ymax - point.y))
+    return side, parameter
+
+
+def perimeter_order(items, rectangles):
+    if not rectangles:
+        points = [item[1] for item in items]
+        bounds = (
+            min(point.x for point in points),
+            max(point.x for point in points),
+            min(point.y for point in points),
+            max(point.y for point in points),
+        )
+        rectangles = [(0, None, bounds)]
+    buckets = {}
+    for item in items:
+        index = min(
+            range(len(rectangles)),
+            key=lambda i: _distance_to_rectangle(item[1], rectangles[i][2]),
+        )
+        bounds = rectangles[index][2]
+        parameter = _rectangle_side_and_parameter(item[1], bounds)[1]
+        buckets.setdefault(index, []).append((parameter, item))
+    result = []
+    assignment = {}
+    for index in sorted(buckets, key=lambda i: rectangles[i][0]):
+        for parameter, item in sorted(buckets[index], key=lambda entry: entry[0]):
+            result.append(item)
+            assignment[item[0].Name] = rectangles[index][2]
+    return result, assignment
+
+
+def _perimeter_corners_between(first, second, bounds):
+    """Esquinas del rectangulo por el trayecto perimetral mas corto."""
+    xmin, xmax, ymin, ymax = bounds
+    corners = [
+        App.Vector(xmax, ymin, PLANE_Z),
+        App.Vector(xmax, ymax, PLANE_Z),
+        App.Vector(xmin, ymax, PLANE_Z),
+        App.Vector(xmin, ymin, PLANE_Z),
+    ]
+    side_a, ta = _rectangle_side_and_parameter(first, bounds)
+    side_b, tb = _rectangle_side_and_parameter(second, bounds)
+    perimeter = 2.0 * ((xmax - xmin) + (ymax - ymin))
+    forward = (tb - ta) % perimeter
+    backward = (ta - tb) % perimeter
+    result = []
+    if forward <= backward:
+        side = side_a
+        while side != side_b:
+            result.append(corners[side])
+            side = (side + 1) % 4
+    else:
+        side = side_a
+        while side != side_b:
+            result.append(corners[(side - 1) % 4])
+            side = (side - 1) % 4
+    return result
+
+
+def perimeter_route_points(items, assignment):
+    points = []
+    if not items:
+        return points
+    _append_point(points, items[0][1])
+    for previous, current in zip(items, items[1:]):
+        first = previous[1]
+        second = current[1]
+        bounds_a = assignment.get(previous[0].Name)
+        bounds_b = assignment.get(current[0].Name)
+        if bounds_a is not None and bounds_a == bounds_b:
+            for corner in _perimeter_corners_between(first, second, bounds_a):
+                _append_point(points, corner)
+        else:
+            # Entre recintos se conserva una transicion ortogonal estable.
+            _append_point(points, App.Vector(second.x, first.y, PLANE_Z))
+        _append_point(points, second)
+    return points
+
+
+def _nearest_rectangle_bounds(point, rectangles):
+    if not rectangles:
+        return None
+    return min(rectangles, key=lambda entry: _distance_to_rectangle(point, entry[2]))[2]
+
+
+def _polyline_length(points):
+    return sum(a.distanceToPoint(b) for a, b in zip(points, points[1:]))
+
+
+def _different_room_transition(first, second, bounds_a, bounds_b):
+    candidates = [
+        [first, App.Vector(second.x, first.y, PLANE_Z), second],
+        [first, App.Vector(first.x, second.y, PLANE_Z), second],
+    ]
+
+    def score(candidate):
+        elbow = candidate[1]
+        boundary_score = 0.0
+        if bounds_a is not None:
+            boundary_score += _distance_to_rectangle(elbow, bounds_a)
+        if bounds_b is not None:
+            boundary_score += _distance_to_rectangle(elbow, bounds_b)
+        return (_polyline_length(candidate), boundary_score)
+
+    return min(candidates, key=score)[1:-1]
+
+
+def _same_room_transition(first, second, bounds):
+    """Trayecto ortogonal local que sigue las paredes, sin dar la vuelta al area."""
+    side_a = _rectangle_side_and_parameter(first, bounds)[0]
+    side_b = _rectangle_side_and_parameter(second, bounds)[0]
+    vertical = (1, 3)
+    horizontal = (0, 2)
+    if side_a == side_b:
+        if side_a in vertical:
+            return [App.Vector(first.x, second.y, PLANE_Z)]
+        return [App.Vector(second.x, first.y, PLANE_Z)]
+    if side_a in vertical and side_b in horizontal:
+        return [App.Vector(first.x, second.y, PLANE_Z)]
+    if side_a in horizontal and side_b in vertical:
+        return [App.Vector(second.x, first.y, PLANE_Z)]
+
+    xmin, xmax, ymin, ymax = bounds
+    candidates = []
+    if side_a in vertical and side_b in vertical:
+        for y in (ymin, ymax):
+            candidates.append(
+                [
+                    first,
+                    App.Vector(first.x, y, PLANE_Z),
+                    App.Vector(second.x, y, PLANE_Z),
+                    second,
+                ]
+            )
+    else:
+        for x in (xmin, xmax):
+            candidates.append(
+                [
+                    first,
+                    App.Vector(x, first.y, PLANE_Z),
+                    App.Vector(x, second.y, PLANE_Z),
+                    second,
+                ]
+            )
+    return min(candidates, key=_polyline_length)[1:-1]
+
+
+def _unit_xy(vector):
+    if vector is None:
+        return None
+    result = App.Vector(vector.x, vector.y, 0.0)
+    if result.Length <= EPS:
+        return None
+    result.normalize()
+    return result
+
+
+def _wall_tangent_from_toma(obj):
+    """Eje longitudinal de pared, siguiendo ConectarTomasSnake."""
+    try:
+        rotation = _global_placement(obj).Rotation
+        tangent = rotation.multVec(App.Vector(1.0, 0.0, 0.0))
+        try:
+            giro = float(getattr(obj, "Giro", 0.0) or 0.0)
+        except Exception:
+            giro = 0.0
+        if abs(giro) > EPS:
+            tangent = App.Rotation(App.Vector(0.0, 0.0, 1.0), giro).multVec(tangent)
+        return _unit_xy(tangent)
+    except Exception:
+        return None
+
+
+def _line_intersection_2d(first, direction_a, second, direction_b):
+    a = direction_a.x
+    b = -direction_b.x
+    c = direction_a.y
+    d = -direction_b.y
+    determinant = a * d - b * c
+    if abs(determinant) <= EPS:
+        return None
+    dx = second.x - first.x
+    dy = second.y - first.y
+    factor = (dx * d - b * dy) / determinant
+    return App.Vector(
+        first.x + factor * direction_a.x,
+        first.y + factor * direction_a.y,
+        PLANE_Z,
+    )
+
+
+def _snake_transition(first_item, second_item):
+    """Codo guiado por los ejes de pared de la macro Snake original."""
+    first = first_item[1]
+    second = second_item[1]
+    tangent_a = _wall_tangent_from_toma(first_item[0])
+    tangent_b = _wall_tangent_from_toma(second_item[0])
+    if tangent_a is None or tangent_b is None:
+        return None
+    parallelism = abs(tangent_a.dot(tangent_b))
+    if parallelism < 0.30:
+        corner = _line_intersection_2d(first, tangent_a, second, tangent_b)
+        return [corner] if corner is not None else None
+    if parallelism > 0.85:
+        delta = second - first
+        along = delta.dot(tangent_a)
+        corner = first + tangent_a * along
+        corner.z = PLANE_Z
+        return [corner]
+    return None
+
+
+def local_perimeter_route_points(items, rectangles):
+    """Ruta compacta: conserva el orden y solo usa esquinas locales."""
+    points = []
+    if not items:
+        return points
+    _append_point(points, items[0][1])
+    for previous, current in zip(items, items[1:]):
+        first = previous[1]
+        second = current[1]
+        transition = _snake_transition(previous, current)
+        if transition is None:
+            bounds_a = _nearest_rectangle_bounds(first, rectangles)
+            bounds_b = _nearest_rectangle_bounds(second, rectangles)
+            if bounds_a is not None and bounds_a == bounds_b:
+                transition = _same_room_transition(first, second, bounds_a)
+            else:
+                transition = _different_room_transition(first, second, bounds_a, bounds_b)
+        for point in transition:
+            _append_point(points, point)
+        _append_point(points, second)
+    return points
+
+
+def snake_continuous_route_points(items):
+    """Concatena en un solo Wire los mismos tramos de ConectarTomasSnake."""
+    points = []
+    if not items:
+        return points
+    _append_point(points, items[0][1])
+    if len(items) >= 2:
+        first_delta = items[1][1] - items[0][1]
+        initial_hv = abs(first_delta.x) >= abs(first_delta.y)
+    else:
+        initial_hv = True
+    for index, (previous, current) in enumerate(zip(items, items[1:])):
+        transition = _snake_transition(previous, current)
+        if transition is None:
+            first = previous[1]
+            second = current[1]
+            horizontal_first = initial_hv if index % 2 == 0 else not initial_hv
+            if horizontal_first:
+                transition = [App.Vector(second.x, first.y, PLANE_Z)]
+            else:
+                transition = [App.Vector(first.x, second.y, PLANE_Z)]
+        for point in transition:
+            _append_point(points, point)
+        _append_point(points, current[1])
+    return points
+
+
+def auto_direction_inward(centers):
+    if len(centers) < 2:
+        return "right"
+    last = centers[-1]
+    mean_x = sum(point.x for point in centers[:-1]) / float(len(centers) - 1)
+    mean_y = sum(point.y for point in centers[:-1]) / float(len(centers) - 1)
+    dx = last.x - mean_x
+    dy = last.y - mean_y
+    if abs(dx) >= abs(dy):
+        return "left" if dx >= 0.0 else "right"
+    return "down" if dy >= 0.0 else "up"
+
+
+def inward_direction_at_toma(point, rectangles, centers):
+    """Normal interior de la pared mas cercana al ultimo tomacorriente."""
+    bounds = _nearest_rectangle_bounds(point, rectangles)
+    if bounds is None:
+        return auto_direction_inward(centers)
+    side = _rectangle_side_and_parameter(point, bounds)[0]
+    return {0: "up", 1: "left", 2: "down", 3: "right"}.get(
+        side, auto_direction_inward(centers)
+    )
+
+
+def direction_vector(direction):
+    return {
+        "right": App.Vector(1.0, 0.0, 0.0),
+        "left": App.Vector(-1.0, 0.0, 0.0),
+        "up": App.Vector(0.0, 1.0, 0.0),
+        "down": App.Vector(0.0, -1.0, 0.0),
+    }.get(direction, App.Vector(1.0, 0.0, 0.0))
+
+
+def rounded_wire(points, radius, protected_points=None):
+    """Wire unico con lineas y arcos tangentes en sus esquinas."""
+    clean = []
+    for point in points:
+        _append_point(clean, point)
+    if len(clean) < 2:
+        raise RuntimeError("La ruta no contiene suficientes puntos para un Wire.")
+    edges = []
+    current = clean[0]
+    protected = list(protected_points or [])
+    for index in range(1, len(clean) - 1):
+        previous = clean[index - 1]
+        vertex = clean[index]
+        following = clean[index + 1]
+        # Los centros de tomacorriente son nodos electricos obligatorios. Igual
+        # que en Snake (que crea cada tramo por separado), nunca se sustituyen
+        # por un arco de empalme.
+        if any(vertex.distanceToPoint(point) <= 0.5 for point in protected):
+            if current.distanceToPoint(vertex) > EPS:
+                edges.append(Part.makeLine(current, vertex))
+            current = vertex
+            continue
+        incoming = vertex - previous
+        outgoing = following - vertex
+        length_in = incoming.Length
+        length_out = outgoing.Length
+        if length_in <= EPS or length_out <= EPS:
+            continue
+        incoming.normalize()
+        outgoing.normalize()
+        dot = max(-1.0, min(1.0, incoming.dot(outgoing)))
+        turn = incoming.x * outgoing.y - incoming.y * outgoing.x
+        beta = math.acos(dot)
+        if abs(turn) <= 1.0e-8 or beta <= 1.0e-5 or abs(math.pi - beta) <= 1.0e-5:
+            if current.distanceToPoint(vertex) > EPS:
+                edges.append(Part.makeLine(current, vertex))
+            current = vertex
+            continue
+        tangent_factor = math.tan(beta * 0.5)
+        tangent = min(float(radius) * tangent_factor, length_in * 0.42, length_out * 0.42)
+        if tangent <= 0.5:
+            if current.distanceToPoint(vertex) > EPS:
+                edges.append(Part.makeLine(current, vertex))
+            current = vertex
+            continue
+        effective_radius = tangent / tangent_factor
+        entry = vertex - incoming * tangent
+        exit_point = vertex + outgoing * tangent
+        if current.distanceToPoint(entry) > EPS:
+            edges.append(Part.makeLine(current, entry))
+        sign = 1.0 if turn > 0.0 else -1.0
+        normal = App.Vector(-incoming.y * sign, incoming.x * sign, 0.0)
+        center = entry + normal * effective_radius
+        radial_mid = (entry - center) + (exit_point - center)
+        if radial_mid.Length <= EPS:
+            edges.append(Part.makeLine(entry, exit_point))
+        else:
+            radial_mid.normalize()
+            middle = center + radial_mid * effective_radius
+            edges.append(Part.Arc(entry, middle, exit_point).toShape())
+        current = exit_point
+    if current.distanceToPoint(clean[-1]) > EPS:
+        edges.append(Part.makeLine(current, clean[-1]))
+    if not edges:
+        edges.append(Part.makeLine(clean[0], clean[-1]))
+    return Part.Wire(edges)
+
+
+def arrow_shape(endpoint, direction, arrow_length):
+    unit = direction_vector(direction)
+    perpendicular = App.Vector(-unit.y, unit.x, 0.0)
+    back = endpoint - unit * max(float(arrow_length), 20.0)
+    half_width = max(float(arrow_length) * 0.42, 10.0)
+    return Part.makeCompound(
+        [
+            Part.makeLine(endpoint, back + perpendicular * half_width),
+            Part.makeLine(endpoint, back - perpendicular * half_width),
+        ]
+    )
+
+
+def font_path():
+    candidates = [
+        os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "arial.ttf"),
+        os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "segoeui.ttf"),
+    ]
+    for path in candidates:
+        if os.path.isfile(path):
+            return path
+    return ""
+
+
+def text_shape_at(text, endpoint, direction, size, gap):
+    font = font_path()
+    if not font:
+        raise RuntimeError("No se encontro una fuente TrueType para la etiqueta.")
+    maker = getattr(Part, "makeShapeString", None)
+    shape = None
+    if maker is not None:
+        try:
+            shape = maker(
+                String=str(text), FontFile=font, Size=float(size), Tracking=0
+            )
+        except TypeError:
+            shape = maker(str(text), font, float(size))
+    if shape is None or getattr(shape, "isNull", lambda: True)():
+        # FreeCAD 1.0 no siempre expone Part.makeShapeString. Draft crea el
+        # texto temporalmente; copiamos solo su TopoShape y lo eliminamos, de
+        # modo que el resultado persistente sigue siendo un Part::Feature puro.
+        import Draft
+
+        draft_maker = getattr(Draft, "makeShapeString", None)
+        if draft_maker is None:
+            raise RuntimeError("Esta version no ofrece ningun creador ShapeString.")
+        temporary = draft_maker(
+            String=str(text), FontFile=font, Size=float(size), Tracking=0
+        )
+        try:
+            App.ActiveDocument.recompute()
+            shape = temporary.Shape.copy()
+        finally:
+            try:
+                App.ActiveDocument.removeObject(temporary.Name)
+            except Exception:
+                pass
+    if shape is None or getattr(shape, "isNull", lambda: True)():
+        raise RuntimeError("No se pudo generar la geometria de la etiqueta.")
+    bb = shape.BoundBox
+    unit = direction_vector(direction)
+    anchor = endpoint + unit * float(gap)
+    if direction == "right":
+        x = anchor.x - bb.XMin
+        y = anchor.y - (bb.YMin + bb.YMax) * 0.5
+    elif direction == "left":
+        x = anchor.x - bb.XMax
+        y = anchor.y - (bb.YMin + bb.YMax) * 0.5
+    elif direction == "up":
+        x = anchor.x - (bb.XMin + bb.XMax) * 0.5
+        y = anchor.y - bb.YMin
+    else:
+        x = anchor.x - (bb.XMin + bb.XMax) * 0.5
+        y = anchor.y - bb.YMax
+    placed = shape.copy()
+    placed.Placement = App.Placement(App.Vector(x, y, PLANE_Z), App.Rotation())
+    return placed
+
+
+def set_property(obj, prop_type, name, value, description=""):
+    if not hasattr(obj, name):
+        obj.addProperty(prop_type, name, "ElectricCR", description)
+    setattr(obj, name, value)
+
+
+def remove_legacy_dependency_properties(obj):
+    """Elimina enlaces que crean ciclos al vivir dentro del grupo fuente."""
+    for name in ("ECR_SourceGroup", "ECR_SourceObjects", "AreasReferencia"):
+        try:
+            if name in list(getattr(obj, "PropertiesList", []) or []):
+                obj.removeProperty(name)
+        except Exception as exc:
+            warn("No se pudo retirar {} de '{}': {}".format(name, obj.Label, exc))
+
+
+def repair_legacy_dependency_cycles(doc):
+    repaired = 0
+    circuit_by_id = {}
+    for candidate in doc.Objects:
+        if is_group(candidate):
+            cid = str(getattr(candidate, "CircuitoID", "") or "").strip()
+            if cid:
+                circuit_by_id[cid] = candidate.Name
+    for obj in doc.Objects:
+        role = str(getattr(obj, "ECR_Role", "") or "")
+        if not role.startswith("circuit_plan_"):
+            continue
+        legacy = any(
+            name in list(getattr(obj, "PropertiesList", []) or [])
+            for name in ("ECR_SourceGroup", "ECR_SourceObjects", "AreasReferencia")
+        )
+        if not legacy:
+            continue
+        cid = str(getattr(obj, "CircuitoID", "") or "").strip()
+        group_name = circuit_by_id.get(cid, "")
+        remove_legacy_dependency_properties(obj)
+        if group_name:
+            set_property(
+                obj,
+                "App::PropertyString",
+                "ECR_SourceGroupName",
+                group_name,
+                "Nombre interno del grupo del circuito (sin dependencia)",
+            )
+        repaired += 1
+    if repaired:
+        warn(
+            "Se repararon {} objetos de conexiones antiguas que formaban ciclos de dependencia.".format(
+                repaired
+            )
+        )
+    return repaired
+
+
+def find_role_object(doc, group, role):
+    for obj in doc.Objects:
+        if str(getattr(obj, "ECR_Role", "") or "") != role:
+            continue
+        source_name = str(getattr(obj, "ECR_SourceGroupName", "") or "")
+        if source_name == group.Name:
+            return obj
+        # Compatibilidad para identificar el objeto legado antes de retirar su
+        # PropertyLink. Se prefiere CircuitoID porque no agrega dependencias.
+        if not source_name and str(getattr(obj, "CircuitoID", "") or "") == circuit_id(group):
+            return obj
+    return None
+
+
+def ensure_connection_group(doc, circuit_group, source_objects):
+    this_dir = os.path.dirname(__file__) if "__file__" in globals() else ""
+    if this_dir and this_dir not in sys.path:
+        sys.path.insert(0, this_dir)
+    try:
+        import conexiones_grouping
+
+        return conexiones_grouping.ensure_conexiones_group(
+            doc, parent_group=circuit_group, objects=source_objects
+        )
+    except Exception as exc:
+        warn("Se uso el agrupado basico de conexiones: {}".format(exc))
+    for child in list(getattr(circuit_group, "Group", []) or []):
+        if is_group(child) and str(getattr(child, "Label", "")).strip().lower() == "conexiones":
+            return child
+    result = doc.addObject("App::DocumentObjectGroup", "Conexiones")
+    result.Label = "Conexiones"
+    circuit_group.addObject(result)
+    return result
+
+
+def update_feature(doc, group, role, name, label, shape, source_objects, color, line_width):
+    obj = find_role_object(doc, group, role)
+    if obj is None:
+        obj = doc.addObject("Part::Feature", name)
+    remove_legacy_dependency_properties(obj)
+    obj.Label = label
+    obj.Shape = shape
+    set_property(obj, "App::PropertyString", "ECR_Role", role, "Funcion grafica ElectricCR")
+    set_property(
+        obj,
+        "App::PropertyString",
+        "ECR_SourceGroupName",
+        group.Name,
+        "Nombre interno del grupo del circuito (sin dependencia)",
+    )
+    set_property(
+        obj,
+        "App::PropertyStringList",
+        "ECR_SourceObjectNames",
+        [source.Name for source in source_objects],
+        "Nombres internos de los tomacorrientes conectados (sin dependencias)",
+    )
+    set_property(obj, "App::PropertyString", "CircuitoID", circuit_id(group), "Identificador del circuito")
+    set_property(obj, "App::PropertyLength", "PlanoTrabajoZ", PLANE_Z, "Cota de la representacion 2D")
+    try:
+        obj.ViewObject.LineColor = color
+        obj.ViewObject.ShapeColor = color
+        obj.ViewObject.LineWidth = float(line_width)
+        obj.ViewObject.DisplayMode = "Flat Lines"
+    except Exception:
+        pass
+    return obj
+
+
+def create_or_update_circuit(
+    group,
+    order_mode="tree",
+    route_mode="direct",
+    direction="auto",
+    row_tolerance=800.0,
+    leader_length=1200.0,
+    arrow_length=180.0,
+    label_text="",
+    text_size=180.0,
+    text_gap=120.0,
+    line_width=3.0,
+    corner_radius=250.0,
+):
+    doc = group.Document
+    tomas = direct_tomas(group)
+    if len(tomas) < 1:
+        raise RuntimeError("El grupo debe contener por lo menos un tomacorriente directo.")
+    items = ordered_items(tomas, order_mode, float(row_tolerance))
+    if len(items) < 1:
+        raise RuntimeError("No se obtuvo ningun centro 2D valido.")
+    rectangles = []
+    if route_mode == "perimeter":
+        rectangles = relevant_area_rectangles(group)
+        points = snake_continuous_route_points(items)
+    else:
+        centers_initial = [item[1] for item in items]
+        points = route_points(centers_initial, route_mode)
+    centers = [item[1] for item in items]
+    resolved_direction = (
+        inward_direction_at_toma(centers[-1], rectangles, centers)
+        if direction == "auto"
+        else direction
+    )
+    endpoint = points[-1] + direction_vector(resolved_direction) * max(float(leader_length), 1.0)
+    _append_point(points, endpoint)
+    route_shape = rounded_wire(points, float(corner_radius), protected_points=centers)
+    separate_arrow_shape = arrow_shape(endpoint, resolved_direction, float(arrow_length))
+    text = str(label_text or circuit_id(group)).strip() or circuit_id(group)
+    label_shape = text_shape_at(text, endpoint, resolved_direction, float(text_size), float(text_gap))
+    source_objects = [item[0] for item in items]
+    color = (0.85, 0.15, 0.75)
+    route = update_feature(
+        doc,
+        group,
+        "circuit_plan_route",
+        "Ruta_Circuito_Tomas_Plano",
+        "Ruta {} (plano)".format(circuit_id(group)),
+        route_shape,
+        source_objects,
+        color,
+        line_width,
+    )
+    label = update_feature(
+        doc,
+        group,
+        "circuit_plan_label",
+        "Etiqueta_Circuito_Tomas_Plano",
+        "Etiqueta {} (plano)".format(circuit_id(group)),
+        label_shape,
+        source_objects,
+        color,
+        max(float(line_width) * 0.65, 1.0),
+    )
+    arrow = update_feature(
+        doc,
+        group,
+        "circuit_plan_arrow",
+        "Flecha_Circuito_Tomas_Plano",
+        "Flecha {} (plano)".format(circuit_id(group)),
+        separate_arrow_shape,
+        source_objects,
+        color,
+        line_width,
+    )
+    set_property(route, "App::PropertyEnumeration", "ModoOrden", ["tree", "nearest", "snake"])
+    route.ModoOrden = order_mode
+    set_property(route, "App::PropertyEnumeration", "ModoRuta", ["direct", "xy", "yx", "perimeter"])
+    route.ModoRuta = route_mode
+    set_property(route, "App::PropertyInteger", "CantidadTomas", len(source_objects))
+    set_property(route, "App::PropertyString", "DireccionEtiqueta", resolved_direction)
+    set_property(route, "App::PropertyLength", "RadioEsquinas", float(corner_radius))
+    if rectangles:
+        set_property(
+            route,
+            "App::PropertyStringList",
+            "AreasReferenciaNombres",
+            [entry[1].Name for entry in rectangles if entry[1] is not None],
+            "Nombres de los rectangulos usados como referencia (sin dependencias)",
+        )
+    set_property(label, "App::PropertyString", "TextoEtiqueta", text)
+    target = ensure_connection_group(doc, group, source_objects)
+    for obj in (route, arrow, label):
+        try:
+            if obj not in list(getattr(target, "Group", []) or []):
+                target.addObject(obj)
+        except Exception:
+            pass
+    return route, label, items, resolved_direction
+
+
+class CircuitDialog(QtWidgets.QDialog):
+    def __init__(self, doc, candidates, selected=None, parent=None):
+        super(CircuitDialog, self).__init__(parent)
+        self.doc = doc
+        self.candidates = candidates
+        self.setWindowTitle("ElectricCR - Conectar circuito de tomas en plano")
+        self.setMinimumWidth(560)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        intro = QtWidgets.QLabel(
+            "Crea o actualiza una sola ruta desde el centro del simbolo 2D de cada toma. "
+            "La ruta, la flecha y la etiqueta se dibujan en Z = 0."
+        )
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        form = QtWidgets.QFormLayout()
+        self.group_combo = QtWidgets.QComboBox()
+        selected_index = 0
+        for index, group in enumerate(candidates):
+            count = len(direct_tomas(group))
+            self.group_combo.addItem("{}  ({} tomas)".format(group.Label, count), group.Name)
+            if selected is not None and group is selected:
+                selected_index = index
+        self.group_combo.setCurrentIndex(selected_index)
+        form.addRow("Circuito:", self.group_combo)
+
+        self.order_combo = QtWidgets.QComboBox()
+        self.order_combo.addItem("Orden del grupo (manual, recomendado)", "tree")
+        self.order_combo.addItem("Recorrido corto desde el primer toma", "nearest")
+        self.order_combo.addItem("Snake por filas", "snake")
+        form.addRow("Orden de los tomas:", self.order_combo)
+
+        self.route_combo = QtWidgets.QComboBox()
+        self.route_combo.addItem("Snake continuo siguiendo paredes", "perimeter")
+        self.route_combo.addItem("Recta continua entre centros", "direct")
+        self.route_combo.addItem("Ortogonal: primero X, luego Y", "xy")
+        self.route_combo.addItem("Ortogonal: primero Y, luego X", "yx")
+        form.addRow("Forma de la ruta:", self.route_combo)
+
+        self.direction_combo = QtWidgets.QComboBox()
+        self.direction_combo.addItem("Automatica hacia adentro", "auto")
+        self.direction_combo.addItem("Derecha", "right")
+        self.direction_combo.addItem("Izquierda", "left")
+        self.direction_combo.addItem("Arriba", "up")
+        self.direction_combo.addItem("Abajo", "down")
+        form.addRow("Direccion de etiqueta:", self.direction_combo)
+
+        self.label_edit = QtWidgets.QLineEdit()
+        form.addRow("Texto de etiqueta:", self.label_edit)
+
+        self.row_spin = QtWidgets.QDoubleSpinBox()
+        self.row_spin.setRange(50.0, 10000.0)
+        self.row_spin.setDecimals(0)
+        self.row_spin.setSuffix(" mm")
+        self.row_spin.setValue(PARAMS.GetFloat("RowTolerance", 800.0))
+        form.addRow("Tolerancia de fila (snake):", self.row_spin)
+
+        self.leader_spin = QtWidgets.QDoubleSpinBox()
+        self.leader_spin.setRange(100.0, 10000.0)
+        self.leader_spin.setDecimals(0)
+        self.leader_spin.setSuffix(" mm")
+        self.leader_spin.setValue(PARAMS.GetFloat("LeaderLength", 1200.0))
+        form.addRow("Longitud hacia etiqueta:", self.leader_spin)
+
+        self.text_spin = QtWidgets.QDoubleSpinBox()
+        self.text_spin.setRange(20.0, 2000.0)
+        self.text_spin.setDecimals(0)
+        self.text_spin.setSuffix(" mm")
+        self.text_spin.setValue(PARAMS.GetFloat("TextSize", 180.0))
+        form.addRow("Tamano del texto:", self.text_spin)
+
+        self.width_spin = QtWidgets.QDoubleSpinBox()
+        self.width_spin.setRange(1.0, 10.0)
+        self.width_spin.setDecimals(1)
+        self.width_spin.setValue(PARAMS.GetFloat("LineWidth", 3.0))
+        form.addRow("Grosor visual:", self.width_spin)
+
+        self.radius_spin = QtWidgets.QDoubleSpinBox()
+        self.radius_spin.setRange(0.0, 2000.0)
+        self.radius_spin.setDecimals(0)
+        self.radius_spin.setSuffix(" mm")
+        self.radius_spin.setValue(PARAMS.GetFloat("CornerRadius", 250.0))
+        form.addRow("Radio de las esquinas:", self.radius_spin)
+        layout.addLayout(form)
+
+        note = QtWidgets.QLabel(
+            "Al repetir la macro se actualizan el Wire, la flecha separada y el texto "
+            "existentes dentro de Conexiones; no se crean duplicados."
+        )
+        note.setWordWrap(True)
+        layout.addWidget(note)
+
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+        )
+        try:
+            buttons.button(QtWidgets.QDialogButtonBox.Ok).setText("Crear / actualizar")
+        except Exception:
+            pass
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self.group_combo.currentIndexChanged.connect(self._group_changed)
+        self._restore_combos()
+        self._group_changed()
+
+    def _set_combo_data(self, combo, value):
+        index = combo.findData(value)
+        if index >= 0:
+            combo.setCurrentIndex(index)
+
+    def _restore_combos(self):
+        self._set_combo_data(self.order_combo, PARAMS.GetString("OrderMode", "tree"))
+        self._set_combo_data(self.route_combo, PARAMS.GetString("RouteMode", "perimeter"))
+        self._set_combo_data(self.direction_combo, PARAMS.GetString("Direction", "auto"))
+
+    def _group_changed(self, *args):
+        group = self.current_group()
+        if group is not None:
+            self.label_edit.setText(circuit_id(group))
+
+    def current_group(self):
+        name = self.group_combo.currentData()
+        return self.doc.getObject(str(name)) if name else None
+
+    def values(self):
+        result = {
+            "group": self.current_group(),
+            "order_mode": str(self.order_combo.currentData()),
+            "route_mode": str(self.route_combo.currentData()),
+            "direction": str(self.direction_combo.currentData()),
+            "row_tolerance": self.row_spin.value(),
+            "leader_length": self.leader_spin.value(),
+            "arrow_length": max(80.0, self.text_spin.value()),
+            "label_text": self.label_edit.text().strip(),
+            "text_size": self.text_spin.value(),
+            "text_gap": max(60.0, self.text_spin.value() * 0.65),
+            "line_width": self.width_spin.value(),
+            "corner_radius": self.radius_spin.value(),
+        }
+        PARAMS.SetString("OrderMode", result["order_mode"])
+        PARAMS.SetString("RouteMode", result["route_mode"])
+        PARAMS.SetString("Direction", result["direction"])
+        PARAMS.SetFloat("RowTolerance", result["row_tolerance"])
+        PARAMS.SetFloat("LeaderLength", result["leader_length"])
+        PARAMS.SetFloat("TextSize", result["text_size"])
+        PARAMS.SetFloat("LineWidth", result["line_width"])
+        PARAMS.SetFloat("CornerRadius", result["corner_radius"])
+        return result
+
+
+def _dialog_exec(dialog):
+    runner = getattr(dialog, "exec", None) or getattr(dialog, "exec_", None)
+    return runner()
+
+
+def main():
+    doc = App.ActiveDocument
+    if doc is None:
+        QtWidgets.QMessageBox.warning(None, "ElectricCR", "No hay un documento activo.")
+        return
+    # Versiones anteriores creaban PropertyLink desde objetos contenidos hacia
+    # su grupo padre. Se corrige antes de consultar InList o mostrar el dialogo.
+    repair_legacy_dependency_cycles(doc)
+    candidates = circuit_groups(doc)
+    if not candidates:
+        QtWidgets.QMessageBox.warning(
+            None,
+            "ElectricCR",
+            "No se encontro ningun grupo que contenga tomacorrientes directamente.",
+        )
+        return
+    preselected = selected_circuit(doc, candidates)
+    dialog = CircuitDialog(doc, candidates, preselected, Gui.getMainWindow())
+    if not _dialog_exec(dialog):
+        return
+    values = dialog.values()
+    group = values.pop("group")
+    if group is None:
+        return
+    doc.openTransaction("Conectar circuito de tomas en plano")
+    try:
+        route, label, items, direction = create_or_update_circuit(group, **values)
+        doc.recompute()
+        doc.commitTransaction()
+        Gui.Selection.clearSelection()
+        Gui.Selection.addSelection(route)
+        log(
+            "{}: {} tomas conectados desde su centro 2D; ruta y etiqueta en Z=0; direccion {}.".format(
+                circuit_id(group), len(items), direction
+            )
+        )
+        fallbacks = [item[0].Label for item in items if "respaldo" in item[2]]
+        if fallbacks:
+            warn(
+                "Se uso el punto de insercion como respaldo en: {}".format(
+                    ", ".join(fallbacks)
+                )
+            )
+    except Exception as exc:
+        try:
+            doc.abortTransaction()
+        except Exception:
+            pass
+        App.Console.PrintError("[ElectricCR][{}] Error: {}\n".format(TAG, exc))
+        QtWidgets.QMessageBox.critical(None, "ElectricCR", "No se pudo crear el circuito:\n{}".format(exc))
+
+
+if not globals().get("ECR_NO_AUTORUN", False):
+    main()

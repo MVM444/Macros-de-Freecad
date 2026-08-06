@@ -1,0 +1,471 @@
+# -*- coding: utf-8 -*-
+# MenuText: Sustituir áreas por rectángulos nuevos
+# ToolTip: Seleccione áreas nuevas de RectFromBoundaryLines para reemplazar automáticamente las áreas anteriores.
+# Toolbar: Areas
+# Icon: SustituirAreasPorRectangulosNuevos.svg
+# Transaction: self
+
+from __future__ import annotations
+
+import math
+import unicodedata
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+import Draft
+
+
+ANALYSIS_GROUP = "FA_RectangularAreas"
+SHEET_NAME = "Spreadsheet_Analisis_Areas"
+OLD_GENERATOR = "FA_RectangularAreaAnalysis"
+NEW_GENERATOR = "RectFromBoundaryLines"
+
+
+def add_prop(obj, prop_type, name, group="ElectricCR", description=""):
+    if name not in obj.PropertiesList:
+        obj.addProperty(prop_type, name, group, description or name)
+
+
+def area_m2(obj):
+    return float(getattr(getattr(obj, "Shape", None), "Area", 0.0)) / 1000000.0
+
+
+def has_valid_area_shape(obj):
+    try:
+        shape = obj.Shape
+        return not shape.isNull() and float(shape.Area) > 1.0
+    except Exception:
+        return False
+
+
+def center_xy(obj):
+    box = obj.Shape.BoundBox
+    return App.Vector((box.XMin + box.XMax) * 0.5, (box.YMin + box.YMax) * 0.5, (box.ZMin + box.ZMax) * 0.5)
+
+
+def source_point(obj):
+    source = getattr(obj, "FA_SourceLabel", None)
+    if source is None:
+        return center_xy(obj)
+    try:
+        point = source.getGlobalPlacement().Base
+    except Exception:
+        point = source.Placement.Base
+    return App.Vector(float(point.x), float(point.y), center_xy(obj).z)
+
+
+def normalized_name(value):
+    text = unicodedata.normalize("NFKD", str(value or "").strip().upper())
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    return "".join(ch for ch in text if ch.isalnum())
+
+
+def is_generic_name(value):
+    name = normalized_name(value)
+    return not name or name.startswith("AREA") and (name[4:].isdigit() or name.startswith("AREASINNOMBRE"))
+
+
+def clean_area_name(value):
+    text = str(value or "").strip()
+    prefix = "etiqueta área - "
+    if text.lower().startswith(prefix):
+        text = text[len(prefix):].strip()
+    return text
+
+
+def match_old_area_by_name(new_obj, candidates):
+    wanted = normalized_name(getattr(new_obj, "Label", ""))
+    if is_generic_name(wanted):
+        return None
+    matches = []
+    for old in candidates:
+        names = {
+            normalized_name(getattr(old, attr, ""))
+            for attr in ("Label", "AreaID", "Recinto", "AreaNombre", "Habitacion", "Local", "Espacio", "FA_RoomName")
+        }
+        if wanted in names:
+            matches.append(old)
+    if len(matches) > 1:
+        raise RuntimeError("El nombre '%s' coincide con más de un área existente." % new_obj.Label)
+    return matches[0] if matches else None
+
+
+def point_distance_to_area(point, obj):
+    try:
+        shape = obj.Shape.copy()
+        shape.translate(App.Vector(0.0, 0.0, float(point.z) - center_xy(obj).z))
+        return float(Part.Vertex(point).distToShape(shape)[0])
+    except Exception:
+        center = center_xy(obj)
+        return math.hypot(point.x - center.x, point.y - center.y)
+
+
+def match_old_area(new_obj, candidates):
+    center = center_xy(new_obj)
+    ranked = []
+    for old in candidates:
+        point = source_point(old)
+        boundary_distance = point_distance_to_area(point, new_obj)
+        center_distance = math.hypot(point.x - center.x, point.y - center.y)
+        ranked.append((boundary_distance > 0.1, boundary_distance, center_distance, old))
+    if not ranked:
+        return None
+    best = min(ranked, key=lambda item: item[:3])
+    return best[3] if best[1] <= 0.1 else None
+
+
+def copy_identity(old, new):
+    properties = (
+        "AreaID", "Recinto", "AreaNombre", "Habitacion", "Local", "Espacio", "Zona",
+        "VirtualClosures", "Confidence", "FA_RoomName", "FA_ProgramAreaM2",
+        "FA_SourceLabel", "FA_SourceBIMWall", "FA_SourceCenterline",
+    )
+    for name in properties:
+        if name not in old.PropertiesList:
+            continue
+        if name not in new.PropertiesList:
+            add_prop(new, old.getTypeIdOfProperty(name), name, old.getGroupOfProperty(name), old.getDocumentationOfProperty(name))
+        try:
+            setattr(new, name, getattr(old, name))
+        except Exception:
+            pass
+    old_z = float(old.Placement.Base.z)
+    placement = new.Placement
+    placement.Base.z = old_z
+    new.Placement = placement
+    value = area_m2(new)
+    add_prop(new, "App::PropertyString", "ElectricCRTipo")
+    add_prop(new, "App::PropertyString", "GeneratedBy")
+    add_prop(new, "App::PropertyFloat", "AreaM2")
+    add_prop(new, "App::PropertyInteger", "VirtualClosures")
+    add_prop(new, "App::PropertyFloat", "Confidence")
+    add_prop(new, "App::PropertyFloat", "FA_AreaDifferenceM2", "FacilArquitectura")
+    add_prop(new, "App::PropertyString", "FA_GeneratedBy", "FacilArquitectura")
+    add_prop(new, "App::PropertyString", "FA_InferenceMethod", "FacilArquitectura")
+    new.Label = old.Label
+    new.ElectricCRTipo = "Area"
+    new.GeneratedBy = NEW_GENERATOR
+    new.AreaM2 = value
+    new.FA_AreaDifferenceM2 = value - float(getattr(new, "FA_ProgramAreaM2", 0.0))
+    new.FA_GeneratedBy = "ElectricCR_ManualAreaReplacement"
+    new.FA_InferenceMethod = "Rectángulo corregido manualmente desde líneas límite"
+    new.VirtualClosures = 0
+    new.Confidence = 0.98
+    return value
+
+
+def apply_source_geometry(target, source):
+    """Update the named analysis area without consuming the manual source."""
+    add_prop(target, "App::PropertyString", "GeneratedBy", "ElectricCR", "Macro generadora")
+    add_prop(target, "App::PropertyFloat", "AreaM2", "ElectricCR", "Área en m²")
+    add_prop(target, "App::PropertyFloat", "FA_AreaDifferenceM2", "FacilArquitectura", "Diferencia de área")
+    add_prop(target, "App::PropertyString", "FA_GeneratedBy", "FacilArquitectura", "Generador")
+    add_prop(target, "App::PropertyString", "FA_InferenceMethod", "FacilArquitectura", "Método de inferencia")
+    add_prop(target, "App::PropertyInteger", "VirtualClosures", "ElectricCR", "Cierres virtuales")
+    add_prop(target, "App::PropertyFloat", "Confidence", "ElectricCR", "Confianza")
+    old_z = float(target.Placement.Base.z)
+    if hasattr(target, "Length") and hasattr(source, "Length"):
+        target.Length = source.Length
+    if hasattr(target, "Height") and hasattr(source, "Height"):
+        target.Height = source.Height
+    placement = source.Placement
+    placement.Base.z = old_z
+    target.Placement = placement
+    target.Document.recompute()
+    value = area_m2(target)
+    target.GeneratedBy = NEW_GENERATOR
+    target.AreaM2 = value
+    target.FA_AreaDifferenceM2 = value - float(getattr(target, "FA_ProgramAreaM2", 0.0))
+    target.FA_GeneratedBy = "ElectricCR_ManualAreaReplacement"
+    target.FA_InferenceMethod = "Rectángulo corregido manualmente desde líneas límite"
+    target.VirtualClosures = 0
+    target.Confidence = 0.98
+    add_prop(source, "App::PropertyLink", "ElectricCRReplacementTarget", "ElectricCR", "Área nombrada corregida con esta fuente")
+    add_prop(source, "App::PropertyString", "ElectricCRReplacementStatus", "ElectricCR", "Estado de la fuente manual")
+    source.ElectricCRReplacementTarget = target
+    source.ElectricCRReplacementStatus = "Aplicada; fuente conservada"
+    return value
+
+
+def update_companion_label(doc, old, new, value):
+    for obj in doc.Objects:
+        if getattr(obj, "FA_AreaRectangle", None) is not old:
+            continue
+        obj.FA_AreaRectangle = new
+        try:
+            obj.Text = [new.Label, "%.2f m²" % value]
+            obj.Label = "Etiqueta área - " + new.Label
+            point = center_xy(new)
+            obj.Placement.Base = App.Vector(point.x, point.y, 35.0)
+        except Exception:
+            pass
+
+
+def update_sheet(sheet, new, value):
+    if sheet is None:
+        return
+    name = str(new.Label)
+    for row in range(2, 1000):
+        current = str(sheet.get("A%d" % row) or "").strip()
+        if not current or current == "TOTAL":
+            break
+        if current != name:
+            continue
+        program = float(getattr(new, "FA_ProgramAreaM2", 0.0))
+        box = new.Shape.BoundBox
+        width = float(getattr(getattr(new, "Length", 0.0), "Value", getattr(new, "Length", box.XLength)))
+        height = float(getattr(getattr(new, "Height", 0.0), "Value", getattr(new, "Height", box.YLength)))
+        sheet.set("C%d" % row, "%.3f" % value)
+        sheet.set("D%d" % row, "%.3f" % (value - program))
+        sheet.set("E%d" % row, "%.2f" % width)
+        sheet.set("F%d" % row, "%.2f" % height)
+        sheet.set("G%d" % row, "Corregido manualmente")
+        break
+
+
+def update_totals(group, sheet):
+    areas = [obj for obj in group.Group if str(getattr(obj, "ElectricCRTipo", "")).lower() == "area"]
+    program_total = sum(float(getattr(obj, "FA_ProgramAreaM2", 0.0)) for obj in areas)
+    calculated_total = sum(area_m2(obj) for obj in areas)
+    for name, value in (("FA_RoomCount", len(areas)), ("FA_ProgramAreaTotalM2", program_total),
+                        ("FA_CalculatedAreaTotalM2", calculated_total),
+                        ("FA_TotalDifferenceM2", calculated_total - program_total)):
+        if name in group.PropertiesList:
+            setattr(group, name, value)
+    if sheet is not None:
+        for row in range(2, 1000):
+            if str(sheet.get("A%d" % row) or "").strip() == "TOTAL":
+                sheet.set("B%d" % row, "%.3f" % program_total)
+                sheet.set("C%d" % row, "%.3f" % calculated_total)
+                sheet.set("D%d" % row, "%.3f" % (calculated_total - program_total))
+                break
+
+
+def next_generic_name(doc):
+    used = {str(obj.Label).strip().upper() for obj in doc.Objects}
+    index = 1
+    while True:
+        candidate = "ÁREA SIN NOMBRE %03d" % index
+        if candidate not in used:
+            return candidate
+        index += 1
+
+
+def mark_pending_generic(doc, obj):
+    current = str(getattr(obj, "Label", "") or "").strip().upper()
+    if not current or current.startswith("AREA_") or current.startswith("ÁREA_"):
+        obj.Label = next_generic_name(doc)
+    add_prop(obj, "App::PropertyString", "AreaNombre", "ElectricCR", "Nombre editable del área")
+    add_prop(obj, "App::PropertyString", "Recinto", "ElectricCR", "Nombre editable del recinto")
+    add_prop(obj, "App::PropertyString", "ElectricCRReplacementStatus", "ElectricCR", "Estado de identificación")
+    obj.AreaNombre = obj.Label
+    obj.Recinto = obj.Label
+    obj.ElectricCRReplacementStatus = "Pendiente de identificar"
+
+
+def next_area_id(group):
+    values = []
+    for obj in group.Group:
+        value = str(getattr(obj, "AreaID", "") or "")
+        try:
+            values.append(int(value.rsplit("_", 1)[-1]))
+        except Exception:
+            pass
+    return "FA_%03d" % ((max(values) if values else 0) + 1)
+
+
+def create_new_analysis_area(doc, group, source):
+    add_prop(source, "App::PropertyLink", "ElectricCRReplacementTarget", "ElectricCR", "Área creada desde esta fuente")
+    add_prop(source, "App::PropertyString", "ElectricCRReplacementStatus", "ElectricCR", "Estado de la fuente manual")
+    desired_label = clean_area_name(source.Label)
+    source.Label = desired_label + " (fuente)"
+    placement = source.Placement
+    placement.Base.z = 20.0
+    target = Draft.makeRectangle(float(source.Length.Value), float(source.Height.Value), placement)
+    target.Label = desired_label
+    if hasattr(target, "MakeFace"):
+        target.MakeFace = True
+    specs = (
+        ("App::PropertyString", "ElectricCRTipo"), ("App::PropertyString", "GeneratedBy"),
+        ("App::PropertyFloat", "AreaM2"), ("App::PropertyString", "AreaID"),
+        ("App::PropertyString", "Recinto"), ("App::PropertyString", "AreaNombre"),
+        ("App::PropertyString", "Habitacion"), ("App::PropertyString", "Local"),
+        ("App::PropertyString", "Espacio"), ("App::PropertyInteger", "VirtualClosures"),
+        ("App::PropertyFloat", "Confidence"), ("App::PropertyString", "FA_RoomName"),
+        ("App::PropertyFloat", "FA_ProgramAreaM2"), ("App::PropertyFloat", "FA_AreaDifferenceM2"),
+        ("App::PropertyString", "FA_GeneratedBy"), ("App::PropertyString", "FA_InferenceMethod"),
+    )
+    for prop_type, name in specs:
+        add_prop(target, prop_type, name, "ElectricCR", name)
+    doc.recompute()
+    value = area_m2(target)
+    target.ElectricCRTipo = "Area"; target.GeneratedBy = NEW_GENERATOR; target.AreaM2 = value
+    target.AreaID = next_area_id(group); target.Recinto = target.Label; target.AreaNombre = target.Label
+    target.Habitacion = target.Label; target.Local = target.Label; target.Espacio = target.Label
+    target.VirtualClosures = 0; target.Confidence = 0.98; target.FA_RoomName = target.Label
+    target.FA_ProgramAreaM2 = value; target.FA_AreaDifferenceM2 = 0.0
+    target.FA_GeneratedBy = "ElectricCR_NewManualArea"
+    target.FA_InferenceMethod = "Área nueva desde rectángulo manual nombrado"
+    group.addObject(target)
+    source.ElectricCRReplacementTarget = target
+    source.ElectricCRReplacementStatus = "Agregada como área nueva; fuente conservada"
+    try:
+        target.ViewObject.LineColor = (0.0, 0.48, 0.42); target.ViewObject.ShapeColor = (0.35, 0.80, 0.70)
+        target.ViewObject.Transparency = 68; target.ViewObject.LineWidth = 3.0
+        source.ViewObject.Visibility = False
+    except Exception:
+        pass
+    create_area_label(doc, group, target, value)
+    return target, value
+
+
+def create_area_label(doc, group, target, value):
+    for obj in doc.Objects:
+        if getattr(obj, "FA_AreaRectangle", None) is target:
+            try:
+                obj.Text = [target.Label, "%.2f m²" % value]
+                obj.Label = "Etiqueta área - " + target.Label
+            except Exception:
+                pass
+            return obj
+    center = center_xy(target)
+    try:
+        label = Draft.make_text([target.Label, "%.2f m²" % value], point=App.Vector(center.x, center.y, 35.0), screen=False)
+    except Exception:
+        label = Draft.makeText([target.Label, "%.2f m²" % value], point=App.Vector(center.x, center.y, 35.0), screen=False)
+    label.Label = "Etiqueta área - " + target.Label
+    add_prop(label, "App::PropertyString", "FA_GeneratedBy", "FacilArquitectura", "Generador")
+    add_prop(label, "App::PropertyLink", "FA_AreaRectangle", "FacilArquitectura", "Área asociada")
+    label.FA_GeneratedBy = "ElectricCR_NewManualAreaLabel"
+    label.FA_AreaRectangle = target
+    group.addObject(label)
+    try:
+        label.ViewObject.FontSize = 180.0
+        label.ViewObject.TextColor = (0.08, 0.20, 0.16)
+        label.ViewObject.Justification = "Center"
+    except Exception:
+        pass
+    return label
+
+
+def sync_all_area_names_and_labels(doc, group):
+    updated = 0
+    for target in list(group.Group):
+        if str(getattr(target, "ElectricCRTipo", "")).lower() != "area" or not has_valid_area_shape(target):
+            continue
+        name = clean_area_name(target.Label)
+        if not name:
+            name = next_generic_name(doc)
+        target.Label = name
+        for attr in ("Recinto", "AreaNombre", "Habitacion", "Local", "Espacio", "FA_RoomName"):
+            if attr in target.PropertiesList:
+                try:
+                    setattr(target, attr, name)
+                except Exception:
+                    pass
+        value = area_m2(target)
+        if "AreaM2" in target.PropertiesList:
+            target.AreaM2 = value
+        if "FA_AreaDifferenceM2" in target.PropertiesList:
+            target.FA_AreaDifferenceM2 = value - float(getattr(target, "FA_ProgramAreaM2", 0.0))
+        create_area_label(doc, group, target, value)
+        updated += 1
+    doc.recompute()
+    return updated
+
+
+doc = App.ActiveDocument
+if doc is None:
+    raise RuntimeError("Abra un documento antes de ejecutar la macro.")
+
+selected = list(Gui.Selection.getSelection() or [])
+sync_only = not selected
+if sync_only:
+    group = doc.getObject(ANALYSIS_GROUP)
+    if group is None:
+        raise RuntimeError("No se encontró el grupo de análisis de áreas.")
+    doc.openTransaction("ElectricCR: actualizar nombres y etiquetas de áreas")
+    try:
+        synced_count = sync_all_area_names_and_labels(doc, group)
+        update_totals(group, doc.getObject(SHEET_NAME))
+        doc.recompute()
+        doc.commitTransaction()
+    except Exception:
+        doc.abortTransaction()
+        raise
+    App.Console.PrintMessage("[ElectricCR] Nombres y etiquetas actualizados: %d\n" % synced_count)
+new_areas = [
+    obj for obj in selected
+    if str(getattr(obj, "GeneratedBy", "")) == NEW_GENERATOR
+    and str(getattr(obj, "ElectricCRTipo", "")).lower() == "area"
+    and hasattr(obj, "Shape")
+    and has_valid_area_shape(obj)
+]
+invalid_selected = [obj for obj in selected if obj not in new_areas]
+if selected and not new_areas:
+    raise RuntimeError("La selección no contiene rectángulos nuevos válidos de RectFromBoundaryLines.")
+if invalid_selected:
+    App.Console.PrintWarning(
+        "[ElectricCR] Se omiten objetos sin área geométrica válida: %s\n"
+        % ", ".join(obj.Label for obj in invalid_selected)
+    )
+
+group = doc.getObject(ANALYSIS_GROUP)
+if group is None:
+    raise RuntimeError("No se encontró el análisis rectangular anterior.")
+old_areas = [
+    obj for obj in group.Group
+    if str(getattr(obj, "ElectricCRTipo", "")).lower() == "area"
+    and bool(str(getattr(obj, "AreaID", "") or ""))
+    and hasattr(obj, "Shape")
+    and has_valid_area_shape(obj)
+]
+if not old_areas:
+    raise RuntimeError("No se encontraron áreas anteriores para sustituir.")
+
+matches = []
+unmatched = []
+available = list(old_areas)
+for new in new_areas:
+    old = match_old_area_by_name(new, available)
+    if old is None:
+        unmatched.append(new)
+        continue
+    matches.append((new, old))
+    available.remove(old)
+
+doc.openTransaction("ElectricCR: sustituir áreas corregidas")
+try:
+    sheet = doc.getObject(SHEET_NAME)
+    report = []
+    for new, old in matches:
+        value = apply_source_geometry(old, new)
+        update_companion_label(doc, old, old, value)
+        update_sheet(sheet, old, value)
+        report.append((old.Label, value, old.Name))
+        try:
+            new.ViewObject.Visibility = False
+        except Exception:
+            pass
+    for new in unmatched:
+        mark_pending_generic(doc, new)
+        target, value = create_new_analysis_area(doc, group, new)
+        report.append((target.Label, value, "área nueva"))
+    update_totals(group, sheet)
+    doc.recompute()
+    doc.commitTransaction()
+except Exception:
+    doc.abortTransaction()
+    raise
+
+Gui.Selection.clearSelection()
+for _new, old in matches:
+    Gui.Selection.addSelection(old)
+for new in unmatched:
+    Gui.Selection.addSelection(new)
+App.Console.PrintMessage("[ElectricCR] Áreas sustituidas: %d\n" % len(matches))
+if unmatched:
+    App.Console.PrintMessage("[ElectricCR] Áreas pendientes con nombre genérico: %d\n" % len(unmatched))
+for name, value, old_name in report:
+    App.Console.PrintMessage("  %s: %.3f m² (reemplazó %s)\n" % (name, value, old_name))
