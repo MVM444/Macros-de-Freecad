@@ -1,6 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-electriccr.features.objeto_toma_uno (rev H)
+electriccr.features.objeto_toma_uno (rev I, 2026-08-06 13:05 America/Costa_Rica)
+
+Important rev I behavior:
+- Direct devices change AlturaRel and keep their base Placement.
+- App::Link instances relink to immutable height masters; shared masters are not mutated.
+- Public height services intentionally defer document recompute to the caller.
 
 - Un solo Placement (sin BasePlacement).
 - 2D en Z=0 (planta). En 'Horizontal' sÃƒÆ’Ã‚Â³lo el 3D recibe pitch +90Ãƒâ€šÃ‚Â° (eje Y local).
@@ -539,6 +544,166 @@ def _get_or_create_master_toma(doc, key_registro=None, tipo_logico=None, modo_vi
         except Exception:
             pass
     return master
+
+
+def _property_text(obj, names, default=""):
+    """Return the first non-empty property as plain text."""
+    if obj is None:
+        return _safe_text(default)
+    props = list(getattr(obj, "PropertiesList", []) or [])
+    for name in tuple(names or ()):
+        if name not in props:
+            continue
+        try:
+            value = _safe_text(getattr(obj, name, "")).strip()
+        except Exception:
+            value = ""
+        if value:
+            return value
+    return _safe_text(default)
+
+
+def _property_float(obj, names, default=0.0):
+    """Return the first available numeric property as float."""
+    if obj is None:
+        return float(default)
+    props = list(getattr(obj, "PropertiesList", []) or [])
+    for name in tuple(names or ()):
+        if name not in props:
+            continue
+        try:
+            value = getattr(obj, name)
+            if hasattr(value, "Value"):
+                value = value.Value
+            return float(value)
+        except Exception:
+            continue
+    return float(default)
+
+
+def _linked_master(obj):
+    if str(getattr(obj, "TypeId", "") or "") != "App::Link":
+        return None
+    try:
+        return getattr(obj, "LinkedObject", None) or getattr(obj, "Link", None)
+    except Exception:
+        return None
+
+
+def is_electriccr_device(obj):
+    """Return True for a direct TomaUno device or one of its App::Link instances."""
+    candidate = _linked_master(obj) or obj
+    if candidate is None:
+        return False
+    props = set(getattr(candidate, "PropertiesList", []) or [])
+    if not {"AlturaRel", "ModoVisual"}.issubset(props):
+        return False
+    proxy = getattr(candidate, "Proxy", None)
+    if isinstance(proxy, TomaUnoProxy):
+        return True
+    # Restored legacy documents can lose the Python proxy but retain the
+    # ElectricCR semantic property set.
+    return "KeyRegistro" in props and ("Tipo" in props or "LnkMasterKey" in props)
+
+
+def installation_elevation_mm(obj):
+    """Return the semantic 3D installation height for an ElectricCR device."""
+    if not is_electriccr_device(obj):
+        raise ValueError("El objeto no es un dispositivo ElectricCR compatible")
+    master = _linked_master(obj)
+    if master is not None:
+        props = set(getattr(obj, "PropertiesList", []) or [])
+        if "AlturaRel" in props:
+            return _property_float(obj, ("AlturaRel",), 0.0)
+        return _property_float(master, ("AlturaRel", "LnkMasterAltura"), 0.0)
+    return _property_float(obj, ("AlturaRel",), 0.0)
+
+
+def set_installation_elevation(obj, elevation_mm):
+    """Set only the ElectricCR device's relative 3D installation height.
+
+    Direct FeaturePython devices update ``AlturaRel`` and are touched for the
+    document's next recompute. App::Link instances are relinked to a matching
+    immutable master; instance Placement, Label and group ownership remain.
+    This function intentionally does not recompute the document.
+    """
+    if not is_electriccr_device(obj):
+        raise ValueError("El objeto no es un dispositivo ElectricCR compatible")
+
+    target_mm = float(elevation_mm)
+    master = _linked_master(obj)
+    if master is None:
+        old_mm = _property_float(obj, ("AlturaRel",), 0.0)
+        obj.AlturaRel = target_mm
+        try:
+            obj.touch()
+        except Exception:
+            pass
+        return {
+            "strategy": "electriccr_direct",
+            "old_mm": old_mm,
+            "new_mm": target_mm,
+            "master_old": "",
+            "master_new": "",
+        }
+
+    old_mm = installation_elevation_mm(obj)
+    key_registro = _property_text(
+        obj, ("KeyRegistro",),
+        _property_text(master, ("KeyRegistro", "LnkMasterKey"), ""),
+    )
+    tipo_logico = _property_text(
+        obj, ("Tipo",),
+        _property_text(master, ("Tipo",), "Toma"),
+    )
+    modo_visual = _property_text(
+        obj, ("ModoVisual",),
+        _property_text(master, ("ModoVisual", "LnkMasterMode"), "Ambos"),
+    ) or "Ambos"
+    orientacion = _property_text(
+        obj, ("OrientacionPared",),
+        _property_text(master, ("OrientacionPared",), "Vertical"),
+    ) or "Vertical"
+
+    if not key_registro:
+        raise ValueError("El App::Link ElectricCR no tiene KeyRegistro recuperable")
+
+    placement = App.Placement(obj.Placement)
+    old_master_name = _safe_text(getattr(master, "Name", ""))
+    new_master = _get_or_create_master_toma(
+        doc=obj.Document,
+        key_registro=key_registro,
+        tipo_logico=tipo_logico,
+        modo_visual=modo_visual,
+        altura_rel=target_mm,
+        orientacion_pared=orientacion,
+        hide_master=True,
+    )
+    if new_master is None:
+        raise RuntimeError("No se pudo crear el maestro ElectricCR para la nueva altura")
+
+    obj.LinkedObject = new_master
+    obj.Placement = placement
+    _ensure_link_metadata(
+        obj,
+        tipo_logico=tipo_logico,
+        key_registro=key_registro,
+        modo_visual=modo_visual,
+        altura_rel=target_mm,
+        orientacion_pared=orientacion,
+    )
+    try:
+        obj.touch()
+    except Exception:
+        pass
+
+    return {
+        "strategy": "electriccr_link",
+        "old_mm": old_mm,
+        "new_mm": target_mm,
+        "master_old": old_master_name,
+        "master_new": _safe_text(getattr(new_master, "Name", "")),
+    }
 
 
 def crear_toma_link(doc=None, name_prefix=None, key_registro=None, tipo_logico=None, placement=None,

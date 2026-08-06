@@ -1,3 +1,16 @@
+# -*- coding: utf-8 -*-
+# MenuText: Cambiar altura y rotacion de objetos
+# ToolTip: Ajusta altura 3D semantica y rotacion en planta sin elevar simbolos 2D
+# Revision: 2026-08-06 13:05 America/Costa_Rica, rev 2
+# Transaction: self
+#
+# Important:
+# - ElectricCR direct objects use AlturaRel.
+# - ElectricCR App::Link objects are relinked to an immutable height master.
+# - MEP HVAC objects use their public installation-elevation API.
+# - Only simple fallback objects change Placement.Base.z.
+# - Rotation is composed around world Z; technical pitch/roll is preserved.
+
 # Qt compatibility for FreeCAD 1.x (PySide6) and older builds.
 def _ensure_qt_compat():
     import sys
@@ -69,9 +82,25 @@ def _ensure_qt_compat():
 _ensure_qt_compat()
 
 import math
+import os
+import sys
 
 import FreeCAD as App
 import FreeCADGui as Gui
+
+
+def _ensure_workbench_root_on_path():
+    """Expose sibling ElectricCR and MEPWorkbenchCR packages to this macro."""
+    try:
+        macro_dir = os.path.dirname(os.path.abspath(__file__))
+        root = os.path.dirname(macro_dir)
+        if os.path.isdir(os.path.join(root, "ElectricCR")) and root not in sys.path:
+            sys.path.insert(0, root)
+    except Exception:
+        pass
+
+
+_ensure_workbench_root_on_path()
 
 QtWidgets = None
 QtCore = None
@@ -102,8 +131,62 @@ def log_err(msg):
     App.Console.PrintError(str(msg) + "\n")
 
 
-def _selected_with_placement():
-    return [obj for obj in (Gui.Selection.getSelection() or []) if hasattr(obj, "Placement")]
+def _import_electriccr_api():
+    for module_name in (
+        "ElectricCR.electriccr.features.objeto_toma_uno",
+        "electriccr.features.objeto_toma_uno",
+    ):
+        try:
+            return __import__(module_name, fromlist=["objeto_toma_uno"])
+        except Exception:
+            continue
+    return None
+
+
+def _import_hvac_api():
+    for module_name in (
+        "MEPWorkbenchCR.MEP.hvac.hvac_equipment",
+        "MEP.hvac.hvac_equipment",
+    ):
+        try:
+            return __import__(module_name, fromlist=["hvac_equipment"])
+        except Exception:
+            continue
+    return None
+
+
+def _object_key(obj):
+    if obj is None:
+        return ""
+    doc = getattr(obj, "Document", None)
+    return "{}:{}".format(
+        str(getattr(doc, "Name", "") or ""),
+        str(getattr(obj, "Name", "") or id(obj)),
+    )
+
+
+def _selected_compatible(objects=None):
+    raw = list(objects if objects is not None else (Gui.Selection.getSelection() or []))
+    hvac_api = _import_hvac_api()
+    resolved = []
+    seen = set()
+    for candidate in raw:
+        obj = candidate
+        if hvac_api is not None:
+            try:
+                owner = hvac_api.resolve_equipment_owner(candidate, doc=getattr(candidate, "Document", None))
+                if owner is not None:
+                    obj = owner
+            except Exception:
+                pass
+        if obj is None or not hasattr(obj, "Placement"):
+            continue
+        key = _object_key(obj)
+        if key in seen:
+            continue
+        resolved.append(obj)
+        seen.add(key)
+    return resolved
 
 
 def _yaw_deg(rot):
@@ -119,6 +202,81 @@ def _yaw_deg(rot):
         return math.degrees(float(rot.Angle))
     except Exception:
         return 0.0
+
+
+def _copy_placement(obj):
+    return App.Placement(getattr(obj, "Placement", App.Placement()))
+
+
+def _rotation_with_world_yaw(rot, mode, value_deg):
+    current = App.Rotation(rot)
+    current_yaw = _yaw_deg(current)
+    if str(mode or "abs") == "delta":
+        delta = float(value_deg)
+        target = current_yaw + delta
+    else:
+        target = float(value_deg)
+        delta = ((target - current_yaw + 180.0) % 360.0) - 180.0
+    z_delta = App.Rotation(App.Vector(0.0, 0.0, 1.0), float(delta))
+    return z_delta.multiply(current), current_yaw, target
+
+
+def _height_adapter(obj):
+    hvac_api = _import_hvac_api()
+    if hvac_api is not None:
+        try:
+            if hvac_api.resolve_equipment_owner(obj, doc=getattr(obj, "Document", None)) is obj:
+                return "mep_hvac", hvac_api
+        except Exception:
+            pass
+
+    electriccr_api = _import_electriccr_api()
+    if electriccr_api is not None:
+        try:
+            if electriccr_api.is_electriccr_device(obj):
+                kind = "electriccr_link" if str(getattr(obj, "TypeId", "") or "") == "App::Link" else "electriccr_direct"
+                return kind, electriccr_api
+        except Exception:
+            pass
+    return "placement", None
+
+
+def _current_height_mm(obj):
+    kind, api = _height_adapter(obj)
+    if kind == "mep_hvac":
+        return float(api.installation_elevation_mm(obj)), kind
+    if kind.startswith("electriccr_"):
+        return float(api.installation_elevation_mm(obj)), kind
+    return float(obj.Placement.Base.z), kind
+
+
+def _apply_height(obj, target_mm):
+    old_mm, kind = _current_height_mm(obj)
+    if kind == "mep_hvac":
+        actual = float(_height_adapter(obj)[1].set_installation_elevation(obj, target_mm))
+        return old_mm, actual, kind, "InstallationElevation/Height"
+    if kind.startswith("electriccr_"):
+        result = _height_adapter(obj)[1].set_installation_elevation(obj, target_mm)
+        actual = float(result.get("new_mm", target_mm))
+        prop = "AlturaRel"
+        if kind == "electriccr_link":
+            prop = "LinkedObject({}->{})+AlturaRel".format(
+                str(result.get("master_old", "") or "?"),
+                str(result.get("master_new", "") or "?"),
+            )
+        return old_mm, actual, kind, prop
+
+    placement = _copy_placement(obj)
+    placement.Base.z = float(target_mm)
+    obj.Placement = placement
+    return old_mm, float(target_mm), kind, "Placement.Base.z"
+
+
+def _object_label(obj):
+    return "{} ({})".format(
+        str(getattr(obj, "Label", "") or getattr(obj, "Name", "") or "?"),
+        str(getattr(obj, "Name", "") or "?"),
+    )
 
 
 def _run_dialog(dialog):
@@ -140,7 +298,7 @@ if QtWidgets is not None:
 
             layout = QtWidgets.QVBoxLayout(self)
 
-            self.lbl_sel = QtWidgets.QLabel("Seleccion actual: 0 objeto(s) con Placement")
+            self.lbl_sel = QtWidgets.QLabel("Seleccion actual: 0 objeto(s) compatible(s)")
             layout.addWidget(self.lbl_sel)
 
             form = QtWidgets.QFormLayout()
@@ -148,7 +306,7 @@ if QtWidgets is not None:
             self.chk_altura = QtWidgets.QCheckBox("Aplicar altura")
             self.chk_altura.setChecked(True)
             self.cmb_modo_altura = QtWidgets.QComboBox()
-            self.cmb_modo_altura.addItem("Absoluta (Z final)", "abs")
+            self.cmb_modo_altura.addItem("Absoluta (altura de instalacion)", "abs")
             self.cmb_modo_altura.addItem("Delta (+/-)", "delta")
             self.sp_altura = QtWidgets.QDoubleSpinBox()
             self.sp_altura.setDecimals(3)
@@ -187,13 +345,13 @@ if QtWidgets is not None:
             self._preload_selection()
 
         def _preload_selection(self):
-            objs = _selected_with_placement()
+            objs = _selected_compatible()
             n = len(objs)
-            self.lbl_sel.setText("Seleccion actual: {} objeto(s) con Placement".format(n))
+            self.lbl_sel.setText("Seleccion actual: {} objeto(s) compatible(s)".format(n))
             if not objs:
                 return
 
-            avg_z = sum(float(o.Placement.Base.z) for o in objs) / float(n)
+            avg_z = sum(_current_height_mm(o)[0] for o in objs) / float(n)
             avg_yaw = sum(_yaw_deg(o.Placement.Rotation) for o in objs) / float(n)
 
             self.sp_altura.setValue(avg_z)
@@ -221,19 +379,25 @@ def cambiar_altura_y_rotacion_objetos(
     apply_rotation,
     rotation_mode,
     rotation_value,
+    objects=None,
 ):
-    objs = _selected_with_placement()
+    objs = _selected_compatible(objects=objects)
     if not objs:
-        log_err("[ERROR] No hay objetos seleccionados con Placement.")
+        log_err("[ECR][ALTURA] No hay objetos seleccionados compatibles.")
         return False
 
     if not apply_height and not apply_rotation:
-        log_warn("[WARN] No hay cambios para aplicar.")
+        log_warn("[ECR][ALTURA] No hay cambios para aplicar.")
         return False
 
     doc = App.ActiveDocument
     if doc is None:
-        log_err("[ERROR] No hay documento activo.")
+        log_err("[ECR][ALTURA] No hay documento activo.")
+        return False
+
+    foreign_docs = [obj for obj in objs if getattr(obj, "Document", None) is not doc]
+    if foreign_docs:
+        log_err("[ECR][ALTURA] La seleccion contiene objetos de otro documento.")
         return False
 
     changed = 0
@@ -242,40 +406,60 @@ def cambiar_altura_y_rotacion_objetos(
     doc.openTransaction("Cambiar altura y rotacion")
     try:
         for obj in objs:
-            pl = getattr(obj, "Placement", None)
-            if pl is None:
+            try:
+                kind, _api = _height_adapter(obj)
+                log_info(
+                    "[ECR][ALTURA] objeto={} tipo={} TypeId={}".format(
+                        _object_label(obj), kind, str(getattr(obj, "TypeId", "") or "?"),
+                    )
+                )
+
+                object_changed = False
+                if apply_height:
+                    current_mm, _kind = _current_height_mm(obj)
+                    target_mm = current_mm + float(height_value) if height_mode == "delta" else float(height_value)
+                    old_mm, new_mm, used_kind, prop = _apply_height(obj, target_mm)
+                    log_info(
+                        "[ECR][ALTURA] objeto={} estrategia={} propiedad={} anterior={:.3f}mm nueva={:.3f}mm resultado=OK".format(
+                            _object_label(obj), used_kind, prop, old_mm, new_mm,
+                        )
+                    )
+                    object_changed = True
+
+                if apply_rotation:
+                    placement = _copy_placement(obj)
+                    new_rot, old_yaw, _target_yaw = _rotation_with_world_yaw(
+                        placement.Rotation, rotation_mode, rotation_value,
+                    )
+                    placement.Rotation = new_rot
+                    obj.Placement = placement
+                    log_info(
+                        "[ECR][ROTACION] objeto={} propiedad=Placement.Rotation anterior_yaw={:.3f}deg nueva_yaw={:.3f}deg modo={} resultado=OK (pitch/roll preservados)".format(
+                            _object_label(obj), old_yaw, _yaw_deg(new_rot), str(rotation_mode or "abs"),
+                        )
+                    )
+                    object_changed = True
+
+                if object_changed:
+                    changed += 1
+            except Exception as obj_ex:
                 skipped += 1
-                continue
-
-            base = App.Vector(float(pl.Base.x), float(pl.Base.y), float(pl.Base.z))
-            rot = pl.Rotation
-
-            if apply_height:
-                if height_mode == "delta":
-                    base.z = float(base.z) + float(height_value)
-                else:
-                    base.z = float(height_value)
-
-            if apply_rotation:
-                current_yaw = _yaw_deg(rot)
-                if rotation_mode == "delta":
-                    new_yaw = current_yaw + float(rotation_value)
-                else:
-                    new_yaw = float(rotation_value)
-                rot = App.Rotation(App.Vector(0.0, 0.0, 1.0), new_yaw)
-
-            obj.Placement = App.Placement(base, rot)
-            changed += 1
+                log_err(
+                    "[ECR][ALTURA] objeto={} resultado=ERROR razon={} accion=REVERTIR_TRANSACCION".format(
+                        _object_label(obj), obj_ex,
+                    )
+                )
+                raise
 
         doc.recompute()
         doc.commitTransaction()
     except Exception as ex:
         doc.abortTransaction()
-        log_err("[ERROR] Operacion cancelada: {}".format(ex))
+        log_err("[ECR][ALTURA] Operacion cancelada: {}".format(ex))
         return False
 
-    log_info("[INFO] Cambios aplicados: {} | Omitidos: {}".format(changed, skipped))
-    return True
+    log_info("[ECR][ALTURA] Cambios aplicados: {} | Omitidos: {}".format(changed, skipped))
+    return changed > 0
 
 
 def ejecutar_dialogo():
