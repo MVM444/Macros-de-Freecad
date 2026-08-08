@@ -2,7 +2,7 @@
 
 **Proposito:** Resumir la arquitectura vigente y el estado de integracion que debe conocerse antes de modificar objetos ElectricCR.
 
-**Version:** 2026-08-08 11:46, America/Costa_Rica.
+**Version:** 2026-08-08 13:01, America/Costa_Rica.
 
 ## Entorno
 
@@ -11,6 +11,68 @@
 - Workbench principal en esta carpeta: `ElectricCR/`.
 - Macros auxiliares relacionadas se encuentran tambien en carpetas como `Objetos/`, `Deteccion/`, `Iluminacion/` y `Resources/`.
 - El flujo obligatorio de trabajo y validacion se documenta en `FLUJO_GPT_CODEX.md`.
+- El mapa operativo vivo del Workbench se documenta en `MAPA_WORKBENCH.md`.
+- Las decisiones de depuracion y migracion macro por macro se registran en `REVISION_MACROS.md`.
+
+## Memoria operativa del proyecto
+
+ElectricCR adopta como regla que el repositorio debe contener suficiente contexto para que Marco, GPT y Codex puedan retomar el proyecto sin reconstruir de memoria como funciona el Workbench.
+
+Codex debe reconstruir el contexto desde la documentacion y el codigo antes de pedirle al usuario explicaciones que pueda obtener por inspeccion tecnica.
+
+`MAPA_WORKBENCH.md` describe como funciona el sistema actual.
+
+`REVISION_MACROS.md` registra que se ha decidido sobre cada macro durante la depuracion y migracion.
+
+Si el codigo actual contradice la documentacion, debe describirse el comportamiento real desde el codigo y corregirse la documentacion.
+
+## Estado arquitectonico del Workbench
+
+ElectricCR ya funciona como un Workbench Python mediante `ElectricCR/InitGui.py` y `Gui::PythonWorkbench`.
+
+Sin embargo, una parte importante de sus herramientas se incorpora actualmente mediante el registro dinamico de archivos `.FCMacro` realizado por `ElectricCR/commands/macros.py`.
+
+Esto significa que el Workbench actual es hibrido:
+
+- infraestructura Python propia del Workbench;
+- modulos Python internos;
+- objetos ElectricCR propios;
+- macros registradas como comandos;
+- herramientas de soporte, pruebas y recursos.
+
+El auto-registro de macros se considera una arquitectura de transicion. La existencia de una macro en una carpeta escaneada no demuestra que deba pertenecer al Workbench definitivo.
+
+## Estrategia de evolucion adoptada
+
+No se reinicia ElectricCR desde cero.
+
+Se conserva y respalda el Workbench actual y se realiza una migracion progresiva.
+
+La secuencia adoptada es:
+
+```text
+reconstruir contexto
+  -> revisar macro dentro de su familia
+  -> clasificar
+  -> decidir destino ElectricCR
+  -> migrar solo si corresponde
+  -> probar tecnicamente
+  -> validar funcionalmente
+  -> aceptar e integrar
+```
+
+La revision se realiza inicialmente en este orden:
+
+1. Areas
+2. Objetos
+3. Iluminacion
+4. Tomacorrientes
+5. Deteccion
+6. Cajas
+7. Tableros y Configuracion del proyecto
+8. Conectar
+
+`Conectar` se deja para una fase avanzada debido a la cantidad de estrategias geometricas, solapamientos y dependencias historicas.
 
 ## Arquitectura de dispositivos ElectricCR
 
@@ -106,6 +168,8 @@ ElectricCR adopta formalmente tres ejes de evaluacion:
 2. Madurez.
 3. Resultado comprobado.
 
+Adicionalmente, durante la migracion se asigna una `Decision ElectricCR` independiente, registrada en `REVISION_MACROS.md`.
+
 El inventario de herramientas utiliza estos ejes para distinguir herramientas productivas, candidatas, experimentales, duplicadas, incompletas, fallidas, abandonadas o pendientes de verificar.
 
 Reglas vigentes:
@@ -120,7 +184,8 @@ Reglas vigentes:
 ## Ciclo de vida adoptado
 
 ```text
-DEFINIDA
+CONTEXTO RECONSTRUIDO
+  -> DEFINIDA
   -> IMPLEMENTADA
   -> PROBADA TECNICAMENTE
   -> VALIDADA FUNCIONALMENTE
