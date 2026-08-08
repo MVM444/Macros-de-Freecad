@@ -2,7 +2,7 @@
 
 **Proposito:** Registrar de forma persistente la revision funcional de cada macro antes de decidir si se incorpora al Workbench, permanece como macro, se fusiona, se archiva o se excluye.
 
-**Version:** 2026-08-08 13:01, America/Costa_Rica.
+**Version:** 2026-08-08 15:24, America/Costa_Rica.
 
 ## Principio
 
@@ -146,7 +146,36 @@ Fecha de revision:
 | Deteccion | PENDIENTE | Revisar variantes NFPA y relacion con Areas. |
 | Cajas | PENDIENTE | Revisar despues de Deteccion/Tomacorrientes. |
 | Tableros / Configuracion | PENDIENTE | Revisar comandos de tablero, calculo y organizacion. |
-| Conectar | PENDIENTE - ALTA COMPLEJIDAD | Dejar para etapa avanzada por solapamientos, estrategias geometricas y dependencias. |
+| Conectar | EN REVISION - ALTA COMPLEJIDAD | Revisar por familias funcionales; Alimentadores tiene prioridad especial. |
+
+## Notas funcionales confirmadas por Marco
+
+### Conectar/Conectar_Alimentadores_a_Tablero_Auto.FCMacro
+
+Familia: Conectar / Alimentadores
+
+Confirmacion de Marco:
+
+- Esta macro es IMPORTANTE dentro del flujo de conexiones.
+- No debe tratarse como una variante secundaria, descartable o reemplazada solamente por ser antigua o por no localizarse facilmente en el `main` actual.
+- Antes de cualquier limpieza, migracion o fusion, Codex debe reconstruir su arquitectura completa y verificar su presencia real en la copia local, ramas, respaldos y GitHub.
+
+Evidencia tecnica ya documentada:
+
+- Existe `Conectar/DOCUMENTACION_ALIMENTADORES_TABLERO.md` con una documentacion extensa del flujo.
+- La documentacion describe una arquitectura de tres piezas:
+  1. `Conectar_Alimentadores_a_Tablero_Auto.FCMacro` como interfaz y orquestacion.
+  2. `alimentadores_backend.py` como backend especializado.
+  3. `Conectar_Cajas_a_Tablero_Auto.FCMacro` como backend legado que contiene parte de la logica geometrica estable reutilizada.
+- La documentacion de cierre del 2026-03-19 indica un estado funcional general bueno y que la etapa se considero concluida, aunque con mejoras futuras posibles de interfaz y mantenibilidad.
+
+Clasificacion definitiva: PENDIENTE DE REVISION DETALLADA.
+
+Decision ElectricCR: POR VERIFICAR.
+
+Regla especial: no eliminar, ocultar permanentemente, fusionar ni migrar esta familia hasta reconstruir y validar primero el flujo funcional completo.
+
+Fecha de nota: 2026-08-08.
 
 ## Registro de decisiones confirmadas
 
