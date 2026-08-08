@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "updated": "2026-08-06T12:24:03",
+  "updated": "2026-08-06T13:14:33",
   "tools": {
     "Draft_Line": {
       "count": 226,
@@ -465,15 +465,15 @@
       }
     },
     "macro:C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Objetos\\cambiar_altura_y_rotacion_objetos.FCMacro": {
-      "count": 10,
-      "last_ts": "2026-08-06T12:24:03",
+      "count": 14,
+      "last_ts": "2026-08-06T13:14:33",
       "last_meta": {
-        "cmd": "ElectricCR_Objetos_cambiar_altura_y_rotacion_objetos_1781299828",
+        "cmd": "ElectricCR_Objetos_cambiar_altura_y_rotacion_objetos_1786043165",
         "macro": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Objetos\\cambiar_altura_y_rotacion_objetos.FCMacro",
-        "label": "cambiar_altura_y_rotacion_objetos"
+        "label": "Cambiar altura y rotacion de objetos"
       },
       "first_ts": "2026-08-06T12:20:36",
-      "last_session_id": "b671391f5760"
+      "last_session_id": "6ed7c65b83fc"
     },
     "macro:C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Tomacorrientes\\InsertarTomacorrientesenPoligonos_objeto_toma.FCMacro": {
       "count": 13,
@@ -2157,5 +2157,5 @@
     }
   },
   "event_log": "tool_events.jsonl",
-  "last_session_id": "b671391f5760"
+  "last_session_id": "6ed7c65b83fc"
 }
