@@ -156,3 +156,46 @@ La implementacion ha superado las pruebas tecnicas realizadas y corrige los meca
 El estado correcto es `PROBADA TECNICAMENTE`, no `ACEPTADA` ni `INTEGRADA` como mejora definitiva.
 
 La decision final depende de la validacion funcional de Marco y de la revision posterior segun `FLUJO_GPT_CODEX.md`.
+
+---
+
+# Respaldo previo a la migracion de macros
+
+## Respaldo
+
+- Fecha y hora: 2026-08-08 12:05:06 -06:00, America/Costa_Rica.
+- Repositorio local: `MVM444/Macros-de-Freecad`.
+- Rama original: `main`.
+- SHA respaldado: `60074b976de81173f7223331632af7d078239340`.
+- Estado inicial de `git status`: limpio; inicialmente `main` local estaba en `c24460c09a8c946f92803880d64026f4145f8863`, 7 commits detras de `origin/main`.
+- Sincronizacion inicial: se ejecuto `git fetch --prune origin`; los 7 commits remotos pendientes modificaban solamente documentacion de coordinacion de ElectricCR y agregaban `ElectricCR/FLUJO_GPT_CODEX.md`.
+- Sincronizacion aplicada: avance rapido (`git pull --ff-only`) hasta `60074b976de81173f7223331632af7d078239340`; no hubo merge, rebase ni reescritura de historial.
+- Cambios locales encontrados antes del respaldo: ninguno.
+- Archivos no rastreados relevantes encontrados: ninguno.
+- Archivos ignorados encontrados en `ElectricCR/`: caches `__pycache__`/`*.pyc` y registros locales `tool_events*.jsonl`/`tool_usage-DESKTOP*.json`; no son fuentes ni recursos requeridos para reconstruir el Workbench.
+- Commit de respaldo adicional: no correspondio; el arbol funcional ya estaba confirmado en Git. Este informe se confirma despues, como cambio exclusivamente documental, sin alterar el SHA respaldado.
+- Tag anotado: `electriccr-pre-migracion-macros-2026-08-08`.
+- Rama de respaldo: `backup/electriccr-pre-migracion-2026-08-08`.
+- Remoto utilizado: `origin`, `https://github.com/MVM444/Macros-de-Freecad.git`.
+- Publicacion en GitHub: rama de respaldo, tag y este informe publicados sin force push.
+
+## Verificacion de integridad
+
+- Se verificaron 155 rutas registradas dentro de `ElectricCR/` en el estado inicial y 173 rutas clave del conjunto reconstruible asociado.
+- Estan registrados en Git `Resources/registry/registry_electric.json`, `Resources/prototypes/2d/`, `Resources/prototypes/3d/`, `Objetos/`, `Deteccion/`, `Iluminacion/`, `MEPWorkbenchCR/`, `ElectricCR/Init.py` y `ElectricCR/InitGui.py`.
+- No existen submodulos, enlaces simbolicos de ElectricCR ni objetos administrados por Git LFS que requieran recuperacion adicional.
+- El repositorio requiere una instalacion compatible de FreeCAD; la version objetivo declarada es FreeCAD 1.1.1. El layout de ejecucion o instalacion bajo el directorio de macros/`Mod` es una condicion del entorno, no un archivo local faltante.
+- Las rutas absolutas encontradas corresponden principalmente a telemetria historica registrada y a resolucion dinamica del directorio de usuario de FreeCAD; no se identifico una fuente o recurso funcional local ausente de GitHub.
+- El respaldo representa completamente el estado funcional actual versionado y sincronizado antes de iniciar la migracion.
+- No se modifico, refactorizo, movio, limpio ni convirtio ninguna macro o archivo de codigo funcional durante esta tarea.
+
+## Verificacion final
+
+- La rama original permanece `main`.
+- La rama `backup/electriccr-pre-migracion-2026-08-08` y el tag `electriccr-pre-migracion-macros-2026-08-08` apuntan al mismo commit: `60074b976de81173f7223331632af7d078239340`.
+- No se elimino ni descarto ningun archivo local.
+- No se inicio la migracion de macros a codigo.
+
+## Resultado final
+
+`RESPALDO COMPLETO Y VERIFICADO`
