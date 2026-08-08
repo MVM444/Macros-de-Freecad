@@ -1,8 +1,8 @@
 # ElectricCR - Flujo de trabajo GPT-Codex
 
-**Proposito:** Definir el ciclo obligatorio de analisis, implementacion, prueba, validacion y aceptacion de cambios realizados con ChatGPT, Codex u otros agentes.
+**Proposito:** Definir el ciclo obligatorio de reconstruccion de contexto, analisis, revision, implementacion, prueba, validacion y aceptacion de cambios realizados con ChatGPT, Codex u otros agentes.
 
-**Version:** 2026-08-08 11:46, America/Costa_Rica.
+**Version:** 2026-08-08 13:01, America/Costa_Rica.
 
 ## Principio general
 
@@ -16,12 +16,29 @@ La solucion que permanece debe ser la que mejor funcione en el trabajo real.
 
 El proyecto debe distinguir siempre entre:
 
+- codigo que existe;
 - codigo que ejecuta;
 - codigo probado tecnicamente;
 - solucion validada funcionalmente;
 - solucion aceptada para integracion definitiva.
 
+El repositorio debe funcionar como memoria operativa del proyecto. Marco no debe tener que reconstruir de memoria como funciona ElectricCR en cada nueva sesion.
+
 ## Flujo obligatorio
+
+### 0. Reconstruccion del contexto
+
+Antes de analizar una macro, desarrollar codigo o preguntarle al usuario como funciona una parte de ElectricCR, Codex debe:
+
+1. Leer los archivos definidos en el orden obligatorio de `AGENTS.md`.
+2. Leer `MAPA_WORKBENCH.md` para reconstruir la arquitectura vigente.
+3. Leer `REVISION_MACROS.md` para conocer decisiones confirmadas y pendientes.
+4. Inspeccionar el codigo real de la familia o herramienta involucrada.
+5. Buscar dependencias, herramientas relacionadas y versiones anteriores cuando sean relevantes.
+6. Presentar un resumen breve de lo que puede confirmar por evidencia tecnica.
+7. Separar claramente hechos confirmados, inferencias y preguntas que realmente requieran conocimiento de Marco.
+
+Codex no debe preguntarle al usuario que hace una macro antes de inspeccionar su codigo, salvo que el archivo no pueda localizarse o la informacion funcional no pueda deducirse razonablemente.
 
 ### 1. GPT analiza y define la tarea
 
@@ -49,7 +66,42 @@ Antes de crear una macro, comando, modulo o variante nueva se debe:
 
 Si se decide crear una nueva variante, Codex debe explicar por que era necesaria y que mejora funcional concreta pretende aportar.
 
-## 3. Implementacion por Codex
+### 3. Revision macro por macro antes de migrar
+
+Durante la depuracion y migracion del Workbench, cada macro debe revisarse dentro de su familia funcional antes de convertirla a codigo propio de ElectricCR.
+
+Para cada herramienta Codex debe reconstruir y documentar:
+
+- objetivo original;
+- funcion real confirmada por el codigo;
+- entradas y salidas;
+- objetos creados o modificados;
+- herramientas relacionadas;
+- dependencias;
+- uso conocido;
+- pruebas conocidas;
+- capacidades unicas;
+- resultado funcional conocido;
+- aspectos que requieren validacion de Marco.
+
+La decision debe registrarse en `REVISION_MACROS.md` utilizando uno de estos destinos:
+
+- INCORPORAR
+- INCORPORAR DESPUES
+- MANTENER COMO MACRO
+- EXPERIMENTAL
+- FUSIONAR
+- LEGACY
+- RESPALDO
+- EXCLUIR
+- DESCARTABLE
+- POR VERIFICAR
+
+El inventario general sirve para priorizar la revision, pero no constituye por si solo una decision definitiva.
+
+No convertir automaticamente las macros actuales a comandos Python.
+
+### 4. Implementacion por Codex
 
 Codex puede trabajar:
 
@@ -58,13 +110,15 @@ Codex puede trabajar:
 
 Durante la implementacion:
 
-- respetar `AGENTS.md`, `DECISIONES_TECNICAS.md` y `TAREA_ACTUAL.md`;
+- respetar `AGENTS.md`, `MAPA_WORKBENCH.md`, `DECISIONES_TECNICAS.md`, `REVISION_MACROS.md` y `TAREA_ACTUAL.md`;
 - evitar crear herramientas paralelas sin justificacion;
 - mantener cambios pequenos, reversibles y verificables;
 - conservar compatibilidad con soluciones anteriores mientras la nueva no haya sido validada;
 - no continuar desarrollando una solucion que se haya desviado del objetivo sin documentar primero esa desviacion.
 
-## 4. Prueba tecnica
+En la migracion macro-a-codigo, preferir extraer la logica util a modulos Python reutilizables y mantener temporalmente un envoltorio `.FCMacro` cuando facilite compatibilidad y pruebas.
+
+### 5. Prueba tecnica
 
 Los cambios deben probarse dentro de FreeCAD cuando corresponda.
 
@@ -78,25 +132,28 @@ Las pruebas tecnicas deben verificar como minimo:
 - que los resultados tecnicos coinciden con lo implementado;
 - que no se introducen regresiones conocidas.
 
-## 5. Resultado de Codex
+### 6. Resultado de Codex
 
 `RESULTADO_CODEX.md` debe registrar siempre:
 
 1. Objetivo original.
-2. Busqueda previa realizada.
-3. Archivos revisados, creados y modificados.
-4. Solucion implementada.
-5. Pruebas ejecutadas.
-6. Resultado tecnico observado.
-7. Limitaciones y riesgos.
-8. Herramientas anteriores relacionadas.
-9. Si la solucion reemplaza, complementa, duplica o se desvia de otra.
-10. Aspectos que requieren validacion de Marco en FreeCAD.
-11. Clasificacion provisional por Rol funcional, Madurez y Resultado comprobado.
+2. Contexto reconstruido y archivos consultados.
+3. Busqueda previa realizada.
+4. Archivos revisados, creados y modificados.
+5. Solucion implementada o decision de revision.
+6. Pruebas ejecutadas.
+7. Resultado tecnico observado.
+8. Limitaciones y riesgos.
+9. Herramientas anteriores relacionadas.
+10. Si la solucion reemplaza, complementa, duplica o se desvia de otra.
+11. Aspectos que requieren validacion de Marco en FreeCAD.
+12. Clasificacion provisional por Rol funcional, Madurez y Resultado comprobado.
+13. Decision ElectricCR cuando corresponda.
+14. Cambios realizados o pendientes en `MAPA_WORKBENCH.md` y `REVISION_MACROS.md`.
 
 Codex no debe ocultar resultados negativos ni presentar como terminada una solucion que no resuelva el objetivo original.
 
-## 6. Tres ejes de clasificacion
+## 7. Tres ejes de clasificacion
 
 Toda herramienta relevante debe poder describirse mediante tres ejes independientes.
 
@@ -141,7 +198,7 @@ Las herramientas nuevas no deben declararse automaticamente ESTABLES o COMPROBAD
 
 Cuando no exista evidencia suficiente debe utilizarse `POR VERIFICAR` en lugar de asumir exito o fracaso.
 
-## 7. Validacion funcional por Marco
+## 8. Validacion funcional por Marco
 
 Despues de la prueba tecnica se debe comprobar si la herramienta resuelve el trabajo real para el que fue creada.
 
@@ -157,7 +214,9 @@ La validacion funcional puede concluir que la solucion:
 
 Una prueba tecnica de Codex no sustituye esta validacion cuando la tarea depende de comportamiento visual, geometria real, flujo de usuario o documentos reales de FreeCAD.
 
-## 8. Revision por GPT y decision de integracion
+Marco no necesita reconstruir la arquitectura tecnica para realizar esta validacion. Codex debe presentar primero el contexto ya investigado y pedir solamente las confirmaciones funcionales necesarias.
+
+## 9. Revision por GPT y decision de integracion
 
 GPT revisa el resultado de Codex, la evidencia de prueba, la validacion funcional y el contexto historico.
 
@@ -173,12 +232,13 @@ La decision debe determinar si la solucion:
 
 La version anterior no se elimina solamente porque exista una version nueva.
 
-## 9. Estados del ciclo de vida
+## 10. Estados del ciclo de vida
 
 El ciclo recomendado es:
 
 ```text
-DEFINIDA
+CONTEXTO RECONSTRUIDO
+  -> DEFINIDA
   -> IMPLEMENTADA
   -> PROBADA TECNICAMENTE
   -> VALIDADA FUNCIONALMENTE
@@ -189,17 +249,20 @@ DEFINIDA
 
 Una tarea puede retroceder a `DESARROLLO` desde cualquier etapa si se detectan errores, desviaciones o regresiones.
 
-## 10. Publicacion y documentacion
+## 11. Publicacion y documentacion
 
 Los cambios y resultados se publican en GitHub para mantener sincronizados:
 
 - el codigo;
 - `AGENTS.md`;
+- `MAPA_WORKBENCH.md`;
 - `ESTADO_PROYECTO.md`;
 - `DECISIONES_TECNICAS.md`;
+- `FLUJO_GPT_CODEX.md`;
+- `REVISION_MACROS.md`;
 - `TAREA_ACTUAL.md`;
 - `RESULTADO_CODEX.md`;
 - `HISTORIAL_CAMBIOS.md`;
 - el inventario y clasificacion de herramientas cuando corresponda.
 
-`HISTORIAL_CAMBIOS.md` registra solamente cambios aceptados. Los intentos, pruebas fallidas y soluciones pendientes permanecen documentados en `RESULTADO_CODEX.md`, el inventario o documentacion de desarrollo correspondiente.
+`HISTORIAL_CAMBIOS.md` registra solamente cambios aceptados. Los intentos, pruebas fallidas y soluciones pendientes permanecen documentados en `RESULTADO_CODEX.md`, `REVISION_MACROS.md`, el inventario o documentacion de desarrollo correspondiente.
