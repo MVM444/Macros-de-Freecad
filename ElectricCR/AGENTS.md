@@ -2,7 +2,7 @@
 
 **Proposito:** Definir las reglas permanentes para ChatGPT, Codex y otros agentes que trabajen dentro de `ElectricCR/`.
 
-**Version:** 2026-08-08 11:46, America/Costa_Rica.
+**Version:** 2026-08-08 13:01, America/Costa_Rica.
 
 **Alcance:** Este archivo aplica a todos los archivos y subdirectorios contenidos en `ElectricCR/`, salvo que exista un `AGENTS.md` mas especifico en un subdirectorio.
 
@@ -11,13 +11,44 @@
 Antes de analizar o modificar el proyecto, leer en este orden:
 
 1. `AGENTS.md`
-2. `ESTADO_PROYECTO.md`
-3. `DECISIONES_TECNICAS.md`
-4. `FLUJO_GPT_CODEX.md`
-5. `TAREA_ACTUAL.md`
-6. El codigo y los recursos relacionados con la tarea
+2. `MAPA_WORKBENCH.md`
+3. `ESTADO_PROYECTO.md`
+4. `DECISIONES_TECNICAS.md`
+5. `FLUJO_GPT_CODEX.md`
+6. `REVISION_MACROS.md`
+7. `TAREA_ACTUAL.md`
+8. El codigo y los recursos relacionados con la tarea
 
 Al finalizar, actualizar `RESULTADO_CODEX.md`. Solo actualizar `HISTORIAL_CAMBIOS.md` cuando un cambio haya sido probado, validado funcionalmente cuando corresponda y aceptado.
+
+## Responsabilidad de reconstruir el contexto
+
+Marco no debe tener que recordar ni volver a explicar toda la arquitectura de ElectricCR cada vez que se retoma el proyecto.
+
+Codex es responsable de reconstruir primero el contexto utilizando:
+
+- `MAPA_WORKBENCH.md`;
+- `REVISION_MACROS.md`;
+- el codigo actual;
+- pruebas;
+- documentacion tecnica;
+- historial Git;
+- resultados anteriores;
+- registros de uso como evidencia secundaria.
+
+Antes de preguntarle al usuario como funciona una macro o una parte del Workbench, inspeccionar primero el repositorio y explicar brevemente:
+
+- que puede confirmarse por el codigo;
+- que herramientas relacionadas existen;
+- que dependencias se observan;
+- que decisiones anteriores estan documentadas;
+- que aspectos siguen siendo desconocidos.
+
+Preguntar a Marco principalmente por informacion que no pueda deducirse del repositorio, por ejemplo uso real, resultado visual esperado, preferencias funcionales o razones historicas no documentadas.
+
+No usar preguntas al usuario como sustituto de una inspeccion tecnica que Codex puede realizar.
+
+Si la documentacion contradice el codigo actual, prevalece el codigo para describir el comportamiento real y debe registrarse la discrepancia.
 
 ## Entorno objetivo
 
@@ -58,6 +89,43 @@ El numero de ejecuciones tampoco demuestra por si solo uso operativo: puede corr
 No continuar desarrollando una solucion que se haya desviado del objetivo original sin documentar primero esa desviacion.
 
 No eliminar una version anterior solamente porque exista una version nueva. La sustitucion requiere evidencia de que la nueva solucion cubre los casos funcionales necesarios.
+
+## Revision macro por macro antes de migrar
+
+La conversion progresiva de ElectricCR desde macros hacia comandos y modulos Python debe realizarse solamente despues de revisar cada herramienta dentro de su familia funcional.
+
+No convertir automaticamente todas las macros existentes.
+
+Para cada macro revisar como minimo:
+
+- objetivo original;
+- funcion real del codigo;
+- entradas y salidas;
+- objetos creados o modificados;
+- herramientas relacionadas;
+- dependencias;
+- evidencia de uso real;
+- pruebas conocidas;
+- capacidades unicas;
+- resultado funcional;
+- conveniencia de mostrarla al usuario final.
+
+Registrar las decisiones en `REVISION_MACROS.md`.
+
+Las decisiones ElectricCR permitidas son:
+
+- INCORPORAR
+- INCORPORAR DESPUES
+- MANTENER COMO MACRO
+- EXPERIMENTAL
+- FUSIONAR
+- LEGACY
+- RESPALDO
+- EXCLUIR
+- DESCARTABLE
+- POR VERIFICAR
+
+El inventario general sirve para priorizar y preclasificar, pero no sustituye la revision funcional macro por macro.
 
 ## Clasificacion obligatoria de soluciones
 
@@ -161,6 +229,8 @@ Las pruebas tecnicas no sustituyen la validacion funcional del usuario cuando el
 - Si la solucion reemplaza, complementa, duplica o se desvia de otra herramienta.
 - Aspectos que requieren validacion de Marco en FreeCAD.
 - Clasificacion provisional por Rol funcional, Madurez y Resultado comprobado.
+- Decision ElectricCR cuando se haya realizado una revision macro por macro.
+- Cambios que deban reflejarse en `MAPA_WORKBENCH.md` o `REVISION_MACROS.md`.
 
 No declarar una tarea como terminada si no se ejecutaron pruebas dentro de FreeCAD o si las pruebas requieren validacion manual pendiente.
 
