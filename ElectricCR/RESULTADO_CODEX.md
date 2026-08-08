@@ -1,16 +1,25 @@
 # ElectricCR - Resultado de Codex
 
-**Estado:** Implementado y probado.
+**Estado:** Implementado y probado tecnicamente. Validacion funcional de Marco pendiente.
 
 **Fecha de ejecucion:** 2026-08-06, America/Costa_Rica.
 
+**Revision de estado:** 2026-08-08 11:46, America/Costa_Rica.
+
 **Tarea relacionada:** `TAREA_ACTUAL.md`
+
+## Objetivo original
+
+Modernizar la herramienta para cambiar altura y rotacion de sensores, luminarias, equipos HVAC y otros objetos con simbolo 2D, sin elevar el simbolo de planta ni destruir orientaciones tecnicas existentes.
+
+La implementacion debe evaluarse respecto a este objetivo. El hecho de que el codigo ejecute o pase pruebas tecnicas no implica por si solo que la solucion sea una mejora funcional definitiva.
 
 ## Busqueda previa
 
 - Se reviso la documentacion oficial de `App::Link`: el enlace reutiliza la geometria y representacion del objeto enlazado. Por ello, cambiar solo un metadato de altura en la instancia no modifica la forma del maestro.
 - Se reviso el patron oficial de objetos `FeaturePython`: la forma se actualiza desde `execute()` durante la recomputacion.
 - Se reviso la guia oficial de objetos de documento y recomputacion para mantener una sola transaccion y una recomputacion controlada.
+- Se reviso el patron existente en MEPWorkbenchCR antes de implementar una solucion paralela.
 - Fuentes:
   - https://freecad.github.io/SourceDoc/df/d9b/classApp_1_1Link.html
   - https://freecad.github.io/SourceDoc/de/d80/classFeaturePython_1_1Box.html
@@ -66,9 +75,18 @@ MEPWorkbenchCR ya tenia el patron correcto para altura: `InstallationElevation` 
 - Ante un fallo individual se aborta la transaccion completa para evitar estados parciales.
 - No se agrego ninguna migracion automatica al abrir documentos.
 
-## Pruebas
+## Relacion con herramientas anteriores
+
+- La solucion moderniza `Objetos/cambiar_altura_y_rotacion_objetos.FCMacro`; no se creo una segunda macro paralela para el mismo objetivo.
+- Conserva compatibilidad para objetos simples mediante `Placement.Base.z`.
+- Reutiliza conceptualmente el patron semantico de altura de MEPWorkbenchCR.
+- No se considera reemplazo definitivo de la conducta anterior hasta completar la validacion funcional en documentos reales.
+
+## Pruebas tecnicas
 
 Motor probado: FreeCAD `1.1.3` (`20260725`, compilacion disponible en esta estacion).
+
+Version objetivo del proyecto: FreeCAD `1.1.1`.
 
 | Prueba | Objeto | Resultado | Evidencia o mensaje de consola |
 |---|---|---|---|
@@ -94,17 +112,47 @@ FreeCAD 1.1/bin/python.exe ElectricCR/tests/test_cambiar_altura_rotacion_semanti
 FreeCAD 1.1/bin/python.exe MEPWorkbenchCR/tests/test_hvac_evaporator_installation_elevation.py
 ```
 
+## Interpretacion de las pruebas
+
+Las pruebas anteriores demuestran que la implementacion se comporta segun la logica tecnica prevista en los casos ensayados.
+
+No demuestran todavia que la herramienta sea una mejora definitiva en el trabajo real de ElectricCR.
+
+La validacion funcional pendiente debe confirmar desde la interfaz habitual y con objetos reales que:
+
+- el resultado visual es correcto;
+- el simbolo 2D permanece en su plano;
+- el flujo de uso es practico;
+- no aparecen regresiones no cubiertas por las pruebas;
+- la herramienta resuelve el objetivo original mejor que la conducta anterior.
+
+## Clasificacion provisional
+
+```text
+Rol funcional:        NUCLEO
+Madurez:               CANDIDATA
+Resultado comprobado: PROMETEDORA
+```
+
+Esta clasificacion es provisional. No promover a `ESTABLE / COMPROBADA` solamente por haber pasado las pruebas tecnicas.
+
 ## Riesgos y limitaciones
 
 - Un `App::Link` ElectricCR heredado que haya perdido tanto sus metadatos como los de su maestro se rechaza de forma segura; no se adivina el tipo y se revierte la transaccion.
 - La prueba completa con HVAC mediante MCP excedio el tiempo de respuesta de 90 segundos por la carga STEP en la sesion grafica. El documento temporal se cerro correctamente; la misma prueba completa paso con el Python incluido en FreeCAD y la prueba MCP ligera paso en la GUI.
 - No se modifico ni guardo el documento `Puriscal_03_08_2026`.
+- Las pruebas se realizaron con FreeCAD 1.1.3, mientras el objetivo declarado del proyecto continua siendo 1.1.1.
 
 ## Pendientes
 
-- Validacion visual del usuario con uno o dos objetos reales de Puriscal desde el icono de la macro.
-- No actualizar `HISTORIAL_CAMBIOS.md` hasta que el usuario acepte el resultado.
+- Validacion visual y funcional de Marco con uno o dos objetos reales desde el icono de la macro.
+- Confirmar comportamiento en la version objetivo FreeCAD 1.1.1 cuando sea posible.
+- No actualizar el historial como cambio funcional aceptado hasta que Marco confirme el resultado.
 
 ## Conclusion
 
-La herramienta mantiene compatibilidad con objetos simples y ahora cambia la altura fisica 3D de sensores, luminarias enlazadas y equipos HVAC sin elevar el simbolo 2D. La rotacion ya no elimina orientaciones tecnicas existentes.
+La implementacion ha superado las pruebas tecnicas realizadas y corrige los mecanismos identificados de altura y rotacion en los casos ensayados.
+
+El estado correcto es `PROBADA TECNICAMENTE`, no `ACEPTADA` ni `INTEGRADA` como mejora definitiva.
+
+La decision final depende de la validacion funcional de Marco y de la revision posterior segun `FLUJO_GPT_CODEX.md`.
