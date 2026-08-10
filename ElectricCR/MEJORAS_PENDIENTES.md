@@ -2,7 +2,7 @@
 
 **Proposito:** Mantener una memoria viva de mejoras, observaciones funcionales y hallazgos que todavia no constituyen cambios aceptados. Este archivo sirve como puente para Marco, GPT y Codex.
 
-**Version:** 2026-08-10 11:28, America/Costa_Rica.
+**Version:** 2026-08-10 17:28, America/Costa_Rica.
 
 **FreeCAD objetivo:** 1.1.3
 
@@ -266,7 +266,134 @@ No convertir estas asociaciones en reglas permanentes sin revision funcional.
 
 ---
 
-## 8. Estado
+## 8. Tableros - herramienta esencial y defecto de orientacion al insertar en muro
+
+### Herramienta
+
+`ElectricCR/Insertar_Tablero.FCMacro`
+
+Se considera una herramienta ESENCIAL de ElectricCR. La macro es una interfaz para el backend:
+
+`ElectricCR/electriccr/features/tablero_electrico.py`
+
+Permite insertar como `App::Link`:
+
+- Tablero;
+- Desconector;
+- Interruptor.
+
+Mantener esta herramienta como candidata prioritaria a comando estable del Workbench.
+
+### Defecto observado - La Cruz Version 2.1
+
+Al seleccionar una pared/cara y pedir insertar un tablero, el tablero se esta colocando torcido respecto al muro.
+
+### Causa probable a verificar
+
+En `_face_context_from_face()` el backend calcula dos referencias:
+
+- vector desde el centro del objeto propietario hacia el centro de la cara (`outward`);
+- normal geometrica real de la cara (`normal`).
+
+Actualmente se prioriza `outward` cuando existe y solo se usa la normal si ese vector no es valido.
+
+En un muro largo, irregular o con centro geometrico desplazado, el vector centro-del-muro -> centro-de-cara puede tener componente tangencial y no ser perpendicular a la cara. Esto puede explicar una rotacion ligeramente torcida.
+
+Esta es una HIPOTESIS TECNICA basada en el codigo actual y debe comprobarse en FreeCAD antes de corregir.
+
+### Comportamiento deseado
+
+Cuando la insercion se realiza sobre una cara vertical plana de un muro:
+
+- la orientacion debe derivarse principalmente de la normal geometrica real de la cara;
+- el tablero debe quedar paralelo al plano del muro;
+- el frente debe quedar hacia el lado correcto;
+- la vista/camara o el centro global del muro solo deberian ayudar a resolver el signo interior/exterior, no crear una direccion oblicua;
+- debe funcionar en muros horizontales, verticales, diagonales y segmentos de muros complejos.
+
+Crear prueba especifica con muro diagonal y con muro largo/irregular.
+
+---
+
+## 9. Asignar Tableros y Circuitos - herramienta esencial sin icono
+
+### Macro identificada
+
+`Configuracion del proyecto/Asignar_Tableros_y_Circuitos.FCMacro`
+
+Menu actual:
+
+`Asignar tableros y circuitos (pestanas)`
+
+La macro no declara actualmente una linea `# Icon:` en su encabezado.
+
+### Importancia funcional
+
+Se considera otra herramienta ESENCIAL de ElectricCR porque organiza la asignacion electrica y produce las hojas:
+
+- `Asignacion_Red`
+- `Red_Origenes`
+
+Su interfaz trabaja con:
+
+- pestanas por tablero para asignar circuitos y componentes aguas abajo;
+- pestana de origen para indicar de donde viene cada tablero/desconector/interruptor.
+
+Esta informacion es fundamental para separar correctamente:
+
+`asignacion electrica -> motor de conexiones -> geometria`
+
+Por tanto no debe clasificarse como utilidad secundaria solamente por estar en `Configuracion del proyecto`.
+
+### Pendientes
+
+- marcar como NUCLEO/ESENCIAL en la revision de macros cuando corresponda;
+- crear/asignar un icono coherente con ElectricCR;
+- revisar si su logica debe convertirse en servicio estable de asignaciones, conservando la interfaz por pestanas;
+- evitar que los motores geometricos tengan que inferir relaciones que ya estan definidas en `Asignacion_Red` y `Red_Origenes`.
+
+---
+
+## 10. Capturar Arbol de Grupos - herramienta de diagnostico
+
+### Macro identificada
+
+`Configuracion del proyecto/Capturar_Arbol_Grupos_Documento.FCMacro`
+
+Los mensajes `[ARBOL_GRUPOS] Exportado:` NO indican un error ni una modificacion del modelo.
+
+La macro toma una instantanea del arbol de grupos del documento activo y genera tres representaciones:
+
+- `.txt` legible para personas;
+- `.md` para documentacion/GPT/Codex;
+- `.json` para procesamiento automatico.
+
+Los archivos se guardan en:
+
+`Configuracion del proyecto/_reportes_arbol/`
+
+### Alcance
+
+- Si hay grupos seleccionados, exporta esos grupos como raiz.
+- Si no hay grupos seleccionados, exporta los grupos raiz del documento.
+
+El mensaje:
+
+`Resumen: scope=documento | raiz=6 | clipboard=SI`
+
+significa:
+
+- `scope=documento`: se capturo el arbol del documento completo porque no se uso una seleccion de grupos como raiz;
+- `raiz=6`: encontro seis grupos raiz;
+- `clipboard=SI`: tambien copio el reporte textual al portapapeles.
+
+### Clasificacion propuesta
+
+Herramienta de SOPORTE / DIAGNOSTICO, util para compartir el estado estructural de un FCStd con GPT o Codex. No necesita ocupar una posicion prioritaria en las barras normales de produccion si la interfaz se simplifica.
+
+---
+
+## 11. Estado
 
 Este documento contiene PENDIENTES y observaciones.
 
