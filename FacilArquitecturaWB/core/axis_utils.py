@@ -1,9 +1,12 @@
-"""BIM axis-system and column helpers for FacilArquitecturaWB.
+"""Native BIM axis-system and column helpers for FacilArquitecturaWB.
 
-Descripcion: convierte lineas de un sketch en Arch Axis, AxisSystem y columnas Arch Structure.
-Fecha: 2026-07-15
-Version: 0.1.0
-Instrucciones: usar exclusivamente objetos BIM existentes para ejes y columnas.
+Descripcion: convierte lineas de un Sketch en Arch Axis, AxisSystem y columnas
+Arch Structure, contenidas directamente en un Building Storey nativo.
+FreeCAD objetivo: 1.1.3.
+Fecha y hora: 2026-08-09 22:10 UTC-06:00.
+Version: 0.2.0.
+Instrucciones de mantenimiento: no crear grupos FA intermedios para columnas;
+conservar el Sketch como fuente trazable y el Level.Group como contencion.
 """
 
 from __future__ import annotations
@@ -13,6 +16,7 @@ import math
 import FreeCAD
 
 from .command_errors import UserFacingError
+from .bim_structure_utils import add_to_level, is_level
 from .naming import safe_name
 from .project_structure import msg, set_prop, warn
 
@@ -22,7 +26,8 @@ except Exception:  # pragma: no cover - depende del runtime de FreeCAD
     Arch = None
 
 
-GENERATED_BY_AXES_COLUMNS = "FA_CreateAxesColumnsBIM"
+GENERATED_BY_AXES_COLUMNS = "FA_CreateColumnsFromSketch"
+LEGACY_GENERATORS = ("FA_CreateAxesColumnsBIM", GENERATED_BY_AXES_COLUMNS)
 ANGLE_TOLERANCE_DEG = 4.0
 MIN_AXIS_SEGMENT_MM = 20.0
 MAX_COLUMN_INSTANCES = 2000
@@ -63,7 +68,7 @@ def find_axis_sketch_from_selection(objects):
     raise UserFacingError("La seleccion contiene varios sketches de ejes. Seleccione solamente uno.")
 
 
-def create_bim_axes_and_columns_from_sketch(doc, bim_group, sketch, params):
+def create_bim_axes_and_columns_from_sketch(doc, target_container, sketch, params):
     """Create two Arch Axis families, one AxisSystem and one replicated Arch column."""
     _require_bim_tools()
     settings = _ensure_sketch_parameters(sketch, params)
@@ -126,10 +131,9 @@ def create_bim_axes_and_columns_from_sketch(doc, bim_group, sketch, params):
         "Cantidad de cruces realmente dibujados en el sketch",
         len(source_points),
     )
-    try:
-        bim_group.addObject(system)
-    except Exception:
-        pass
+    _add_to_target(target_container, system, sketch)
+    for axis in axes:
+        _add_to_target(target_container, axis, sketch)
 
     doc.recompute()
     points = list(system.Proxy.getPoints(system) or [])
@@ -139,36 +143,11 @@ def create_bim_axes_and_columns_from_sketch(doc, bim_group, sketch, params):
             % (len(points), system_point_count)
         )
 
-    container_name = safe_name("FA_Columns_" + _object_label(sketch), "FA_Columns")
-    column_container = doc.addObject("App::DocumentObjectGroup", container_name)
-    column_container.Label = "Columnas BIM - " + _object_label(sketch)
-    _tag_generated_object(column_container, sketch, "columns_group")
-    set_prop(
-        column_container,
-        "App::PropertyInteger",
-        "FA_ColumnCount",
-        "FacilArquitectura",
-        "Cantidad de columnas generadas desde el sketch",
-        len(source_points),
-    )
     column_rotation = _grid_rotation_deg(specs)
     use_axis_spread = len(source_points) == system_point_count and abs(column_rotation) <= 1e-6
     placement_mode = "axis_system" if use_axis_spread else "sketch_crosses"
     if len(source_points) == system_point_count and not use_axis_spread:
         placement_mode = "sketch_crosses_rotated"
-    set_prop(
-        column_container,
-        "App::PropertyString",
-        "FA_ColumnPlacementMode",
-        "FacilArquitectura",
-        "Metodo utilizado para colocar las columnas",
-        placement_mode,
-    )
-    try:
-        bim_group.addObject(column_container)
-    except Exception:
-        pass
-
     column_objects = []
     if use_axis_spread:
         column = _make_arch_column(
@@ -182,7 +161,8 @@ def create_bim_axes_and_columns_from_sketch(doc, bim_group, sketch, params):
             role="columns",
             count=system_point_count,
         )
-        column_container.addObject(column)
+        _set_column_placement_mode(column, placement_mode)
+        _add_to_target(target_container, column, sketch)
         column_objects.append(column)
     else:
         for index, point in enumerate(source_points, start=1):
@@ -212,7 +192,8 @@ def create_bim_axes_and_columns_from_sketch(doc, bim_group, sketch, params):
                 "Indice del cruce fuente",
                 index,
             )
-            column_container.addObject(column)
+            _set_column_placement_mode(column, placement_mode)
+            _add_to_target(target_container, column, sketch)
             column_objects.append(column)
 
     doc.recompute()
@@ -237,14 +218,14 @@ def create_bim_axes_and_columns_from_sketch(doc, bim_group, sketch, params):
             "+".join(str(len(spec["positions"])) for spec in specs),
             system_point_count,
             len(source_points),
-            column_container.FA_ColumnPlacementMode,
+            placement_mode,
         )
     )
     return {
         "sketch": sketch,
         "axes": axes,
         "system": system,
-        "column": column_container,
+        "column": column_objects[0],
         "columns": column_objects,
         "points": source_points,
         "system_points": points,
@@ -387,7 +368,7 @@ def remove_previous_axes_columns(doc, source_sketch=None):
     source_name = str(getattr(source_sketch, "Name", "") or "")
     candidates = []
     for obj in list(getattr(doc, "Objects", []) or []):
-        if str(getattr(obj, "FA_GeneratedBy", "") or "") != GENERATED_BY_AXES_COLUMNS:
+        if str(getattr(obj, "FA_GeneratedBy", "") or "") not in LEGACY_GENERATORS:
             continue
         if source_name:
             source = getattr(obj, "FA_SourceSketch", None)
@@ -488,6 +469,28 @@ def _make_arch_column(sketch, settings, name, label, center, rotation_deg, axis=
     except Exception:
         pass
     return column
+
+
+def _set_column_placement_mode(column, placement_mode):
+    set_prop(
+        column,
+        "App::PropertyString",
+        "FA_ColumnPlacementMode",
+        "FacilArquitectura",
+        "Metodo utilizado para colocar la columna",
+        str(placement_mode),
+    )
+
+
+def _add_to_target(target_container, obj, source_sketch):
+    """Add an object to a native Level, with legacy group compatibility."""
+    if is_level(target_container):
+        add_to_level(target_container, obj, source_sketch=source_sketch)
+        return
+    try:
+        target_container.addObject(obj)
+    except Exception:
+        pass
 
 
 def _family_spec(cluster, position_tolerance):

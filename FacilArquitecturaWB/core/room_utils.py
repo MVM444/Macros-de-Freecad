@@ -15,7 +15,11 @@ import FreeCAD
 import Part
 import Sketcher
 
-from .bim_utils import collect_wall_sketches_from_selection, wall_thickness_from_sketch
+from .bim_utils import (
+    collect_any_sketches_from_selection,
+    collect_wall_sketches_from_selection,
+    wall_thickness_from_sketch,
+)
 from .command_errors import UserFacingError
 from .naming import safe_name
 from .project_structure import msg, set_prop, warn
@@ -48,6 +52,28 @@ OPENING_KEYWORDS = (
 def collect_selected_wall_sketches(selection):
     """Return only wall centerline sketches represented by the selection."""
     return collect_wall_sketches_from_selection(list(selection or []))
+
+
+def collect_selected_wall_candidates(selection, opening_sketches=None):
+    """Resolve valid wall sources or safe generic Sketch conversion candidates.
+
+    A selected native Arch/BIM wall resolves to its ``Base`` or
+    ``FA_SourceSketch``. Generic Sketches are returned only when no already
+    classified wall was selected, and known openings or columns are excluded.
+    """
+    recognized = collect_selected_wall_sketches(selection)
+    if recognized:
+        return recognized
+    opening_keys = {_source_key(obj) for obj in list(opening_sketches or [])}
+    result = []
+    seen = set()
+    for sketch in collect_any_sketches_from_selection(selection):
+        key = _source_key(sketch)
+        if key in seen or key in opening_keys or _is_explicit_column_sketch(sketch):
+            continue
+        seen.add(key)
+        result.append(sketch)
+    return result
 
 
 def collect_opening_sketches(doc, selection=None):
@@ -815,6 +841,17 @@ def _is_opening_sketch(obj):
     return any(keyword in text for keyword in OPENING_KEYWORDS) and bool(
         _geometry_records_from_sketch(obj)
     )
+
+
+def _is_explicit_column_sketch(obj):
+    kind = str(getattr(obj, "FA_CenterlineKind", "") or "").strip().lower()
+    element_type = str(getattr(obj, "FA_ElementType", "") or "").strip().lower()
+    return kind == "columns" or element_type in ("column", "columns", "columna", "columnas")
+
+
+def _source_key(obj):
+    name = str(getattr(obj, "Name", "") or "")
+    return ("name", name) if name else ("id", id(obj))
 
 
 def _replace_segment_endpoint(segment, endpoint, point):

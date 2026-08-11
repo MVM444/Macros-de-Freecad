@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # MenuText: Registrar acometida y ruta
 # Icon: Registrar_Acometida_y_Ruta.svg
+# Revision: 2026-08-10 20:31 CST - popup QComboBox legible en Task Panel Qt6.
 
 # Qt compatibility for FreeCAD 1.x (PySide6) and older builds.
 def _ensure_qt_compat():
@@ -770,8 +771,13 @@ QTabWidget::pane {
     border-radius: 8px;
     background: #ffffff;
 }
+QWidget#AcometidaTabPage {
+    background: #ffffff;
+    color: #1f2d3d;
+}
 QTabBar::tab {
     background: #dfe8f5;
+    color: #274661;
     border: 1px solid #b7c6da;
     border-bottom: none;
     border-top-left-radius: 6px;
@@ -784,8 +790,20 @@ QTabBar::tab:selected {
     background: #ffffff;
     color: #1b4577;
 }
+QTabBar::tab:disabled {
+    background: #e8edf3;
+    color: #7a8694;
+}
 QLabel {
     color: #1f2d3d;
+    background: transparent;
+}
+QCheckBox {
+    color: #1f2d3d;
+    background: transparent;
+}
+QCheckBox:disabled {
+    color: #7a8694;
 }
 QPushButton {
     background: #2d6fb8;
@@ -801,8 +819,75 @@ QComboBox, QDoubleSpinBox, QSpinBox, QLineEdit {
     border-radius: 4px;
     padding: 2px 4px;
     background: #ffffff;
+    color: #1f2d3d;
+    selection-background-color: #2d6fb8;
+    selection-color: #ffffff;
+}
+QComboBox:disabled, QDoubleSpinBox:disabled, QSpinBox:disabled, QLineEdit:disabled {
+    background: #e8edf3;
+    color: #6f7b88;
+    border-color: #cbd4df;
+}
+QComboBox QAbstractItemView {
+    background: #ffffff;
+    color: #1f2d3d;
+    border: 1px solid #b7c6da;
+    selection-background-color: #2d6fb8;
+    selection-color: #ffffff;
+    outline: 0;
+}
+QComboBox QAbstractItemView::item:selected {
+    background: #2d6fb8;
+    color: #ffffff;
 }
 """
+
+
+def _acometida_combo_popup_qss():
+    """Style the separate Qt6 popup view, which may leave the Task Panel tree."""
+    return """
+QAbstractItemView#AcometidaComboPopup {
+    background-color: #ffffff;
+    alternate-background-color: #f4f7fb;
+    color: #1f2d3d;
+    border: 1px solid #b7c6da;
+    selection-background-color: #2d6fb8;
+    selection-color: #ffffff;
+    outline: 0;
+}
+QAbstractItemView#AcometidaComboPopup::item {
+    background-color: #ffffff;
+    color: #1f2d3d;
+    min-height: 20px;
+    padding: 2px 4px;
+}
+QAbstractItemView#AcometidaComboPopup::item:selected {
+    background-color: #2d6fb8;
+    color: #ffffff;
+}
+QAbstractItemView#AcometidaComboPopup::item:disabled {
+    background-color: #e8edf3;
+    color: #6f7b88;
+}
+"""
+
+
+def _style_acometida_combo_popup(combo):
+    """Apply popup colors directly so reparenting into Gui.Control cannot lose them."""
+    try:
+        view = combo.view()
+        view.setObjectName("AcometidaComboPopup")
+        view.setStyleSheet(_acometida_combo_popup_qss())
+        try:
+            viewport = view.viewport()
+            viewport.setObjectName("AcometidaComboPopupViewport")
+            viewport.setStyleSheet("background-color: #ffffff; color: #1f2d3d;")
+        except Exception:
+            pass
+        return view
+    except Exception as ex:
+        _log_w("No se pudo aplicar estilo directo al popup de un combo: {}".format(ex))
+        return None
 
 
 class _AcometidaDialog(QtWidgets.QWidget):
@@ -975,17 +1060,20 @@ class _AcometidaDialog(QtWidgets.QWidget):
 
         tabs = QtWidgets.QTabWidget()
         tab_basicos = QtWidgets.QWidget()
+        tab_basicos.setObjectName("AcometidaTabPage")
         lay_basicos = QtWidgets.QVBoxLayout(tab_basicos)
         lay_basicos.addWidget(gb_basicos)
         lay_basicos.addWidget(sel_box)
         lay_basicos.addStretch(1)
 
         tab_auto = QtWidgets.QWidget()
+        tab_auto.setObjectName("AcometidaTabPage")
         lay_auto = QtWidgets.QVBoxLayout(tab_auto)
         lay_auto.addWidget(gb_auto)
         lay_auto.addStretch(1)
 
         tab_manual = QtWidgets.QWidget()
+        tab_manual.setObjectName("AcometidaTabPage")
         lay_manual = QtWidgets.QVBoxLayout(tab_manual)
         lay_manual.addWidget(gb_manual)
         lay_manual.addStretch(1)
@@ -994,6 +1082,15 @@ class _AcometidaDialog(QtWidgets.QWidget):
         tabs.addTab(tab_auto, "Demanda Auto")
         tabs.addTab(tab_manual, "Seleccion Final")
         vbox.addWidget(tabs)
+
+        # QComboBox creates its list as a separate popup. In FreeCAD's Qt6
+        # Task Panel that popup may be reparented outside AcometidaRoot and no
+        # longer inherit its light QSS, so style each native view directly.
+        self._acometida_combo_popup_views = []
+        for combo in self.findChildren(QtWidgets.QComboBox):
+            view = _style_acometida_combo_popup(combo)
+            if view is not None:
+                self._acometida_combo_popup_views.append(view)
 
         self.cb_system.currentIndexChanged.connect(self._apply_system_defaults)
         self.cb_norma.currentIndexChanged.connect(self._on_norma_changed)

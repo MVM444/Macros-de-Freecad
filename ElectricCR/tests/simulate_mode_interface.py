@@ -386,7 +386,7 @@ def main():
     combo_a = mode_combo.ensure_mode_combo()
     combo_b = mode_combo.ensure_mode_combo()
     assert combo_a is combo_b
-    assert combo_a.count() == 8
+    assert combo_a.count() == 9
 
     panel_a = mode_panel.ensure_panel(show=True)
     panel_b = mode_panel.ensure_panel(show=False)
@@ -410,7 +410,10 @@ def main():
         mode_manager.select_mode(mode_key)
         assert_visible(expected)
 
-    combo_a.setCurrentIndex(1)
+    illumination_index = next(
+        index for index in range(combo_a.count()) if combo_a.itemData(index) == "iluminacion"
+    )
+    combo_a.setCurrentIndex(illumination_index)
     assert mode_manager.get_last_mode() == "iluminacion"
     assert_visible(["Iluminacion"])
 

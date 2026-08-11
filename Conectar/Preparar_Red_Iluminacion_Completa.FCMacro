@@ -19,6 +19,7 @@ seleccion procesa todos los circuitos de iluminacion centrales.
 import json
 import math
 import re
+import sys
 from pathlib import Path
 
 import FreeCAD as App
@@ -563,7 +564,14 @@ def _run_branches(doc, groups, cfg):
 
 
 def _run_panel_feeders(doc, groups, cfg):
-    ns = _load_macro(Path("Conectar") / "Conectar_Circuitos_TP_a_Cara_Superior_Tablero.FCMacro", "electriccr_lighting_panel")
+    repo_root = Path(__file__).resolve().parent.parent
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+    from ElectricCR.electriccr.connections import feeders, panels
+
+    panel = panels.find_panel_by_token(doc, "TP")
+    if panel is None:
+        raise RuntimeError("No se encontro el tablero TP asignado a iluminacion")
     panel_cfg = {
         "route_z": float(cfg["panel_route_z"]),
         "lane_spacing": 50.0,
@@ -572,7 +580,12 @@ def _run_panel_feeders(doc, groups, cfg):
         "port_stub": 80.0,
         "circuit_ids": [_group_circuit_id(group) for group in groups],
     }
-    result = ns["main"](doc_override=doc, cfg_override=panel_cfg)
+    result = feeders.connect_circuit_feeders(
+        doc,
+        circuit_groups=groups,
+        forced_panel=panel,
+        cfg=panel_cfg,
+    )
     if result is None:
         raise RuntimeError("No se pudieron conectar los circuitos a la cara superior del TP")
     return result

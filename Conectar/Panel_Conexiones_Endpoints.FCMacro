@@ -2,6 +2,7 @@
 # MenuText: Panel Conexiones Endpoints (Beta)
 # ToolTip: Panel unificado para conexiones por tipo de endpoint (octogonal, cuadrada, luminaria, otros)
 # Icon: Conectar/Panel_Conexiones_Endpoints.svg
+# Revision: 2026-08-10 - reusable Qt dock lifecycle for FreeCAD 1.1.3.
 
 # Qt compatibility for FreeCAD 1.x (PySide6) and older builds.
 def _ensure_qt_compat():
@@ -112,6 +113,11 @@ except Exception:
 THIS_DIR = os.path.dirname(__file__) if "__file__" in globals() else os.getcwd()
 if THIS_DIR and THIS_DIR not in sys.path:
     sys.path.insert(0, THIS_DIR)
+REPO_DIR = os.path.dirname(THIS_DIR)
+if REPO_DIR and REPO_DIR not in sys.path:
+    sys.path.insert(0, REPO_DIR)
+
+from ElectricCR.ui import dock_manager as _dock_manager
 
 
 def _safe_text(value):
@@ -3160,10 +3166,13 @@ _DOCK_MAX_FLOAT_WIDTH = 1400
 _DOCK_MAX_FLOAT_HEIGHT = 1100
 
 
-def _on_panel_destroyed(*_args):
+def _on_panel_destroyed(destroyed_dock=None):
     global _PANEL_DOCK, _PANEL_WIDGET
+    if destroyed_dock is not None and _PANEL_DOCK is not destroyed_dock:
+        return
     _PANEL_DOCK = None
     _PANEL_WIDGET = None
+    App.Console.PrintMessage("[UI-DOCK][Endpoints] destroyed name={}\n".format(_PANEL_DOCK_OBJECT))
 
 
 def _on_dock_visibility_changed(visible):
@@ -3440,12 +3449,27 @@ def main():
         _err("No se pudo obtener la ventana principal de FreeCAD.")
         return
 
-    old = mw.findChild(QtWidgets.QDockWidget, _PANEL_DOCK_OBJECT)
-    if old is not None:
+    dock = _dock_manager.get_reusable_dock(
+        mw, _PANEL_DOCK_OBJECT, "[UI-DOCK][Endpoints]"
+    )
+    if dock is not None:
+        panel = getattr(dock, "_electriccr_panel_widget", None)
+        if panel is None:
+            try:
+                content = dock.widget()
+                panel = content.widget() if isinstance(content, QtWidgets.QScrollArea) else content
+            except Exception:
+                panel = None
+        _PANEL_DOCK = dock
+        _PANEL_WIDGET = panel
         try:
-            old.close()
+            if panel is not None:
+                panel.set_active(True)
+                panel.refresh_from_selection()
         except Exception:
             pass
+        _dock_manager.show_dock(dock, _PANEL_DOCK_OBJECT, "[UI-DOCK][Endpoints]")
+        return
 
     prefs = _load_dock_prefs()
     _dbg(
@@ -3457,6 +3481,7 @@ def main():
             int(prefs.get("float_height", _DOCK_DEFAULT_HEIGHT)),
         )
     )
+    _dock_manager.log_created(_PANEL_DOCK_OBJECT, "[UI-DOCK][Endpoints]")
     dock = QtWidgets.QDockWidget("Conexiones Endpoints", mw)
     dock.setObjectName(_PANEL_DOCK_OBJECT)
     try:
@@ -3485,6 +3510,7 @@ def main():
     panel_scroll.setWidget(panel)
     _apply_panel_theme(panel_scroll, panel, mw)
     dock.setWidget(panel_scroll)
+    dock._electriccr_panel_widget = panel
 
     try:
         dock.destroyed.connect(_on_panel_destroyed)
@@ -3543,20 +3569,6 @@ def main():
     except Exception:
         _err("No se pudo acoplar el panel en la ventana de FreeCAD.")
         return
-    try:
-        combo_dock = _find_combo_view_dock(mw)
-        if combo_dock is not None and combo_dock is not dock:
-            try:
-                mw.tabifyDockWidget(combo_dock, dock)
-            except Exception:
-                pass
-    except Exception:
-        pass
-    try:
-        mw.resizeDocks([dock], [prefs["dock_width"]], QtCore.Qt.Horizontal)
-    except Exception:
-        pass
-
     panel.set_active(True)
     panel.refresh_from_selection()
 
@@ -3569,7 +3581,7 @@ def main():
             dock.setFloating(False)
     except Exception:
         pass
-    dock.show()
+    _dock_manager.show_dock(dock, _PANEL_DOCK_OBJECT, "[UI-DOCK][Endpoints]")
     _persist_dock_state()
 
 

@@ -88,6 +88,7 @@ class ServicePlatformDialog(QtWidgets.QDialog):
             divider_height_mm=defaults.divider_height_mm,
             staff_zone_depth_mm=float(self.staff_depth.value()),
             public_zone_depth_mm=float(self.public_depth.value()),
+            origin_x_mm=defaults.origin_x_mm,
             front_offset_mm=defaults.front_offset_mm,
             minimum_position_width_mm=defaults.minimum_position_width_mm,
             create_3d_furniture=bool(self.create_3d.isChecked()),

@@ -1,16 +1,16 @@
 """Shared constants for FacilArquitecturaWB.
 
 Descripcion: nombres, version y parametros base.
-Fecha: 2026-08-05
-Version: 0.7.0
+Fecha: 2026-08-09
+Version: 0.9.0
 Instrucciones: mantener nombres ASCII seguros para FreeCAD.
 """
 
 LOG_PREFIX = "[FACILARQ] "
 WORKBENCH_ID = "FacilArquitecturaWorkbench"
 WORKBENCH_NAME = "Facil Arquitectura"
-VERSION = "0.7.0"
-BUILD_ID = "2026.08.05.1"
+VERSION = "0.9.0"
+BUILD_ID = "2026.08.09.5"
 CREATED_BY = "FacilArquitecturaWB"
 
 ROOT_GROUP_NAME = "FA_Project"

@@ -1,91 +1,83 @@
 # -*- coding: utf-8 -*-
-# MenuText: Preparar red TCOM completa
+# MenuText: Preparar red TCOM completa (Legacy)
 # Icon: Conectar/Preparar_Red_TCOM_Completa.svg
+# Toolbar: Conectar Legacy
+# Transaction: self
 
-"""Crea alimentadores y ramales TCOM y colorea los tomas de computo."""
+"""Orquestador TCOM basado en los motores generales ElectricCR.
+
+No carga macros geometricas mediante exec(). Mantiene la presentacion roja de
+los tomacorrientes de computo como ultimo paso. Compatible con FreeCAD 1.1.3.
+Revision: 2026-08-08.
+"""
 
 from pathlib import Path
-import re
-
+import sys
+import unicodedata
 import FreeCAD as App
 
 
-TAG = "[RED_TCOM_COMPLETA]"
+def _normalized(value):
+    raw = unicodedata.normalize("NFD", str(value or ""))
+    return "".join(char for char in raw if unicodedata.category(char) != "Mn").lower()
 
 
-def _load_macro(path, module_name):
-    source = path.read_text(encoding="utf-8-sig")
-    source = re.sub(
-        r"\nif\s+__name__\s*==\s*[\"']__main__[\"']\s*:\s*\n\s*main\(\)\s*\Z",
-        "\n",
-        source,
-        flags=re.MULTILINE,
-    )
-    namespace = {"__name__": module_name, "__file__": str(path)}
-    exec(compile(source, str(path), "exec"), namespace, namespace)
-    return namespace
+def _paint_computer_outlets(doc):
+    outlets = []
+    for obj in list(doc.Objects):
+        if hasattr(obj, "Group"):
+            continue
+        if str(getattr(obj, "TypeId", "")) != "App::Link" and not hasattr(obj, "LinkedObject"):
+            continue
+        circuit = _normalized(getattr(obj, "CircuitoID", ""))
+        system = " ".join(_normalized(getattr(obj, prop, "")) for prop in ("Sistema", "UsoElectrico", "ClaseCSV"))
+        imported = _normalized(getattr(obj, "Name", "")).startswith("toma_computo_dxf_")
+        if circuit.startswith("tcom-") or "computo" in system or imported:
+            outlets.append(obj)
+    painted = 0
+    for obj in outlets:
+        view = getattr(obj, "ViewObject", None)
+        if view is None:
+            continue
+        changed = False
+        for prop in ("ShapeColor", "LineColor", "PointColor"):
+            if hasattr(view, prop):
+                try:
+                    setattr(view, prop, (1.0, 0.05, 0.05))
+                    changed = True
+                except Exception:
+                    pass
+        painted += int(changed)
+    return {"encontrados": len(outlets), "pintados": painted}
 
 
 def main(doc_override=None):
+    root = Path(__file__).resolve().parent.parent
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    from ElectricCR.electriccr.connections import backbone, feeders
+
     doc = doc_override or App.ActiveDocument
     if doc is None:
-        App.Console.PrintError(TAG + " No hay documento activo.\n")
         return None
-
-    folder = Path(__file__).resolve().parent
-    root = folder.parent
-    try:
-        feeder = _load_macro(
-            folder / "Conectar_Circuitos_TCOM_a_Cara_Superior_Tablero.FCMacro",
-            "_electriccr_red_tcom_feeder",
-        )
-        branches = _load_macro(
-            folder / "Conectar_Octogonales_Ortogonal_por_Circuito_TCOM.FCMacro",
-            "_electriccr_red_tcom_branches",
-        )
-        painter = _load_macro(
-            root / "Tomacorrientes" / "Pintar_Tomacorrientes_Computo_Rojo.FCMacro",
-            "_electriccr_red_tcom_painter",
-        )
-    except Exception as exc:
-        App.Console.PrintError(TAG + " No se pudieron cargar las macros: " + str(exc) + "\n")
-        return None
-
-    feeder_result = feeder["main"](
+    feeder_result = feeders.connect_circuit_feeders(
         doc,
-        {
-            "route_z": 3400.0,
-            "lane_spacing": 50.0,
-            "approach_clearance": 300.0,
-            "bend_radius": 100.0,
-            "port_stub": 80.0,
-        },
+        panel_code="TCOM",
+        circuit_prefix="TCOM",
+        cfg={"route_z": 3400.0, "lane_spacing": 50.0, "approach_clearance": 300.0, "bend_radius": 100.0, "port_stub": 80.0},
     )
-    if feeder_result is None:
-        App.Console.PrintError(TAG + " No se crearon los alimentadores TCOM.\n")
+    if feeder_result.get("errors"):
         return None
-
-    branch_result = branches["main"](
+    branch_result = backbone.connect_backbone(
         doc,
-        {
-            "route_z": 3400.0,
-            "bend_radius": 100.0,
-            "port_stub": 80.0,
-            "diameter": 22.2,
-        },
+        circuit_prefix="TCOM",
+        cfg={"route_z": 3400.0, "bend_radius": 100.0, "port_stub": 80.0, "diameter": 22.2},
     )
-    if branch_result is None:
-        App.Console.PrintError(TAG + " No se crearon los ramales TCOM.\n")
+    if branch_result.get("errors"):
         return None
-
-    paint_result = painter["main"](doc)
-    result = {
-        "alimentadores": feeder_result,
-        "ramales": branch_result,
-        "color": paint_result,
-    }
-    App.Console.PrintMessage(TAG + " Red TCOM completa terminada.\n")
-    return result
+    color_result = _paint_computer_outlets(doc)
+    doc.recompute()
+    return {"alimentadores": feeder_result, "ramales": branch_result, "color": color_result}
 
 
 if __name__ == "__main__":

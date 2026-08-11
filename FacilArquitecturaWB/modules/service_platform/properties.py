@@ -11,7 +11,7 @@ from .validation import normalize_options
 
 GENERATED_BY = "FA_CreateServicePlatformFront"
 MODULE_TYPE = "service_platform_front"
-MODULE_VERSION = "0.1"
+MODULE_VERSION = "0.2"
 PROPERTY_GROUP = "FacilArquitectura - Plataforma"
 PARAMETER_ROWS = (
     ("total_width_mm", "Ancho total", "mm"),
@@ -25,6 +25,7 @@ PARAMETER_ROWS = (
     ("divider_height_mm", "Altura de division", "mm"),
     ("staff_zone_depth_mm", "Profundidad area funcionario", "mm"),
     ("public_zone_depth_mm", "Profundidad area publica", "mm"),
+    ("origin_x_mm", "Coordenada X inicial", "mm"),
     ("front_offset_mm", "Desfase frontal", "mm"),
     ("minimum_position_width_mm", "Ancho minimo por puesto", "mm"),
     ("create_3d_furniture", "Crear mobiliario 3D", "boolean"),
@@ -104,6 +105,8 @@ def set_root_properties(root, options: PlatformOptions, layout: PlatformLayout, 
         ("App::PropertyLength", "FA_DeskHeight_mm", "Altura escritorio", options.desk_height_mm),
         ("App::PropertyLength", "FA_StaffZoneDepth_mm", "Profundidad funcionario", options.staff_zone_depth_mm),
         ("App::PropertyLength", "FA_PublicZoneDepth_mm", "Profundidad publica", options.public_zone_depth_mm),
+        ("App::PropertyDistance", "FA_OriginX_mm", "Coordenada X inicial", options.origin_x_mm),
+        ("App::PropertyDistance", "FA_OriginY_mm", "Coordenada Y del frente", options.front_offset_mm),
         ("App::PropertyString", "FA_GeneratedBy", "Generador", GENERATED_BY),
         ("App::PropertyString", "FA_SourceStandard", "Referencia", "CCSS_PL-01_reference"),
         ("App::PropertyString", "FA_ReferenceDocument", "Documento", "Guia Estandarizacion 050626 2"),

@@ -20,6 +20,7 @@ class PlatformOptions:
     divider_height_mm: float = 450.0
     staff_zone_depth_mm: float = 1800.0
     public_zone_depth_mm: float = 1500.0
+    origin_x_mm: float = 0.0
     front_offset_mm: float = 0.0
     minimum_position_width_mm: float = 1200.0
     create_3d_furniture: bool = True

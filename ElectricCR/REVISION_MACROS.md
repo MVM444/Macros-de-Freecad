@@ -2,7 +2,31 @@
 
 **Proposito:** Registrar de forma persistente la revision funcional de cada macro antes de decidir si se incorpora al Workbench, permanece como macro, se fusiona, se archiva o se excluye.
 
-**Version:** 2026-08-08 15:24, America/Costa_Rica.
+**Version:** 2026-08-10, revision tecnica de Ruta critica seleccionados.
+
+## Estado provisional despues de la consolidacion
+
+| Herramienta | Rol | Madurez | Resultado | Decision provisional |
+|---|---|---|---|---|
+| `electriccr/connections/feeders.py` | NUCLEO | CANDIDATA | COMPROBADA-PARCIAL | Motor comun activo; validacion visual pendiente. |
+| `electriccr/connections/backbone.py` | NUCLEO | CANDIDATA | COMPROBADA-PARCIAL | Motor comun activo; validacion visual pendiente. |
+| `Conectar_Alimentadores_a_Tablero_Auto.FCMacro` | OPERATIVA | CANDIDATA | COMPROBADA-PARCIAL | Interfaz general visible. |
+| `Conectar_Octogonales_por_Circuito.FCMacro` | OPERATIVA | CANDIDATA | COMPROBADA-PARCIAL | Interfaz general visible. |
+| `Ajustar_Alimentador_o_Ramal_Manual.FCMacro` | OPERATIVA | ACTIVA | COMPROBADA-PARCIAL | Visible y preservada como ajuste distinto. |
+| `RutaCritica_Seleccionados.FCMacro` | OPERATIVA | CANDIDATA | COMPROBADA-PARCIAL | Seleccion geometrica y radio probados tecnicamente; validacion GUI de Marco pendiente. |
+| Variantes TP/TCOM de alimentador | ESPECIALIZADA | LEGACY-REEMPLAZADA | COMPROBADA-PARCIAL | Wrapper compatible, fuera de barra normal. |
+| Variantes TP/TCOM de backbone | ESPECIALIZADA | LEGACY-REEMPLAZADA | COMPROBADA-PARCIAL | Wrapper compatible, fuera de barra normal. |
+| `Conectar_Tableros_Cara_Superior.FCMacro` | ESPECIALIZADA | LEGACY-REEMPLAZADA | COMPROBADA-PARCIAL | Wrapper del motor de equipos. |
+| `Conectar_Desconectores_HVAC_a_TP.FCMacro` | ESPECIALIZADA | LEGACY-REEMPLAZADA | COMPROBADA-PARCIAL | Wrapper de asignacion/geometria; tabla heredada pendiente de migrar. |
+| `Preparar_Red_TCOM_Completa.FCMacro` | OPERATIVA | LEGACY-REEMPLAZADA | COMPROBADA-PARCIAL | Orquestador de servicios generales. |
+| `Conectar_Cajas_a_Tablero_Auto.FCMacro` | NUCLEO | LEGACY-DEPENDENCIA | COMPROBADA-PARCIAL | Respaldo/compatibilidad de ramales; fuera de barra normal. |
+| `alimentadores_backend.py` | NUCLEO | LEGACY-DEPENDENCIA | POR VERIFICAR | No usado por el nuevo motor; conservar mientras haya consumidores. |
+| `ramales_backend.py` | NUCLEO | LEGACY-DEPENDENCIA | COMPROBADA-PARCIAL | Todavia usado por flujos de ramales no consolidados. |
+
+`FUSIONADA` describe la funcion geometrica absorbida por los modulos comunes;
+no implica que el archivo historico haya sido borrado. Todas las versiones
+previas estan respaldadas bajo
+`Conectar/Backups/consolidacion_conexiones_20260808/`.
 
 ## Principio
 
@@ -146,7 +170,7 @@ Fecha de revision:
 | Deteccion | PENDIENTE | Revisar variantes NFPA y relacion con Areas. |
 | Cajas | PENDIENTE | Revisar despues de Deteccion/Tomacorrientes. |
 | Tableros / Configuracion | PENDIENTE | Revisar comandos de tablero, calculo y organizacion. |
-| Conectar | EN REVISION - ALTA COMPLEJIDAD | Revisar por familias funcionales; Alimentadores tiene prioridad especial. |
+| Conectar | AUDITORIA PARCIAL - DEPENDENCIA RECUPERADA LOCALMENTE | Reconstruidas generaciones; los dos archivos historicos fueron recuperados desde `b7d4fef`, sin commit ni prueba funcional FreeCAD. |
 
 ## Notas funcionales confirmadas por Marco
 
@@ -176,6 +200,479 @@ Decision ElectricCR: POR VERIFICAR.
 Regla especial: no eliminar, ocultar permanentemente, fusionar ni migrar esta familia hasta reconstruir y validar primero el flujo funcional completo.
 
 Fecha de nota: 2026-08-08.
+
+## Auditoria provisional - Alimentadores y backbone
+
+Fecha de revision: 2026-08-08.
+
+Alcance original de la auditoria: no se modifico, restauro, fusiono, movio ni elimino codigo. Despues de la auditoria, Marco solicito recuperar los dos archivos historicos desde `b7d4fef`. El informe comparativo y la actualizacion estan en `RESULTADO_CODEX.md`.
+
+### `Conectar/Conectar_Alimentadores_a_Tablero_Auto.FCMacro`
+
+Familia: Conectar / alimentadores.
+
+Objetivo original: crear exclusivamente los alimentadores desde la caja principal de cada circuito hasta un tablero, usando rutas guia, caras y carriles coordinados.
+
+Funcion real confirmada: controlador de UI y orquestacion que delegaba el planeamiento y trazado en `alimentadores_backend.py`.
+
+Entradas: tablero, caras, rutas guia, grupos de circuito, orden manual, altura, radio, separacion e inicio de abanico.
+
+Salidas / objetos modificados: alimentadores EMT agrupados por circuito, configuracion persistida y metadatos de ruta.
+
+Herramientas relacionadas: v1 general, TP Top, TCOM Top y Proponer Rutas Guia.
+
+Dependencias: directa de `alimentadores_backend.py`; indirecta de la v1 recuperada localmente.
+
+Uso conocido: 182 ejecuciones registradas; ultima el 2026-03-28. El registro no separa produccion de depuracion.
+
+Pruebas conocidas: documentacion de continuidad y requisitos recurrentes; sin prueba reproducida en esta auditoria.
+
+Validacion de Marco: pendiente comparar con TP/TCOM posteriores.
+
+Rol funcional: OPERATIVA.
+
+Madurez: REVISAR-INTEGRIDAD.
+
+Resultado comprobado: COMPROBADA-PARCIAL.
+
+Decision ElectricCR: POR VERIFICAR.
+
+Destino o reemplazo: no decidido.
+
+Confianza: alta sobre arquitectura y dependencia; media sobre calidad visual final.
+
+Motivo de la decision: fue recuperada desde `b7d4fef` y conserva capacidades documentadas que no aparecen en las macros posteriores; falta validarla.
+
+Pendientes: validar resultado historico y resolver la dependencia antes de cualquier reactivacion.
+
+### `Conectar/alimentadores_backend.py`
+
+Familia: Conectar / motor de alimentadores.
+
+Objetivo original: encapsular la logica madura de alimentadores de la v1 detras de una API menor.
+
+Funcion real confirmada: agrega carriles por guia/seccion, parches de entrada al tablero, seleccion de fuente, configuracion manual y limpieza; delega gran parte de su API a la v1.
+
+Entradas: circuitos, dispositivos, cajas, tablero, guias y configuracion.
+
+Salidas / objetos modificados: planes, mapas de carriles, conexiones y grupos.
+
+Herramientas relacionadas: controlador de Alimentadores y v1.
+
+Dependencias: carga en tiempo de ejecucion `Conectar_Cajas_a_Tablero_Auto.FCMacro` mediante `SourceFileLoader`; NetworkX es opcional.
+
+Uso conocido: indirecto mediante la macro de alimentadores.
+
+Pruebas conocidas: la dependencia fisica fue recuperada y coincide con el blob historico; falta ejecucion funcional en FreeCAD.
+
+Validacion de Marco: pendiente.
+
+Rol funcional: NUCLEO.
+
+Madurez: LEGACY-DEPENDENCIA.
+
+Resultado comprobado: POR VERIFICAR.
+
+Decision ElectricCR: POR VERIFICAR.
+
+Destino o reemplazo: no decidido.
+
+Confianza: alta.
+
+Motivo de la decision: contiene logica general valiosa, pero no es autonomo.
+
+Pendientes: validar en FreeCAD la dependencia recuperada y decidir despues entre conservarla temporalmente o extraer sus funciones.
+
+### `Conectar/Conectar_Cajas_a_Tablero_Auto.FCMacro`
+
+Familia: Conectar / motor historico general.
+
+Objetivo original: generar bajantes, backbone y alimentador dentro de un unico plan de circuito.
+
+Funcion real confirmada: clasifica objetos, planea enlaces tipados, selecciona y reserva puertos, enruta por perimetro o guia, distribuye entradas de tablero y escribe wires con claves idempotentes.
+
+Entradas: grupos, dispositivos, cajas, tablero/ancla, caras, guias y parametros.
+
+Salidas / objetos modificados: canalizaciones, grupos `Tuberias_EMT`, propiedades de trazabilidad y log.
+
+Herramientas relacionadas: ambos backends, macro de ramales y Alimentadores Auto.
+
+Dependencias: FreeCAD/Draft/Part/Qt y clasificadores auxiliares.
+
+Uso conocido: 137 ejecuciones registradas; ultima el 2026-03-26.
+
+Pruebas conocidas: documentada como base recuperada razonablemente estable, con problemas recurrentes de cruces y entrada al tablero.
+
+Validacion de Marco: pendiente determinar por que se abandono el flujo.
+
+Rol funcional: NUCLEO.
+
+Madurez: LEGACY-DEPENDENCIA.
+
+Resultado comprobado: COMPROBADA-PARCIAL.
+
+Decision ElectricCR: POR VERIFICAR.
+
+Destino o reemplazo: no decidido.
+
+Confianza: alta sobre capacidades; media sobre calidad visual.
+
+Motivo de la decision: fue recuperada desde `b7d4fef` porque dos modulos presentes dependen de ella; todavia no esta en un commit nuevo.
+
+Pendientes: comparar geometria con estrategias posteriores.
+
+### `Conectar/Conectar_Circuitos_TP_a_Cara_Superior_Tablero.FCMacro`
+
+Familia: Conectar / alimentador especializado TP.
+
+Objetivo original: caja octogonal principal -> cara superior real del tablero TP.
+
+Funcion real confirmada: detecta `TP-001..018`, verifica una cara horizontal del `Shape`, asigna una matriz 2 x 9 y crea o actualiza un alimentador por circuito.
+
+Entradas: tablero TP, grupos TP con cajas y parametros geometricos.
+
+Salidas / objetos modificados: `Part::Feature`, grupo por circuito, enlaces a caja/tablero y `RutaJSON`.
+
+Herramientas relacionadas: TCOM Top y Backbone TP la usan como biblioteca.
+
+Dependencias: FreeCAD, Part y Qt; no depende de backend Python.
+
+Uso conocido: sin registro en la telemetria consolidada.
+
+Pruebas conocidas: inspeccion estatica; no se hizo validacion visual en esta auditoria.
+
+Validacion de Marco: pendiente.
+
+Rol funcional: ESPECIALIZADA.
+
+Madurez: CANDIDATA.
+
+Resultado comprobado: POR VERIFICAR.
+
+Decision ElectricCR: POR VERIFICAR.
+
+Destino o reemplazo: no decidido.
+
+Confianza: alta sobre funcion; baja sobre resultado visual.
+
+Motivo de la decision: mejora la cara real e idempotencia, pero no reemplaza rutas guia ni orden manual.
+
+Pendientes: comparar con la generacion anterior en un mismo caso.
+
+### `Conectar/Conectar_Circuitos_TCOM_a_Cara_Superior_Tablero.FCMacro`
+
+Familia: Conectar / alimentador especializado TCOM.
+
+Objetivo original: caja octogonal principal -> cara superior real del tablero TCOM.
+
+Funcion real confirmada: variante TCOM-01..05 de TP Top; incorpora cajas asociadas por `CircuitosJSON`, reserva de puertos y distribucion sobre el eje mayor de la cara.
+
+Entradas: tablero TCOM, grupos/cajas TCOM y parametros geometricos.
+
+Salidas / objetos modificados: alimentador, grupo y metadatos equivalentes a TP.
+
+Herramientas relacionadas: TP Top y Backbone TCOM.
+
+Dependencias: lee, compila y ejecuta TP Top como biblioteca.
+
+Uso conocido: sin registro en la telemetria consolidada.
+
+Pruebas conocidas: inspeccion estatica.
+
+Validacion de Marco: pendiente.
+
+Rol funcional: ESPECIALIZADA.
+
+Madurez: CANDIDATA.
+
+Resultado comprobado: POR VERIFICAR.
+
+Decision ElectricCR: POR VERIFICAR.
+
+Destino o reemplazo: no decidido.
+
+Confianza: alta sobre funcion; baja sobre resultado visual.
+
+Motivo de la decision: es una variante parametrizable en concepto, pero hoy depende de otra macro como modulo.
+
+Pendientes: validar reserva de puertos y distribucion real.
+
+### `Conectar/Conectar_Octogonales_Ortogonal_por_Circuito_TP.FCMacro`
+
+Familia: Conectar / backbone TP.
+
+Objetivo original: conectar cajas octogonales del mismo circuito TP.
+
+Funcion real confirmada: crea un arbol de expansion minima, usa la caja alimentadora como raiz cuando existe, reserva puertos y penaliza rutas cercanas a cajas intermedias.
+
+Entradas: grupos TP, cajas, alimentador existente opcional y parametros.
+
+Salidas / objetos modificados: ramales caja-caja idempotentes y grupos `Ramales EMT`.
+
+Herramientas relacionadas: TP Top, Backbone TCOM y ramales_backend.
+
+Dependencias: carga TP Top como biblioteca.
+
+Uso conocido: sin registro en la telemetria consolidada.
+
+Pruebas conocidas: inspeccion estatica.
+
+Validacion de Marco: pendiente comparar MST contra recorrido perimetral.
+
+Rol funcional: ESPECIALIZADA.
+
+Madurez: CANDIDATA.
+
+Resultado comprobado: POR VERIFICAR.
+
+Decision ElectricCR: POR VERIFICAR.
+
+Destino o reemplazo: no decidido.
+
+Confianza: alta sobre algoritmo; baja sobre preferencia funcional.
+
+Motivo de la decision: resuelve backbone, no alimentador, y usa una estrategia unica que no debe confundirse con la anterior.
+
+Pendientes: prueba visual comparativa.
+
+### `Conectar/ramales_backend.py`
+
+Familia: Conectar / motor de ramales.
+
+Objetivo original: separar la UI de ramales del planificador estable de la v1.
+
+Funcion real confirmada: agrega planes de tomas/iluminacion, orden por recintos y comprobaciones de troncal, pero delega primitivas fundamentales a la v1.
+
+Entradas: grupo, dispositivos, cajas, configuracion, puertos y grupo destino.
+
+Salidas / objetos modificados: plan tipado y conexiones de ramal.
+
+Herramientas relacionadas: `Conectar_Circuitos_Ramales_Auto.FCMacro`, flujo de luminarias y v1.
+
+Dependencias: carga la v1 mediante `SourceFileLoader`.
+
+Uso conocido: indirecto mediante macros de ramales/luminarias.
+
+Pruebas conocidas: la dependencia recuperada coincide con el blob historico; ejecucion funcional pendiente.
+
+Validacion de Marco: pendiente.
+
+Rol funcional: NUCLEO.
+
+Madurez: LEGACY-DEPENDENCIA.
+
+Resultado comprobado: POR VERIFICAR.
+
+Decision ElectricCR: POR VERIFICAR.
+
+Destino o reemplazo: no decidido.
+
+Confianza: alta.
+
+Motivo de la decision: la extraccion quedo a medio camino y la dependencia requerida fue eliminada.
+
+Pendientes: preservar plan de recintos, controles de troncal y reglas de puertos al resolver independencia.
+
+### `Conectar/Conectar_Circuitos_Ramales_Auto.FCMacro`
+
+Familia: Conectar / ramales operativos.
+
+Objetivo original: red interna del circuito sin alimentador al tablero.
+
+Funcion real confirmada: su flujo principal usa `ramales_backend.py`; conserva ademas funciones locales solapadas de plan, perimetro y creacion de wires.
+
+Entradas: seleccion o todos los grupos detectados y configuracion persistida.
+
+Salidas / objetos modificados: ramales EMT dentro del circuito.
+
+Herramientas relacionadas: ramales_backend, v1 y macro separada de luminarias.
+
+Dependencias: backend Python y, por transitividad, v1 recuperada localmente.
+
+Uso conocido: documentacion registra recuperacion temporal del motor v1.
+
+Pruebas conocidas: resultado historico parcial; flujo limpio actual roto por dependencia.
+
+Validacion de Marco: pendiente.
+
+Rol funcional: OPERATIVA.
+
+Madurez: REVISAR-INTEGRIDAD.
+
+Resultado comprobado: COMPROBADA-PARCIAL.
+
+Decision ElectricCR: POR VERIFICAR.
+
+Destino o reemplazo: no decidido.
+
+Confianza: alta.
+
+Motivo de la decision: separa correctamente el problema funcional, pero no es reconstruible desde `main`.
+
+Pendientes: determinar que implementacion local es residual y cual debe preservarse.
+
+### `Conectar/Ajustar_Alimentador_o_Ramal_Manual.FCMacro`
+
+Familia: Conectar / ajuste manual.
+
+Objetivo original: corregir localmente una ruta existente conservando el resto.
+
+Funcion real confirmada: identifica ruta/objetivo, conserva tramos, evita zigzag/backtracking, respeta salida perpendicular y ajusta radio.
+
+Entradas: ruta y referencia geometrica seleccionadas.
+
+Salidas / objetos modificados: `Points` o `Shape` y radio de la ruta existente.
+
+Herramientas relacionadas: todos los generadores de alimentadores y ramales.
+
+Dependencias: FreeCAD/Part/GUI; sin backend externo.
+
+Uso conocido: 100 ejecuciones hasta el 2026-03-26; notas registran un resultado aprobado visualmente por Marco.
+
+Pruebas conocidas: evidencia historica de continuidad; no se repitio prueba GUI en esta auditoria.
+
+Validacion de Marco: confirmacion actual pendiente.
+
+Rol funcional: OPERATIVA.
+
+Madurez: ACTIVA.
+
+Resultado comprobado: COMPROBADA-PARCIAL.
+
+Decision ElectricCR: POR VERIFICAR.
+
+Destino o reemplazo: no decidido.
+
+Confianza: alta sobre codigo; media sobre comportamiento actual.
+
+Motivo de la decision: contiene capacidades unicas; puede dejar metadatos geometricos desactualizados.
+
+Pendientes: validar y definir sincronizacion de `RutaJSON`/extremos en una etapa funcional posterior.
+
+### `Conectar/Proponer_Rutas_Guia_Auto.FCMacro`
+
+Familia: Conectar / infraestructura auxiliar.
+
+Objetivo original: proponer rutas guia a partir del plano de trabajo, areas, cajas y tableros.
+
+Funcion real confirmada: genera ejes de pasillo/area, rutas hacia tablero y rutas representativas por circuito en un grupo propio con metadatos.
+
+Entradas: seleccion, areas, cajas, tableros y plano de trabajo.
+
+Salidas / objetos modificados: Draft Wires de guia 2D/3D y grupo `Rutas_Guia_Propuestas`.
+
+Herramientas relacionadas: generacion anterior de alimentadores.
+
+Dependencias: FreeCAD, Draft y GUI.
+
+Uso conocido: no analizado cuantitativamente en esta auditoria.
+
+Pruebas conocidas: inspeccion estatica.
+
+Validacion de Marco: pendiente.
+
+Rol funcional: SOPORTE.
+
+Madurez: CANDIDATA.
+
+Resultado comprobado: POR VERIFICAR.
+
+Decision ElectricCR: POR VERIFICAR.
+
+Destino o reemplazo: no decidido.
+
+Confianza: media.
+
+Motivo de la decision: resuelve infraestructura auxiliar, no debe mezclarse con el motor de alimentadores.
+
+Pendientes: validar si las guias propuestas coinciden con las usadas en proyectos reales.
+
+### `Conectar/RutaCritica_Seleccionados.FCMacro`
+
+Familia: Conectar / medicion y rutas criticas ad hoc.
+
+Objetivo original: crear rutas ortogonales independientes desde el primer
+elemento seleccionado hacia todos los destinos seleccionados.
+
+Funcion real confirmada: usa cada seleccion geometrica de `SelectionEx` como
+endpoint; conserva caras, aristas y vertices distintos del mismo objeto;
+crea Draft Wires a una altura Z comun y aplica un radio editable limitado por
+la longitud disponible.
+
+Entradas: objetos completos, caras, vertices, aristas/puntos seleccionados,
+altura de ruta y radio de curva.
+
+Salidas / objetos modificados: Draft Wires agrupados bajo `Conexiones`, con
+metadatos de origen, destino, puntos, altura y radios.
+
+Herramientas relacionadas: `medir_distancia_y_dibujar_ruta.FCMacro`,
+`Ajustar_Alimentador_o_Ramal_Manual.FCMacro` y `selection_geometry.py`.
+
+Dependencias: FreeCAD, FreeCADGui, Draft y Qt; conserva la carga historica de
+la macro base. La logica nueva compartida vive en un modulo Python.
+
+Uso conocido: la herramienta previa fue considerada util por Marco; no se
+uso el registro cuantitativo como prueba de calidad.
+
+Pruebas conocidas: smoke test en FreeCAD 1.1.3 con seleccion simulada,
+geometria Part/Draft real, mismo objeto, multiples destinos, radios,
+metadatos, repeticion, Undo/Redo y reapertura.
+
+Validacion de Marco: pendiente con seleccion real de la GUI y resultado
+visual en un documento de trabajo.
+
+Rol funcional: OPERATIVA.
+
+Madurez: CANDIDATA.
+
+Resultado comprobado: COMPROBADA-PARCIAL.
+
+Decision ElectricCR: POR VERIFICAR.
+
+Destino o reemplazo: mejora la macro existente; no crea ni reemplaza otra
+herramienta especializada.
+
+Confianza: alta sobre la logica y pruebas tecnicas; media sobre el flujo GUI
+hasta la validacion de Marco.
+
+Motivo de la decision: las limitaciones tecnicas originales fueron
+reproducidas y corregidas, pero el criterio visual y el orden de seleccion
+real requieren prueba funcional.
+
+Pendientes: ejecutar los casos GUI registrados en
+`MEJORAS_PENDIENTES.md`.
+
+Fecha de revision: 2026-08-10.
+
+## Revision provisional - legibilidad de Registrar acometida
+
+Hecho tecnico confirmado: el popup de `QComboBox` dentro del Task Panel Qt6
+puede no heredar el QSS de `AcometidaRoot`. La macro aplica ahora el estilo
+claro directamente a cada vista popup nativa. Prueba renderizada con temas
+oscuro/claro y reparentado en `QDockWidget`: correcta. Clasificacion
+provisional: OPERATIVA / ACTIVA / COMPROBADA-PARCIAL, pendiente de validacion
+en la interfaz real de Marco.
+
+## Revision provisional - centro circular en RutaCritica Seleccionados
+
+Hecho tecnico confirmado: `RutaCritica_Seleccionados.FCMacro`, mediante
+`selection_geometry.py`, usa ahora el centro geometrico de una arista circular
+o arco aunque el clic ocurra sobre la circunferencia. El endpoint queda marcado
+como `CIRCLE_CENTER`. La suite completa paso en FreeCAD 1.1.3; validacion visual
+en un proyecto real pendiente. Clasificacion provisional: ACTIVA / PRUEBA
+TECNICA / POR VERIFICAR VISUALMENTE.
+
+## Revision provisional - RectFromBoundaryLines con caras BIM
+
+| Herramienta | Rol funcional | Madurez | Resultado comprobado | Decision ElectricCR provisional |
+|---|---|---|---|---|
+| `Areas/RectFromBoundaryLines.FCMacro` | Creacion manual de areas rectangulares desde limites | ACTIVA | PRUEBA TECNICA EN FREECAD 1.1.3 | POR VERIFICAR VISUALMENTE |
+
+Hechos confirmados: mantiene el calculo anterior desde aristas, reconoce caras
+de muros Arch/BIM, proyecta caras verticales, resuelve una cara horizontal por
+el borde mas cercano al clic y conserva enlaces `FA_SourceWalls`. La prueba
+uso muros Arch reales, Undo/Redo y guardar/reabrir temporal; no constituye aun
+aprobacion visual en un proyecto real.
 
 ## Registro de decisiones confirmadas
 

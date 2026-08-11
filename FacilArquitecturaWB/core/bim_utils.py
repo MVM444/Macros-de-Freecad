@@ -1,9 +1,12 @@
 """BIM helpers for FacilArquitecturaWB.
 
 Descripcion: usa herramientas existentes Arch/BIM para generar objetos arquitectonicos.
-Fecha: 2026-07-15
-Version: 0.2.0
-Instrucciones: no crear objetos BIM propios si Arch/BIM ya tiene herramientas.
+Objetivo: crear muros y aberturas nativos con fuentes Sketch parametricas directas.
+FreeCAD objetivo: 1.1.3.
+Fecha y hora: 2026-08-09 21:24 UTC-06:00.
+Version: 0.3.0.
+Instrucciones de mantenimiento: no crear objetos BIM propios si Arch/BIM ya ofrece
+la herramienta; conservar las fuentes y el destino Building Storey mediante enlaces.
 """
 
 from __future__ import annotations
@@ -13,6 +16,7 @@ import re
 import FreeCAD
 
 from .command_errors import UserFacingError
+from .bim_structure_utils import add_to_level, is_level
 from .naming import safe_name
 from .project_structure import find_by_name_or_label, msg, set_prop, warn
 
@@ -25,6 +29,11 @@ except Exception:  # pragma: no cover - depende del runtime de FreeCAD
 def supports_arch_window() -> bool:
     """Return whether this FreeCAD build exposes the native Arch window factory."""
     return Arch is not None and hasattr(Arch, "makeWindow")
+
+
+def supports_arch_window_preset() -> bool:
+    """Return whether this FreeCAD build exposes native BIM window presets."""
+    return Arch is not None and hasattr(Arch, "makeWindowPreset")
 
 
 def make_arch_window(baseobj=None, width=None, height=None, parts=None, name=None):
@@ -48,7 +57,17 @@ def make_arch_window(baseobj=None, width=None, height=None, parts=None, name=Non
         return Arch.makeWindow(baseobj, width, height, parts, name)
 
 
+def make_arch_window_preset(preset, **kwargs):
+    """Version-isolated wrapper for native BIM door and window presets."""
+    if not supports_arch_window_preset():
+        raise UserFacingError(
+            "Arch.makeWindowPreset no esta disponible en esta instalacion de FreeCAD."
+        )
+    return Arch.makeWindowPreset(str(preset), **kwargs)
+
+
 GENERATED_BY_WALLS = "FA_CreateWallsBIM"
+WALL_METADATA_GROUP = "FacilArquitectura"
 MASTER_WALL_SPECS = {
     "Sketch_Muros_Ext_200": ("exterior", 200.0, "ext_wall_thickness_mm"),
     "Sketch_Muros_Int_100": ("interior", 100.0, "int_wall_thickness_mm"),
@@ -57,7 +76,7 @@ THICKNESS_PATTERN = re.compile(r"Espesor[_ ]([0-9]+(?:[.,][0-9]+)?)mm", re.IGNOR
 
 
 def collect_wall_sketches_from_selection(objects):
-    """Collect selected wall centerline sketches, including related thickness groups."""
+    """Collect selected wall sketches, including sources linked by BIM walls."""
     result = []
     pending = list(objects or [])
     seen = set()
@@ -77,12 +96,198 @@ def collect_wall_sketches_from_selection(objects):
                 pass
             continue
 
-        for attr in ("Group", "Objects"):
+        for attr in ("FA_SourceSketch", "Base", "Group", "Objects"):
             try:
-                pending.extend(list(getattr(obj, attr, []) or []))
+                pending.extend(_linked_objects(getattr(obj, attr, None)))
             except Exception:
                 pass
     return result
+
+
+def collect_any_sketches_from_selection(objects):
+    """Collect any selected Sketcher object, including sketches inside groups.
+
+    Unlike :func:`collect_wall_sketches_from_selection`, this function does not
+    require Facil Arquitectura metadata. It is intended only for an explicit
+    conversion workflow that asks the user for the missing wall parameters.
+    """
+    result = []
+    pending = list(objects or [])
+    seen = set()
+    while pending:
+        obj = pending.pop(0)
+        name = str(getattr(obj, "Name", "") or "")
+        identity = name or str(id(obj))
+        if identity in seen:
+            continue
+        seen.add(identity)
+        if _is_sketch(obj):
+            result.append(obj)
+            try:
+                pending.extend(list(getattr(obj, "FA_RelatedCenterlineSketches", []) or []))
+            except Exception:
+                pass
+            continue
+        for attr in ("FA_SourceSketch", "Base", "Group", "Objects"):
+            try:
+                pending.extend(_linked_objects(getattr(obj, attr, None)))
+            except Exception:
+                pass
+    return result
+
+
+def _linked_objects(value):
+    """Normalize FreeCAD link, LinkSub and group-like property values."""
+    if value is None:
+        return []
+    if isinstance(value, tuple):
+        # App::PropertyLinkSub is commonly exposed as ``(object, ["Edge1"])``.
+        if value and hasattr(value[0], "TypeId"):
+            return [value[0]]
+        result = []
+        for item in value:
+            result.extend(_linked_objects(item))
+        return result
+    if isinstance(value, list):
+        result = []
+        for item in value:
+            result.extend(_linked_objects(item))
+        return result
+    if hasattr(value, "TypeId") or hasattr(value, "Geometry"):
+        return [value]
+    return []
+
+
+def sketches_requiring_wall_metadata(sketches):
+    """Return sketches that cannot yet be used as parametric wall centerlines."""
+    result = []
+    for sketch in sketches or []:
+        missing_thickness = wall_thickness_from_sketch(sketch) <= 0.0
+        missing_height = _quantity_value(getattr(sketch, "FA_WallHeight", 0.0)) <= 0.0
+        if not _is_wall_sketch(sketch) or missing_thickness or missing_height:
+            result.append(sketch)
+    return result
+
+
+def prepare_sketches_as_wall_centerlines(
+    sketches,
+    thickness: float,
+    height: float,
+    wall_type: str = "interior",
+):
+    """Add missing wall metadata to arbitrary sketches without altering geometry.
+
+    Existing positive dimensions are preserved. Classification properties are
+    normalized only for sketches that were not already valid wall centerlines.
+    The operation is idempotent and safe to include in the command transaction.
+    """
+    thickness = float(thickness)
+    height = float(height)
+    if thickness <= 0.0:
+        raise UserFacingError("El espesor del muro debe ser mayor que cero.")
+    if height <= 0.0:
+        raise UserFacingError("La altura del muro debe ser mayor que cero.")
+    normalized_type = str(wall_type or "interior").strip().lower() or "interior"
+    prepared = []
+    for sketch in sketches or []:
+        if not _is_sketch(sketch):
+            continue
+        if _geometry_count(sketch) == 0:
+            warn("Sketch sin geometria omitido: %s" % _object_label(sketch))
+            continue
+        was_wall_sketch = _is_wall_sketch(sketch)
+        previous_role = str(getattr(sketch, "FA_Role", "") or "").strip()
+        previous_element_type = str(getattr(sketch, "FA_ElementType", "") or "").strip()
+        if not was_wall_sketch:
+            if previous_role and previous_role.lower() not in ("centerlines", "grid_clipped_lines"):
+                set_prop(
+                    sketch,
+                    "App::PropertyString",
+                    "FA_PreviousRole",
+                    WALL_METADATA_GROUP,
+                    "Rol anterior antes de convertir a eje de muro",
+                    previous_role,
+                )
+            if previous_element_type and previous_element_type.lower() not in ("muro", "wall", normalized_type):
+                set_prop(
+                    sketch,
+                    "App::PropertyString",
+                    "FA_PreviousElementType",
+                    WALL_METADATA_GROUP,
+                    "Tipo anterior antes de convertir a eje de muro",
+                    previous_element_type,
+                )
+            set_prop(
+                sketch,
+                "App::PropertyString",
+                "FA_Role",
+                WALL_METADATA_GROUP,
+                "Rol",
+                "centerlines",
+            )
+            set_prop(
+                sketch,
+                "App::PropertyString",
+                "FA_CenterlineKind",
+                WALL_METADATA_GROUP,
+                "Tipo de eje",
+                "walls",
+            )
+            set_prop(
+                sketch,
+                "App::PropertyString",
+                "FA_ElementType",
+                WALL_METADATA_GROUP,
+                "Tipo de elemento",
+                normalized_type,
+            )
+            set_prop(
+                sketch,
+                "App::PropertyBool",
+                "FA_ConvertedToWallCenterline",
+                WALL_METADATA_GROUP,
+                "Convertido explicitamente a eje de muro",
+                True,
+            )
+            set_prop(
+                sketch,
+                "App::PropertyString",
+                "FA_ConvertedBy",
+                WALL_METADATA_GROUP,
+                "Comando de conversion",
+                GENERATED_BY_WALLS,
+            )
+        current_thickness = wall_thickness_from_sketch(sketch)
+        if current_thickness <= 0.0:
+            set_prop(
+                sketch,
+                "App::PropertyLength",
+                "FA_WallThickness",
+                WALL_METADATA_GROUP,
+                "Espesor parametrico del muro BIM",
+                thickness,
+            )
+        current_height = _quantity_value(getattr(sketch, "FA_WallHeight", 0.0))
+        if current_height <= 0.0:
+            set_prop(
+                sketch,
+                "App::PropertyLength",
+                "FA_WallHeight",
+                WALL_METADATA_GROUP,
+                "Altura parametrica del muro BIM",
+                height,
+            )
+        prepared.append(sketch)
+        if not was_wall_sketch:
+            msg(
+                "Sketch convertido a eje de muro: %s | espesor %.1f mm | altura %.1f mm"
+                % (
+                    _object_label(sketch),
+                    wall_thickness_from_sketch(sketch),
+                    _quantity_value(getattr(sketch, "FA_WallHeight", height)),
+                )
+            )
+    return prepared
 
 
 def collect_master_wall_sketches(doc):
@@ -95,7 +300,9 @@ def collect_master_wall_sketches(doc):
     return result
 
 
-def create_walls_from_centerline_sketches(doc, bim_group, sketches, params: dict):
+def create_walls_from_centerline_sketches(
+    doc, bim_group, sketches, params: dict, target_level=None
+):
     """Create one parametric Arch Wall for each selected centerline thickness sketch."""
     if Arch is None or not hasattr(Arch, "makeWall"):
         raise UserFacingError("Arch/BIM no esta disponible. Active o instale el Workbench BIM/Arch.")
@@ -130,10 +337,15 @@ def create_walls_from_centerline_sketches(doc, bim_group, sketches, params: dict
         wall_name = safe_name("FA_Wall_" + _object_label(sketch), "FA_Wall")
         wall = _make_arch_wall(sketch, wall_name, thickness, height)
         wall.Label = "Muro BIM - " + _object_label(sketch)
-        try:
-            bim_group.addObject(wall)
-        except Exception:
-            pass
+        if target_level is not None:
+            add_to_level(target_level, wall, source_sketch=sketch)
+        elif is_level(bim_group):
+            add_to_level(bim_group, wall, source_sketch=sketch)
+        else:
+            try:
+                bim_group.addObject(wall)
+            except Exception:
+                pass
         _tag_wall(wall, sketch, wall_type, thickness, height)
         _link_wall_parameters(wall, sketch)
         created.append(wall)
@@ -146,12 +358,14 @@ def create_walls_from_centerline_sketches(doc, bim_group, sketches, params: dict
     return created
 
 
-def create_walls_from_master_sketches(doc, bim_group, params: dict):
+def create_walls_from_master_sketches(doc, bim_group, params: dict, target_level=None):
     """Compatibility wrapper for the original exterior/interior master sketch flow."""
     sketches = collect_master_wall_sketches(doc)
     if not sketches:
         raise UserFacingError("No se encontraron sketches maestros de muro con geometria.")
-    return create_walls_from_centerline_sketches(doc, bim_group, sketches, params)
+    return create_walls_from_centerline_sketches(
+        doc, bim_group, sketches, params, target_level=target_level
+    )
 
 
 def _geometry_count(sketch) -> int:
@@ -228,13 +442,20 @@ def _is_wall_sketch(obj) -> bool:
         return False
     label = _object_label(obj)
     role = str(getattr(obj, "FA_Role", "") or "").strip().lower()
-    is_sketch = str(getattr(obj, "TypeId", "") or "").startswith("Sketcher::") or hasattr(obj, "Geometry")
-    if not is_sketch:
+    if not _is_sketch(obj):
         return False
     if label in MASTER_WALL_SPECS:
         return True
     compatible_roles = ("centerlines", "grid_clipped_lines")
     return (role in compatible_roles or label.startswith("Sketch_Centros")) and wall_thickness_from_sketch(obj) > 0.0
+
+
+def _is_sketch(obj) -> bool:
+    """Return True only for Sketcher objects, including lightweight test doubles."""
+    if obj is None:
+        return False
+    type_id = str(getattr(obj, "TypeId", "") or "")
+    return type_id.startswith("Sketcher::") or (not type_id and hasattr(obj, "Geometry"))
 
 
 def _ensure_sketch_wall_parameters(sketch, thickness: float, default_height: float) -> float:
@@ -310,6 +531,10 @@ def _tag_wall(wall, sketch, wall_type: str, thickness: float, height: float) -> 
     set_prop(wall, "App::PropertyFloat", "FA_Height_mm", "FacilArquitectura", "Altura", height)
     set_prop(wall, "App::PropertyString", "FA_GeneratedBy", "FacilArquitectura", "Generado por", GENERATED_BY_WALLS)
     set_prop(wall, "App::PropertyString", "FA_Role", "FacilArquitectura", "Rol", "wall")
+    try:
+        wall.IfcType = "Wall"
+    except Exception:
+        pass
     try:
         color = (0.72, 0.72, 0.72) if wall_type == "exterior" else (0.78, 0.84, 0.90)
         wall.ViewObject.ShapeColor = color

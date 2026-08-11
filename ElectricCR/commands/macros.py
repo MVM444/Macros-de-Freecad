@@ -386,13 +386,10 @@ def register_predefined_macros(base_dir: str):
         return base or "Macro"
 
     def _cmd_id(prefix: str, name: str, macro_path: str, icon_path_str: str) -> str:
-        try:
-            mt = os.path.getmtime(macro_path) if os.path.exists(macro_path) else 0
-            it = os.path.getmtime(icon_path_str) if icon_path_str and os.path.exists(icon_path_str) else 0
-            ver = int(max(mt, it))
-        except Exception:
-            ver = 0
-        return f"ElectricCR_{prefix}_{_sanitize_id(name)}_{ver}"
+        del macro_path, icon_path_str
+        # El identificador representa al comando, no a la fecha del archivo.
+        # Esto evita IDs nuevos cada vez que se edita la macro o su icono.
+        return f"ElectricCR_{_sanitize_id(prefix)}_{_sanitize_id(name)}"
 
     def _register_dir_group(title: str, dirname: str, prefix: str, icon_name: str = ""):
         dir_path = os.path.join(repo_root, dirname)
