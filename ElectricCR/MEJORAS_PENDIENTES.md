@@ -2,7 +2,7 @@
 
 **Proposito:** Mantener una memoria viva de mejoras, observaciones funcionales y hallazgos que todavia no constituyen cambios aceptados. Este archivo sirve como puente para Marco, GPT y Codex.
 
-**Version:** 2026-08-10 17:28, America/Costa_Rica.
+**Version:** 2026-08-10 19:14, America/Costa_Rica.
 
 **FreeCAD objetivo:** 1.1.3
 
@@ -368,7 +368,7 @@ La macro toma una instantanea del arbol de grupos del documento activo y genera 
 - `.md` para documentacion/GPT/Codex;
 - `.json` para procesamiento automatico.
 
-Los archivos se guardan en:
+Los archivos se guardan actualmente en:
 
 `Configuracion del proyecto/_reportes_arbol/`
 
@@ -387,13 +387,94 @@ significa:
 - `raiz=6`: encontro seis grupos raiz;
 - `clipboard=SI`: tambien copio el reporte textual al portapapeles.
 
-### Clasificacion propuesta
+### Clasificacion y ubicacion propuesta
 
-Herramienta de SOPORTE / DIAGNOSTICO, util para compartir el estado estructural de un FCStd con GPT o Codex. No necesita ocupar una posicion prioritaria en las barras normales de produccion si la interfaz se simplifica.
+Herramienta de SOPORTE / DIAGNOSTICO para GPT, Codex y desarrollo. Debe moverse, no eliminarse, desde `Configuracion del proyecto` hacia el directorio `Programacion`, junto con su subdirectorio `_reportes_arbol`. No necesita ocupar una posicion prioritaria en las barras normales de produccion.
 
 ---
 
-## 11. Estado
+## 11. Ruta Critica solo seleccionados - usar subelementos seleccionados y radio EMT configurable
+
+### Macro identificada
+
+`Conectar/RutaCritica_Seleccionados.FCMacro`
+
+Se considera una herramienta util e interesante que conviene conservar y mejorar.
+
+### Defecto actual
+
+La macro usa `Selection.getSelection()` y reduce la seleccion a objetos. Luego calcula origen y destinos con `base.get_connection_point(obj)`, que usa principalmente `Placement.Base` mas altura relativa. Por ello, seleccionar una cara, vertice, arista o punto concreto no cambia realmente el punto geometrico desde donde nace o termina la ruta.
+
+Tambien aplica actualmente un `FilletRadius` fijo de `500.0 mm` a todas las rutas.
+
+### Comportamiento deseado
+
+La herramienta debe trabajar con puntos de seleccion reales, conservando el orden de seleccion:
+
+1. Primer elemento/subelemento seleccionado = origen.
+2. Siguientes elementos/subelementos seleccionados = destinos.
+3. Si se selecciona un vertice, usar el vertice exacto.
+4. Si se selecciona una cara, usar el centro geometrico/centro de masa de la cara.
+5. Si se selecciona una arista o un punto sobre geometria, usar un criterio explicito y predecible; preferir el punto 3D realmente seleccionado cuando exista.
+6. Si solo se selecciona un objeto sin subelemento, conservar como fallback su punto de conexion actual.
+7. No deduplicar solamente por nombre de objeto: dos subelementos distintos del mismo objeto pueden representar dos puntos diferentes.
+
+La ruta ortogonal puede seguir usando la logica actual de altura Z y agrupacion en `Conexiones`.
+
+### Reutilizacion dentro del repositorio
+
+`Conectar/Ajustar_Alimentador_o_Ramal_Manual.FCMacro` ya implementa conceptos equivalentes para resolver:
+
+- vertice exacto;
+- centro de arista circular;
+- punto medio de linea;
+- centro de masa de cara;
+- punto 3D seleccionado;
+- verificacion de capacidad de radio de curva.
+
+Antes de duplicar esta logica, estudiar si conviene extraer un helper comun para puntos de seleccion y/o capacidad de fillet.
+
+### Radio de curvatura
+
+El usuario debe poder modificar el radio de redondeo antes de generar las rutas.
+
+Requisitos:
+
+- radio editable en mm;
+- permitir `0` para ruta sin redondeo;
+- guardar un valor predeterminado razonable para EMT de 50 mm (2 pulgadas nominales);
+- si un tramo es demasiado corto para el radio solicitado, no debe fallar toda la ruta: reducir a un radio geometricamente posible o informar claramente el radio efectivo usado;
+- registrar en consola radio solicitado y radio efectivo.
+
+Como referencia inicial de fabricante, herramientas Greenlee para EMT de 2 pulgadas usan radios al eje cercanos a 229-233 mm, por lo que un valor aproximado de 230-235 mm es candidato razonable a predeterminado. La decision final debe validarse funcionalmente antes de fijarla como criterio general de ElectricCR.
+
+### Interfaz sugerida
+
+En lugar de preguntar solo `Altura Z`, usar un dialogo pequeno con al menos:
+
+- `Altura ruta Z (mm)`;
+- `Radio curva (mm)`;
+
+con el radio precargado pero editable.
+
+### Pruebas necesarias
+
+- objeto -> objeto;
+- vertice -> vertice;
+- cara -> cara usando centro de cada cara;
+- cara -> objeto;
+- punto seleccionado -> cara;
+- varios destinos en una sola ejecucion;
+- dos subelementos distintos del mismo objeto;
+- radio 0;
+- radio predeterminado EMT 50 mm;
+- radio mayor que el permitido por segmentos cortos;
+- Undo/Redo;
+- comprobar que las rutas siguen agrupandose correctamente en `Conexiones`.
+
+---
+
+## 12. Estado
 
 Este documento contiene PENDIENTES y observaciones.
 
