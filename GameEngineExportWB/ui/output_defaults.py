@@ -31,21 +31,21 @@ def _sanitize_doc_base(doc_path: Path) -> str:
 
 
 def compute_output_defaults(params, doc_path: Optional[Path]) -> Tuple[str, str, str]:
-    """Return the directory/base defaults plus the active document key."""
-    stored_dir = params.GetString("output_dir", "")
+    """Prefer the active document folder and avoid stale paths from other PCs."""
+    stored_dir = params.GetString("output_dir", "").strip()
     stored_base = params.GetString("base_name", "")
-    last_doc = params.GetString(LAST_DOC_PATH_KEY, "")
 
     doc_key = str(doc_path) if doc_path else ""
-    doc_dir = str(doc_path.parent) if doc_path else ""
     doc_base = _sanitize_doc_base(doc_path) if doc_path else ""
 
-    if doc_key:
-        if doc_key != last_doc:
-            return doc_dir, doc_base, doc_key
-        return stored_dir or doc_dir, stored_base or doc_base, doc_key
+    if doc_path and doc_path.parent.is_dir():
+        return str(doc_path.parent), doc_base, doc_key
 
-    return stored_dir, stored_base, ""
+    # A saved preference is useful only if it is valid on this computer.
+    # Otherwise leave the field empty so the user can choose a folder.
+    stored_path = Path(os.path.expandvars(os.path.expanduser(stored_dir))) if stored_dir else None
+    fallback_dir = str(stored_path) if stored_path and stored_path.is_dir() else ""
+    return fallback_dir, doc_base or stored_base, doc_key
 
 
 def ensure_output_directory(value: str) -> Tuple[str, bool]:
