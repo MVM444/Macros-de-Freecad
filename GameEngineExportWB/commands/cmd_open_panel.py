@@ -10,21 +10,32 @@ Instrucciones clave:
 
 import importlib
 import os
+import sys
 
 import FreeCAD
 import FreeCADGui
 
-from ..core import exporter_x3d
-from ..core import gamestart
-from ..core import lights
-from ..core import persist
-from ..ui import output_defaults
-from ..ui import panel_export
-from ..ui import panel_info
-
 ICON_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "resources", "icons", "gameexport.svg")
 ).replace(os.sep, "/")
+
+RUNTIME_MODULE_NAMES = (
+    "GameEngineExportWB.core.persist",
+    "GameEngineExportWB.core.gamestart",
+    "GameEngineExportWB.core.lights",
+    "GameEngineExportWB.core.exporter_x3d",
+    "GameEngineExportWB.ui.output_defaults",
+    "GameEngineExportWB.ui.panel_info",
+    "GameEngineExportWB.ui.panel_export",
+)
+
+
+def _reload_or_import(module_name):
+    """Reload a live module or import it again after a loader purge."""
+    module = sys.modules.get(module_name)
+    if module is None:
+        return importlib.import_module(module_name), "imported"
+    return importlib.reload(module), "reloaded"
 
 
 def _reload_export_runtime():
@@ -35,21 +46,14 @@ def _reload_export_runtime():
     an updated UI with an older geometry or light implementation.
     """
     importlib.invalidate_caches()
-    modules = (
-        persist,
-        gamestart,
-        lights,
-        exporter_x3d,
-        output_defaults,
-        panel_info,
-        panel_export,
-    )
     reloaded = []
-    for module in modules:
-        current = importlib.reload(module)
+    for module_name in RUNTIME_MODULE_NAMES:
+        current, action = _reload_or_import(module_name)
         reloaded.append(current)
         FreeCAD.Console.PrintMessage(
-            "[GAMEEXPORT] Runtime module reloaded: "
+            "[GAMEEXPORT] Runtime module "
+            + action
+            + ": "
             + str(getattr(current, "__name__", "unknown"))
             + " | version="
             + str(getattr(current, "DEBUG_VERSION", "unversioned"))
@@ -83,11 +87,11 @@ class CommandClass:
             current_panel = _reload_export_runtime()
         except Exception as exc:  # pragma: no cover - runtime guard
             FreeCAD.Console.PrintWarning(
-                "[GAMEEXPORT][WARN] Runtime reload failed; using loaded modules: "
+                "[GAMEEXPORT][WARN] Runtime reload failed; importing panel directly: "
                 + str(exc)
                 + "\n"
             )
-            current_panel = panel_export
+            current_panel = importlib.import_module("GameEngineExportWB.ui.panel_export")
         FreeCAD.Console.PrintMessage(
             "[GAMEEXPORT] Export panel module: "
             + str(getattr(current_panel, "__file__", "unknown"))
