@@ -12,6 +12,7 @@ Instrucciones clave:
 
 import importlib
 import os
+import sys
 from pathlib import Path
 
 import FreeCAD
@@ -31,7 +32,6 @@ except ImportError:
         if not hasattr(QtGui, name) and hasattr(QtWidgets, name):
             setattr(QtGui, name, getattr(QtWidgets, name))
 
-from ..core import x3d_analyzer
 from ..ui.output_defaults import compute_output_defaults, normalize_base_name
 
 
@@ -46,6 +46,33 @@ ICON_PATH = os.path.abspath(
         "analyze_x3d.svg",
     )
 ).replace(os.sep, "/")
+ANALYZER_MODULE_NAME = "GameEngineExportWB.core.x3d_analyzer"
+
+
+def _load_analyzer_module():
+    """Load or reload the analyzer without using a stale package reference."""
+    module = sys.modules.get(ANALYZER_MODULE_NAME)
+    if module is not None:
+        FreeCAD.Console.PrintMessage(
+            LOG_PREFIX + "Reloading X3D analyzer module\n"
+        )
+        return importlib.reload(module)
+
+    core_package = importlib.import_module("GameEngineExportWB.core")
+    stale_module = getattr(core_package, "x3d_analyzer", None)
+    if stale_module is not None:
+        try:
+            delattr(core_package, "x3d_analyzer")
+        except Exception:
+            pass
+        FreeCAD.Console.PrintWarning(
+            LOG_PREFIX + "Removed stale X3D analyzer package reference\n"
+        )
+
+    FreeCAD.Console.PrintMessage(
+        LOG_PREFIX + "Importing X3D analyzer module\n"
+    )
+    return importlib.import_module(ANALYZER_MODULE_NAME)
 
 
 def _candidate_paths():
@@ -164,17 +191,22 @@ class CommandClass:
             return not progress.wasCanceled()
 
         try:
-            analyzer = importlib.reload(x3d_analyzer)
+            analyzer = _load_analyzer_module()
             report = analyzer.analyze_x3d(
                 path,
                 top_n=20,
                 progress_callback=update_progress,
             )
             json_path, markdown_path = analyzer.write_reports(report, path)
-        except x3d_analyzer.AnalysisCancelled:
-            FreeCAD.Console.PrintWarning(LOG_PREFIX + "X3D analysis cancelled by user\n")
-            return
         except Exception as exc:
+            if (
+                exc.__class__.__name__ == "AnalysisCancelled"
+                and exc.__class__.__module__ == ANALYZER_MODULE_NAME
+            ):
+                FreeCAD.Console.PrintWarning(
+                    LOG_PREFIX + "X3D analysis cancelled by user\n"
+                )
+                return
             FreeCAD.Console.PrintError(LOG_PREFIX + "X3D analysis failed: " + str(exc) + "\n")
             QtGui.QMessageBox.critical(
                 FreeCADGui.getMainWindow(),
