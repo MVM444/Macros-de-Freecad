@@ -8,11 +8,18 @@ import FreeCAD
 import FreeCADGui
 
 ICON_PATH = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "resources", "icons", "gameexport.svg")
+    os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "resources",
+        "icons",
+        "reload_workbench.svg",
+    )
 ).replace(os.sep, "/")
 
 COMMAND_MODULE_NAMES = (
     "GameEngineExportWB.commands.cmd_open_panel",
+    "GameEngineExportWB.commands.cmd_export_and_launch",
     "GameEngineExportWB.commands.cmd_add_light_properties",
     "GameEngineExportWB.commands.cmd_quick_examples",
     "GameEngineExportWB.commands.cmd_import_json_example",
