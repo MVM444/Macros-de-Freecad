@@ -2,6 +2,7 @@
 # MenuText: Colocar Luminarias Link
 # ToolTip: Colocar luminarias por rejilla usando App::Link
 # Icon: ColocarLuminarias.svg
+# Revision: 2026-08-10 11:40 CST - la altura elegida gobierna el modelo 3D.
 
 # Qt compatibility for FreeCAD 1.x (PySide6) and older builds.
 def _ensure_qt_compat():
@@ -381,6 +382,13 @@ def ensure_link_master(doc, crear_toma_uno, key_registro, altura_rel, modo_visua
     except Exception:
         pass
 
+    # AlturaRel changes the generated Shape, so make the FeaturePython execute
+    # again on the document recompute before any App::Link is displayed.
+    try:
+        master.touch()
+    except Exception:
+        pass
+
     try:
         master.Label = "Master Link {} {}mm {}".format(
             str(key_registro), int(round(float(altura_rel))), str(modo_visual)
@@ -652,6 +660,40 @@ class PickTypeDialog(QtWidgets.QDialog):
         self._apply_defaults()
 
 
+def resolve_rectangle_luminaire_settings(
+    rect, reg, selected_key, selected_height, selected_mode, use_assigned_area_type
+):
+    """Resolve the type per area while keeping the dialog height authoritative."""
+    rect_key = (
+        str(getattr(rect, "LightingTypeKey", "") or "").strip()
+        if use_assigned_area_type else ""
+    )
+    if rect_key and rect_key not in (reg.get("types") or {}):
+        log_w("{}: tipo asignado '{}' no existe; se usa '{}'.".format(
+            rect.Label, rect_key, selected_key
+        ))
+        rect_key = ""
+
+    active_key = rect_key or selected_key
+    active_info = (reg.get("types") or {}).get(active_key, {}) or {}
+    active_defaults = active_info.get("defaults", {}) or {}
+
+    # The checkbox promises only to select the type assigned to each area.
+    # LightingMountHeight and the registry default must not silently replace
+    # the height that the user explicitly entered in this dialog.
+    active_height = float(selected_height)
+
+    default_mode = str(active_defaults.get("modo", selected_mode) or selected_mode)
+    active_mode = {
+        "Both": "Ambos",
+        "Solo 2D": "Solo2D",
+        "Solo 3D": "Solo3D",
+    }.get(default_mode, default_mode)
+    if not rect_key:
+        active_mode = selected_mode
+    return rect_key, active_key, active_height, active_mode
+
+
 def run():
     doc = App.ActiveDocument or App.newDocument("Electrico")
 
@@ -696,20 +738,14 @@ def run():
         output_groups = {}
 
         for rect in rects:
-            rect_key = str(getattr(rect, "LightingTypeKey", "") or "").strip() if use_assigned_area_type else ""
-            if rect_key and rect_key not in (reg.get("types") or {}):
-                log_w("{}: tipo asignado '{}' no existe; se usa '{}'.".format(rect.Label, rect_key, key))
-                rect_key = ""
-            active_key = rect_key or key
-            active_info = (reg.get("types") or {}).get(active_key, {}) or {}
-            active_defaults = active_info.get("defaults", {}) or {}
-            active_height = float(getattr(rect, "LightingMountHeight", 0.0) or 0.0)
-            if active_height <= 0.0:
-                active_height = float(active_defaults.get("altura", altura_rel) or altura_rel)
-            default_mode = str(active_defaults.get("modo", modo_visual) or modo_visual)
-            active_mode = {"Both": "Ambos", "Solo 2D": "Solo2D", "Solo 3D": "Solo3D"}.get(default_mode, default_mode)
-            if not rect_key:
-                active_mode = modo_visual
+            rect_key, active_key, active_height, active_mode = resolve_rectangle_luminaire_settings(
+                rect,
+                reg,
+                selected_key=key,
+                selected_height=altura_rel,
+                selected_mode=modo_visual,
+                use_assigned_area_type=use_assigned_area_type,
+            )
             master_token = (active_key, round(active_height, 3), active_mode)
             master = masters.get(master_token)
             if master is None:
@@ -739,7 +775,11 @@ def run():
             rect_pos = rect_pl.Base
             rect_rot = rect_pl.Rotation
 
-            log_i("Procesando {}: {}x{} | tipo={} | W={:.1f} H={:.1f}".format(rect.Label, cols, rows, active_key, width, height))
+            log_i(
+                "Procesando {}: {}x{} | tipo={} | altura={:.1f} mm | W={:.1f} H={:.1f}".format(
+                    rect.Label, cols, rows, active_key, active_height, width, height
+                )
+            )
 
             modular_positions = None
             if modular_grid_positions is not None:

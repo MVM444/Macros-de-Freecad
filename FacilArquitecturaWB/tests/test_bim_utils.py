@@ -43,6 +43,20 @@ class FakeSketch:
         self.FA_WallThickness = Quantity(thickness)
         self.FA_RelatedCenterlineSketches = []
 
+    def addProperty(self, _kind, name, _group, _description):
+        setattr(self, name, None)
+
+
+class GenericSketch:
+    def __init__(self, name="SketchGenerico", geometry=True):
+        self.Name = name
+        self.Label = name
+        self.TypeId = "Sketcher::SketchObject"
+        self.Geometry = [object()] if geometry else []
+
+    def addProperty(self, _kind, name, _group, _description):
+        setattr(self, name, None)
+
 
 class FakeGroup:
     def __init__(self, objects):
@@ -58,6 +72,14 @@ class FakeWall:
         self.FA_SourceSketch = source
 
 
+class FakeNativeWall:
+    def __init__(self, name, source, link_sub=False):
+        self.Name = name
+        self.Label = name
+        self.TypeId = "PartDesign::FeaturePython"
+        self.Base = (source, ["Edge1"]) if link_sub else source
+
+
 class FakeDocument:
     def __init__(self, objects):
         self.Objects = list(objects)
@@ -70,6 +92,82 @@ class FakeDocument:
 
 
 class BIMUtilsTests(unittest.TestCase):
+    def test_selected_bim_wall_resolves_its_base_sketch(self):
+        source = FakeSketch("Sketch_Base_Muro", 140.0)
+
+        sketches = bim_utils.collect_wall_sketches_from_selection(
+            [FakeNativeWall("Wall", source)]
+        )
+
+        self.assertEqual([source], sketches)
+
+    def test_selected_link_sub_resolves_its_source_sketch(self):
+        source = GenericSketch("Sketch_Base_Generico")
+
+        sketches = bim_utils.collect_any_sketches_from_selection(
+            [FakeNativeWall("WallLinkSub", source, link_sub=True)]
+        )
+
+        self.assertEqual([source], sketches)
+
+    def test_any_sketch_collector_accepts_unclassified_sketches(self):
+        generic = GenericSketch()
+        opening = FakeSketch("Sketch_Centros_Ventanas", 0.0)
+
+        sketches = bim_utils.collect_any_sketches_from_selection([FakeGroup([generic, opening])])
+
+        self.assertEqual([generic, opening], sketches)
+
+    def test_generic_sketch_can_be_prepared_as_wall_centerline(self):
+        generic = GenericSketch()
+
+        missing = bim_utils.sketches_requiring_wall_metadata([generic])
+        prepared = bim_utils.prepare_sketches_as_wall_centerlines(
+            missing, thickness=120.0, height=3000.0, wall_type="interior"
+        )
+
+        self.assertEqual([generic], prepared)
+        self.assertAlmostEqual(120.0, generic.FA_WallThickness)
+        self.assertAlmostEqual(3000.0, generic.FA_WallHeight)
+        self.assertEqual("centerlines", generic.FA_Role)
+        self.assertEqual("walls", generic.FA_CenterlineKind)
+        self.assertEqual("interior", generic.FA_ElementType)
+        self.assertTrue(generic.FA_ConvertedToWallCenterline)
+        self.assertEqual([generic], bim_utils.collect_wall_sketches_from_selection([generic]))
+
+    def test_existing_wall_sketch_without_height_requests_missing_metadata(self):
+        wall = FakeSketch("Sketch_Centros_Muro_Espesor_120mm", 120.0)
+
+        missing = bim_utils.sketches_requiring_wall_metadata([wall])
+
+        self.assertEqual([wall], missing)
+
+    def test_conversion_preserves_existing_positive_dimensions_and_previous_role(self):
+        generic = GenericSketch("SketchConDatos")
+        generic.FA_WallThickness = Quantity(175.0)
+        generic.FA_WallHeight = Quantity(2800.0)
+        generic.FA_Role = "reference_geometry"
+        generic.FA_ElementType = "guide"
+
+        bim_utils.prepare_sketches_as_wall_centerlines(
+            [generic], thickness=100.0, height=3000.0, wall_type="exterior"
+        )
+
+        self.assertAlmostEqual(175.0, generic.FA_WallThickness.Value)
+        self.assertAlmostEqual(2800.0, generic.FA_WallHeight.Value)
+        self.assertEqual("reference_geometry", generic.FA_PreviousRole)
+        self.assertEqual("guide", generic.FA_PreviousElementType)
+        self.assertEqual("exterior", generic.FA_ElementType)
+
+    def test_empty_generic_sketch_is_omitted_during_preparation(self):
+        empty = GenericSketch(geometry=False)
+
+        prepared = bim_utils.prepare_sketches_as_wall_centerlines(
+            [empty], thickness=100.0, height=3000.0
+        )
+
+        self.assertEqual([], prepared)
+
     def test_primary_centerline_collects_related_thickness_sketches(self):
         primary = FakeSketch("Sketch_Centros_Muro_Espesor_100mm", 100.0)
         related = FakeSketch("Sketch_Centros_Muro_Espesor_200mm", 200.0)

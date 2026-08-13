@@ -9,8 +9,6 @@ Instrucciones: seleccionar un layer, grupo o shapes que representen ventanas ant
 from __future__ import annotations
 
 import os
-import time
-
 import FreeCADGui
 
 from ..core.centerline_utils import create_centerline_sketch_from_objects
@@ -20,13 +18,12 @@ from ..core.project_structure import ensure_project_structure, msg
 ICON_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "resources", "icons", "window_centerlines.svg")
 ).replace(os.sep, "/")
-COMMAND_VERSION = str(int(time.time()))
 
 
 class CommandClass:
     """FreeCAD command for extracting one dominant centerline per window shape."""
 
-    CommandName = "FA_WindowCenterlinesFromSelection_" + COMMAND_VERSION
+    CommandName = "FA_WindowCenterlinesFromSelection"
 
     def GetResources(self):  # noqa: N802
         return {

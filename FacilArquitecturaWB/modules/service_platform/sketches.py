@@ -33,7 +33,8 @@ def create_master_sketches(doc, group, owner, options, layout):
         result[label] = sketch
 
     y0 = options.front_offset_mm
-    _add_line(result["SK_PA_FrontAxis"], 0.0, y0, options.total_width_mm, y0)
+    x0 = options.origin_x_mm
+    _add_line(result["SK_PA_FrontAxis"], x0, y0, x0 + options.total_width_mm, y0)
     _add_axis_constraint(result["SK_PA_FrontAxis"], 0)
 
     origins = position_origins(options, layout)

@@ -29,6 +29,51 @@ _install_freecad_stubs()
 from FacilArquitecturaWB.core import room_utils as rooms  # noqa: E402
 
 
+class SelectionSketch:
+    def __init__(self, name, thickness=0.0, kind=""):
+        self.Name = name
+        self.Label = name
+        self.TypeId = "Sketcher::SketchObject"
+        self.Geometry = [object()]
+        self.FA_WallThickness = thickness
+        self.FA_CenterlineKind = kind
+        if thickness > 0.0:
+            self.FA_Role = "centerlines"
+
+
+class SelectionWall:
+    def __init__(self, source):
+        self.Name = "Wall"
+        self.TypeId = "PartDesign::FeaturePython"
+        self.Base = source
+
+
+class WallSelectionTests(unittest.TestCase):
+    def test_selected_bim_wall_uses_base_sketch(self):
+        source = SelectionSketch("Sketch_Muro", thickness=125.0, kind="walls")
+
+        candidates = rooms.collect_selected_wall_candidates([SelectionWall(source)])
+
+        self.assertEqual([source], candidates)
+
+    def test_generic_candidate_excludes_selected_opening(self):
+        generic = SelectionSketch("Sketch_Generico")
+        door = SelectionSketch("Sketch_Centros_Puertas")
+
+        candidates = rooms.collect_selected_wall_candidates(
+            [generic, door], opening_sketches=[door]
+        )
+
+        self.assertEqual([generic], candidates)
+
+    def test_explicit_column_is_not_a_wall_conversion_candidate(self):
+        column = SelectionSketch("Sketch_Columnas", kind="columns")
+
+        candidates = rooms.collect_selected_wall_candidates([column])
+
+        self.assertEqual([], candidates)
+
+
 class RoomTopologyTests(unittest.TestCase):
     def setUp(self):
         self.walls = [

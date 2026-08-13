@@ -51,7 +51,7 @@ def calculate_layout(values=None) -> PlatformLayout:
 
 def position_origins(options: PlatformOptions, layout: PlatformLayout):
     """Return the left X coordinate of each service position."""
-    x = options.side_margin_mm
+    x = options.origin_x_mm + options.side_margin_mm
     result = []
     for index in range(options.service_positions):
         result.append(x)

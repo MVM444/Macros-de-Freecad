@@ -1,350 +1,73 @@
 # -*- coding: utf-8 -*-
-# MenuText: Conectar tableros y desconectores por cara superior
-# ToolTip: Crea o actualiza el alimentador ortogonal entre tableros, desconectores o interruptores y registra su longitud
+# MenuText: Conectar tableros y equipos por cara superior (Legacy)
+# ToolTip: Wrapper compatible del motor general de alimentadores
 # Icon: Conectar_Tableros_Cara_Superior.svg
-# Toolbar: Conexiones
+# Toolbar: Conectar Legacy
 # Transaction: self
 
-import re
-import unicodedata
+"""Wrapper tablero/equipo -> tablero aguas arriba.
 
+La cara, distribucion, ruteo y metadatos pertenecen al motor Python general.
+Compatible con FreeCAD 1.1.3. Revision: 2026-08-08.
+"""
+
+from pathlib import Path
+import sys
 import FreeCAD as App
-import FreeCADGui as Gui
-import Part
+
+try:
+    import FreeCADGui as Gui
+except Exception:
+    Gui = None
 
 
-TAG = "[ElectricCR][TABLERO-TABLERO]"
-GENERATED_BY = "ConectarTablerosCaraSuperior"
+def _services():
+    root = Path(__file__).resolve().parent.parent
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    from ElectricCR.electriccr.connections import assignments, feeders, panels
 
-
-def _txt(value):
-    try:
-        return str(value or "")
-    except Exception:
-        return ""
-
-
-def _key(value):
-    text = unicodedata.normalize("NFKD", _txt(value).strip().lower())
-    return "".join(ch for ch in text if not unicodedata.combining(ch) and ch.isalnum())
-
-
-def _log(message):
-    App.Console.PrintMessage("{} {}\n".format(TAG, message))
-
-
-def _warn(message):
-    App.Console.PrintWarning("{} {}\n".format(TAG, message))
-
-
-def _ensure(obj, ptype, name, group, description):
-    try:
-        if name not in obj.PropertiesList:
-            obj.addProperty(ptype, name, group, description)
-    except Exception:
-        pass
-
-
-def _is_board(obj):
-    if obj is None:
-        return False
-    equipment_class = _key(
-        "{} {} {} {}".format(
-            getattr(obj, "ClaseEquipo", ""),
-            getattr(obj, "Tipo", ""),
-            getattr(obj, "ElementType", ""),
-            getattr(obj, "IfcType", ""),
-        )
-    )
-    return any(
-        marker in equipment_class
-        for marker in (
-            "tablero",
-            "desconector",
-            "interruptor",
-            "distributionboard",
-            "disconnectswitch",
-        )
-    )
-
-
-def _board_by_code(doc, code):
-    wanted = _txt(code).strip().upper()
-    for obj in doc.Objects:
-        if _is_board(obj) and _txt(getattr(obj, "Codigo", "")).strip().upper() == wanted:
-            return obj
-    return None
-
-
-def _selected_boards():
-    try:
-        return [obj for obj in (Gui.Selection.getSelection() or []) if _is_board(obj)]
-    except Exception:
-        return []
-
-
-def _assigned_circuit(doc, destination, source_code):
-    sheet = doc.getObject("Asignacion_Red")
-    if sheet is not None:
-        expected = "EQ::OBJ::" + destination.Name
-        empty_run = 0
-        for row in range(2, 500):
-            try:
-                key = _txt(sheet.getContents("H{}".format(row))).strip("'")
-                cid = _txt(sheet.getContents("K{}".format(row))).strip("'")
-            except Exception:
-                key = cid = ""
-            if not key and not cid:
-                empty_run += 1
-                if empty_run >= 80:
-                    break
-                continue
-            empty_run = 0
-            if key == expected and cid:
-                return cid
-    return "{}-FDR".format(_txt(source_code).strip().upper() or "TP")
-
-
-def _top_center(board):
-    try:
-        shape = board.Shape
-        bb = shape.BoundBox
-        if not bool(getattr(bb, "IsVoid", False)):
-            return App.Vector(float(bb.Center.x), float(bb.Center.y), float(bb.ZMax))
-    except Exception:
-        pass
-    try:
-        placement = board.getGlobalPlacement()
-    except Exception:
-        placement = getattr(board, "Placement", App.Placement())
-    point = App.Vector(placement.Base)
-    for prop in ("AlturaSuperiorInstalacion", "InstallationElevation", "AlturaMontaje"):
-        try:
-            value = float(getattr(board, prop))
-        except Exception:
-            continue
-        if value > point.z:
-            point.z = value
-            break
-    return point
-
-
-def _top_face(board):
-    """Devuelve la mayor cara horizontal real situada en la cota superior."""
-    try:
-        shape = board.Shape
-        if shape is None or shape.isNull():
-            return 0, None
-        top_z = float(shape.BoundBox.ZMax)
-    except Exception:
-        return 0, None
-
-    candidates = []
-    for index, face in enumerate(list(getattr(shape, "Faces", []) or []), start=1):
-        try:
-            umin, umax, vmin, vmax = face.ParameterRange
-            u = 0.5 * (umin + umax)
-            v = 0.5 * (vmin + vmax)
-            normal = face.normalAt(u, v)
-            center = face.valueAt(u, v)
-            bb = face.BoundBox
-        except Exception:
-            continue
-        if float(normal.z) < 0.70:
-            continue
-        if abs(float(bb.ZMax) - float(bb.ZMin)) > 0.1:
-            continue
-        if abs(float(center.z) - top_z) > 0.5:
-            continue
-        candidates.append((float(face.Area), index, face))
-    if not candidates:
-        return 0, None
-    candidates.sort(key=lambda item: item[0], reverse=True)
-    _area, index, face = candidates[0]
-    return index, face
-
-
-def _distributed_top_point(board, slot_index, slot_count):
-    """Reparte puertos dentro de la cara superior, sobre su direccion mayor.
-
-    ``slot_index`` es cero basado. El calculo usa el dominio parametrico de la
-    cara real, de modo que el punto sigue perteneciendo al Shape del tablero y
-    no a una caja envolvente o al plano de trabajo.
-    """
-    count = max(1, int(slot_count or 1))
-    index = max(0, min(int(slot_index or 0), count - 1))
-    face_index, face = _top_face(board)
-    if face is None:
-        # Compatibilidad con tableros heredados sin caras utilizables.
-        center = _top_center(board)
-        try:
-            bb = board.Shape.BoundBox
-            fraction = float(index + 1) / float(count + 1)
-            if float(bb.XLength) >= float(bb.YLength) and float(bb.XLength) > 0.01:
-                center.x = float(bb.XMin) + fraction * float(bb.XLength)
-            elif float(bb.YLength) > 0.01:
-                center.y = float(bb.YMin) + fraction * float(bb.YLength)
-        except Exception:
-            pass
-        return center, 0
-
-    umin, umax, vmin, vmax = face.ParameterRange
-    umid = 0.5 * (umin + umax)
-    vmid = 0.5 * (vmin + vmax)
-    fraction = float(index + 1) / float(count + 1)
-    try:
-        u_start = face.valueAt(umin, vmid)
-        u_end = face.valueAt(umax, vmid)
-        v_start = face.valueAt(umid, vmin)
-        v_end = face.valueAt(umid, vmax)
-        vary_u = u_start.distanceToPoint(u_end) >= v_start.distanceToPoint(v_end)
-    except Exception:
-        vary_u = True
-    if vary_u:
-        point = face.valueAt(umin + fraction * (umax - umin), vmid)
-    else:
-        point = face.valueAt(umid, vmin + fraction * (vmax - vmin))
-    return App.Vector(point), face_index
-
-
-def _existing_route_for_destination(doc, expected_name, destination):
-    exact = doc.getObject(expected_name)
-    if exact is not None:
-        return exact
-    for obj in list(doc.Objects):
-        generated = _txt(getattr(obj, "GeneradoPor", "")).strip()
-        logical_type = _txt(getattr(obj, "Tipo", "")).strip()
-        if generated != GENERATED_BY and logical_type != "AlimentadorEntreTableros":
-            continue
-        try:
-            if getattr(obj, "TableroDestino", None) is destination:
-                return obj
-        except Exception:
-            continue
-    return None
-
-
-def _route_points(source, destination, source_point=None):
-    start = App.Vector(source_point) if source_point is not None else _top_center(source)
-    end = _top_center(destination)
-    z = max(float(start.z), float(end.z))
-    a = App.Vector(start.x, start.y, z)
-    b = App.Vector(end.x, end.y, z)
-    points = [start]
-    if start.distanceToPoint(a) > 0.01:
-        points.append(a)
-    if abs(float(b.x - a.x)) >= abs(float(b.y - a.y)):
-        corner = App.Vector(b.x, a.y, z)
-    else:
-        corner = App.Vector(a.x, b.y, z)
-    if points[-1].distanceToPoint(corner) > 0.01:
-        points.append(corner)
-    if points[-1].distanceToPoint(b) > 0.01:
-        points.append(b)
-    if points[-1].distanceToPoint(end) > 0.01:
-        points.append(end)
-    if len(points) < 2:
-        points.append(App.Vector(end.x + 0.01, end.y, end.z))
-    return points
-
-
-def _ensure_group(doc):
-    group = doc.getObject("Alimentadores_Entre_Tableros")
-    if group is None:
-        group = doc.addObject("App::DocumentObjectGroup", "Alimentadores_Entre_Tableros")
-    group.Label = "Alimentadores entre tableros"
-    parent = doc.getObject("Tableros")
-    if parent is not None and group not in list(getattr(parent, "Group", []) or []):
-        try:
-            parent.addObject(group)
-        except Exception:
-            pass
-    return group
+    return assignments, feeders, panels
 
 
 def run(source=None, destination=None, circuit_id="", source_slot_index=None, source_slot_count=None):
+    assignments, feeders, panels = _services()
     doc = App.ActiveDocument
     if doc is None:
-        _warn("No hay documento activo")
         return None
-
-    selected = _selected_boards()
-    source = source or (selected[0] if len(selected) >= 1 else _board_by_code(doc, "TP"))
-    destination = destination or (selected[1] if len(selected) >= 2 else _board_by_code(doc, "TCOM"))
-    if not _is_board(source) or not _is_board(destination) or source == destination:
-        _warn("Seleccione primero el tablero origen y luego el tablero, desconector o interruptor destino")
-        return None
-
-    source_code = _txt(getattr(source, "Codigo", "TP")).strip().upper() or "TP"
-    destination_code = _txt(getattr(destination, "Codigo", "TCOM")).strip().upper() or "TCOM"
-    circuit_id = _txt(circuit_id).strip() or _assigned_circuit(doc, destination, source_code)
-    token = re.sub(r"[^0-9A-Za-z_]+", "_", source_code + "_" + destination_code)
-    name = "Alimentador_Entre_Tableros_" + token
-
-    doc.openTransaction("ElectricCR: conectar tableros por cara superior")
-    try:
-        # Si cambia el tablero origen, reutilizar la ruta que ya pertenecia al
-        # desconector. Asi no quedan dos alimentadores hacia el mismo equipo.
-        route = _existing_route_for_destination(doc, name, destination)
-        route = route or doc.addObject("Part::Feature", name)
-        face_index = 0
-        if source_slot_index is not None:
-            source_point, face_index = _distributed_top_point(
-                source,
-                source_slot_index,
-                source_slot_count,
-            )
-        else:
-            source_point = _top_center(source)
-        points = _route_points(source, destination, source_point=source_point)
-        route.Shape = Part.makePolygon(points)
-        route.Label = "Alimentador {} -> {} ({})".format(source_code, destination_code, circuit_id)
-        definitions = (
-            ("App::PropertyString", "Tipo", "ElectricCR", "Tipo logico"),
-            ("App::PropertyString", "GeneradoPor", "ElectricCR", "Macro generadora"),
-            ("App::PropertyString", "CircuitoID", "ElectricCR", "Circuito del tablero origen"),
-            ("App::PropertyLink", "TableroOrigen", "Vinculo", "Tablero aguas arriba"),
-            ("App::PropertyLink", "TableroDestino", "Vinculo", "Tablero aguas abajo"),
-            ("App::PropertyVector", "PuntoOrigen", "Geometria", "Centro de cara superior origen"),
-            ("App::PropertyVector", "PuntoDestino", "Geometria", "Centro de cara superior destino"),
-            ("App::PropertyVectorList", "Points", "Geometria", "Eje ortogonal"),
-            ("App::PropertyFloat", "Longitud_m", "Calculo", "Longitud del eje en metros"),
-            ("App::PropertyString", "CaraTableroOrigen", "Puertos", "Cara del tablero aguas arriba"),
-            ("App::PropertyInteger", "FaceIndexTableroOrigen", "Puertos", "Indice de la cara superior usada"),
-            ("App::PropertyInteger", "RanuraTableroOrigen", "Puertos", "Ranura asignada, uno basada"),
-            ("App::PropertyInteger", "CantidadRanurasTableroOrigen", "Puertos", "Cantidad de llegadas distribuidas"),
-        )
-        for definition in definitions:
-            _ensure(route, *definition)
-        route.Tipo = "AlimentadorEntreTableros"
-        route.GeneradoPor = GENERATED_BY
-        route.CircuitoID = circuit_id
-        route.TableroOrigen = source
-        route.TableroDestino = destination
-        route.PuntoOrigen = points[0]
-        route.PuntoDestino = points[-1]
-        route.Points = points
-        route.Longitud_m = float(route.Shape.Length) / 1000.0
-        route.CaraTableroOrigen = "Top"
-        route.FaceIndexTableroOrigen = int(face_index)
-        route.RanuraTableroOrigen = int(source_slot_index) + 1 if source_slot_index is not None else 0
-        route.CantidadRanurasTableroOrigen = int(source_slot_count or 0)
-        group = _ensure_group(doc)
-        if route not in list(getattr(group, "Group", []) or []):
-            group.addObject(route)
+    selected = []
+    if Gui is not None:
         try:
-            route.ViewObject.LineColor = (1.0, 0.45, 0.05)
-            route.ViewObject.ShapeColor = (1.0, 0.45, 0.05)
-            route.ViewObject.LineWidth = 4.0
+            selected = [obj for obj in (Gui.Selection.getSelection() or []) if panels.is_panel(obj) or assignments.is_connectable_equipment(obj)]
         except Exception:
-            pass
-        doc.recompute()
-        doc.commitTransaction()
-    except Exception:
-        doc.abortTransaction()
-        raise
-
-    _log("{}: {:.3f} m desde {} hasta {}".format(circuit_id, route.Longitud_m, source_code, destination_code))
+            selected = []
+    source = source or (selected[0] if len(selected) >= 1 else None)
+    destination = destination or (selected[1] if len(selected) >= 2 else None)
+    if source is None or destination is None or source is destination or not panels.is_panel(source):
+        App.Console.PrintWarning("[ElectricCR][FEEDER] Seleccione primero el tablero aguas arriba y luego el equipo destino.\n")
+        return None
+    cid = panels.text(circuit_id).strip() or assignments.circuit_id(destination)
+    if not cid:
+        App.Console.PrintWarning("[ElectricCR][FEEDER] El equipo destino no tiene circuito asignado.\n")
+        return None
+    record = {"object": destination, "panel": source, "circuit_id": cid, "source": "Seleccion"}
+    result = feeders.connect_equipment_feeders(doc, [record])
+    route = result["routes"][0] if result and result.get("routes") else None
+    if route is None:
+        return None
+    for ptype, name, group, description in (
+        ("App::PropertyInteger", "RanuraTableroOrigen", "Puertos", "Ranura asignada, uno basada"),
+        ("App::PropertyInteger", "CantidadRanurasTableroOrigen", "Puertos", "Cantidad de llegadas distribuidas"),
+        ("App::PropertyInteger", "FaceIndexTableroOrigen", "Puertos", "Indice de cara superior"),
+        ("App::PropertyString", "CaraTableroOrigen", "Puertos", "Cara superior usada"),
+    ):
+        if name not in set(getattr(route, "PropertiesList", []) or []):
+            route.addProperty(ptype, name, group, description)
+    route.RanuraTableroOrigen = int(source_slot_index) + 1 if source_slot_index is not None else int(route.SlotTablero)
+    route.CantidadRanurasTableroOrigen = int(source_slot_count) if source_slot_count is not None else int(route.CantidadSlotsTablero)
+    route.FaceIndexTableroOrigen = int(route.FaceIndexTablero)
+    route.CaraTableroOrigen = str(route.CaraTablero)
+    route.Tipo = "AlimentadorEntreTableros"
     return route
 
 

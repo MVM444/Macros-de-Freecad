@@ -1,7 +1,18 @@
 # -*- coding: utf-8 -*-
 # MenuText: Ruta critica solo seleccionados
-# ToolTip: Dibuja rutas criticas desde el primer objeto hacia los demas objetos seleccionados
+# ToolTip: Dibuja rutas criticas entre objetos o subelementos seleccionados
 # Icon: medir_distancia_y_dibujar_ruta.svg
+#
+# Purpose: create one orthogonal route from the first geometric selection to
+# every following selection. FreeCAD target: 1.1.3.
+# Revision: 2026-08-10 20:18:00 -06:00.
+# Selection semantics: Face.CenterOfMass, Vertex.Point, reliable picked point
+# on a non-circular Edge, center of circular Edge, stable Edge fallback, and
+# object get_connection_point fallback.
+# Route height and bend radius are configurable; an impossible radius is
+# reduced safely or disabled without aborting the remaining routes.
+# IMPORTANT: never reduce selection identity to Object.Name. Different faces,
+# edges, vertices, or points on the same object are valid distinct endpoints.
 
 # Qt compatibility for FreeCAD 1.x (PySide6) and older builds.
 def _ensure_qt_compat():
@@ -75,6 +86,7 @@ _ensure_qt_compat()
 
 
 import os
+import sys
 import importlib.util
 import importlib.machinery
 
@@ -89,6 +101,14 @@ except Exception:
 
 TAG = "[RUTA-SEL]"
 USE_RESULTS_SHEET = False
+DEFAULT_ROUTE_Z = 3000.0
+DEFAULT_FILLET_RADIUS = 235.0
+
+_THIS_DIR = os.path.dirname(__file__) if "__file__" in globals() else ""
+if _THIS_DIR and _THIS_DIR not in sys.path:
+    sys.path.insert(0, _THIS_DIR)
+
+import selection_geometry as _selection_geometry
 
 
 def log_info(msg):
@@ -103,31 +123,83 @@ def log_err(msg):
     FreeCAD.Console.PrintError(f"{TAG}[ERROR] {msg}\n")
 
 
-def _selected_objects():
-    sel = list(FreeCADGui.Selection.getSelection() or [])
-    if sel:
-        return sel
+def _route_settings_dialog(default_height=DEFAULT_ROUTE_Z, default_radius=DEFAULT_FILLET_RADIUS):
+    dialog = QtGui.QDialog()
+    dialog.setWindowTitle("Ruta critica")
+    dialog.setModal(True)
+
+    layout = QtGui.QFormLayout(dialog)
+
+    height_spin = QtGui.QDoubleSpinBox(dialog)
+    height_spin.setObjectName("routeHeightSpin")
+    height_spin.setRange(-100000.0, 100000.0)
+    height_spin.setDecimals(1)
+    height_spin.setSingleStep(100.0)
+    height_spin.setSuffix(" mm")
+    height_spin.setValue(float(default_height))
+
+    radius_spin = QtGui.QDoubleSpinBox(dialog)
+    radius_spin.setObjectName("filletRadiusSpin")
+    radius_spin.setRange(0.0, 100000.0)
+    radius_spin.setDecimals(1)
+    radius_spin.setSingleStep(5.0)
+    radius_spin.setSuffix(" mm")
+    radius_spin.setSpecialValueText("0 mm (sin curva)")
+    radius_spin.setValue(float(default_radius))
+
+    layout.addRow("Altura ruta Z (mm):", height_spin)
+    layout.addRow("Radio curva (mm):", radius_spin)
+
+    standard = getattr(QtGui.QDialogButtonBox, "StandardButton", QtGui.QDialogButtonBox)
+    buttons = QtGui.QDialogButtonBox(standard.Ok | standard.Cancel, parent=dialog)
+    buttons.accepted.connect(dialog.accept)
+    buttons.rejected.connect(dialog.reject)
+    layout.addRow(buttons)
+
+    runner = getattr(dialog, "exec", None) or getattr(dialog, "exec_", None)
+    accepted = getattr(QtGui.QDialog, "Accepted", 1)
+    dialog_code = runner() if callable(runner) else 0
+    if dialog_code != accepted:
+        return None
+    return float(height_spin.value()), float(radius_spin.value())
+
+
+def _selected_endpoints(base):
     try:
-        sel_ex = FreeCADGui.Selection.getSelectionEx() or []
-        return [s.Object for s in sel_ex if getattr(s, "Object", None)]
+        selection_ex = list(FreeCADGui.Selection.getSelectionEx("", 0) or [])
+    except TypeError:
+        selection_ex = list(FreeCADGui.Selection.getSelectionEx() or [])
     except Exception:
-        return []
+        selection_ex = []
 
+    records = _selection_geometry.resolve_selection_ex_list(
+        selection_ex,
+        fallback_resolver=base.get_connection_point,
+    )
+    if records:
+        return records
 
-def _unique_objects(objs):
-    out = []
-    seen = set()
-    for obj in objs or []:
-        if obj is None:
+    # Compatibility fallback for environments that expose only getSelection.
+    records = []
+    try:
+        objects = list(FreeCADGui.Selection.getSelection() or [])
+    except Exception:
+        objects = []
+    for index, obj in enumerate(objects):
+        try:
+            point = base.get_connection_point(obj)
+        except Exception:
             continue
-        key = str(getattr(obj, "Name", "") or "")
-        if not key:
-            key = str(id(obj))
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(obj)
-    return out
+        records.append({
+            "object": obj,
+            "subobject": None,
+            "subelement": "",
+            "point": point,
+            "selection_type": "OBJECT",
+            "source": "object",
+            "ordinal": index,
+        })
+    return records
 
 
 def _load_base_macro():
@@ -146,12 +218,13 @@ def _load_base_macro():
     return mod
 
 
-def _is_valid_target(base, obj):
+def _is_valid_target(base, endpoint):
+    obj = endpoint.get("object") if isinstance(endpoint, dict) else None
     if obj is None:
         return False
     if hasattr(obj, "Group"):
         return False
-    if not hasattr(obj, "Placement"):
+    if endpoint.get("point") is None:
         return False
     try:
         if base.is_ruta_obj(obj):
@@ -164,6 +237,74 @@ def _is_valid_target(base, obj):
     except Exception:
         pass
     return True
+
+
+def _endpoint_text(endpoint):
+    obj = endpoint.get("object")
+    label = str(getattr(obj, "Label", getattr(obj, "Name", "?")) or "?")
+    subelement = str(endpoint.get("subelement", "") or "")
+    selection_type = str(endpoint.get("selection_type", "UNKNOWN") or "UNKNOWN")
+    point = endpoint.get("point")
+    point_text = "(?, ?, ?)"
+    if point is not None:
+        point_text = "({:.2f}, {:.2f}, {:.2f})".format(point.x, point.y, point.z)
+    detail = subelement or selection_type
+    return "{} | {} | punto={}".format(label, detail, point_text)
+
+
+def _target_label(endpoint):
+    obj = endpoint.get("object")
+    label = str(getattr(obj, "Label", getattr(obj, "Name", "Destino")) or "Destino")
+    subelement = str(endpoint.get("subelement", "") or "")
+    if subelement:
+        return "{} ({})".format(label, subelement)
+    return label
+
+
+def _set_property(obj, property_type, name, value, description):
+    try:
+        if name not in (getattr(obj, "PropertiesList", []) or []):
+            obj.addProperty(property_type, name, "ElectricCR", description)
+        setattr(obj, name, value)
+        return True
+    except Exception as ex:
+        log_warn("No se pudo guardar metadato {}: {}".format(name, ex))
+        return False
+
+
+def _write_route_metadata(wire, origin, destination, route_height, requested_radius, effective_radius):
+    origin_obj = origin.get("object")
+    destination_obj = destination.get("object")
+    values = (
+        ("App::PropertyString", "ECR_ObjetoOrigen", str(getattr(origin_obj, "Name", "") or ""), "Nombre interno del objeto origen"),
+        ("App::PropertyString", "ECR_ObjetoDestino", str(getattr(destination_obj, "Name", "") or ""), "Nombre interno del objeto destino"),
+        ("App::PropertyString", "ECR_TipoSeleccionOrigen", str(origin.get("selection_type", "") or ""), "Tipo de seleccion origen"),
+        ("App::PropertyString", "ECR_SubElementoOrigen", str(origin.get("subelement", "") or ""), "Subelemento origen"),
+        ("App::PropertyString", "ECR_TipoSeleccionDestino", str(destination.get("selection_type", "") or ""), "Tipo de seleccion destino"),
+        ("App::PropertyString", "ECR_SubElementoDestino", str(destination.get("subelement", "") or ""), "Subelemento destino"),
+        ("App::PropertyVector", "ECR_PuntoOrigen", origin.get("point"), "Punto geometrico origen"),
+        ("App::PropertyVector", "ECR_PuntoDestino", destination.get("point"), "Punto geometrico destino"),
+        ("App::PropertyLength", "ECR_AlturaRuta", float(route_height), "Altura Z solicitada para la ruta"),
+        ("App::PropertyLength", "ECR_RadioSolicitado", float(requested_radius), "Radio de curva solicitado"),
+        ("App::PropertyLength", "ECR_RadioEfectivo", float(effective_radius), "Radio de curva aplicado"),
+        ("App::PropertyString", "ECR_GeneradoPor", "RutaCritica_Seleccionados", "Herramienta generadora"),
+    )
+    for property_type, name, value, description in values:
+        if value is not None:
+            _set_property(wire, property_type, name, value, description)
+
+
+def _wire_has_curved_edge(wire):
+    shape = getattr(wire, "Shape", None)
+    for edge in list(getattr(shape, "Edges", []) or []):
+        curve = getattr(edge, "Curve", None)
+        text = "{} {}".format(
+            getattr(curve, "TypeId", ""),
+            curve.__class__.__name__ if curve is not None else "",
+        ).lower()
+        if "circle" in text or "bspline" in text or "bezier" in text:
+            return True
+    return False
 
 
 def _parent_group_for_target(base, doc, target):
@@ -182,69 +323,83 @@ def ruta_critica_solo_seleccionados():
         log_err("No hay documento activo")
         return
 
-    sel = _selected_objects()
-    if len(sel) < 2:
-        log_err("Seleccione primero el objeto inicial y luego uno o mas destinos")
-        return
-
-    objeto_inicial = sel[0]
-    if not hasattr(objeto_inicial, "Placement"):
-        log_err("El primer elemento seleccionado no tiene Placement")
-        return
-
     try:
         base = _load_base_macro()
     except Exception as ex:
         log_err(f"No se pudo cargar macro base: {ex}")
         return
 
-    raw_targets = _unique_objects(sel[1:])
+    endpoints = _selected_endpoints(base)
+    if len(endpoints) < 2:
+        log_err("Seleccione primero el objeto inicial y luego uno o mas destinos")
+        return
+
+    origin = endpoints[0]
+    if not _is_valid_target(base, origin):
+        log_err("El primer elemento seleccionado no es un origen geometrico valido")
+        return
+
     targets = []
     skipped = []
-    origin_name = str(getattr(objeto_inicial, "Name", "") or "")
-
-    for obj in raw_targets:
-        obj_name = str(getattr(obj, "Name", "") or "")
-        if obj_name and obj_name == origin_name:
-            continue
-        if _is_valid_target(base, obj):
-            targets.append(obj)
+    for endpoint in endpoints[1:]:
+        if _is_valid_target(base, endpoint):
+            targets.append(endpoint)
         else:
-            skipped.append(obj)
+            skipped.append(endpoint)
 
     if not targets:
-        log_err("No hay destinos validos en la seleccion. Seleccione objetos con Placement.")
+        log_err("No hay destinos geometricos validos en la seleccion")
         return
 
-    altura, ok = QtGui.QInputDialog.getDouble(
-        None, "Altura", "Ingrese altura Z de las rutas (mm):",
-        3000, -100000, 100000, 2
-    )
-    if not ok:
+    settings = _route_settings_dialog()
+    if settings is None:
         log_warn("Operacion cancelada por el usuario")
         return
+    altura, requested_radius = settings
 
     hoja = base.ensure_results_sheet(doc) if USE_RESULTS_SHEET else None
     next_row = 2 if USE_RESULTS_SHEET else None
-    p_ini = base.get_connection_point(objeto_inicial)
+    p_ini = origin.get("point")
     total_wires = 0
+    created = []
 
+    log_info("Origen: {}".format(_endpoint_text(origin)))
     log_info(f"Destinos a procesar: {len(targets)}")
-    for idx, target in enumerate(targets, 1):
-        t_label = getattr(target, "Label", getattr(target, "Name", "Destino"))
+    log_info("Z ruta solicitado: {:.2f} mm".format(altura))
+    log_info("Radio solicitado: {:.2f} mm".format(requested_radius))
+
+    doc.openTransaction("Ruta critica solo seleccionados")
+    for idx, destination in enumerate(targets, 1):
+        target = destination.get("object")
+        t_label = _target_label(destination)
+        wire = None
         try:
-            p_fin = base.get_connection_point(target)
+            p_fin = destination.get("point")
             dist = p_ini.distanceToPoint(p_fin)
             z_route = base.route_z_level(altura, p_ini, p_fin)
             pts = base.ortho_points_path(p_ini, p_fin, altura)
+            effective_radius, radius_capacity = _selection_geometry.effective_fillet_radius(
+                pts,
+                requested_radius,
+            )
 
             wire = base.create_draft_wire(pts)
             wire.Label = f"Ruta Critica hacia {t_label}"
             if hasattr(wire, "FilletRadius"):
                 try:
-                    wire.FilletRadius = 500.0
+                    wire.FilletRadius = float(effective_radius)
                 except Exception as exf:
                     log_warn(f"No se pudo aplicar FilletRadius en '{t_label}': {exf}")
+                    effective_radius = 0.0
+
+            _write_route_metadata(
+                wire,
+                origin,
+                destination,
+                altura,
+                requested_radius,
+                effective_radius,
+            )
 
             parent_group = _parent_group_for_target(base, doc, target)
             grupo_conexiones = base.ensure_conexiones_group(doc, parent_group)
@@ -262,13 +417,44 @@ def ruta_critica_solo_seleccionados():
                 next_row += 1
 
             total_wires += 1
+            created.append({
+                "wire": wire,
+                "label": t_label,
+                "requested": float(requested_radius),
+                "effective": float(effective_radius),
+                "capacity": float(radius_capacity),
+            })
+            log_info("Destino: {}".format(_endpoint_text(destination)))
             log_info(
-                "[{}/{}] '{}' distancia={:.2f} mm z_ruta={:.2f}".format(
-                    idx, len(targets), t_label, dist, z_route
+                "[{}/{}] '{}' distancia={:.2f} mm z_ruta={:.2f} "
+                "radio solicitado={:.2f} mm | radio efectivo={:.2f} mm | radio max={:.2f} mm".format(
+                    idx,
+                    len(targets),
+                    t_label,
+                    dist,
+                    z_route,
+                    requested_radius,
+                    effective_radius,
+                    radius_capacity,
                 )
             )
+            if requested_radius > 0.0 and effective_radius <= 0.0:
+                log_warn("'{}': la geometria no admite fillet; se conserva la ruta ortogonal".format(t_label))
+            elif effective_radius + 0.01 < requested_radius:
+                log_warn(
+                    "'{}': radio solicitado={:.2f} mm | reducido a {:.2f} mm por longitud disponible".format(
+                        t_label,
+                        requested_radius,
+                        effective_radius,
+                    )
+                )
         except Exception as ex:
             log_err(f"Fallo en '{t_label}': {ex}")
+            if wire is not None:
+                try:
+                    doc.removeObject(wire.Name)
+                except Exception:
+                    pass
             if USE_RESULTS_SHEET and hoja is not None and next_row is not None:
                 try:
                     base.set_text(hoja, f"A{next_row}", "ERROR")
@@ -285,10 +471,46 @@ def ruta_critica_solo_seleccionados():
         except Exception as ex:
             log_warn(f"No se pudo actualizar E1: {ex}")
 
-    try:
-        doc.recompute()
-    except Exception as ex:
-        log_warn(f"Error en recompute: {ex}")
+    if total_wires:
+        try:
+            doc.recompute()
+            changed = False
+            for item in created:
+                if item["effective"] <= 0.0 or _wire_has_curved_edge(item["wire"]):
+                    continue
+                try:
+                    item["wire"].FilletRadius = 0.0
+                    _set_property(
+                        item["wire"],
+                        "App::PropertyLength",
+                        "ECR_RadioEfectivo",
+                        0.0,
+                        "Radio de curva aplicado",
+                    )
+                    item["effective"] = 0.0
+                    changed = True
+                    log_warn(
+                        "'{}': Draft no genero curva; se conserva la ruta sin fillet".format(
+                            item["label"]
+                        )
+                    )
+                except Exception as ex:
+                    log_warn("No se pudo desactivar fillet fallido en '{}': {}".format(item["label"], ex))
+            if changed:
+                doc.recompute()
+            doc.commitTransaction()
+        except Exception as ex:
+            try:
+                doc.abortTransaction()
+            except Exception:
+                pass
+            log_err(f"Error final al recomputar rutas: {ex}")
+            return
+    else:
+        try:
+            doc.abortTransaction()
+        except Exception:
+            pass
 
     if skipped:
         log_warn(f"Se omitieron {len(skipped)} objetos no validos de la seleccion")

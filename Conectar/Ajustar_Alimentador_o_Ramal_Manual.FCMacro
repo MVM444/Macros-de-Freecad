@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-# MenuText: [ACTIVA] Ajustar Alimentador o Ramal Manual
+# MenuText: Ajustar Ruta...
 # Icon: Ajustar_Alimentador_o_Ramal_Manual.svg
+# Toolbar: Conectar
 """
 Macro: Ajustar_Alimentador_o_Ramal_Manual
 Description:
@@ -26,6 +27,14 @@ Behavior:
 """
 
 import math
+import os
+import sys
+
+_THIS_DIR = os.path.dirname(__file__) if "__file__" in globals() else ""
+if _THIS_DIR and _THIS_DIR not in sys.path:
+    sys.path.insert(0, _THIS_DIR)
+
+import selection_geometry as _selection_geometry
 
 import FreeCAD as App
 
@@ -849,44 +858,13 @@ def _score_route_candidate(obj):
 
 
 def _point_from_edge(edge):
-    if edge is None:
-        return None
-    curve = getattr(edge, "Curve", None)
-    if curve is not None:
-        center = getattr(curve, "Center", None)
-        if center is not None:
-            return _vec(center.x, center.y, center.z)
-    verts = list(getattr(edge, "Vertexes", []) or [])
-    if len(verts) >= 2:
-        p1 = verts[0].Point
-        p2 = verts[-1].Point
-        return _vec((p1.x + p2.x) * 0.5, (p1.y + p2.y) * 0.5, (p1.z + p2.z) * 0.5)
-    if len(verts) == 1:
-        p = verts[0].Point
-        return _vec(p.x, p.y, p.z)
-    return None
+    point, _selection_type = _selection_geometry.point_from_edge(edge)
+    return point
 
 
 def _point_from_subobject(subobj):
-    if subobj is None:
-        return None
-    point = getattr(subobj, "Point", None)
-    if point is not None:
-        return _vec(point.x, point.y, point.z)
-
-    stype = _safe_text(getattr(subobj, "ShapeType", "")).lower()
-    if stype == "edge":
-        pt = _point_from_edge(subobj)
-        if pt is not None:
-            return pt
-    if stype == "face":
-        com = getattr(subobj, "CenterOfMass", None)
-        if com is not None:
-            return _vec(com.x, com.y, com.z)
-    com = getattr(subobj, "CenterOfMass", None)
-    if com is not None:
-        return _vec(com.x, com.y, com.z)
-    return None
+    point, _selection_type = _selection_geometry.point_from_subobject(subobj)
+    return point
 
 
 def _face_normal_from_subobject(subobj):
@@ -1062,45 +1040,28 @@ def _target_info_from_selection_ex(sel_ex):
     if sel_ex is None:
         return None
 
-    obj = getattr(sel_ex, "Object", None)
-    for sub in (getattr(sel_ex, "SubObjects", []) or []):
-        pt = _point_from_subobject(sub)
-        if pt is not None:
-            outward = _outward_dir_from_obj_point(obj, pt)
-            return {
-                "point": pt,
-                "obj": obj,
-                "subobj": sub,
-                "perp_dir": _perpendicular_dir_from_target(pt, obj=obj, subobj=sub),
-                "outward_dir": outward,
-                "source": "subobject",
-            }
-
-    for p in (getattr(sel_ex, "PickedPoints", []) or []):
-        if p is not None:
-            pt = _vec(p.x, p.y, p.z)
-            outward = _outward_dir_from_obj_point(obj, pt)
-            return {
-                "point": pt,
-                "obj": obj,
-                "subobj": None,
-                "perp_dir": _perpendicular_dir_from_target(pt, obj=obj, subobj=None),
-                "outward_dir": outward,
-                "source": "picked",
-            }
-
-    pt = _point_from_object(obj)
-    if pt is not None:
-        outward = _outward_dir_from_obj_point(obj, pt)
-        return {
-            "point": pt,
-            "obj": obj,
-            "subobj": None,
-            "perp_dir": _perpendicular_dir_from_target(pt, obj=obj, subobj=None),
-            "outward_dir": outward,
-            "source": "object",
-        }
-    return None
+    records = _selection_geometry.resolve_selection_ex_entry(
+        sel_ex,
+        fallback_resolver=_point_from_object,
+    )
+    if not records:
+        return None
+    record = records[0]
+    obj = record.get("object")
+    sub = record.get("subobject")
+    pt = record.get("point")
+    outward = _outward_dir_from_obj_point(obj, pt)
+    source = "subobject" if sub is not None else record.get("source", "object")
+    return {
+        "point": pt,
+        "obj": obj,
+        "subobj": sub,
+        "subelement": record.get("subelement", ""),
+        "selection_type": record.get("selection_type", "UNKNOWN"),
+        "perp_dir": _perpendicular_dir_from_target(pt, obj=obj, subobj=sub),
+        "outward_dir": outward,
+        "source": source,
+    }
 
 
 def _axis_delta(a, b):
@@ -2668,32 +2629,10 @@ def _adjust_points_local(points, target, target_info=None, route_obj=None):
 
 
 def _max_fillet_radius(points):
-    pts = _dedup_points(points)
-    if len(pts) < 3:
-        return 0.0
-    best = float("inf")
-    found_corner = False
-    for idx in range(1, len(pts) - 1):
-        a = pts[idx - 1]
-        b = pts[idx]
-        c = pts[idx + 1]
-        l1 = float(a.distanceToPoint(b))
-        l2 = float(b.distanceToPoint(c))
-        if l1 <= POINT_TOL or l2 <= POINT_TOL:
-            continue
-        # Ignore collinear runs; fillet on same-direction edges raises warnings.
-        v1 = _normalize(_vec(b.x - a.x, b.y - a.y, b.z - a.z))
-        v2 = _normalize(_vec(c.x - b.x, c.y - b.y, c.z - b.z))
-        if _is_zero_vec(v1) or _is_zero_vec(v2):
-            continue
-        align = abs(float(_dot(v1, v2)))
-        if align >= 0.995:
-            continue
-        found_corner = True
-        best = min(best, 0.5 * min(l1, l2))
-    if not found_corner or not math.isfinite(best):
-        return 0.0
-    return max(0.0, best)
+    return _selection_geometry.max_uniform_fillet_radius(
+        points,
+        tolerance=POINT_TOL,
+    )
 
 
 def _property_names(obj):

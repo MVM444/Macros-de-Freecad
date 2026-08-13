@@ -90,10 +90,16 @@ def get_metadata(obj) -> Optional[Dict[str, object]]:
         float(getattr(base, "y", 0.0)),
         float(getattr(base, "z", 0.0)),
     )
+    yaw_deg = _get_float_property(obj, ("Yaw",), 0.0)
+    pitch_deg = _get_float_property(obj, ("Pitch",), 0.0)
+    roll_deg = _get_float_property(obj, ("Roll",), 0.0)
 
     return {
         "position_mm": position_mm,
         "orientation": _placement_orientation(placement),
+        "yaw_deg": yaw_deg,
+        "pitch_deg": pitch_deg,
+        "roll_deg": roll_deg,
         "fov_rad": math.radians(_get_float_property(obj, ("FOV", "FieldOfView"), DEFAULT_FOV_DEG)),
         "height_offset_mm": _get_float_property(
             obj, ("HeightOffset", "HeightOffsetMm"), DEFAULT_HEIGHT_OFFSET_MM

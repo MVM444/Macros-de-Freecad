@@ -54,6 +54,15 @@ class ServicePlatformCalculatorTests(unittest.TestCase):
         self.assertAlmostEqual(1200.0, layout.position_width_mm)
         self.assertEqual([100.0], position_origins(options, layout))
 
+    def test_positions_honor_global_x_origin(self):
+        options = PlatformOptions(
+            total_width_mm=3000.0,
+            service_positions=2,
+            origin_x_mm=8457.343,
+        )
+        layout = calculate_layout(options)
+        self.assertEqual([8557.343, 9977.343], position_origins(options, layout))
+
     def test_invalid_position_count_is_rejected(self):
         with self.assertRaises(PlatformValidationError):
             calculate_layout(PlatformOptions(service_positions=0))

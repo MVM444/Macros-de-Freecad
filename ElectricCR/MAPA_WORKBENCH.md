@@ -2,7 +2,7 @@
 
 **Proposito:** Servir como memoria tecnica viva para Marco, GPT, Codex y otros agentes. Este archivo debe permitir reconstruir como funciona ElectricCR sin depender de la memoria del usuario ni de conversaciones anteriores.
 
-**Version:** 2026-08-08 13:01, America/Costa_Rica.
+**Version:** 2026-08-08 18:06, America/Costa_Rica.
 
 ## Regla principal
 
@@ -91,10 +91,25 @@ Estas macros no deben considerarse automaticamente parte del Workbench definitiv
 Incluye modulos Python internos, por ejemplo:
 
 - `ElectricCR/electriccr/features/`
+- `ElectricCR/electriccr/connections/`
 
 Aqui existen comportamientos propios de objetos ElectricCR, incluyendo objetos `FeaturePython`, `App::Link`, maestros y propiedades semanticas.
 
 Esta capa es parte de la evolucion hacia un Workbench mas formal y mantenible.
+
+La familia `connections/` separa asignaciones, tableros, puertos, ruteo,
+alimentadores y backbone. TP, TCOM y otros codigos son datos, no algoritmos.
+Las guias de ruta son opcionales y los objetos generados viven bajo
+`ElectricCR_Conexiones` para evitar ciclos entre grupos y `PropertyLink`.
+
+En la barra normal `Conectar` deben quedar como flujo principal:
+
+- `Conectar Alimentadores...`;
+- `Conectar Circuito / Backbone...`;
+- `Ajustar Ruta...`.
+
+Los wrappers historicos se registran en `Conectar Legacy`, disponible por menu
+pero no incluido en la configuracion compacta de barras.
 
 ### 4. Capa de soporte
 

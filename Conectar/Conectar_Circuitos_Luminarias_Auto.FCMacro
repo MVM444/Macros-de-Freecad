@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # MenuText: [ACTIVA] Conectar Circuitos Luminarias
 # Icon: Conectar_Circuitos_Luminarias_Auto.svg
+# Revision: 2026-08-10 - reusable Qt dock lifecycle for FreeCAD 1.1.3.
 
 # Qt compatibility for FreeCAD 1.x (PySide6) and older builds.
 def _ensure_qt_compat():
@@ -106,6 +107,12 @@ from pathlib import Path
 
 import FreeCAD as App
 import Draft
+
+_REPO_DIR = str(Path(__file__).resolve().parents[1]) if "__file__" in globals() else ""
+if _REPO_DIR and _REPO_DIR not in sys.path:
+    sys.path.insert(0, _REPO_DIR)
+
+from ElectricCR.ui import dock_manager as _dock_manager
 
 try:
     import FreeCADGui as Gui
@@ -3040,39 +3047,45 @@ class FormularioRamales(object):
         lay = None
 
         if QtCore is not None and parent is not None and hasattr(QtWidgets, "QDockWidget"):
-            try:
-                old = parent.findChild(QtWidgets.QDockWidget, PANEL_DOCK_OBJECT_NAME)
-                if old is not None:
-                    old.close()
-                    old.deleteLater()
-            except Exception:
-                pass
+            dock = _dock_manager.get_reusable_dock(
+                parent,
+                PANEL_DOCK_OBJECT_NAME,
+                "[UI-DOCK][CircuitosLuminarias]",
+            )
             try:
                 pref_panel_floating = pref_get_bool("panel_floating", False)
-                dock = QtWidgets.QDockWidget(DEFAULT_PANEL_TITLE, parent)
-                dock.setObjectName(PANEL_DOCK_OBJECT_NAME)
-                dock.setAllowedAreas(
-                    QtCore.Qt.LeftDockWidgetArea
-                    | QtCore.Qt.RightDockWidgetArea
-                    | QtCore.Qt.TopDockWidgetArea
-                    | QtCore.Qt.BottomDockWidgetArea
-                )
-                dock.setMinimumWidth(340)
-                try:
-                    dock.setFeatures(
-                        QtWidgets.QDockWidget.DockWidgetClosable
-                        | QtWidgets.QDockWidget.DockWidgetMovable
-                        | QtWidgets.QDockWidget.DockWidgetFloatable
+                if dock is None:
+                    _dock_manager.log_created(
+                        PANEL_DOCK_OBJECT_NAME,
+                        "[UI-DOCK][CircuitosLuminarias]",
                     )
-                except Exception:
-                    dock.setFeatures(QtWidgets.QDockWidget.DockWidgetClosable)
-                dock.setFloating(bool(pref_panel_floating))
+                    dock = QtWidgets.QDockWidget(DEFAULT_PANEL_TITLE, parent)
+                    dock.setObjectName(PANEL_DOCK_OBJECT_NAME)
+                    dock.setAllowedAreas(
+                        QtCore.Qt.LeftDockWidgetArea
+                        | QtCore.Qt.RightDockWidgetArea
+                        | QtCore.Qt.TopDockWidgetArea
+                        | QtCore.Qt.BottomDockWidgetArea
+                    )
+                    dock.setMinimumWidth(340)
+                    try:
+                        dock.setFeatures(
+                            QtWidgets.QDockWidget.DockWidgetClosable
+                            | QtWidgets.QDockWidget.DockWidgetMovable
+                            | QtWidgets.QDockWidget.DockWidgetFloatable
+                        )
+                    except Exception:
+                        dock.setFeatures(QtWidgets.QDockWidget.DockWidgetClosable)
+                    dock.setFloating(bool(pref_panel_floating))
+                    parent.addDockWidget(
+                        QtCore.Qt.RightDockWidgetArea if not pref_panel_floating else QtCore.Qt.LeftDockWidgetArea,
+                        dock,
+                    )
+                old_root = dock.widget()
                 root = QtWidgets.QWidget(dock)
                 dock.setWidget(root)
-                parent.addDockWidget(
-                    QtCore.Qt.RightDockWidgetArea if not pref_panel_floating else QtCore.Qt.LeftDockWidgetArea,
-                    dock,
-                )
+                if old_root is not None and old_root is not root:
+                    old_root.deleteLater()
                 lay = QtWidgets.QVBoxLayout(root)
             except Exception:
                 dock = None

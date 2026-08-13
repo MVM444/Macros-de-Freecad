@@ -5,6 +5,13 @@ import sys
 
 import FreeCAD as App
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
+if REPO not in sys.path:
+    sys.path.insert(0, REPO)
+
+from ElectricCR.electriccr.connections import feeders as connection_feeders
+
 
 def main():
     source = os.path.abspath(sys.argv[-2])
@@ -41,7 +48,7 @@ def main():
             raise RuntimeError("Circuito sin cajas: " + group.CircuitoID)
     circuit_ids = set(group.CircuitoID for group in groups)
     feeders = [obj for obj in doc.Objects
-               if str(getattr(obj, "GeneradoPor", "")) == "Conectar_Circuitos_TP_a_Cara_Superior_Tablero"
+               if str(getattr(obj, "GeneradoPor", "")) == connection_feeders.GENERATED_BY
                and str(getattr(obj, "CircuitoID", "")) in circuit_ids]
     if len(feeders) != len(groups):
         raise RuntimeError("Faltan alimentadores al TP")

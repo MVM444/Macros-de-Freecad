@@ -200,3 +200,27 @@ FacilArquitecturaWB debe iniciar como una herramienta simple y robusta de prepar
 - Convertir sketches de muros en Arch Walls.
 
 Luego evolucionar hacia importacion/limpieza asistida de DXF y, posteriormente, hacia imagenes/PDF como referencias calibradas.
+
+## 8. Actualizacion 2026-08-09 - reconstruccion BIM nativa
+
+La revision del codigo instalado de FreeCAD 1.1.3 confirmo:
+
+- `Arch.makeBuilding()` crea un `BuildingPart` con `IfcType = Building`.
+- `Arch.makeFloor()` crea un `BuildingPart` con `IfcType = Building Storey`.
+- `Arch.makeWall(sketch)` conserva el Sketch directamente como `Base` parametrica.
+- `Arch.makeStructure()` produce las columnas nativas usadas por BIM.
+- `Arch.makeWindowPreset()` y `Hosts = [wall]` producen Door/Window nativas y el
+  muro obtiene el hueco mediante el mecanismo de subvolumen de `ArchWindow`.
+- `Arch.makeSpace()` existe, pero la generacion automatica de Spaces y la losa se
+  difieren hasta validar topologia cerrada con la misma profundidad que los muros.
+
+La contencion nativa se realiza con `Building.Group -> Level` y
+`Level.Group -> objetos`. No se debe agregar un `PropertyLink` inverso desde cada
+objeto hacia el Level: FreeCAD considera esa combinacion un ciclo del grafo. La
+trazabilidad `FA_TargetLevel` se guarda por eso como nombre estable en texto.
+
+Se comprobo ademas que `Arch.makeWindowPreset()` ejecuta varias recomputaciones por
+abertura. En un muro compuesto con decenas de puertas/ventanas el resultado sigue
+siendo correcto, pero puede tardar varios minutos. La prueba automatica de La Cruz
+usa todas las paredes y columnas y una muestra real de cada abertura para mantener
+un tiempo acotado; el asistente permite seleccionar todas las fuentes en uso normal.

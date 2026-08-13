@@ -1,0 +1,68 @@
+# -*- coding: utf-8 -*-
+# MenuText: Conectar Circuito / Backbone...
+# ToolTip: Conecta las cajas octogonales del mismo circuito sin depender del nombre del tablero
+# Icon: Conectar/Conectar_Octogonales_por_Circuito.svg
+# Toolbar: Conectar
+# Transaction: self
+
+"""Comando general de backbone ElectricCR.
+
+La geometria vive en ``ElectricCR.electriccr.connections.backbone``. Sustituye
+las variantes TP/TCOM como herramienta visible. Compatible con FreeCAD 1.1.3.
+Creado: 2026-08-08 18:01 CST. No agregar variantes por nombre de tablero.
+"""
+
+from pathlib import Path
+import sys
+import FreeCAD as App
+
+try:
+    import FreeCADGui as Gui
+except Exception:
+    Gui = None
+
+
+def _selected_groups():
+    if Gui is None:
+        return []
+    try:
+        return [obj for obj in (Gui.Selection.getSelection() or []) if hasattr(obj, "Group")]
+    except Exception:
+        return []
+
+
+def _cfg():
+    prefs = App.ParamGet("User parameter:BaseApp/Preferences/Mod/ElectricCR/ConectarBackbone")
+    return {
+        "route_z": float(prefs.GetFloat("route_z", 3400.0)),
+        "bend_radius": float(prefs.GetFloat("bend_radius", 100.0)),
+        "port_stub": float(prefs.GetFloat("port_stub", 80.0)),
+        "diameter": float(prefs.GetFloat("diameter", 22.2)),
+    }
+
+
+def run(doc_override=None, cfg_override=None, groups_override=None, circuit_prefix=None):
+    root = Path(__file__).resolve().parent.parent
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    from ElectricCR.electriccr.connections import backbone
+
+    doc = doc_override or App.ActiveDocument
+    if doc is None:
+        App.Console.PrintWarning("[ElectricCR][BACKBONE] No hay documento activo.\n")
+        return None
+    groups = list(groups_override) if groups_override is not None else _selected_groups()
+    return backbone.connect_backbone(
+        doc,
+        circuit_groups=groups or None,
+        cfg=dict(cfg_override) if cfg_override is not None else _cfg(),
+        circuit_prefix=circuit_prefix,
+    )
+
+
+def main():
+    return run()
+
+
+if __name__ == "__main__":
+    main()

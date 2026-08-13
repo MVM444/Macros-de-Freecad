@@ -1,33 +1,33 @@
 """FA_CloseWallSketch command.
 
 Descripcion: copia sketches de paredes y extiende lineas sobre puertas y ventanas.
-Fecha: 2026-07-23
-Version: 0.2.0
+Fecha: 2026-08-09
+Version: 0.3.0
 Instrucciones: una sola transaccion para permitir Ctrl-Z.
 """
 
 from __future__ import annotations
 
 import os
-import time
-
 import FreeCAD
 import FreeCADGui
 from PySide import QtWidgets
 
+from ..core.bim_utils import prepare_sketches_as_wall_centerlines, sketches_requiring_wall_metadata
 from ..core.command_errors import UserFacingError, handle_command_exception
 from ..core.constants import BUILD_ID
+from ..core.parameters import ensure_parameter_sheet, read_parameters
 from ..core.project_structure import ensure_project_structure, msg
 from ..core.room_utils import (
     collect_opening_sketches,
-    collect_selected_wall_sketches,
+    collect_selected_wall_candidates,
     create_closed_wall_sketches,
 )
+from ..ui.dialog_wall_parameters import WallSketchParametersDialog
 
 ICON_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "resources", "icons", "closed_rooms.svg")
 ).replace(os.sep, "/")
-COMMAND_VERSION = str(int(time.time()))
 PREFERENCES_PATH = "User parameter:BaseApp/Preferences/Mod/FacilArquitecturaWB/ClosedRooms"
 
 
@@ -120,14 +120,14 @@ class ClosedRoomsDialog(QtWidgets.QDialog):
 
 
 class CommandClass:
-    CommandName = "FA_CloseWallSketch_" + COMMAND_VERSION
+    CommandName = "FA_CloseWallSketch"
 
     def GetResources(self):  # noqa: N802
         return {
             "MenuText": "FA Cerrar huecos de paredes",
             "ToolTip": (
-                "Copiar los sketches de pared seleccionados y extender sus lineas "
-                "sobre los buques detectados de puertas y ventanas."
+                "Cerrar huecos desde un muro BIM, su Sketch Base o un Sketch generico; "
+                "solicita los parametros de muro que falten."
             ),
             "Pixmap": ICON_PATH,
         }
@@ -156,12 +156,29 @@ class CommandClass:
                 raise UserFacingError(
                     "Seleccione el sketch de centros de paredes que desea copiar y cerrar."
                 )
-            wall_sketches = collect_selected_wall_sketches(selection)
+            opening_sketches = collect_opening_sketches(doc, selection=selection)
+            wall_sketches = collect_selected_wall_candidates(selection, opening_sketches)
             if not wall_sketches:
                 raise UserFacingError(
-                    "La seleccion no contiene un sketch de paredes con espesor detectado."
+                    "La seleccion no contiene un muro BIM ni un Sketch de pared convertible. "
+                    "Seleccione el muro, su Sketch Base o un Sketch generico con geometria."
                 )
-            opening_sketches = collect_opening_sketches(doc, selection=selection)
+            missing = sketches_requiring_wall_metadata(wall_sketches)
+            conversion_values = None
+            if missing:
+                sheet = ensure_parameter_sheet(doc, groups["parameters"])
+                params = read_parameters(sheet)
+                parameter_dialog = WallSketchParametersDialog(
+                    missing, params, parent=FreeCADGui.getMainWindow()
+                )
+                accepted = (
+                    parameter_dialog.exec()
+                    if hasattr(parameter_dialog, "exec")
+                    else parameter_dialog.exec_()
+                )
+                if accepted != QtWidgets.QDialog.Accepted:
+                    return
+                conversion_values = parameter_dialog.values()
             msg(
                 "Clasificacion: paredes=%d | puertas_ventanas=%d"
                 % (len(wall_sketches), len(opening_sketches))
@@ -182,6 +199,13 @@ class CommandClass:
                 transaction_open = True
             except Exception:
                 transaction_open = False
+            if conversion_values is not None:
+                wall_sketches = prepare_sketches_as_wall_centerlines(
+                    wall_sketches,
+                    conversion_values["thickness"],
+                    conversion_values["height"],
+                    conversion_values["wall_type"],
+                )
             sketches, summary = create_closed_wall_sketches(
                 doc,
                 groups["master_sketches"],

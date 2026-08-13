@@ -6,6 +6,10 @@ Este directorio contiene macros para crear, nombrar y usar poligonos/rectangulos
 
 ## Bitacora
 
+- 2026-08-10: `RectFromBoundaryLines.FCMacro` admite tambien caras seleccionadas
+  de muros BIM/Arch. Las caras verticales se proyectan como limites en planta;
+  en una cara horizontal se usa el borde recto mas cercano al punto del clic.
+  El rectangulo conserva enlaces `FA_SourceWalls` a los muros utilizados.
 - 2026-06-10: antes de agregar la guia visible de Areas, se respaldo `README.md` y posibles archivos de guia en `../Respaldos/Areas_Guia_Areas_20260610_105630/`.
 - 2026-06-10: se agrego `Guia_Areas.FCMacro` como ventana practica de flujo de trabajo para la barra `Areas`.
 - 2026-06-10: se agrego `Guia_Areas.svg` junto a la macro y en `ElectricCR/icons/Areas/Guia_Areas.svg`; el icono usa un signo de pregunta para identificarlo como ayuda/guia.
@@ -115,14 +119,22 @@ con varios rotulos distintos se reporta como posible pared abierta o faltante.
 
 ## RectFromBoundaryLines.FCMacro
 
-Macro manual estable para crear rectangulos a partir de 2 a N aristas limite seleccionadas.
+Macro manual para crear rectangulos a partir de 2 a N aristas limite o caras
+seleccionadas de muros BIM.
 
 Comportamiento actual:
 
 - Calcula el rectangulo desde orientaciones y limites de las aristas seleccionadas.
+- Reconoce muros `Arch Wall`, IFC Wall y objetos con `FA_Role = wall`.
+- Convierte una cara vertical del muro en su linea limite proyectada sobre XY.
+- En caras superiores o inferiores toma el borde recto mas cercano al punto
+  seleccionado; esto permite escoger explicitamente el lado interior o exterior.
+- Admite mezclar aristas tradicionales y caras BIM en la misma seleccion.
 - Crea el objeto dentro del grupo `Areas`.
 - Etiqueta el resultado como `Area_###`.
 - Agrega propiedades `ElectricCRTipo`, `GeneratedBy`, `AreaM2`, `VirtualClosures` y `Confidence`.
+- Registra `FA_SourceMethod` y `FA_SourceWalls` para conservar trazabilidad hacia
+  los muros fuente, sin alterar los muros BIM.
 - Usa un color verde-azulado transparente para diferenciarlo de las areas creadas por click.
 
 ## AsignarNombreEstandar.FCMacro
