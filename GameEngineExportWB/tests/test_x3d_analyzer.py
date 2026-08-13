@@ -39,7 +39,10 @@ class X3DAnalyzerTests(unittest.TestCase):
             json_path, md_path = x3d_analyzer.write_reports(report, path)
             self.assertTrue(json_path.is_file())
             self.assertTrue(md_path.is_file())
-            self.assertIn("PotLink001", md_path.read_text(encoding="utf-8"))
+            markdown = md_path.read_text(encoding="utf-8")
+            self.assertIn("PotLink001", markdown)
+            self.assertIn("Radio PointLight: promedio 6.000 m", markdown)
+            self.assertIn("enlaces exportados como copias completas", markdown)
             self.assertEqual(path.read_bytes(), original)
 
     def test_gzip_x3dz(self):
