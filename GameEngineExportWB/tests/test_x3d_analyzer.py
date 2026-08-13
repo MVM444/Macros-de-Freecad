@@ -3,7 +3,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import x3d_analyzer
+try:
+    from GameEngineExportWB.core import x3d_analyzer
+except ImportError:
+    import x3d_analyzer
 
 
 SAMPLE = '''<?xml version="1.0" encoding="UTF-8"?>
