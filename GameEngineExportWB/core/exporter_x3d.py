@@ -23,7 +23,7 @@ import xml.etree.ElementTree as ET
 
 
 LOG_PREFIX = "[GAMEEXPORT] "
-DEBUG_VERSION = "2026-07-30-automatic-complete-scene-v2"
+DEBUG_VERSION = "2026-08-13-unique-x3d-def-names-v1"
 SCALE_VECTOR = "0.001 0.001 0.001"
 ROTATION_VECTOR = "1 0 0 -1.57079632679"
 TRANSFORM_DEF = "FreeCAD_mm_to_m"
@@ -515,6 +515,7 @@ def decorate_x3d(
             )
         return
 
+    _ensure_unique_def_names(scene)
     _remove_gameexport_light_nodes(scene)
     _remove_walk_ground_collision(scene, q)
     navigation_cfg = _normalize_navigation_cfg(lighting_cfg)
@@ -896,10 +897,9 @@ def _insert_viewpoint(scene, q, meta: Optional[Dict[str, object]], nav_cfg: Dict
 
     eye_height_mm = float(nav_cfg.get("eye_height_mm", DEFAULT_EYE_HEIGHT_MM))
     position_mm = (0.0, -6000.0, 0.0)
-    # A walking camera in FreeCAD must look horizontally with Z as up. After
-    # the global -90 X conversion this becomes an identity X3D viewpoint,
-    # preserving X3D/Castle's default +Y gravity-up direction.
-    orientation = (1.0, 0.0, 0.0, math.radians(90.0))
+    orientation = (0.0, 1.0, 0.0, 0.0)
+    yaw_pitch_roll_deg = (0.0, 0.0, 0.0)
+    use_yaw_pitch_roll = True
     description = "GameStart"
     fov_rad = math.radians(60.0)
 
@@ -910,6 +910,11 @@ def _insert_viewpoint(scene, q, meta: Optional[Dict[str, object]], nav_cfg: Dict
         if isinstance(meta.get("orientation"), (list, tuple)) and len(meta.get("orientation")) == 4:
             o = meta["orientation"]
             orientation = (float(o[0]), float(o[1]), float(o[2]), float(o[3]))
+        ypr_keys = ("yaw_deg", "pitch_deg", "roll_deg")
+        if all(key in meta for key in ypr_keys):
+            yaw_pitch_roll_deg = tuple(float(meta[key]) for key in ypr_keys)
+        else:
+            use_yaw_pitch_roll = False
         description = str(meta.get("description", description))
         fov_rad = float(meta.get("fov_rad", fov_rad))
         if "height_offset_mm" in meta:
@@ -923,26 +928,36 @@ def _insert_viewpoint(scene, q, meta: Optional[Dict[str, object]], nav_cfg: Dict
     pos_rot = transform_rot.multVec(pos_vec)
     position_m = (pos_rot.x * 0.001, pos_rot.y * 0.001, pos_rot.z * 0.001)
 
-    axis_vec = FreeCAD.Vector(orientation[0], orientation[1], orientation[2])
-    angle_rad = float(orientation[3])
-    if axis_vec.Length == 0.0 or abs(angle_rad) < 1e-9:
-        view_rot = FreeCAD.Rotation()
+    if use_yaw_pitch_roll:
+        yaw_deg, pitch_deg, roll_deg = yaw_pitch_roll_deg
+        FreeCAD.Console.PrintMessage(
+            LOG_PREFIX
+            + "[DEBUG] GameStart FreeCAD orientation: "
+            + f"Yaw={yaw_deg:.6f} deg, Pitch={pitch_deg:.6f} deg, Roll={roll_deg:.6f} deg\n"
+        )
+        final_axis_angle = _convert_gamestart_orientation_to_x3d(
+            orientation,
+            yaw_pitch_roll_deg,
+        )
     else:
-        view_rot = FreeCAD.Rotation(axis_vec, math.degrees(angle_rad))
-    final_rot = transform_rot.multiply(view_rot)
-    axis = final_rot.Axis
-    if axis.Length == 0.0:
-        axis = FreeCAD.Vector(0, 1, 0)
-    else:
-        axis.normalize()
-    # FreeCAD.Rotation.Angle is already expressed in radians.
-    final_angle_rad = float(final_rot.Angle)
+        FreeCAD.Console.PrintMessage(
+            LOG_PREFIX
+            + "[DEBUG] GameStart FreeCAD Yaw/Pitch/Roll unavailable; "
+            + "using legacy Placement orientation\n"
+        )
+        final_axis_angle = _convert_gamestart_orientation_to_x3d(orientation, None)
+    axis_x, axis_y, axis_z, final_angle_rad = final_axis_angle
+    FreeCAD.Console.PrintMessage(
+        LOG_PREFIX
+        + "[DEBUG] GameStart X3D Viewpoint axis-angle: "
+        + f"{axis_x:.6f} {axis_y:.6f} {axis_z:.6f} {final_angle_rad:.6f}\n"
+    )
 
     attrs = {
         "DEF": "GameExport_Viewpoint",
         "description": description,
         "position": f"{position_m[0]:.6f} {position_m[1]:.6f} {position_m[2]:.6f}",
-        "orientation": f"{axis.x:.6f} {axis.y:.6f} {axis.z:.6f} {final_angle_rad:.6f}",
+        "orientation": f"{axis_x:.6f} {axis_y:.6f} {axis_z:.6f} {final_angle_rad:.6f}",
         "fieldOfView": f"{fov_rad:.6f}",
         "jump": "true",
     }
@@ -956,6 +971,76 @@ def _insert_viewpoint(scene, q, meta: Optional[Dict[str, object]], nav_cfg: Dict
         if child.tag in {q("Background"), q("NavigationInfo")}:
             insert_index = idx + 1
     scene.insert(insert_index, ET.Element(q("Viewpoint"), attrs))
+
+
+def _convert_gamestart_orientation_to_x3d(
+    placement_orientation: Tuple[float, float, float, float],
+    yaw_pitch_roll_deg: Optional[Tuple[float, float, float]],
+) -> Tuple[float, float, float, float]:
+    """Convert a relative FreeCAD camera rotation into the X3D camera basis."""
+    if yaw_pitch_roll_deg is None:
+        source_rotation = _quaternion_from_axis_angle(
+            placement_orientation[:3],
+            float(placement_orientation[3]),
+        )
+    else:
+        yaw_deg, pitch_deg, roll_deg = yaw_pitch_roll_deg
+        yaw_rotation = _quaternion_from_axis_angle((0.0, 0.0, 1.0), math.radians(yaw_deg))
+        pitch_rotation = _quaternion_from_axis_angle((1.0, 0.0, 0.0), math.radians(pitch_deg))
+        roll_rotation = _quaternion_from_axis_angle((0.0, 1.0, 0.0), math.radians(roll_deg))
+        source_rotation = _quaternion_multiply(
+            _quaternion_multiply(yaw_rotation, pitch_rotation),
+            roll_rotation,
+        )
+
+    # Geometry changes from FreeCAD Z-up to X3D Y-up through -90 degrees X.
+    # Camera rotations are relative, so change basis by T * R * inverse(T).
+    basis_rotation = _quaternion_from_axis_angle((1.0, 0.0, 0.0), -math.pi / 2.0)
+    converted = _quaternion_multiply(
+        _quaternion_multiply(basis_rotation, source_rotation),
+        _quaternion_conjugate(basis_rotation),
+    )
+    return _quaternion_to_axis_angle(converted)
+
+
+def _quaternion_from_axis_angle(axis, angle_rad: float) -> Tuple[float, float, float, float]:
+    x, y, z = (float(axis[0]), float(axis[1]), float(axis[2]))
+    length = math.sqrt((x * x) + (y * y) + (z * z))
+    if length <= 1e-12 or abs(angle_rad) <= 1e-12:
+        return (1.0, 0.0, 0.0, 0.0)
+    half_angle = float(angle_rad) * 0.5
+    scale = math.sin(half_angle) / length
+    return (math.cos(half_angle), x * scale, y * scale, z * scale)
+
+
+def _quaternion_multiply(left, right) -> Tuple[float, float, float, float]:
+    lw, lx, ly, lz = left
+    rw, rx, ry, rz = right
+    return (
+        (lw * rw) - (lx * rx) - (ly * ry) - (lz * rz),
+        (lw * rx) + (lx * rw) + (ly * rz) - (lz * ry),
+        (lw * ry) - (lx * rz) + (ly * rw) + (lz * rx),
+        (lw * rz) + (lx * ry) - (ly * rx) + (lz * rw),
+    )
+
+
+def _quaternion_conjugate(value) -> Tuple[float, float, float, float]:
+    return (value[0], -value[1], -value[2], -value[3])
+
+
+def _quaternion_to_axis_angle(value) -> Tuple[float, float, float, float]:
+    length = math.sqrt(sum(float(component) ** 2 for component in value))
+    if length <= 1e-12:
+        return (0.0, 0.0, 1.0, 0.0)
+    w, x, y, z = (float(component) / length for component in value)
+    if w < 0.0:
+        w, x, y, z = -w, -x, -y, -z
+    w = max(-1.0, min(1.0, w))
+    angle_rad = 2.0 * math.acos(w)
+    axis_length = math.sqrt((x * x) + (y * y) + (z * z))
+    if axis_length <= 1e-12 or abs(angle_rad) <= 1e-12:
+        return (0.0, 0.0, 1.0, 0.0)
+    return (x / axis_length, y / axis_length, z / axis_length, angle_rad)
 
 
 def _material_cfg_with_light_source_indices(
@@ -1787,6 +1872,64 @@ def _serialize_xml(root: ET.Element, doctype_line: str) -> str:
             lines.insert(0, doctype_line)
         text = "\n".join(lines) + "\n"
     return text
+
+
+def _iter_def_scope_nodes(root: ET.Element):
+    """Yield nodes in one X3D DEF scope without entering ProtoDeclare bodies."""
+    yield root
+    for child in list(root):
+        if _local_name(child.tag) == "ProtoDeclare":
+            continue
+        yield from _iter_def_scope_nodes(child)
+
+
+def _ensure_unique_def_names(scene: ET.Element) -> int:
+    """Rename duplicate X3D DEF values while preserving the first definition.
+
+    FreeCADGui.export may emit the same internal Coin name for multiple linked
+    Mesh instances, for example SoFCIndexedFaceSet. X3D requires every DEF in
+    a scene name scope to be unique. Keeping the first DEF also keeps existing
+    USE references deterministic; later full node definitions only receive a
+    numeric suffix and their geometry, placement and appearance stay intact.
+    """
+    nodes = list(_iter_def_scope_nodes(scene))
+    reserved = {
+        str(node.attrib.get("DEF", "") or "")
+        for node in nodes
+        if str(node.attrib.get("DEF", "") or "")
+    }
+    seen = set()
+    next_suffix = {}
+    renamed = 0
+
+    for node in nodes:
+        original = str(node.attrib.get("DEF", "") or "")
+        if not original:
+            continue
+        if original not in seen:
+            seen.add(original)
+            continue
+
+        suffix = int(next_suffix.get(original, 2))
+        candidate = f"{original}_{suffix}"
+        while candidate in reserved or candidate in seen:
+            suffix += 1
+            candidate = f"{original}_{suffix}"
+        next_suffix[original] = suffix + 1
+        node.set("DEF", candidate)
+        reserved.add(candidate)
+        seen.add(candidate)
+        renamed += 1
+
+    if renamed:
+        FreeCAD = __import__("FreeCAD")
+        FreeCAD.Console.PrintMessage(
+            LOG_PREFIX
+            + "Normalized duplicate X3D DEF names: "
+            + str(renamed)
+            + " renamed\n"
+        )
+    return renamed
 
 
 def _extract_doctype(text: str) -> str:
