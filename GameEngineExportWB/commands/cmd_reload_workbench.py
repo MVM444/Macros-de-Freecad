@@ -20,6 +20,7 @@ ICON_PATH = os.path.abspath(
 COMMAND_MODULE_NAMES = (
     "GameEngineExportWB.commands.cmd_open_panel",
     "GameEngineExportWB.commands.cmd_export_and_launch",
+    "GameEngineExportWB.commands.cmd_analyze_x3d",
     "GameEngineExportWB.commands.cmd_add_light_properties",
     "GameEngineExportWB.commands.cmd_quick_examples",
     "GameEngineExportWB.commands.cmd_import_json_example",
