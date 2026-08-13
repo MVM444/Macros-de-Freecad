@@ -33,7 +33,7 @@ ICON_PATH = os.path.abspath(
     )
 ).replace(os.sep, "/")
 
-FINGERPRINT_VERSION = "gameexport-scene-v1"
+FINGERPRINT_VERSION = "gameexport-scene-v2-unique-def"
 SIDECAR_CACHE_KEY = "export_launch_cache"
 VIEW_PROPERTIES = (
     "Visibility",
