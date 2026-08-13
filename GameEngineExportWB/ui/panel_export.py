@@ -452,6 +452,9 @@ class ExportTaskPanel:
 
         grid.addWidget(QtGui.QLabel("Carpeta / Folder"), 0, 0)
         self.output_dir_line = QtGui.QLineEdit()
+        self.output_dir_line.setPlaceholderText(
+            "Carpeta del documento; si no existe, use Examinar / Document folder; otherwise Browse"
+        )
         grid.addWidget(self.output_dir_line, 0, 1)
         btn_browse_dir = QtGui.QPushButton("Examinar / Browse")
         btn_browse_dir.clicked.connect(self._browse_output_dir)
@@ -777,8 +780,14 @@ class ExportTaskPanel:
 
         output_cfg = data.get("output", {})
         if isinstance(output_cfg, dict):
-            if output_cfg.get("dir"):
-                self.output_dir_line.setText(output_cfg["dir"])
+            document_dir_is_valid = bool(
+                self.doc_path is not None and self.doc_path.parent.is_dir()
+            )
+            sidecar_dir = str(output_cfg.get("dir", "") or "").strip()
+            if not document_dir_is_valid and sidecar_dir:
+                expanded_sidecar_dir = os.path.expandvars(os.path.expanduser(sidecar_dir))
+                if Path(expanded_sidecar_dir).is_dir():
+                    self.output_dir_line.setText(str(Path(expanded_sidecar_dir)))
             if output_cfg.get("base_name"):
                 self.base_name_line.setText(output_cfg["base_name"])
 
@@ -1258,7 +1267,13 @@ class ExportTaskPanel:
         return True
 
     def _browse_output_dir(self):
-        start_dir = self.output_dir_line.text() or os.path.expanduser("~")
+        candidate = self.output_dir_line.text().strip()
+        if candidate and os.path.isdir(candidate):
+            start_dir = candidate
+        elif self.doc_path is not None and self.doc_path.parent.is_dir():
+            start_dir = str(self.doc_path.parent)
+        else:
+            start_dir = os.path.expanduser("~")
         selected = QtGui.QFileDialog.getExistingDirectory(
             self.widget, "Seleccionar carpeta de salida", start_dir
         )
@@ -2293,8 +2308,13 @@ class ExportTaskPanel:
         output_dir = self.output_dir_line.text().strip()
         base_name = self.base_name_line.text().strip()
         if not output_dir:
-            FreeCAD.Console.PrintError("[GAMEEXPORT] Output folder is empty\n")
-            return False
+            self._browse_output_dir()
+            output_dir = self.output_dir_line.text().strip()
+            if not output_dir:
+                FreeCAD.Console.PrintWarning(
+                    "[GAMEEXPORT] Export cancelled: no output folder was selected\n"
+                )
+                return False
         if not base_name:
             base_name = doc.Label.replace(" ", "_") or doc.Name
 
