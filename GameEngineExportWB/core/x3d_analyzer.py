@@ -487,6 +487,67 @@ def _markdown_report(report: Dict[str, object]) -> str:
     else:
         lines.append("- No se detectaron luces.")
 
+    radius = lights.get("radius", {}) if isinstance(lights, dict) else {}
+    intensity = lights.get("intensity", {}) if isinstance(lights, dict) else {}
+    for light_name in sorted(set(radius) | set(intensity)):
+        radius_info = radius.get(light_name, {})
+        intensity_info = intensity.get(light_name, {})
+        if radius_info.get("count"):
+            lines.append(
+                "- Radio "
+                + light_name
+                + ": promedio "
+                + f"{float(radius_info.get('average', 0.0)):.3f} m"
+                + ", rango "
+                + f"{float(radius_info.get('min', 0.0)):.3f} - "
+                + f"{float(radius_info.get('max', 0.0)):.3f} m"
+            )
+        if intensity_info.get("count"):
+            lines.append(
+                "- Intensidad "
+                + light_name
+                + ": promedio "
+                + f"{float(intensity_info.get('average', 0.0)):.3f}"
+                + ", rango "
+                + f"{float(intensity_info.get('min', 0.0)):.3f} - "
+                + f"{float(intensity_info.get('max', 0.0)):.3f}"
+            )
+
+    payload_percent = float(
+        summary.get("geometry_payload_percent_of_uncompressed", 0.0) or 0.0
+    )
+    repeated_percent = float(
+        summary.get("estimated_repeated_geometry_percent_of_uncompressed", 0.0)
+        or 0.0
+    )
+    lines.extend(["", "## Diagnostico automatico", ""])
+    if payload_percent >= 50.0:
+        lines.append(
+            "- La mayor parte del archivo es geometria textual: coordenadas, "
+            "indices, normales y datos asociados."
+        )
+    else:
+        lines.append(
+            "- La geometria textual no supera la mitad del archivo; revise tambien "
+            "materiales, metadatos y otros nodos en el JSON."
+        )
+    if repeated_percent >= 5.0:
+        lines.append(
+            "- Hay una cantidad significativa de geometria identica repetida. "
+            "Esto es compatible con enlaces exportados como copias completas de la malla."
+        )
+    elif summary.get("duplicate_geometry_groups", 0):
+        lines.append(
+            "- Se encontraron mallas identicas repetidas, pero su peso estimado no "
+            "domina el archivo."
+        )
+    else:
+        lines.append("- No se detectaron bloques geometricos identicos repetidos.")
+    if summary.get("duplicate_def_names", 0):
+        lines.append(
+            "- Existen nombres DEF duplicados; esto puede producir advertencias de X3D."
+        )
+
     lines.extend(
         [
             "",
