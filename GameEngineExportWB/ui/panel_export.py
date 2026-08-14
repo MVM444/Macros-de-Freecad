@@ -121,7 +121,7 @@ FreeCAD = __import__("FreeCAD")
 FreeCADGui = __import__("FreeCADGui")
 
 PARAM_GROUP = "User parameter:Plugins/GameEngineExportWB"
-DEBUG_VERSION = "2026-08-03-existing-output-folder-v3"
+DEBUG_VERSION = "2026-08-13-x3d-link-instancing-v1"
 ARCHITECTURAL_PROFILE_VERSION = "architectural-complete-v2"
 ARCHITECTURAL_CGE_LIGHT_RADIUS_M = 4.0
 ARCHITECTURAL_GLOBAL_AMBIENT = 0.12
@@ -464,8 +464,26 @@ class ExportTaskPanel:
         self.base_name_line = QtGui.QLineEdit()
         grid.addWidget(self.base_name_line, 1, 1)
 
+        grid.addWidget(QtGui.QLabel("Algoritmo X3D / X3D algorithm"), 2, 0)
+        self.combo_geometry_export_mode = QtGui.QComboBox()
+        self.combo_geometry_export_mode.addItem(
+            "Optimizado - reutilizar enlaces / Optimized - reuse links",
+            "Optimized",
+        )
+        self.combo_geometry_export_mode.addItem(
+            "Clasico - compatibilidad / Classic - compatibility",
+            "Classic",
+        )
+        self.combo_geometry_export_mode.setToolTip(
+            "ES: Optimizado reutiliza geometria identica mediante DEF/USE. "
+            "Clasico conserva el algoritmo anterior como respaldo.\n"
+            "EN: Optimized reuses identical geometry with DEF/USE. "
+            "Classic preserves the previous algorithm as a fallback."
+        )
+        grid.addWidget(self.combo_geometry_export_mode, 2, 1, 1, 2)
+
         self.launch_checkbox = QtGui.QCheckBox("Lanzar Castle Engine al exportar")
-        grid.addWidget(self.launch_checkbox, 2, 0, 1, 3)
+        grid.addWidget(self.launch_checkbox, 3, 0, 1, 3)
 
         self.btn_web_preview = QtGui.QPushButton("Vista previa Web / Web preview")
         self.btn_web_preview.setToolTip(
@@ -473,7 +491,7 @@ class ExportTaskPanel:
             "EN: Exports X3D, generates index.html and opens the default browser."
         )
         self.btn_web_preview.clicked.connect(self._export_web_preview)
-        grid.addWidget(self.btn_web_preview, 3, 0, 1, 3)
+        grid.addWidget(self.btn_web_preview, 4, 0, 1, 3)
 
         return group
 
@@ -682,6 +700,9 @@ class ExportTaskPanel:
         self.output_dir_line.setText(output_dir)
         self.base_name_line.setText(base_name)
         self.launch_checkbox.setChecked(bool(self.params.GetBool("launch_cge", False)))
+        self._set_geometry_export_mode(
+            self.params.GetString("x3d_geometry_mode", "Optimized")
+        )
         self.cge_path = self.params.GetString("cge_path", "")
         self.cge_path_line.setText(self.cge_path)
         nav_speed = self._normalize_nav_speed(float(self.params.GetFloat("nav_speed", 2.0)))
@@ -790,6 +811,12 @@ class ExportTaskPanel:
                     self.output_dir_line.setText(str(Path(expanded_sidecar_dir)))
             if output_cfg.get("base_name"):
                 self.base_name_line.setText(output_cfg["base_name"])
+
+        geometry_export_cfg = data.get("geometry_export")
+        if isinstance(geometry_export_cfg, dict):
+            self._set_geometry_export_mode(
+                str(geometry_export_cfg.get("mode", "Optimized"))
+            )
 
         global_cfg = data.get("global_light")
         if isinstance(global_cfg, dict):
@@ -972,6 +999,7 @@ class ExportTaskPanel:
         data["export_names"] = sorted(self.export_names)
         data["gamestart_label"] = gamestart_label
         data["output"] = {"dir": output_dir, "base_name": base_name}
+        data["geometry_export"] = self._geometry_export_config()
 
         data["global_light"] = {
             "enabled": bool(self.chk_global_light.isChecked()),
@@ -2055,6 +2083,29 @@ class ExportTaskPanel:
             index = 0
         self.combo_interior_lighting_mode.setCurrentIndex(index)
 
+    def _geometry_export_mode(self) -> str:
+        mode = self.combo_geometry_export_mode.currentData()
+        if mode is None:
+            text = str(self.combo_geometry_export_mode.currentText() or "")
+            mode = "Classic" if text.startswith("Clasico") else "Optimized"
+        return "Classic" if str(mode) == "Classic" else "Optimized"
+
+    def _set_geometry_export_mode(self, mode: str) -> None:
+        clean_mode = "Classic" if str(mode) == "Classic" else "Optimized"
+        for index in range(self.combo_geometry_export_mode.count()):
+            if str(self.combo_geometry_export_mode.itemData(index)) == clean_mode:
+                self.combo_geometry_export_mode.setCurrentIndex(index)
+                return
+        self.combo_geometry_export_mode.setCurrentIndex(
+            1 if clean_mode == "Classic" else 0
+        )
+
+    def _geometry_export_config(self) -> dict:
+        return {
+            "mode": self._geometry_export_mode(),
+            "minimum_payload_chars": 2048,
+        }
+
     def _normalize_nav_speed(self, speed: float) -> float:
         """Normalize navigation speed and migrate legacy bad default 2000->2."""
         if speed >= 1500.0:
@@ -2176,6 +2227,7 @@ class ExportTaskPanel:
         try:
             payload = {
                 "debug_version": DEBUG_VERSION,
+                "geometry_export": self._geometry_export_config(),
                 "document": {
                     "name": str(getattr(doc, "Name", "") or ""),
                     "label": str(getattr(doc, "Label", "") or ""),
@@ -2371,6 +2423,7 @@ class ExportTaskPanel:
                 material_cfg,
                 environment_cfg,
                 ground_texture_cfg,
+                self._geometry_export_config(),
             )
         except Exception as exc:
             FreeCAD.Console.PrintError("[GAMEEXPORT] Export failed: " + str(exc) + "\n")
@@ -2379,6 +2432,7 @@ class ExportTaskPanel:
         # Persist last choices
         persist_output_settings(self.params, output_dir, base_name, self.doc_path)
         self.params.SetBool("launch_cge", bool(self.launch_checkbox.isChecked()))
+        self.params.SetString("x3d_geometry_mode", self._geometry_export_mode())
         self.cge_path = self.cge_path_line.text().strip()
         self.params.SetString("cge_path", self.cge_path)
         self.params.SetFloat("nav_speed", float(self.spin_nav_speed.value()))
