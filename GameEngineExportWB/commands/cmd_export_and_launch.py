@@ -33,7 +33,7 @@ ICON_PATH = os.path.abspath(
     )
 ).replace(os.sep, "/")
 
-FINGERPRINT_VERSION = "gameexport-scene-v2-unique-def"
+FINGERPRINT_VERSION = "gameexport-scene-v3-x3d-instancing"
 SIDECAR_CACHE_KEY = "export_launch_cache"
 VIEW_PROPERTIES = (
     "Visibility",
@@ -260,6 +260,7 @@ def _panel_settings(panel):
         "environment": panel._environment_config_for_sidecar(),
         "point_light_options": panel._point_light_options_config(),
         "ground_texture": panel._ground_texture_config(),
+        "geometry_export": panel._geometry_export_config(),
     }
     return _stable_value(settings)
 
