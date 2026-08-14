@@ -11,6 +11,7 @@ Instrucciones clave:
 from __future__ import annotations
 
 import gzip
+import hashlib
 import math
 import re
 import shutil
@@ -23,7 +24,7 @@ import xml.etree.ElementTree as ET
 
 
 LOG_PREFIX = "[GAMEEXPORT] "
-DEBUG_VERSION = "2026-08-13-unique-x3d-def-names-v1"
+DEBUG_VERSION = "2026-08-13-x3d-link-instancing-v1"
 SCALE_VECTOR = "0.001 0.001 0.001"
 ROTATION_VECTOR = "1 0 0 -1.57079632679"
 TRANSFORM_DEF = "FreeCAD_mm_to_m"
@@ -40,6 +41,9 @@ DEFAULT_POINT_LIGHT_AMBIENT_INTENSITY = 0.18
 MAX_POINT_LIGHT_SHADOWS = 4
 EMITTER_MATERIAL_DEF_PREFIX = "GameExport_Emitter_"
 GROUND_TEXTURE_MATERIAL_DEF_PREFIX = "GameExport_GroundTexture_"
+INSTANCE_DEF_PREFIX = "GameExport_Instance_"
+DEFAULT_GEOMETRY_EXPORT_MODE = "Optimized"
+MIN_INSTANCE_PAYLOAD_CHARS = 2048
 GROUND_TEXTURE_FALLBACK_KEYWORDS = (
     ("terrain", 100),
     ("ground", 90),
@@ -119,6 +123,7 @@ def export_to_x3d(
     material_cfg: Optional[Dict[str, object]] = None,
     environment_cfg: Optional[Dict[str, object]] = None,
     ground_texture_cfg: Optional[Dict[str, object]] = None,
+    geometry_export_cfg: Optional[Dict[str, object]] = None,
 ) -> Path:
     """Export selected objects to X3D and run postprocessing."""
     FreeCAD = __import__("FreeCAD")
@@ -157,6 +162,7 @@ def export_to_x3d(
         _material_cfg_with_light_source_indices(material_cfg, exportable),
         environment_cfg,
         _ground_texture_cfg_with_object_indices(ground_texture_cfg, exportable),
+        geometry_export_cfg,
     )
     return out_path
 
@@ -464,6 +470,7 @@ def decorate_x3d(
     material_cfg: Optional[Dict[str, object]] = None,
     environment_cfg: Optional[Dict[str, object]] = None,
     ground_texture_cfg: Optional[Dict[str, object]] = None,
+    geometry_export_cfg: Optional[Dict[str, object]] = None,
 ) -> None:
     """Apply mandatory axis conversion and keep output format (plain/gzip)."""
     FreeCAD = __import__("FreeCAD")
@@ -547,6 +554,19 @@ def decorate_x3d(
             + "Applied ground texture to exported object: "
             + str(ground_texture_count)
             + " Shape nodes\n"
+        )
+
+    instance_count = _apply_geometry_export_mode(
+        scene,
+        q,
+        geometry_export_cfg,
+    )
+    if instance_count > 0:
+        FreeCAD.Console.PrintMessage(
+            LOG_PREFIX
+            + "Optimized repeated X3D geometry with DEF/USE: "
+            + str(instance_count)
+            + " repeated nodes replaced\n"
         )
 
     xml_out = _serialize_xml(root, doctype_line)
@@ -1857,6 +1877,174 @@ def _force_gzip_to_plain(path: Path) -> None:
             )
     except Exception as exc:
         FreeCAD.Console.PrintWarning(LOG_PREFIX + f"force gzip->plain failed: {exc}\n")
+
+
+def _geometry_export_mode(cfg: Optional[Dict[str, object]]) -> str:
+    if not isinstance(cfg, dict):
+        return DEFAULT_GEOMETRY_EXPORT_MODE
+    requested = str(cfg.get("mode", DEFAULT_GEOMETRY_EXPORT_MODE) or "").strip()
+    if requested.lower() == "classic":
+        return "Classic"
+    return "Optimized"
+
+
+def _apply_geometry_export_mode(
+    scene: ET.Element,
+    q,
+    cfg: Optional[Dict[str, object]],
+) -> int:
+    """Reuse identical rendered subtrees while preserving all placements."""
+    FreeCAD = __import__("FreeCAD")
+    mode = _geometry_export_mode(cfg)
+    FreeCAD.Console.PrintMessage(
+        LOG_PREFIX + "X3D geometry export mode: " + mode + "\n"
+    )
+    if mode == "Classic":
+        return 0
+
+    transform = _find_freecad_transform(scene, q)
+    if transform is None:
+        FreeCAD.Console.PrintWarning(
+            LOG_PREFIX + "Geometry instancing skipped: FreeCAD transform not found\n"
+        )
+        return 0
+
+    try:
+        minimum_payload = int(
+            (cfg or {}).get("minimum_payload_chars", MIN_INSTANCE_PAYLOAD_CHARS)
+        )
+    except (TypeError, ValueError):
+        minimum_payload = MIN_INSTANCE_PAYLOAD_CHARS
+    return _instance_repeated_x3d_subtrees(
+        transform,
+        minimum_payload_chars=max(0, minimum_payload),
+    )
+
+
+def _instance_repeated_x3d_subtrees(
+    root: ET.Element,
+    minimum_payload_chars: int = MIN_INSTANCE_PAYLOAD_CHARS,
+) -> int:
+    """Replace later identical Group/Switch/Shape nodes with type-safe USE.
+
+    DEF names are ignored during comparison. Existing USE nodes are resolved
+    to their previously defined content, so only complete visual matches are
+    reused. Transform nodes are never replaced, preserving every placement.
+    """
+    def_nodes = {}
+    reserved_defs = set()
+    for node in _iter_def_scope_nodes(root):
+        node_def = str(node.attrib.get("DEF", "") or "").strip()
+        if not node_def:
+            continue
+        reserved_defs.add(node_def)
+        def_nodes.setdefault(node_def, node)
+
+    digest_cache = {}
+
+    def digest_node(node, resolving=None):
+        cache_key = id(node)
+        cached = digest_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        resolving = set(resolving or ())
+        if cache_key in resolving:
+            marker = ("cycle:" + str(node.attrib.get("DEF", ""))).encode("utf-8")
+            result = (hashlib.sha256(marker).hexdigest(), len(marker))
+            digest_cache[cache_key] = result
+            return result
+        resolving.add(cache_key)
+
+        digest = hashlib.sha256()
+        local_tag = _local_name(node.tag)
+        digest.update(local_tag.encode("utf-8", errors="replace"))
+        payload_chars = len(local_tag)
+
+        node_use = str(node.attrib.get("USE", "") or "").strip()
+        if node_use:
+            target = def_nodes.get(node_use)
+            if target is not None:
+                target_digest, target_size = digest_node(target, resolving)
+                digest.update(b"\x00RESOLVED_USE\x00")
+                digest.update(target_digest.encode("ascii"))
+                payload_chars += target_size
+            else:
+                digest.update(b"\x00UNRESOLVED_USE\x00")
+                digest.update(node_use.encode("utf-8", errors="replace"))
+                payload_chars += len(node_use)
+            container_field = str(node.attrib.get("containerField", "") or "")
+            if container_field:
+                digest.update(b"\x00containerField\x00")
+                digest.update(container_field.encode("utf-8", errors="replace"))
+                payload_chars += len(container_field)
+        else:
+            for key, value in sorted(node.attrib.items()):
+                if key in {"DEF", "USE"}:
+                    continue
+                text = str(value)
+                digest.update(b"\x00ATTR\x00")
+                digest.update(str(key).encode("utf-8", errors="replace"))
+                digest.update(b"\x00")
+                digest.update(text.encode("utf-8", errors="replace"))
+                payload_chars += len(str(key)) + len(text)
+            for child in list(node):
+                child_digest, child_size = digest_node(child, resolving)
+                digest.update(b"\x00CHILD\x00")
+                digest.update(child_digest.encode("ascii"))
+                payload_chars += child_size
+
+        result = (digest.hexdigest(), payload_chars)
+        digest_cache[cache_key] = result
+        return result
+
+    eligible_tags = {"Group", "Switch", "Shape"}
+    seen = {}
+    generated_index = 1
+    replacement_count = 0
+
+    def next_instance_def() -> str:
+        nonlocal generated_index
+        while True:
+            candidate = INSTANCE_DEF_PREFIX + f"{generated_index:05d}"
+            generated_index += 1
+            if candidate not in reserved_defs:
+                reserved_defs.add(candidate)
+                return candidate
+
+    def visit(parent) -> None:
+        nonlocal replacement_count
+        for child in list(parent):
+            local_tag = _local_name(child.tag)
+            if local_tag not in eligible_tags or child.attrib.get("USE"):
+                visit(child)
+                continue
+
+            digest_value, payload_chars = digest_node(child)
+            key = (local_tag, digest_value)
+            previous = seen.get(key)
+            if previous is not None and payload_chars >= minimum_payload_chars:
+                _source_node, source_def = previous
+                replacement = ET.Element(child.tag, {"USE": source_def})
+                container_field = child.attrib.get("containerField")
+                if container_field:
+                    replacement.attrib["containerField"] = container_field
+                child_index = list(parent).index(child)
+                parent.remove(child)
+                parent.insert(child_index, replacement)
+                replacement_count += 1
+                continue
+
+            source_def = str(child.attrib.get("DEF", "") or "").strip()
+            if not source_def:
+                source_def = next_instance_def()
+                child.attrib["DEF"] = source_def
+                def_nodes[source_def] = child
+            seen[key] = (child, source_def)
+            visit(child)
+
+    visit(root)
+    return replacement_count
 
 
 def _serialize_xml(root: ET.Element, doctype_line: str) -> str:
