@@ -161,6 +161,14 @@ La pagina usa X3DOM estable desde `https://www.x3dom.org/release/`. El `Scene` d
 
 Para evitar interiores oscuros en archivos sin iluminacion, el HTML activa `headlight="true"` en una copia del `NavigationInfo` solo cuando no existen nodos `DirectionalLight`, `PointLight` o `SpotLight`. Si el X3D ya contiene luces, conserva el valor exportado para no sobreexponer la vista previa. Este ajuste no modifica el X3D exportado, el documento FreeCAD ni la iluminacion usada por Castle Game Engine.
 
+## Diagnostico Castle
+
+El comando **Diagnostico Castle / Castle Diagnostics** (`GameEngineExport_CastleDiagnostics`) localiza el X3D asociado al documento activo y permite analizarlo, abrirlo en Castle con registro de shaders o solicitar una captura automatica desde `GameStart`. Si no existe un X3D asociado, solicita un archivo manualmente y no reutiliza la ruta de otro documento.
+
+El nucleo `core/castle_diagnostics.py` no importa FreeCAD, FreeCADGui ni Qt. Su funcion publica `run_diagnostic(...)` recibe parametros explicitos y devuelve un diccionario versionado compatible con JSON para reutilizacion desde pruebas, macros y una futura herramienta MCP.
+
+Todos los resultados se escriben en `_castle_debug` junto al X3D: manifiesto JSON, resumen Markdown, reportes del analizador, validacion de `castle-model-converter`, registro de Castle y captura cuando corresponde. El FCStd y el X3D de origen permanecen sin cambios.
+
 ## Archivos incluidos
 
 - `Init.py`, `InitGui.py`: arranque del workbench y registro de comandos.

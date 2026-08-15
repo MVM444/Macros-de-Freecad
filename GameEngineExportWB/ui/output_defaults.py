@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import os
 import re
+import tempfile
 import unicodedata
 from pathlib import Path
 from typing import Optional, Tuple
 
 LAST_DOC_PATH_KEY = "last_doc_path"
+TEMP_OUTPUT_ROOT_NAME = "GameEngineExportWB"
 
 
 def _strip_to_ascii(value: str) -> str:
@@ -30,13 +32,30 @@ def _sanitize_doc_base(doc_path: Path) -> str:
     return _normalize_base_name(doc_path.stem)
 
 
-def compute_output_defaults(params, doc_path: Optional[Path]) -> Tuple[str, str, str]:
-    """Prefer the active document folder and avoid stale paths from other PCs."""
+def temporary_output_directory(unsaved_name: str = "") -> str:
+    """Return a stable per-document folder under the operating-system temp path."""
+    unsaved_base = _normalize_base_name(unsaved_name, "Scene")
+    return str(Path(tempfile.gettempdir()) / TEMP_OUTPUT_ROOT_NAME / unsaved_base)
+
+
+def compute_output_defaults(
+    params, doc_path: Optional[Path], unsaved_name: str = ""
+) -> Tuple[str, str, str]:
+    """Return defaults isolated from unrelated documents.
+
+    An unsaved document has no stable project identity, so it must never reuse
+    the last stored project folder or base name. It receives an isolated
+    temporary folder that is not persisted as a project preference.
+    """
     stored_dir = params.GetString("output_dir", "").strip()
     stored_base = params.GetString("base_name", "")
 
     doc_key = str(doc_path) if doc_path else ""
     doc_base = _sanitize_doc_base(doc_path) if doc_path else ""
+
+    if doc_path is None:
+        unsaved_base = _normalize_base_name(unsaved_name, "Scene") if unsaved_name else ""
+        return temporary_output_directory(unsaved_base), unsaved_base, ""
 
     if doc_path and doc_path.parent.is_dir():
         return str(doc_path.parent), doc_base, doc_key
@@ -80,6 +99,8 @@ def persist_output_settings(
     params, output_dir: str, base_name: str, doc_path: Optional[Path]
 ) -> None:
     """Store output prefs and register the active document key when available."""
+    if doc_path is None:
+        return
     params.SetString("output_dir", output_dir or "")
     params.SetString("base_name", base_name or "")
     if doc_path:

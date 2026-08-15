@@ -8,6 +8,7 @@ import FreeCADGui
 from .commands import cmd_add_light_properties
 from .commands import cmd_analyze_x3d
 from .commands import cmd_bim_doors_windows
+from .commands import cmd_castle_diagnostics
 from .commands import cmd_export_and_launch
 from .commands import cmd_import_json_example
 from .commands import cmd_open_panel
@@ -38,6 +39,7 @@ class GameEngineExportWorkbench(FreeCADGui.Workbench):
         export_command = cmd_open_panel.CommandClass()
         export_launch_command = cmd_export_and_launch.CommandClass()
         analyze_x3d_command = cmd_analyze_x3d.CommandClass()
+        castle_diagnostics_command = cmd_castle_diagnostics.CommandClass()
         light_command = cmd_add_light_properties.CommandClass()
         quick_example_command = cmd_quick_examples.CommandClass()
         import_json_command = cmd_import_json_example.CommandClass()
@@ -49,6 +51,7 @@ class GameEngineExportWorkbench(FreeCADGui.Workbench):
             export_command,
             export_launch_command,
             analyze_x3d_command,
+            castle_diagnostics_command,
             light_command,
             quick_example_command,
             import_json_command,
@@ -72,6 +75,12 @@ class GameEngineExportWorkbench(FreeCADGui.Workbench):
             LOG_PREFIX
             + "Registered X3D analysis command: "
             + analyze_x3d_command.CommandName
+            + "\n"
+        )
+        FreeCAD.Console.PrintMessage(
+            LOG_PREFIX
+            + "Registered Castle diagnostics command: "
+            + castle_diagnostics_command.CommandName
             + "\n"
         )
         commands = [command.CommandName for command in registered]
