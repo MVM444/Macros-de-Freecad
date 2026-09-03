@@ -1,12 +1,16 @@
 """Suspended modular ceiling helpers for FacilArquitecturaWB.
 
 Descripcion: genera cielos de 600x600 rectangulares o poligonales y reserva luminarias ElectricCR.
-Fecha: 2026-07-26
-Version: 0.2.0
+Funcion principal: conservar la logica modular existente e integrar la salida dentro del Level BIM.
+Mantenimiento: la reticula es auxiliar; el cielo conserva semantica IFC Covering/CEILING hasta validar Covering nativo.
+FreeCAD objetivo: 1.1.3.
+Fecha y hora: 2026-09-01 14:35 America/Costa_Rica.
+Version: 0.5.0.
 """
 
 from __future__ import annotations
 
+import json
 import math
 import re
 
@@ -190,10 +194,13 @@ def collect_rooms(doc, selection=None):
     """Collect selected room faces, preferring polygonal wall-derived rooms."""
     selected = list(selection or [])
     candidates = _flatten_selection(selected) if selected else list(getattr(doc, "Objects", []) or [])
+    spaces = [obj for obj in candidates if _is_bim_space(obj)]
     polygons = [obj for obj in candidates if _is_room_polygon(obj, selected=bool(selected))]
     rectangles = [obj for obj in candidates if _is_room_rectangle(obj, selected=bool(selected))]
     if not selected:
-        if polygons:
+        if spaces:
+            rooms = spaces
+        elif polygons:
             rooms = polygons
         else:
             rooms = rectangles
@@ -205,7 +212,8 @@ def collect_rooms(doc, selection=None):
         if generated and not polygons:
             rooms = generated
     else:
-        rooms = polygons + [obj for obj in rectangles if obj not in polygons]
+        rooms = spaces + [obj for obj in polygons if obj not in spaces]
+        rooms += [obj for obj in rectangles if obj not in rooms]
     result = []
     seen = set()
     for room in rooms:
@@ -226,8 +234,15 @@ def collect_electriccr_luminaires(doc):
     return [obj for obj in list(getattr(doc, "Objects", []) or []) if _is_luminaire(obj)]
 
 
-def create_modular_ceilings(doc, bim_group, rooms, luminaires, options):
-    """Create one clipped compound ceiling and grid per room face."""
+def create_modular_ceilings(
+    doc, bim_group, rooms, luminaires, options, level=None, schedule_group=None
+):
+    """Create one clipped compound ceiling per room inside the BIM Level.
+
+    The grid remains part of the calculation contract, but its permanent 2D
+    object is optional/documentary and disabled by default to keep the model
+    tree compact.
+    """
     rooms = list(rooms or [])
     if not rooms:
         raise UserFacingError("No hay recintos rectangulares o poligonales para crear cielos.")
@@ -236,12 +251,24 @@ def create_modular_ceilings(doc, bim_group, rooms, luminaires, options):
     thickness = float(options.get("panel_thickness_mm", 15.0))
     gap = max(0.0, float(options.get("joint_gap_mm", 5.0)))
     tolerance = max(0.0, float(options.get("alignment_tolerance_mm", 50.0)))
+    create_documentary_grid = bool(options.get("create_documentary_grid", False))
     if module <= 0.0 or thickness <= 0.0:
         raise UserFacingError("El modulo y el espesor del panel deben ser mayores que cero.")
     if bool(options.get("replace_previous", True)):
         remove_previous_ceilings(doc)
 
-    ceiling_group = ensure_group(doc, CEILING_GROUP_NAME, "Cielos suspendidos", bim_group)
+    target_parent = level if level is not None else bim_group
+    ceiling_group = ensure_group(doc, CEILING_GROUP_NAME, "Cielos suspendidos", target_parent)
+    _move_generated_group_to_parent(ceiling_group, target_parent)
+    if level is not None:
+        set_prop(
+            ceiling_group,
+            "App::PropertyString",
+            "FA_TargetLevel",
+            "FacilArquitectura",
+            "Nivel BIM que contiene los cielos",
+            str(getattr(level, "Name", "") or ""),
+        )
     plans = []
     created_objects = []
     all_lights = list(luminaires or [])
@@ -271,20 +298,60 @@ def create_modular_ceilings(doc, bim_group, rooms, luminaires, options):
         plan["room_label"] = _room_name(room)
         plan["geometry"] = spec["geometry"]
         panels = _create_room_panels(doc, ceiling_group, spec, plan, elevation, thickness, gap)
-        grid = _create_room_grid(doc, ceiling_group, spec, plan, elevation)
         _set_common_ceiling_properties(panels, room, source_lights, plan, elevation, thickness)
-        _set_common_ceiling_properties(grid, room, source_lights, plan, elevation, 0.0)
         set_prop(panels, "App::PropertyString", "IfcType", "IFC", "Clase IFC", "Covering")
         set_prop(panels, "App::PropertyString", "PredefinedType", "IFC", "Tipo IFC", "CEILING")
         _set_view(panels, color=(0.92, 0.92, 0.88), transparency=0)
-        _set_view(grid, color=(0.35, 0.35, 0.35), transparency=0)
-        created_objects.extend([panels, grid])
+        created_objects.append(panels)
+        if create_documentary_grid:
+            grid = _create_room_grid(doc, schedule_group or ceiling_group, spec, plan, elevation)
+            _set_common_ceiling_properties(grid, room, source_lights, plan, elevation, 0.0)
+            set_prop(
+                grid,
+                "App::PropertyBool",
+                "FA_DocumentaryOnly",
+                "FacilArquitectura",
+                "Objeto auxiliar de documentacion 2D",
+                True,
+            )
+            _set_view(grid, color=(0.35, 0.35, 0.35), transparency=0)
+            created_objects.append(grid)
         plans.append(plan)
 
-    sheet = _write_ceiling_schedule(doc, plans, ceiling_group, options)
+    sheet = _write_ceiling_schedule(doc, plans, schedule_group or ceiling_group, options)
     created_objects.append(sheet)
     doc.recompute()
-    return {"group": ceiling_group, "plans": plans, "objects": created_objects, "sheet": sheet}
+    return {
+        "group": ceiling_group,
+        "plans": plans,
+        "objects": created_objects,
+        "sheet": sheet,
+        "documentary_grid": create_documentary_grid,
+    }
+
+
+def _move_generated_group_to_parent(group, parent):
+    """Keep FA_Ceilings in only one explicit container to avoid duplicated tree branches."""
+    if group is None or parent is None:
+        return
+    for container in list(getattr(group, "InList", []) or []):
+        if container is parent:
+            continue
+        members = list(getattr(container, "Group", []) or [])
+        if group not in members:
+            continue
+        try:
+            if hasattr(container, "removeObject"):
+                container.removeObject(group)
+            else:
+                container.Group = [obj for obj in members if obj is not group]
+        except Exception as exc:
+            warn("No se pudo retirar Cielos suspendidos de %s: %s" % (_object_label(container), exc))
+    try:
+        if group not in list(getattr(parent, "Group", []) or []):
+            parent.addObject(group)
+    except Exception as exc:
+        warn("No se pudo integrar Cielos suspendidos al contenedor BIM: %s" % exc)
 
 
 def remove_previous_ceilings(doc):
@@ -333,6 +400,47 @@ def _flatten_selection(selection):
             except Exception:
                 pass
     return result
+
+
+def _is_bim_space(obj):
+    """Return True for native Arch/BIM Space objects, including FA-tagged Spaces."""
+    role = str(getattr(obj, "FA_Role", "") or "").strip().lower()
+    ifc_type = str(getattr(obj, "IfcType", "") or "").strip().lower()
+    proxy_type = str(getattr(getattr(obj, "Proxy", None), "Type", "") or "").strip().lower()
+    return bool(role == "bim_space" or ifc_type == "space" or proxy_type == "space")
+
+
+def _space_polygon_spec(room):
+    """Return an exact polygon spec when a Space exposes FA_FloorPolygonJSON."""
+    raw = str(getattr(room, "FA_FloorPolygonJSON", "") or "").strip()
+    if not raw:
+        return None
+    try:
+        points = json.loads(raw)
+        points = [(float(point[0]), float(point[1])) for point in points]
+        if len(points) < 3:
+            return None
+        origin_x = min(point[0] for point in points)
+        origin_y = min(point[1] for point in points)
+        local = [(x - origin_x, y - origin_y) for x, y in points]
+        vectors = [FreeCAD.Vector(x, y, 0.0) for x, y in local]
+        wire = Part.makePolygon(vectors + [vectors[0]])
+        face = Part.Face(wire)
+        bounds = face.BoundBox
+        if float(face.Area) <= EPSILON or bounds.XLength <= EPSILON or bounds.YLength <= EPSILON:
+            return None
+        return {
+            "room": room,
+            "geometry": "polygon",
+            "length": float(bounds.XLength),
+            "depth": float(bounds.YLength),
+            "base": FreeCAD.Vector(origin_x, origin_y, 0.0),
+            "rotation": FreeCAD.Rotation(),
+            "face": face,
+            "room_area_mm2": float(face.Area),
+        }
+    except Exception:
+        return None
 
 
 def _is_room_rectangle(obj, selected=False):
@@ -396,6 +504,28 @@ def _is_luminaire(obj):
 
 
 def _room_spec(room):
+    if _is_bim_space(room):
+        exact = _space_polygon_spec(room)
+        if exact is not None:
+            return exact
+        try:
+            bounds = room.Shape.BoundBox
+            length = float(bounds.XLength)
+            depth = float(bounds.YLength)
+            if length <= EPSILON or depth <= EPSILON:
+                raise ValueError("Space sin huella util")
+            return {
+                "room": room,
+                "geometry": "rectangle",
+                "length": length,
+                "depth": depth,
+                "base": FreeCAD.Vector(float(bounds.XMin), float(bounds.YMin), 0.0),
+                "rotation": FreeCAD.Rotation(),
+                "face": None,
+                "room_area_mm2": length * depth,
+            }
+        except Exception as exc:
+            raise UserFacingError("El Espacio BIM %s no tiene huella valida: %s" % (_object_label(room), exc))
     if _is_room_polygon(room, selected=True):
         try:
             source_face = max(list(room.Shape.Faces), key=lambda face: float(face.Area))
@@ -643,7 +773,8 @@ def _write_ceiling_schedule(doc, plans, parent_group, options):
         ]
         for index, value in enumerate(values, start=1):
             sheet.set("%s%d" % (_column_name(index), row), str(value))
-    parent_group.addObject(sheet)
+    if parent_group is not None:
+        parent_group.addObject(sheet)
     _tag_generated(sheet, "ceiling_schedule")
     return sheet
 

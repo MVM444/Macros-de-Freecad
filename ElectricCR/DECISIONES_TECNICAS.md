@@ -2,7 +2,7 @@
 
 **Proposito:** Registrar decisiones de arquitectura y proceso que deben mantenerse entre tareas y agentes.
 
-**Version:** 2026-08-08 11:46, America/Costa_Rica.
+**Version:** 2026-08-19 22:45, America/Costa_Rica.
 
 ## DT-001 - Separacion entre nivel base y altura de instalacion
 
@@ -158,3 +158,104 @@ Definiciones:
 Una tarea puede regresar a `DESARROLLO` desde cualquier etapa si se detectan errores, regresiones o desviaciones.
 
 El detalle operativo completo se mantiene en `FLUJO_GPT_CODEX.md`.
+
+## DT-010 - Espacio BIM como base preferente de recintos y areas
+
+ElectricCR adopta como regla permanente conservar los algoritmos actuales de
+deteccion, delimitacion y calculo de recintos, pero utilizar `Arch Space`
+(Espacio BIM) como objeto espacial base cuando su comportamiento haya sido
+comprobado para el caso procesado.
+
+Reglas:
+
+- No reemplazar ni eliminar automaticamente los objetos Area existentes.
+- No reescribir desde cero los algoritmos que ya detectan contornos, nombres o
+  superficies correctamente.
+- Reutilizar esos algoritmos para crear, alimentar o actualizar un Espacio BIM
+  cuando FreeCAD represente correctamente el recinto.
+- El Espacio BIM debe ser la fuente preferente del nombre funcional, geometria,
+  area, perimetro, volumen y pertenencia a nivel del recinto.
+- Los calculos de iluminacion, tomacorrientes, HVAC, deteccion de incendio y
+  otros sistemas deben referenciar al espacio; no deben duplicar su geometria
+  solo porque un recinto participe en varios calculos.
+- Cada sistema puede indicar si utiliza el espacio y conservar un valor de area
+  ajustada cuando el calculo no use el area completa.
+- Crear una geometria analitica adicional solamente cuando la zona calculada
+  tenga limites realmente distintos de los del espacio fisico.
+- Mantener los objetos Area actuales como compatibilidad y fallback cuando un
+  Espacio BIM falle, sea inestable o no represente correctamente la geometria.
+- No migrar documentos existentes al abrirlos. Toda conversion debe ser
+  explicita, reversible y probada primero en una copia o documento temporal.
+
+Se considera que Espacio BIM funciona correctamente solo despues de comprobar:
+
+- area y nombre del recinto;
+- contornos rectangulares e irregulares;
+- actualizacion al cambiar limites o muros;
+- guardado y reapertura del documento;
+- Undo/Redo;
+- etiquetas y visualizacion en planta;
+- compatibilidad con las tablas y consumidores actuales de ElectricCR.
+
+Hasta completar estas pruebas, la integracion se clasifica como
+`POR VERIFICAR` y no como sustitucion definitiva del sistema de areas.
+
+## DT-011 - No omitir herramientas nativas utiles
+
+El desarrollo de ElectricCR no debe comenzar por una implementacion propia sin
+haber identificado, estudiado y probado primero las herramientas nativas o ya
+disponibles que resuelvan total o parcialmente la misma necesidad.
+
+La omision inicial de Espacio BIM al desarrollar el sistema de Areas se registra
+como una deficiencia del proceso de investigacion, no como evidencia de que los
+algoritmos actuales carezcan de valor.
+
+Se adopta la siguiente regla:
+
+```text
+necesidad
+  -> inventario de herramientas existentes
+  -> prueba funcional en FreeCAD
+  -> comparacion con requisitos
+  -> reutilizar, extender, coexistir o justificar solucion propia
+  -> programar solamente despues
+```
+
+Una busqueda documental sin prueba funcional no completa esta revision. Cuando
+una alternativa nativa sea util pero incompleta, se debe preferir su extension o
+integracion y conservar los algoritmos propios que cubran las limitaciones reales.
+
+Si una herramienta existente se descubre tarde:
+
+- detener cualquier ampliacion basada en supuestos incompletos;
+- comparar resultados y contratos de datos;
+- evitar descartar cualquiera de las dos soluciones prematuramente;
+- documentar que parte se reutiliza y que parte propia se conserva;
+- validar la integracion antes de retirar herramientas, objetos o compatibilidad.
+
+## DT-012 - Flujo 2D-3D sobre una unica identidad
+
+Para los elementos tecnicos que dispongan de simbolo en planta y modelo 3D se
+adopta como criterio permanente que ambos pertenezcan a una unica identidad
+semantica del modelo.
+
+Reglas:
+
+- El usuario debe poder colocar, seleccionar, mover, rotar y editar el elemento
+  de forma sencilla desde la planta 2D cuando la naturaleza del objeto lo permita.
+- `Symbol2D`, `Info2D` y la geometria 3D deben derivarse de las mismas propiedades
+  autoritativas; no deben mantenerse como dos elementos manuales independientes.
+- Un cambio de posicion, orientacion, tipo o propiedades tecnicas debe reflejarse
+  en sus representaciones 2D y 3D sin duplicar la edicion.
+- La representacion 2D se considera interfaz principal de trabajo tecnico y
+  documentacion cuando resulte mas eficiente que manipular directamente el 3D.
+- La representacion 3D se utiliza para visualizacion, alturas de montaje,
+  interferencias, coordinacion y comprobacion espacial.
+- Todo elemento calculado, dimensionado o disenado debe poder generar una salida
+  2D comprensible, identificable y exportable para planos o esquemas.
+- Cuando FreeCAD/BIM requiera objetos Base, perfiles, Hosts u otros auxiliares,
+  estos pueden existir como dependencias vinculadas, pero no deben convertirse en
+  una segunda identidad semantica del mismo elemento.
+- Debe evitarse crear por separado un "objeto 2D" y un "objeto 3D" que el usuario
+  tenga que mantener sincronizados manualmente.
+

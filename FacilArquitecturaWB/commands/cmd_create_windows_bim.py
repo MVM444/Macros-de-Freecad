@@ -3,8 +3,8 @@
 Descripcion: crea ventanas Arch nativas desde Sketches y las aloja en muros.
 Objetivo: admitir seleccion explicita y contener los objetos en un Level BIM nativo.
 FreeCAD objetivo: 1.1.3.
-Fecha y hora: 2026-08-09 22:35 UTC-06:00.
-Version: 0.2.0.
+Fecha y hora: 2026-09-01 09:05 America/Costa_Rica.
+Version: 0.3.0.
 Instrucciones de mantenimiento: conservar FA_CreateWindowsBIM como alias heredado.
 """
 
@@ -26,6 +26,7 @@ from ..core.opening_utils import (
     selection_description,
 )
 from ..core.bim_structure_utils import (
+    adopt_auxiliary_sources,
     collect_buildings,
     ensure_bim_structure,
     is_building,
@@ -34,10 +35,11 @@ from ..core.bim_structure_utils import (
 )
 from ..core.project_structure import active_or_new_document, msg
 from ..ui.dialog_opening_parameters import OpeningParametersDialog
+from ..ui.process_feedback import LongOperationFeedback
 
 
 ICON_PATH = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "resources", "icons", "window_centerlines.svg")
+    os.path.join(os.path.dirname(__file__), "..", "resources", "icons", "create_windows_bim.svg")
 ).replace(os.sep, "/")
 
 
@@ -113,8 +115,10 @@ class CommandClass:
             if accepted != QtWidgets.QDialog.Accepted:
                 return
             options = dialog.values()
+            feedback = LongOperationFeedback("FA Ventanas BIM", "Preparando estructura BIM").start()
             doc.openTransaction("FA Ventanas BIM")
             transaction_open = True
+            feedback.stage("Resolviendo Building y Level")
             structure = ensure_bim_structure(
                 doc,
                 building=chosen_building,
@@ -122,6 +126,8 @@ class CommandClass:
                 elevation_mm=(target_level.Placement.Base.z if target_level is not None else 0.0),
             )
             target_level = structure["level"]
+            adopt_auxiliary_sources(doc, target_level, sources)
+            feedback.stage("Creando ventanas BIM")
             created, summary = create_openings_from_centerlines(
                 doc,
                 target_level,
@@ -133,9 +139,11 @@ class CommandClass:
                 host_tolerance_mm=options["host_tolerance_mm"],
                 replace_existing=options["replace_existing"],
             )
+            feedback.stage("Recomputando y validando documento")
             doc.recompute()
             doc.commitTransaction()
             transaction_open = False
+            feedback.finish(success=True)
             try:
                 FreeCADGui.Selection.clearSelection()
                 for obj in created:
@@ -152,6 +160,11 @@ class CommandClass:
                 )
             )
         except Exception as exc:
+            if "feedback" in locals():
+                try:
+                    feedback.finish(success=False, error=str(exc))
+                except Exception:
+                    pass
             if transaction_open and doc is not None:
                 try:
                     doc.abortTransaction()

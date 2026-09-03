@@ -1,9 +1,11 @@
 """Centerline extraction helpers for FacilArquitecturaWB.
 
-Descripcion: genera lineas de centro desde shapes importados de distintos sistemas.
-Fecha: 2026-07-23
-Version: 0.20.0
-Instrucciones: mantener heuristicas simples; no intentar reconocimiento BIM automatico completo.
+Descripcion: genera lineas de centro desde shapes importados de distintos sistemas, incluidos Part::Feature con Shape Compound.
+Funcion principal: extrae ejes y espesores sin modificar ni explotar destructivamente la geometria fuente.
+Mantenimiento: conservar la descomposicion virtual de Compound/CompSolid antes de aplicar heuristicas de eje principal; no convertir el contenedor completo en un unico muro.
+FreeCAD objetivo: 1.1.3.
+Fecha y hora: 2026-08-23 11:31 America/Costa_Rica.
+Version: 0.22.0.
 """
 
 from __future__ import annotations
@@ -90,6 +92,11 @@ def create_centerline_sketch_from_objects(doc, parent_group, objects, extraction
     source_objects = _collect_leaf_objects(objects)
     if not source_objects:
         raise UserFacingError("No hay objetos utiles en la seleccion.")
+    document_source_objects = list(source_objects)
+    source_objects = _virtual_edge_sources_for_auto_compounds(
+        source_objects,
+        extraction_strategy,
+    )
     source_ids = [_source_object_id(obj, index) for index, obj in enumerate(source_objects)]
     topology_context = _source_topology_context(source_objects, source_ids)
     topology_edge_records = _topology_edge_records(source_objects, source_ids)
@@ -250,6 +257,12 @@ def create_centerline_sketch_from_objects(doc, parent_group, objects, extraction
         msg("Extremos llevados a esquinas o intersecciones: %d" % joined_endpoint_count)
 
     extraction_mode = _extraction_mode(profile_axis_count, bool(paired_records), extraction_strategy)
+    _remove_previous_matching_centerlines(
+        doc,
+        parent_group,
+        document_source_objects,
+        extraction_strategy,
+    )
     sketches = []
     for group_index, group in enumerate(groups):
         thickness = group.get("thickness")
@@ -271,7 +284,7 @@ def create_centerline_sketch_from_objects(doc, parent_group, objects, extraction
         constraint_count = _populate_parametric_sketch(sketch, group_segments)
         _set_centerline_properties(
             sketch,
-            source_objects,
+            document_source_objects,
             raw_edges,
             ignored_compact_profiles,
             group_segments,
@@ -310,7 +323,7 @@ def create_centerline_sketch_from_objects(doc, parent_group, objects, extraction
     )
     msg(
         "Sketches de centros creados: %d | lineas: %d | objetos fuente: %d"
-        % (len(sketches), len(segments), len(source_objects))
+        % (len(sketches), len(segments), len(document_source_objects))
     )
     return primary_sketch, segments
 
@@ -435,6 +448,82 @@ def _collect_leaf_objects(objects):
     return result
 
 
+class _VirtualEdgeShape:
+    """Minimal in-memory shape wrapper equivalent to one Draft split edge."""
+
+    ShapeType = "Edge"
+
+    def __init__(self, edge):
+        self.Edges = [edge]
+        self.Wires = []
+        self.BoundBox = getattr(edge, "BoundBox", None)
+
+
+class _VirtualEdgeSource:
+    """Expose one Compound edge without creating an object in the document tree."""
+
+    def __init__(self, source, edge, index):
+        self._source = source
+        source_name = str(getattr(source, "Name", "Compound") or "Compound")
+        self.Name = "%s__edge_%04d" % (source_name, int(index))
+        self.Label = str(getattr(source, "Label", source_name) or source_name)
+        self.TypeId = "Part::Feature"
+        self.Shape = _VirtualEdgeShape(edge)
+
+    def __getattr__(self, name):
+        return getattr(self._source, name)
+
+
+def _virtual_edge_sources_for_auto_compounds(source_objects, extraction_strategy):
+    """Virtually reproduce Draft ``splitWires`` for plain Part::Feature Compounds.
+
+    The stable reference path for reconstructed wall networks is one source object
+    per edge.  Keeping every Compound child Wire intact lets the complex-profile
+    heuristic invent axes and also assigns one source id to unrelated walls and a
+    compact column.  Edge proxies give the existing topology, pairing, compact
+    profile and thickness logic the same inputs as the user's successful manual
+    Downgrade/Explode workflow, while leaving the document tree untouched.
+
+    Specialized door/window strategies, App::Link instances, non-Compound shapes
+    and derived Part feature types retain their previous paths.
+    """
+    if extraction_strategy != "auto":
+        return list(source_objects or [])
+
+    result = []
+    for obj in source_objects or []:
+        shape = getattr(obj, "Shape", None)
+        type_id = str(getattr(obj, "TypeId", "") or "")
+        if (
+            _is_link_object(obj)
+            or type_id != "Part::Feature"
+            or _shape_type_name(shape) != "Compound"
+        ):
+            result.append(obj)
+            continue
+
+        try:
+            edges = list(getattr(shape, "Edges", []) or [])
+        except Exception:
+            edges = []
+        if not edges:
+            result.append(obj)
+            continue
+
+        result.extend(
+            _VirtualEdgeSource(obj, edge, index)
+            for index, edge in enumerate(edges, start=1)
+        )
+        msg(
+            "Compound descompuesto virtualmente como bordes: %s | bordes=%d | fuente intacta"
+            % (
+                str(getattr(obj, "Label", getattr(obj, "Name", "Objeto"))),
+                len(edges),
+            )
+        )
+    return result
+
+
 def _is_link_object(obj):
     type_id = str(getattr(obj, "TypeId", "") or "")
     return type_id == "App::Link" or type_id.startswith("App::Link")
@@ -460,6 +549,43 @@ def _is_generated_centerline_object(obj):
 def _source_object_id(obj, index):
     name = str(getattr(obj, "Name", "") or "").strip()
     return name or "source_%d" % int(index)
+
+
+def _source_object_names(objects):
+    return sorted(
+        str(getattr(obj, "Name", "") or "").strip()
+        for obj in objects or []
+        if str(getattr(obj, "Name", "") or "").strip()
+    )
+
+
+def _remove_previous_matching_centerlines(doc, parent_group, source_objects, extraction_strategy):
+    """Replace only FA outputs previously generated from the exact same sources."""
+    source_names = _source_object_names(source_objects)
+    if not source_names or doc is None or not hasattr(doc, "removeObject"):
+        return 0
+
+    try:
+        candidates = list(getattr(parent_group, "Group", []) or [])
+    except Exception:
+        candidates = []
+    matches = []
+    for obj in candidates:
+        role = str(getattr(obj, "FA_Role", "") or "").strip().lower()
+        strategy = str(getattr(obj, "FA_ExtractionStrategy", "") or "").strip()
+        stored_names = sorted(
+            str(value or "").strip()
+            for value in list(getattr(obj, "FA_SourceObjectNames", []) or [])
+            if str(value or "").strip()
+        )
+        if role == "centerlines" and strategy == str(extraction_strategy) and stored_names == source_names:
+            matches.append(obj)
+
+    for obj in reversed(matches):
+        doc.removeObject(obj.Name)
+    if matches:
+        msg("Sketches FA previos reemplazados para la misma fuente: %d" % len(matches))
+    return len(matches)
 
 
 def _write_centerline_geometry_diagnostic(
@@ -1852,7 +1978,107 @@ def _point_on_segment(point, first, second, tolerance):
 
 
 def _segments_from_object(obj, prefer_opening_profile=False, source_id=None):
+    """Read one source object, virtually decomposing topological compounds when needed.
+
+    A Part::Feature may expose an entire CAD layer or reconstructed wall set as one
+    ``Part::TopoShape`` Compound. Running the dominant-axis heuristic on that aggregate
+    can incorrectly collapse several independent walls into one long centerline.
+    FreeCAD exposes direct compound children through ``TopoShape.childShapes()``; use
+    those children in memory and keep the document object untouched.
+    """
     shape = getattr(obj, "Shape", None)
+    if shape is None:
+        return [], [], 0, 0
+
+    is_link = _is_link_object(obj)
+    # Preserve the already validated App::Link/block path. This change targets
+    # plain Part::Feature-style containers such as Pared_Concreto001.
+    components = [shape] if is_link else _shape_extraction_components(shape)
+    if len(components) > 1 or (components and components[0] is not shape):
+        label = str(getattr(obj, "Label", getattr(obj, "Name", "Objeto")))
+        msg(
+            "Compound descompuesto virtualmente: %s | componentes=%d | fuente intacta"
+            % (label, len(components))
+        )
+        body_records = []
+        raw_edges = []
+        ignored_compact_profiles = 0
+        profile_axis_count = 0
+        for component in components:
+            (
+                component_body,
+                component_edges,
+                component_ignored,
+                component_profile_count,
+            ) = _segments_from_shape(
+                component,
+                prefer_opening_profile=prefer_opening_profile,
+                source_id=source_id,
+                allow_block_heuristics=False,
+            )
+            body_records.extend(component_body)
+            raw_edges.extend(component_edges)
+            ignored_compact_profiles += component_ignored
+            profile_axis_count += component_profile_count
+        return body_records, raw_edges, ignored_compact_profiles, profile_axis_count
+
+    return _segments_from_shape(
+        shape,
+        prefer_opening_profile=prefer_opening_profile,
+        source_id=source_id,
+        allow_block_heuristics=is_link,
+        source_label=str(getattr(obj, "Label", getattr(obj, "Name", ""))),
+    )
+
+
+def _shape_extraction_components(shape):
+    """Return meaningful topological children for Compound/CompSolid shapes.
+
+    Only compound containers are flattened. Wires, faces and solids remain intact so
+    their local closed-profile information is preserved. ``childShapes()`` defaults
+    to cumulative orientation and location in FreeCAD, which is what extraction needs.
+    """
+    if shape is None or _shape_type_name(shape) not in ("Compound", "CompSolid"):
+        return [shape] if shape is not None else []
+
+    result = []
+    pending = [shape]
+    while pending:
+        current = pending.pop(0)
+        current_type = _shape_type_name(current)
+        if current_type in ("Compound", "CompSolid"):
+            try:
+                children = list(current.childShapes() or [])
+            except Exception:
+                children = []
+            if children:
+                pending[0:0] = children
+                continue
+        if _shape_has_edges(current):
+            result.append(current)
+
+    # Defensive fallback: never discard a usable source solely because an importer
+    # exposes a Compound without childShapes().
+    if not result and _shape_has_edges(shape):
+        return [shape]
+    return result
+
+
+def _shape_type_name(shape):
+    try:
+        return str(getattr(shape, "ShapeType", "") or "")
+    except Exception:
+        return ""
+
+
+def _segments_from_shape(
+    shape,
+    prefer_opening_profile=False,
+    source_id=None,
+    allow_block_heuristics=False,
+    source_label="",
+):
+    """Extract wall/profile candidates from one non-container topological shape."""
     if shape is None:
         return [], [], 0, 0
 
@@ -1868,10 +2094,11 @@ def _segments_from_object(obj, prefer_opening_profile=False, source_id=None):
         source_ids=(source_id,) if source_id is not None else (),
     )
     if profile_record is not None:
-        msg("Eje principal leido en shape complejo: %s" % str(getattr(obj, "Label", getattr(obj, "Name", ""))))
+        if source_label:
+            msg("Eje principal leido en shape complejo: %s" % source_label)
         return [profile_record], [], 0, 1
 
-    if _is_link_object(obj):
+    if allow_block_heuristics:
         block_record = _centerline_record_from_block_shape(
             shape,
             source_ids=(source_id,) if source_id is not None else (),
@@ -1880,7 +2107,7 @@ def _segments_from_object(obj, prefer_opening_profile=False, source_id=None):
             msg(
                 "Eje de bloque leido desde envolvente principal: %s | largo=%.1f mm | espesor=%.1f mm"
                 % (
-                    str(getattr(obj, "Label", getattr(obj, "Name", ""))),
+                    source_label or "Link",
                     _segment_length(block_record["segment"]),
                     float(block_record["thickness"]),
                 )
@@ -1894,10 +2121,7 @@ def _segments_from_object(obj, prefer_opening_profile=False, source_id=None):
         if perimeter_records:
             msg(
                 "Ejes perimetrales leidos desde bloque completo: %s | lineas=%d"
-                % (
-                    str(getattr(obj, "Label", getattr(obj, "Name", ""))),
-                    len(perimeter_records),
-                )
+                % (source_label or "Link", len(perimeter_records))
             )
             return perimeter_records, [], 0, len(perimeter_records)
 
@@ -1918,18 +2142,7 @@ def _segments_from_object(obj, prefer_opening_profile=False, source_id=None):
                 )
             )
 
-    if body_records or raw_edges or ignored_compact_profiles:
-        msg(
-            "Geometria leida en %s: cuerpos=%d bordes=%d compactos_omitidos=%d"
-            % (
-                str(getattr(obj, "Label", getattr(obj, "Name", ""))),
-                len(body_records),
-                len(raw_edges),
-                ignored_compact_profiles,
-            )
-        )
     return body_records, raw_edges, ignored_compact_profiles, 0
-
 
 def _profile_centerlines_from_objects(objects):
     """Group nearby shape edges and create one dominant axis per component."""
@@ -3403,6 +3616,22 @@ def _set_centerline_properties(
     constraint_count,
     joined_endpoint_count,
 ):
+    set_prop(
+        sketch,
+        "App::PropertyString",
+        "FA_ExtractionStrategy",
+        "FacilArquitectura",
+        "Estrategia que genero estos centros",
+        str(extraction_strategy),
+    )
+    set_prop(
+        sketch,
+        "App::PropertyStringList",
+        "FA_SourceObjectNames",
+        "FacilArquitectura",
+        "Nombres internos de los objetos fuente para reejecucion segura",
+        _source_object_names(source_objects),
+    )
     set_prop(sketch, "App::PropertyInteger", "FA_SourceObjectCount", "FacilArquitectura", "Objetos fuente", len(source_objects))
     set_prop(sketch, "App::PropertyInteger", "FA_RawEdgeCount", "FacilArquitectura", "Bordes analizados", len(raw_edges))
     set_prop(

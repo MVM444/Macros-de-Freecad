@@ -1,7 +1,8 @@
 """X3D exporter helpers for Game Engine Export WB.
 
-Descripcion rapida: exporta via FreeCADGui y aplica conversion fija de ejes.
-Fecha y hora: 2026-03-11 17:50 UTC.
+Descripcion rapida: exporta via FreeCADGui, filtra la escena y aplica conversion fija de ejes.
+Version interna: 2026.09.01-game-export-exclude-hard-v1.
+Fecha y hora: 2026-09-01 12:20 America/Costa_Rica.
 Instrucciones clave:
 - Mantener logs con prefijo [GAMEEXPORT].
 - Aplicar siempre mm->m (0.001) y rotacion -90 en X para pasar Z-up a Y-up.
@@ -11,6 +12,7 @@ Instrucciones clave:
 from __future__ import annotations
 
 import gzip
+import hashlib
 import math
 import re
 import shutil
@@ -21,9 +23,11 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 import xml.etree.ElementTree as ET
 
+from . import material_assignments
+
 
 LOG_PREFIX = "[GAMEEXPORT] "
-DEBUG_VERSION = "2026-08-10-gamestart-viewpoint-orientation-v3"
+DEBUG_VERSION = "2026-09-01-game-export-exclude-hard-v1"
 SCALE_VECTOR = "0.001 0.001 0.001"
 ROTATION_VECTOR = "1 0 0 -1.57079632679"
 TRANSFORM_DEF = "FreeCAD_mm_to_m"
@@ -38,8 +42,22 @@ GROUND_COLLISION_DEF = "GameExport_WalkGroundCollision"
 LIGHT_DEF_PREFIX = "GameExport_"
 DEFAULT_POINT_LIGHT_AMBIENT_INTENSITY = 0.18
 MAX_POINT_LIGHT_SHADOWS = 4
+MAX_SPOT_LIGHT_SHADOWS = 4
+LIGHT_MODE_SPOT_SHADOW_MAP = "SpotShadowMap"
+LIGHT_MODE_SPOT_NO_SHADOWS = "SpotNoShadows"
+LIGHT_MODE_POINT_CLASSIC = "PointLightClassic"
+LIGHT_MODE_PHOTOMETRIC = "PhotometricSpot"
+DEFAULT_SPOT_BEAM_WIDTH = 0.59
+DEFAULT_SPOT_CUTOFF_ANGLE = 0.79
+DEFAULT_SPOT_SHADOW_MAP_SIZE = 256
+DEFAULT_PHOTOMETRIC_LUMENS = 3600.0
+DEFAULT_PHOTOMETRIC_BEAM_ANGLE_DEG = 120.0
+DEFAULT_PHOTOMETRIC_CCT_K = 4000.0
 EMITTER_MATERIAL_DEF_PREFIX = "GameExport_Emitter_"
 GROUND_TEXTURE_MATERIAL_DEF_PREFIX = "GameExport_GroundTexture_"
+INSTANCE_DEF_PREFIX = "GameExport_Instance_"
+DEFAULT_GEOMETRY_EXPORT_MODE = "Optimized"
+MIN_INSTANCE_PAYLOAD_CHARS = 2048
 GROUND_TEXTURE_FALLBACK_KEYWORDS = (
     ("terrain", 100),
     ("ground", 90),
@@ -55,17 +73,19 @@ GROUND_TEXTURE_FALLBACK_KEYWORDS = (
 MATERIAL_LIGHTING_PROFILES = {
     "Soft": {
         "ambientIntensity": "0.35",
-        "emissiveColor": "0.06 0.06 0.06",
+        # Default X3D diffuseColor is 0.8, so this keeps approximately the
+        # former 0.06 visible lift while preserving the source hue.
+        "emissiveFactor": 0.075,
         "shininess": "0.10",
     },
     "Architectural": {
         "ambientIntensity": "0.50",
-        "emissiveColor": "0.12 0.12 0.12",
+        "emissiveFactor": 0.15,
         "shininess": "0.10",
     },
     "Bright": {
         "ambientIntensity": "0.65",
-        "emissiveColor": "0.18 0.18 0.18",
+        "emissiveFactor": 0.225,
         "shininess": "0.05",
     },
 }
@@ -73,6 +93,10 @@ MATERIAL_TAG_RE = re.compile(r"<(?:[A-Za-z_][\w.-]*:)?Material\b[^>]*>")
 MATERIAL_PROFILE_ATTR_RE = re.compile(
     r"\s+(?:ambientIntensity|emissiveColor|shininess)\s*=\s*(?:\"[^\"]*\"|'[^']*')"
 )
+MATERIAL_DIFFUSE_COLOR_RE = re.compile(
+    r"\bdiffuseColor\s*=\s*([\"'])([^\"']+)\1"
+)
+MATERIAL_USE_RE = re.compile(r"\bUSE\s*=\s*([\"'])[^\"']+\1")
 SKYBOX_FACE_SUFFIXES = {
     "backUrl": "back",
     "bottomUrl": "bottom",
@@ -119,6 +143,7 @@ def export_to_x3d(
     material_cfg: Optional[Dict[str, object]] = None,
     environment_cfg: Optional[Dict[str, object]] = None,
     ground_texture_cfg: Optional[Dict[str, object]] = None,
+    geometry_export_cfg: Optional[Dict[str, object]] = None,
 ) -> Path:
     """Export selected objects to X3D and run postprocessing."""
     FreeCAD = __import__("FreeCAD")
@@ -139,7 +164,7 @@ def export_to_x3d(
         raise ValueError("No exportable geometry found in selection")
 
     FreeCAD.Console.PrintMessage(
-        LOG_PREFIX + f"Exporting {len(exportable)} objects to {out_path}\n"
+        LOG_PREFIX + f"Exporting {len(exportable)} objects to {out_path.name}\n"
     )
     export_function = getattr(FreeCADGui, "export", None)
     export_backend = "FreeCADGui.export"
@@ -150,13 +175,16 @@ def export_to_x3d(
     FreeCAD.Console.PrintMessage(LOG_PREFIX + "X3D export backend: " + export_backend + "\n")
     with _temporary_export_visibility(exportable):
         export_function(exportable, str(out_path))
+    prepared_material_cfg = _material_cfg_with_light_source_indices(material_cfg, exportable)
+    prepared_material_cfg = _material_cfg_with_object_assignments(prepared_material_cfg, exportable)
     decorate_x3d(
         out_path,
         gamestart_meta,
         lighting_cfg,
-        _material_cfg_with_light_source_indices(material_cfg, exportable),
+        prepared_material_cfg,
         environment_cfg,
         _ground_texture_cfg_with_object_indices(ground_texture_cfg, exportable),
+        geometry_export_cfg,
     )
     return out_path
 
@@ -384,8 +412,12 @@ def complete_scene_objects_with_hidden_3d(
     }
     completed = []
     seen_ids = set()
+    skipped_forced = 0
     for obj in list(selected_objects or []):
         if obj is None or id(obj) in excluded_ids or id(obj) in seen_ids:
+            continue
+        if _object_export_override(obj) is False:
+            skipped_forced += 1
             continue
         completed.append(obj)
         seen_ids.add(id(obj))
@@ -410,6 +442,8 @@ def complete_scene_objects_with_hidden_3d(
         + str(len(completed) - appended)
         + ", hidden_3d_added="
         + str(appended)
+        + ", forced_excluded="
+        + str(skipped_forced)
         + ", total="
         + str(len(completed))
         + "\n"
@@ -452,6 +486,8 @@ def resolve_scene_objects(
     for obj in explicit:
         if id(obj) in excluded_ids or id(obj) in seen_ids:
             continue
+        if _object_export_override(obj) is False:
+            continue
         resolved.append(obj)
         seen_ids.add(id(obj))
     return resolved
@@ -464,13 +500,16 @@ def decorate_x3d(
     material_cfg: Optional[Dict[str, object]] = None,
     environment_cfg: Optional[Dict[str, object]] = None,
     ground_texture_cfg: Optional[Dict[str, object]] = None,
+    geometry_export_cfg: Optional[Dict[str, object]] = None,
 ) -> None:
     """Apply mandatory axis conversion and keep output format (plain/gzip)."""
     FreeCAD = __import__("FreeCAD")
 
     file_path = Path(path)
     if not file_path.exists():
-        FreeCAD.Console.PrintWarning(LOG_PREFIX + f"decorate_x3d skipped, file missing: {file_path}\n")
+        FreeCAD.Console.PrintWarning(
+            LOG_PREFIX + f"decorate_x3d skipped, file missing: {file_path.name}\n"
+        )
         return
 
     target_gzip = file_path.suffix.lower() == ".x3dz"
@@ -515,6 +554,7 @@ def decorate_x3d(
             )
         return
 
+    _ensure_unique_def_names(scene)
     _remove_gameexport_light_nodes(scene)
     _remove_walk_ground_collision(scene, q)
     navigation_cfg = _normalize_navigation_cfg(lighting_cfg)
@@ -525,6 +565,7 @@ def decorate_x3d(
     _insert_viewpoint(scene, q, gamestart_meta, navigation_cfg)
     light_count = _insert_lights(scene, q, lighting_cfg)
     emitter_material_count = _apply_light_source_emissive_materials(scene, q, material_cfg)
+    object_material_count = _apply_object_material_assignments(scene, q, file_path, material_cfg)
     ground_texture_count = _apply_ground_texture(scene, q, file_path, ground_texture_cfg)
 
     if gamestart_meta or lighting_cfg:
@@ -540,12 +581,32 @@ def decorate_x3d(
             + str(emitter_material_count)
             + " Material nodes\n"
         )
+    if object_material_count > 0:
+        FreeCAD.Console.PrintMessage(
+            LOG_PREFIX
+            + "Applied object material/texture effects: "
+            + str(object_material_count)
+            + " Shape nodes\n"
+        )
     if ground_texture_count > 0:
         FreeCAD.Console.PrintMessage(
             LOG_PREFIX
-            + "Applied ground texture to exported object: "
+            + "Applied legacy ground texture to exported object: "
             + str(ground_texture_count)
             + " Shape nodes\n"
+        )
+
+    instance_count = _apply_geometry_export_mode(
+        scene,
+        q,
+        geometry_export_cfg,
+    )
+    if instance_count > 0:
+        FreeCAD.Console.PrintMessage(
+            LOG_PREFIX
+            + "Optimized repeated X3D geometry with DEF/USE: "
+            + str(instance_count)
+            + " repeated nodes replaced\n"
         )
 
     xml_out = _serialize_xml(root, doctype_line)
@@ -871,11 +932,12 @@ def _x3d_mfstring_url(url: str) -> str:
 def _ensure_navigation(scene, q, nav_cfg: Dict[str, object]) -> None:
     eye_height_m = float(nav_cfg["eye_height_mm"]) * 0.001
     step_height_m = float(nav_cfg["step_height_mm"]) * 0.001
+    camera_fill_enabled = bool(nav_cfg.get("camera_fill_enabled", False))
     attrs = {
         "DEF": "GameExport_Navigation",
         "avatarSize": f"0.25 {eye_height_m:.3f} {step_height_m:.3f}",
         "speed": f"{float(nav_cfg['speed']):.3f}",
-        "headlight": "false",
+        "headlight": "true" if camera_fill_enabled else "false",
         "type": '"WALK"' if bool(nav_cfg.get("walk_only", True)) else '"WALK" "ANY"',
     }
 
@@ -885,10 +947,45 @@ def _ensure_navigation(scene, q, nav_cfg: Dict[str, object]) -> None:
             existing = child
             break
     if existing is None:
-        insert_index = 1 if scene and scene[0].tag == q("Background") else 0
-        scene.insert(insert_index, ET.Element(q("NavigationInfo"), attrs))
+        insert_index = 1 if len(scene) > 0 and scene[0].tag == q("Background") else 0
+        existing = ET.Element(q("NavigationInfo"), attrs)
+        scene.insert(insert_index, existing)
     else:
         existing.attrib.update(attrs)
+
+    # Castle supports a custom light attached to the camera through the
+    # NavigationInfo.headlightNode extension.  A single low-intensity
+    # directional fill brightens visible architectural surfaces without
+    # recreating dozens of omnidirectional PointLight contributions.
+    for child in list(existing):
+        if (
+            child.attrib.get("containerField") == "headlightNode"
+            or child.attrib.get("DEF") == "GameExport_CameraFill"
+        ):
+            existing.remove(child)
+    if camera_fill_enabled:
+        fill_intensity = _clamp(
+            _float_config_value(nav_cfg, "camera_fill_intensity", 0.45), 0.0, 1.5
+        )
+        fill_ambient = _clamp(
+            _float_config_value(nav_cfg, "camera_fill_ambient_intensity", 0.25),
+            0.0,
+            1.0,
+        )
+        ET.SubElement(
+            existing,
+            q("DirectionalLight"),
+            {
+                "DEF": "GameExport_CameraFill",
+                "containerField": "headlightNode",
+                "on": "true",
+                "global": "true",
+                "direction": "0 0 -1",
+                "color": "1 0.98 0.92",
+                "intensity": _format_float(fill_intensity),
+                "ambientIntensity": _format_float(fill_ambient),
+            },
+        )
 
 
 def _insert_viewpoint(scene, q, meta: Optional[Dict[str, object]], nav_cfg: Dict[str, object]) -> None:
@@ -1086,6 +1183,43 @@ def _material_cfg_with_light_source_indices(
     return cfg
 
 
+
+def _material_cfg_with_object_assignments(
+    material_cfg: Optional[Dict[str, object]], exportable_objects: Iterable[object]
+) -> Dict[str, object]:
+    """Attach persisted object assignments to material config by export index."""
+    cfg = dict(material_cfg or {})
+    persisted = material_assignments.collect_assignments(exportable_objects, enabled_only=True)
+    explicit = cfg.get("object_assignments", [])
+    merged = []
+    seen = set()
+    for item in list(explicit or []) + persisted:
+        if not isinstance(item, dict):
+            continue
+        normalized = material_assignments.normalize_assignment(item)
+        try:
+            object_index = int(item.get("object_index", -1))
+        except Exception:
+            object_index = -1
+        object_name = str(item.get("object_name", "") or "")
+        key = (object_index, object_name)
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.update(
+            {
+                "object_index": object_index,
+                "object_name": object_name,
+                "object_label": str(item.get("object_label", "") or ""),
+                "native_material_name": str(item.get("native_material_name", "") or ""),
+            }
+        )
+        merged.append(normalized)
+    cfg["object_assignments"] = merged
+    cfg["object_count"] = len(list(exportable_objects or []))
+    return cfg
+
+
 def _ground_texture_cfg_with_object_indices(
     ground_texture_cfg: Optional[Dict[str, object]], exportable_objects: Iterable[object]
 ) -> Optional[Dict[str, object]]:
@@ -1226,6 +1360,274 @@ def _apply_light_source_emissive_materials(scene, q, material_cfg: Optional[Dict
     return count
 
 
+
+def _apply_object_material_assignments(
+    scene, q, file_path: Path, material_cfg: Optional[Dict[str, object]]
+) -> int:
+    if not isinstance(material_cfg, dict):
+        return 0
+    assignments = [item for item in list(material_cfg.get("object_assignments", []) or []) if isinstance(item, dict)]
+    if not assignments:
+        return 0
+    indices = []
+    for item in assignments:
+        try:
+            index = int(item.get("object_index", -1))
+        except Exception:
+            continue
+        if index >= 0:
+            indices.append(index)
+    if not indices:
+        return 0
+    transform = _find_freecad_transform(scene, q)
+    if transform is None:
+        return 0
+    expected_count = _expected_object_count(material_cfg, max(indices) + 1)
+    container = _find_object_group_container(transform, max(indices), expected_count)
+    if container is None:
+        return 0
+    children = list(container)
+    applied = 0
+    for assignment in assignments:
+        cfg = material_assignments.normalize_assignment(assignment)
+        if not bool(cfg.get("enabled", False)):
+            continue
+        try:
+            index = int(assignment.get("object_index", -1))
+        except Exception:
+            index = -1
+        if index < 0 or index >= len(children):
+            _console_warning(
+                "Object material index outside X3D object group: "
+                + str(index)
+                + " / "
+                + str(len(children))
+            )
+            continue
+        mode = str(cfg.get("mode", material_assignments.MODE_TEXTURE))
+        if mode == material_assignments.MODE_MIRROR:
+            applied += _apply_mirror_to_shapes(children[index], q, int(cfg.get("mirror_size", 512)))
+            continue
+        texture_path_text = material_assignments.resolve_texture_path(cfg)
+        texture_url = ""
+        if texture_path_text:
+            texture_path = Path(texture_path_text).expanduser()
+            if texture_path.is_file():
+                texture_url = _copy_texture_asset(texture_path, file_path)
+            else:
+                _console_warning("Object texture file not found: " + str(texture_path))
+        if texture_url:
+            applied += _apply_object_texture_to_shapes(
+                children[index],
+                q,
+                texture_url,
+                str(cfg.get("projection", material_assignments.PROJECTION_AUTO)),
+                float(cfg.get("tile_u_mm", 1000.0)),
+                float(cfg.get("tile_v_mm", 1000.0)),
+                polished=(mode == material_assignments.MODE_POLISHED),
+                reflectivity=float(cfg.get("reflectivity", 0.35)),
+            )
+        elif mode == material_assignments.MODE_POLISHED:
+            applied += _apply_polished_material_to_shapes(
+                children[index], q, float(cfg.get("reflectivity", 0.35))
+            )
+    return applied
+
+
+def _console_warning(message: str) -> None:
+    try:
+        FreeCAD = __import__("FreeCAD")
+        FreeCAD.Console.PrintWarning(LOG_PREFIX + "[WARN] " + str(message) + "\n")
+    except Exception:
+        pass
+
+
+def _apply_object_texture_to_shapes(
+    node,
+    q,
+    texture_url: str,
+    projection: str,
+    tile_u_mm: float,
+    tile_v_mm: float,
+    polished: bool = False,
+    reflectivity: float = 0.35,
+) -> int:
+    coord_defs = _collect_coordinate_defs(node)
+    count = 0
+    for shape in node.iter():
+        if _local_name(shape.tag) != "Shape" or not _shape_has_textured_surface(shape):
+            continue
+        appearance = _ensure_shape_appearance(shape, q)
+        _ensure_object_material(appearance, q, count, polished=polished, reflectivity=reflectivity)
+        _replace_child_by_local_name(
+            appearance,
+            "ImageTexture",
+            ET.Element(
+                q("ImageTexture"),
+                {"url": _x3d_mfstring_url(texture_url), "repeatS": "true", "repeatT": "true"},
+            ),
+        )
+        for local_name in ("RenderedTexture", "GeneratedCubeMapTexture", "MultiTexture"):
+            _remove_children_by_local_name(appearance, local_name)
+        _generate_physical_planar_uv_for_shape(
+            shape,
+            q,
+            projection,
+            tile_u_mm,
+            tile_v_mm,
+            coord_defs,
+        )
+        _remove_children_by_local_name(appearance, "TextureTransform")
+        count += 1
+    return count
+
+
+def _apply_polished_material_to_shapes(node, q, reflectivity: float) -> int:
+    count = 0
+    for shape in node.iter():
+        if _local_name(shape.tag) != "Shape" or not _shape_has_textured_surface(shape):
+            continue
+        appearance = _ensure_shape_appearance(shape, q)
+        _ensure_object_material(appearance, q, count, polished=True, reflectivity=reflectivity)
+        count += 1
+    return count
+
+
+def _apply_mirror_to_shapes(node, q, mirror_size: int) -> int:
+    size = int(max(64, min(4096, int(mirror_size or 512))))
+    count = 0
+    for shape in node.iter():
+        if _local_name(shape.tag) != "Shape" or not _shape_has_textured_surface(shape):
+            continue
+        appearance = _ensure_shape_appearance(shape, q)
+        _ensure_object_material(appearance, q, count, polished=True, reflectivity=1.0)
+        for local_name in ("ImageTexture", "MultiTexture", "GeneratedCubeMapTexture", "RenderedTexture", "TextureTransform"):
+            _remove_children_by_local_name(appearance, local_name)
+        rendered = ET.Element(
+            q("RenderedTexture"),
+            {
+                "dimensions": f"{size} {size} 3",
+                "repeatS": "false",
+                "repeatT": "false",
+                "update": "ALWAYS",
+            },
+        )
+        rendered.append(ET.Element(q("ViewpointMirror"), {"containerField": "viewpoint"}))
+        appearance.append(rendered)
+        for geometry in list(shape):
+            if _local_name(geometry.tag) not in {
+                "ElevationGrid",
+                "Extrusion",
+                "IndexedFaceSet",
+                "IndexedTriangleSet",
+                "TriangleSet",
+                "TriangleStripSet",
+            }:
+                continue
+            _remove_children_by_local_name(geometry, "TextureCoordinate")
+            _remove_children_by_local_name(geometry, "TextureCoordinateGenerator")
+            geometry.attrib.pop("texCoordIndex", None)
+            geometry.append(ET.Element(q("TextureCoordinateGenerator"), {"mode": "MIRROR-PLANE"}))
+        count += 1
+    return count
+
+
+def _remove_children_by_local_name(parent, local_name: str) -> None:
+    for child in list(parent):
+        if _local_name(child.tag) == local_name:
+            parent.remove(child)
+
+
+def _ensure_object_material(
+    appearance,
+    q,
+    material_index: int,
+    polished: bool = False,
+    reflectivity: float = 0.35,
+) -> None:
+    material = None
+    for child in list(appearance):
+        if _local_name(child.tag) == "Material":
+            material = child
+            break
+    if material is None:
+        material = ET.Element(q("Material"))
+        appearance.insert(0, material)
+    material.attrib.pop("USE", None)
+    # Keep each material local to its Shape. Avoid introducing duplicate DEF names
+    # when a selected FreeCAD object expands into multiple X3D Shape nodes.
+    material.attrib.pop("DEF", None)
+    if "diffuseColor" not in material.attrib:
+        material.attrib["diffuseColor"] = "0.8 0.8 0.8"
+    if polished:
+        level = max(0.0, min(1.0, float(reflectivity)))
+        spec = 0.25 + 0.75 * level
+        material.attrib["specularColor"] = f"{_format_float(spec)} {_format_float(spec)} {_format_float(spec)}"
+        material.attrib["shininess"] = _format_float(0.35 + 0.65 * level)
+        material.attrib["ambientIntensity"] = _format_float(0.15 + 0.15 * (1.0 - level))
+
+
+def _generate_physical_planar_uv_for_shape(
+    shape,
+    q,
+    projection: str,
+    tile_u_mm: float,
+    tile_v_mm: float,
+    coord_defs: Optional[Dict[str, str]] = None,
+) -> bool:
+    projection = material_assignments.normalize_projection(projection)
+    tile_u = max(float(tile_u_mm or 1000.0), 1.0)
+    tile_v = max(float(tile_v_mm or 1000.0), 1.0)
+    changed = False
+    for geometry in list(shape):
+        if _local_name(geometry.tag) != "IndexedFaceSet":
+            continue
+        coord = None
+        for child in list(geometry):
+            if _local_name(child.tag) == "Coordinate":
+                coord = child
+                break
+        if coord is None:
+            continue
+        point_text = coord.attrib.get("point", "")
+        if not point_text:
+            coord_use = str(coord.attrib.get("USE", "") or "").strip()
+            point_text = (coord_defs or {}).get(coord_use, "")
+        points = _parse_vec3_points(point_text)
+        if not points:
+            continue
+        axes = _projection_axes(points, projection)
+        u_values = [point[axes[0]] for point in points]
+        v_values = [point[axes[1]] for point in points]
+        min_u = min(u_values)
+        min_v = min(v_values)
+        uv_values = []
+        for point in points:
+            uv_values.append((point[axes[0]] - min_u) / tile_u)
+            uv_values.append((point[axes[1]] - min_v) / tile_v)
+        _remove_children_by_local_name(geometry, "TextureCoordinate")
+        _remove_children_by_local_name(geometry, "TextureCoordinateGenerator")
+        geometry.attrib.pop("texCoordIndex", None)
+        geometry.append(ET.Element(q("TextureCoordinate"), {"point": _format_float_list(uv_values)}))
+        changed = True
+    return changed
+
+
+def _projection_axes(points: List[Tuple[float, float, float]], projection: str) -> Tuple[int, int]:
+    if projection == material_assignments.PROJECTION_XY:
+        return (0, 1)
+    if projection == material_assignments.PROJECTION_XZ:
+        return (0, 2)
+    if projection == material_assignments.PROJECTION_YZ:
+        return (1, 2)
+    spans = []
+    for axis in range(3):
+        values = [point[axis] for point in points]
+        spans.append(max(values) - min(values))
+    candidates = [((0, 1), spans[0] * spans[1]), ((0, 2), spans[0] * spans[2]), ((1, 2), spans[1] * spans[2])]
+    return max(candidates, key=lambda item: item[1])[0]
+
+
 def _apply_ground_texture(scene, q, file_path: Path, ground_texture_cfg: Optional[Dict[str, object]]) -> int:
     if not isinstance(ground_texture_cfg, dict) or not bool(ground_texture_cfg.get("enabled", False)):
         return 0
@@ -1235,7 +1637,7 @@ def _apply_ground_texture(scene, q, file_path: Path, ground_texture_cfg: Optiona
         try:
             FreeCAD = __import__("FreeCAD")
             FreeCAD.Console.PrintWarning(
-                "[GAMEEXPORT][WARN] Ground texture file not found: " + str(texture_path) + "\n"
+                "[GAMEEXPORT][WARN] Ground texture file not found: " + texture_path.name + "\n"
             )
         except Exception:
             pass
@@ -1527,7 +1929,13 @@ def _mark_materials_emissive(node, source_index: int) -> int:
 
 
 def apply_x3d_material_lighting_profile(x3d_content: str, mode: str) -> Tuple[str, int]:
-    """Apply an interior lighting profile to X3D Material tags only."""
+    """Apply color-aware interior compensation to ordinary X3D materials.
+
+    ``emissiveColor`` is derived from each material's own ``diffuseColor``.
+    This preserves FreeCAD hues instead of replacing every surface with the
+    same neutral gray. Material USE nodes and light/ground helper materials
+    remain untouched.
+    """
     profile = MATERIAL_LIGHTING_PROFILES.get(str(mode))
     if not profile:
         return x3d_content, 0
@@ -1541,6 +1949,9 @@ def apply_x3d_material_lighting_profile(x3d_content: str, mode: str) -> Tuple[st
             return tag
         if re.search(r"\bDEF\s*=\s*['\"]" + re.escape(GROUND_TEXTURE_MATERIAL_DEF_PREFIX), tag):
             return tag
+        if MATERIAL_USE_RE.search(tag):
+            return tag
+        diffuse_color = _material_diffuse_color_from_tag(tag)
         tag = MATERIAL_PROFILE_ATTR_RE.sub("", tag)
         self_closing = tag.rstrip().endswith("/>")
         if self_closing:
@@ -1551,14 +1962,42 @@ def apply_x3d_material_lighting_profile(x3d_content: str, mode: str) -> Tuple[st
             end = ">"
 
         count += 1
+        emissive_color = _scaled_material_color(
+            diffuse_color,
+            float(profile.get("emissiveFactor", 0.0)),
+        )
         attrs = (
             f" ambientIntensity=\"{profile['ambientIntensity']}\""
-            f" emissiveColor=\"{profile['emissiveColor']}\""
+            f" emissiveColor=\"{emissive_color}\""
             f" shininess=\"{profile['shininess']}\""
         )
         return base + attrs + end
 
     return MATERIAL_TAG_RE.sub(_replace, x3d_content), count
+
+
+def _material_diffuse_color_from_tag(tag: str) -> Tuple[float, float, float]:
+    """Read diffuseColor from one Material tag, using the X3D default."""
+    match = MATERIAL_DIFFUSE_COLOR_RE.search(str(tag or ""))
+    if match is None:
+        return (0.8, 0.8, 0.8)
+    try:
+        values = [float(value) for value in re.split(r"[\s,]+", match.group(2).strip())]
+    except (TypeError, ValueError):
+        return (0.8, 0.8, 0.8)
+    if len(values) < 3:
+        return (0.8, 0.8, 0.8)
+    return tuple(max(0.0, min(1.0, value)) for value in values[:3])
+
+
+def _scaled_material_color(
+    diffuse_color: Tuple[float, float, float], factor: float
+) -> str:
+    clean_factor = max(0.0, min(1.0, float(factor)))
+    return " ".join(
+        _format_float(max(0.0, min(1.0, component * clean_factor)))
+        for component in diffuse_color
+    )
 
 
 def _material_lighting_mode_from_cfg(material_cfg: Optional[Dict[str, object]]) -> str:
@@ -1573,7 +2012,7 @@ def _material_lighting_mode_from_cfg(material_cfg: Optional[Dict[str, object]]) 
 
 
 def _insert_lights(scene, q, lighting_cfg: Optional[Dict[str, object]]) -> int:
-    """Insert global and point lights using already-converted X3D coordinates."""
+    """Insert global and local lights using already-converted X3D coordinates."""
     if not isinstance(lighting_cfg, dict):
         return 0
 
@@ -1587,18 +2026,30 @@ def _insert_lights(scene, q, lighting_cfg: Optional[Dict[str, object]]) -> int:
     point_entries = lighting_cfg.get("point_lights")
     point_shadow_count = 0
     point_shadow_requested = 0
+    spot_shadow_count = 0
+    spot_shadow_requested = 0
     if isinstance(point_entries, (list, tuple)):
         for index, entry in enumerate(point_entries):
             if not isinstance(entry, dict):
                 continue
             safe_entry = dict(entry)
-            if bool(safe_entry.get("shadows", False)):
+            light_mode = _light_export_mode(safe_entry)
+            if light_mode == LIGHT_MODE_POINT_CLASSIC and bool(safe_entry.get("shadows", False)):
                 point_shadow_requested += 1
                 if point_shadow_count >= MAX_POINT_LIGHT_SHADOWS:
                     safe_entry["shadows"] = False
                 else:
                     point_shadow_count += 1
-            light = _make_point_light(q, safe_entry, index)
+            elif light_mode != LIGHT_MODE_POINT_CLASSIC and bool(safe_entry.get("shadows", False)):
+                spot_shadow_requested += 1
+                if spot_shadow_count >= MAX_SPOT_LIGHT_SHADOWS:
+                    safe_entry["shadows"] = False
+                else:
+                    spot_shadow_count += 1
+            if light_mode == LIGHT_MODE_POINT_CLASSIC:
+                light = _make_point_light(q, safe_entry, index)
+            else:
+                light = _make_spot_light(q, safe_entry, index)
             _insert_scene_light(scene, q, light)
             count += 1
         if point_shadow_count > 0:
@@ -1613,6 +2064,22 @@ def _insert_lights(scene, q, lighting_cfg: Optional[Dict[str, object]]) -> int:
                         + str(point_shadow_requested)
                         + ", written="
                         + str(point_shadow_count)
+                        + "\n"
+                    )
+            except Exception:
+                pass
+        if spot_shadow_requested > 0:
+            try:
+                FreeCAD = __import__("FreeCAD")
+                FreeCAD.Console.PrintMessage(
+                    LOG_PREFIX + "SpotLight shadow maps written: " + str(spot_shadow_count) + "\n"
+                )
+                if spot_shadow_requested > spot_shadow_count:
+                    FreeCAD.Console.PrintWarning(
+                        "[GAMEEXPORT][WARN] SpotLight shadow maps capped to prevent Castle shader overflow: requested="
+                        + str(spot_shadow_requested)
+                        + ", written="
+                        + str(spot_shadow_count)
                         + "\n"
                     )
             except Exception:
@@ -1705,6 +2172,167 @@ def _make_point_light(q, entry: Dict[str, object], index: int):
     return ET.Element(q("PointLight"), attrs)
 
 
+def _make_spot_light(q, entry: Dict[str, object], index: int):
+    """Create a downward ceiling SpotLight, optionally with a static shadow map."""
+    position = entry.get("position_mm", (0.0, 0.0, 0.0))
+    if not isinstance(position, (list, tuple)) or len(position) != 3:
+        position = (0.0, 0.0, 0.0)
+    location = _transform_point_mm_to_x3d_m(
+        (float(position[0]), float(position[1]), float(position[2]))
+    )
+    photometric = _light_export_mode(entry) == LIGHT_MODE_PHOTOMETRIC
+    color = (
+        cct_to_rgb(_float_config_value(entry, "cct_kelvin", DEFAULT_PHOTOMETRIC_CCT_K))
+        if photometric
+        else _normalize_color(entry.get("color", (1.0, 1.0, 1.0)))
+    )
+    if photometric:
+        intensity = photometric_candela(
+            _float_config_value(entry, "lumens", DEFAULT_PHOTOMETRIC_LUMENS),
+            _float_config_value(
+                entry, "beam_angle_deg", DEFAULT_PHOTOMETRIC_BEAM_ANGLE_DEG
+            ),
+        )
+        ambient = 0.0
+    else:
+        intensity = max(0.0, _float_config_value(entry, "intensity", 1.0))
+        ambient = _clamp(
+            _float_config_value(entry, "ambient_intensity", 0.02), 0.0, 1.0
+        )
+    radius = max(0.1, _float_config_value(entry, "radius", 4.0))
+    attenuation = _normalize_attenuation(
+        "0 0 1" if photometric else entry.get("attenuation", "1 0.30 0.06")
+    )
+    if photometric:
+        full_beam_deg = _clamp(
+            _float_config_value(
+                entry, "beam_angle_deg", DEFAULT_PHOTOMETRIC_BEAM_ANGLE_DEG
+            ),
+            1.0,
+            179.0,
+        )
+        cutoff = math.radians(full_beam_deg * 0.5)
+        beam = cutoff * 0.85
+    else:
+        cutoff = _clamp(
+            _float_config_value(entry, "cut_off_angle", DEFAULT_SPOT_CUTOFF_ANGLE),
+            0.01,
+            math.pi / 2.0,
+        )
+        beam = _clamp(
+            _float_config_value(entry, "beam_width", DEFAULT_SPOT_BEAM_WIDTH),
+            0.0,
+            cutoff,
+        )
+    shadows = bool(entry.get("shadows", False))
+    name = str(entry.get("name", "") or f"SpotLight_{index + 1}")
+    attrs = {
+        "DEF": LIGHT_DEF_PREFIX + _safe_x3d_def(name),
+        "on": "true",
+        "global": "true",
+        "location": _format_vec(location),
+        # FreeCAD is Z-up. A ceiling luminaire points along -Z, which becomes
+        # -Y after the exporter's fixed -90 degree X-axis conversion.
+        "direction": "0 -1 0",
+        "radius": _format_float(radius),
+        "beamWidth": _format_float(beam),
+        "cutOffAngle": _format_float(cutoff),
+        "color": _format_vec(color),
+        "intensity": _format_float(intensity),
+        "ambientIntensity": _format_float(ambient),
+        "attenuation": attenuation,
+    }
+    if shadows:
+        attrs["shadows"] = "true"
+        attrs["projectionNear"] = _format_float(
+            max(0.05, min(radius * 0.25, _float_config_value(entry, "projection_near", 0.10)))
+        )
+        attrs["projectionFar"] = _format_float(radius)
+    light = ET.Element(q("SpotLight"), attrs)
+    if shadows:
+        shadow_size = int(
+            _clamp(
+                _float_config_value(entry, "shadow_map_size", DEFAULT_SPOT_SHADOW_MAP_SIZE),
+                64,
+                2048,
+            )
+        )
+        ET.SubElement(
+            light,
+            q("GeneratedShadowMap"),
+            {
+                "containerField": "defaultShadowMap",
+                "update": "NEXT_FRAME_ONLY",
+                "size": str(shadow_size),
+            },
+        )
+    try:
+        FreeCAD = __import__("FreeCAD")
+        FreeCAD.Console.PrintMessage(
+            LOG_PREFIX
+            + "[DEBUG] X3D SpotLight written: name="
+            + name
+            + ", x3d_m="
+            + _format_vec(location)
+            + ", radius="
+            + _format_float(radius)
+            + ", shadows="
+            + str(shadows)
+            + ", photometric="
+            + str(photometric)
+            + ", intensity_cd="
+            + _format_float(intensity)
+            + "\n"
+        )
+    except Exception:
+        pass
+    return light
+
+
+def _light_export_mode(entry: Dict[str, object]) -> str:
+    """Normalize the local-light algorithm while preserving legacy input."""
+    mode = str(entry.get("light_mode", LIGHT_MODE_POINT_CLASSIC) or LIGHT_MODE_POINT_CLASSIC)
+    if mode not in {
+        LIGHT_MODE_SPOT_SHADOW_MAP,
+        LIGHT_MODE_SPOT_NO_SHADOWS,
+        LIGHT_MODE_POINT_CLASSIC,
+        LIGHT_MODE_PHOTOMETRIC,
+    }:
+        return LIGHT_MODE_POINT_CLASSIC
+    return mode
+
+
+def photometric_candela(lumens: float, beam_angle_deg: float) -> float:
+    """Convert luminous flux to center candela for a uniform conical beam.
+
+    ``beam_angle_deg`` is the complete beam angle. The relation is
+    I = Phi / Omega with Omega = 2*pi*(1-cos(angle/2)). This is an
+    intentionally explicit approximation for the experimental mode; an IES
+    distribution can replace it later without changing the legacy modes.
+    """
+    flux = max(0.0, float(lumens))
+    full_angle = _clamp(float(beam_angle_deg), 1.0, 179.0)
+    half_angle = math.radians(full_angle * 0.5)
+    solid_angle = 2.0 * math.pi * (1.0 - math.cos(half_angle))
+    if solid_angle <= 1e-12:
+        return 0.0
+    return flux / solid_angle
+
+
+def cct_to_rgb(cct_kelvin: float) -> Tuple[float, float, float]:
+    """Return a display RGB approximation for a correlated color temperature."""
+    temperature = _clamp(float(cct_kelvin), 1000.0, 40000.0) / 100.0
+    if temperature <= 66.0:
+        red = 255.0
+        green = 99.4708025861 * math.log(temperature) - 161.1195681661
+        blue = 0.0 if temperature <= 19.0 else 138.5177312231 * math.log(temperature - 10.0) - 305.0447927307
+    else:
+        red = 329.698727446 * ((temperature - 60.0) ** -0.1332047592)
+        green = 288.1221695283 * ((temperature - 60.0) ** -0.0755148492)
+        blue = 255.0
+    return tuple(_clamp(component, 0.0, 255.0) / 255.0 for component in (red, green, blue))
+
+
 def _direction_from_yaw_pitch(yaw_deg: float, pitch_deg: float) -> Tuple[float, float, float]:
     """Convert panel yaw/pitch in FreeCAD Z-up coordinates to X3D Y-up direction."""
     yaw = math.radians(yaw_deg)
@@ -1740,7 +2368,7 @@ def _remove_gameexport_light_nodes(node) -> None:
 
 def _is_gameexport_light_node(node) -> bool:
     tag = _local_name(getattr(node, "tag", ""))
-    if tag not in {"DirectionalLight", "PointLight"}:
+    if tag not in {"DirectionalLight", "PointLight", "SpotLight"}:
         return False
     return str(getattr(node, "attrib", {}).get("DEF", "")).startswith(LIGHT_DEF_PREFIX)
 
@@ -1858,6 +2486,174 @@ def _force_gzip_to_plain(path: Path) -> None:
         FreeCAD.Console.PrintWarning(LOG_PREFIX + f"force gzip->plain failed: {exc}\n")
 
 
+def _geometry_export_mode(cfg: Optional[Dict[str, object]]) -> str:
+    if not isinstance(cfg, dict):
+        return DEFAULT_GEOMETRY_EXPORT_MODE
+    requested = str(cfg.get("mode", DEFAULT_GEOMETRY_EXPORT_MODE) or "").strip()
+    if requested.lower() == "classic":
+        return "Classic"
+    return "Optimized"
+
+
+def _apply_geometry_export_mode(
+    scene: ET.Element,
+    q,
+    cfg: Optional[Dict[str, object]],
+) -> int:
+    """Reuse identical rendered subtrees while preserving all placements."""
+    FreeCAD = __import__("FreeCAD")
+    mode = _geometry_export_mode(cfg)
+    FreeCAD.Console.PrintMessage(
+        LOG_PREFIX + "X3D geometry export mode: " + mode + "\n"
+    )
+    if mode == "Classic":
+        return 0
+
+    transform = _find_freecad_transform(scene, q)
+    if transform is None:
+        FreeCAD.Console.PrintWarning(
+            LOG_PREFIX + "Geometry instancing skipped: FreeCAD transform not found\n"
+        )
+        return 0
+
+    try:
+        minimum_payload = int(
+            (cfg or {}).get("minimum_payload_chars", MIN_INSTANCE_PAYLOAD_CHARS)
+        )
+    except (TypeError, ValueError):
+        minimum_payload = MIN_INSTANCE_PAYLOAD_CHARS
+    return _instance_repeated_x3d_subtrees(
+        transform,
+        minimum_payload_chars=max(0, minimum_payload),
+    )
+
+
+def _instance_repeated_x3d_subtrees(
+    root: ET.Element,
+    minimum_payload_chars: int = MIN_INSTANCE_PAYLOAD_CHARS,
+) -> int:
+    """Replace later identical Group/Switch/Shape nodes with type-safe USE.
+
+    DEF names are ignored during comparison. Existing USE nodes are resolved
+    to their previously defined content, so only complete visual matches are
+    reused. Transform nodes are never replaced, preserving every placement.
+    """
+    def_nodes = {}
+    reserved_defs = set()
+    for node in _iter_def_scope_nodes(root):
+        node_def = str(node.attrib.get("DEF", "") or "").strip()
+        if not node_def:
+            continue
+        reserved_defs.add(node_def)
+        def_nodes.setdefault(node_def, node)
+
+    digest_cache = {}
+
+    def digest_node(node, resolving=None):
+        cache_key = id(node)
+        cached = digest_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        resolving = set(resolving or ())
+        if cache_key in resolving:
+            marker = ("cycle:" + str(node.attrib.get("DEF", ""))).encode("utf-8")
+            result = (hashlib.sha256(marker).hexdigest(), len(marker))
+            digest_cache[cache_key] = result
+            return result
+        resolving.add(cache_key)
+
+        digest = hashlib.sha256()
+        local_tag = _local_name(node.tag)
+        digest.update(local_tag.encode("utf-8", errors="replace"))
+        payload_chars = len(local_tag)
+
+        node_use = str(node.attrib.get("USE", "") or "").strip()
+        if node_use:
+            target = def_nodes.get(node_use)
+            if target is not None:
+                target_digest, target_size = digest_node(target, resolving)
+                digest.update(b"\x00RESOLVED_USE\x00")
+                digest.update(target_digest.encode("ascii"))
+                payload_chars += target_size
+            else:
+                digest.update(b"\x00UNRESOLVED_USE\x00")
+                digest.update(node_use.encode("utf-8", errors="replace"))
+                payload_chars += len(node_use)
+            container_field = str(node.attrib.get("containerField", "") or "")
+            if container_field:
+                digest.update(b"\x00containerField\x00")
+                digest.update(container_field.encode("utf-8", errors="replace"))
+                payload_chars += len(container_field)
+        else:
+            for key, value in sorted(node.attrib.items()):
+                if key in {"DEF", "USE"}:
+                    continue
+                text = str(value)
+                digest.update(b"\x00ATTR\x00")
+                digest.update(str(key).encode("utf-8", errors="replace"))
+                digest.update(b"\x00")
+                digest.update(text.encode("utf-8", errors="replace"))
+                payload_chars += len(str(key)) + len(text)
+            for child in list(node):
+                child_digest, child_size = digest_node(child, resolving)
+                digest.update(b"\x00CHILD\x00")
+                digest.update(child_digest.encode("ascii"))
+                payload_chars += child_size
+
+        result = (digest.hexdigest(), payload_chars)
+        digest_cache[cache_key] = result
+        return result
+
+    eligible_tags = {"Group", "Switch", "Shape"}
+    seen = {}
+    generated_index = 1
+    replacement_count = 0
+
+    def next_instance_def() -> str:
+        nonlocal generated_index
+        while True:
+            candidate = INSTANCE_DEF_PREFIX + f"{generated_index:05d}"
+            generated_index += 1
+            if candidate not in reserved_defs:
+                reserved_defs.add(candidate)
+                return candidate
+
+    def visit(parent) -> None:
+        nonlocal replacement_count
+        for child in list(parent):
+            local_tag = _local_name(child.tag)
+            if local_tag not in eligible_tags or child.attrib.get("USE"):
+                visit(child)
+                continue
+
+            digest_value, payload_chars = digest_node(child)
+            key = (local_tag, digest_value)
+            previous = seen.get(key)
+            if previous is not None and payload_chars >= minimum_payload_chars:
+                _source_node, source_def = previous
+                replacement = ET.Element(child.tag, {"USE": source_def})
+                container_field = child.attrib.get("containerField")
+                if container_field:
+                    replacement.attrib["containerField"] = container_field
+                child_index = list(parent).index(child)
+                parent.remove(child)
+                parent.insert(child_index, replacement)
+                replacement_count += 1
+                continue
+
+            source_def = str(child.attrib.get("DEF", "") or "").strip()
+            if not source_def:
+                source_def = next_instance_def()
+                child.attrib["DEF"] = source_def
+                def_nodes[source_def] = child
+            seen[key] = (child, source_def)
+            visit(child)
+
+    visit(root)
+    return replacement_count
+
+
 def _serialize_xml(root: ET.Element, doctype_line: str) -> str:
     buf = BytesIO()
     ET.ElementTree(root).write(buf, encoding="utf-8", xml_declaration=True)
@@ -1871,6 +2667,64 @@ def _serialize_xml(root: ET.Element, doctype_line: str) -> str:
             lines.insert(0, doctype_line)
         text = "\n".join(lines) + "\n"
     return text
+
+
+def _iter_def_scope_nodes(root: ET.Element):
+    """Yield nodes in one X3D DEF scope without entering ProtoDeclare bodies."""
+    yield root
+    for child in list(root):
+        if _local_name(child.tag) == "ProtoDeclare":
+            continue
+        yield from _iter_def_scope_nodes(child)
+
+
+def _ensure_unique_def_names(scene: ET.Element) -> int:
+    """Rename duplicate X3D DEF values while preserving the first definition.
+
+    FreeCADGui.export may emit the same internal Coin name for multiple linked
+    Mesh instances, for example SoFCIndexedFaceSet. X3D requires every DEF in
+    a scene name scope to be unique. Keeping the first DEF also keeps existing
+    USE references deterministic; later full node definitions only receive a
+    numeric suffix and their geometry, placement and appearance stay intact.
+    """
+    nodes = list(_iter_def_scope_nodes(scene))
+    reserved = {
+        str(node.attrib.get("DEF", "") or "")
+        for node in nodes
+        if str(node.attrib.get("DEF", "") or "")
+    }
+    seen = set()
+    next_suffix = {}
+    renamed = 0
+
+    for node in nodes:
+        original = str(node.attrib.get("DEF", "") or "")
+        if not original:
+            continue
+        if original not in seen:
+            seen.add(original)
+            continue
+
+        suffix = int(next_suffix.get(original, 2))
+        candidate = f"{original}_{suffix}"
+        while candidate in reserved or candidate in seen:
+            suffix += 1
+            candidate = f"{original}_{suffix}"
+        next_suffix[original] = suffix + 1
+        node.set("DEF", candidate)
+        reserved.add(candidate)
+        seen.add(candidate)
+        renamed += 1
+
+    if renamed:
+        FreeCAD = __import__("FreeCAD")
+        FreeCAD.Console.PrintMessage(
+            LOG_PREFIX
+            + "Normalized duplicate X3D DEF names: "
+            + str(renamed)
+            + " renamed\n"
+        )
+    return renamed
 
 
 def _extract_doctype(text: str) -> str:
@@ -1895,15 +2749,20 @@ def _local_name(tag: str) -> str:
 
 
 def _split_exportables(objects: Iterable[object]) -> Tuple[List[object], List[Tuple[str, str, str]]]:
+    """Apply the final exportability gate, including explicit exclusion metadata."""
     exportable: List[object] = []
     skipped: List[Tuple[str, str, str]] = []
     for obj in objects:
+        label = getattr(obj, "Label", "") or getattr(obj, "Name", "Unknown")
+        type_id = getattr(obj, "TypeId", "UnknownType")
+        if _object_export_override(obj) is False:
+            reason = "BIM Space (semantic exclusion)" if _is_bim_space(obj) else "GameExportExclude=True"
+            skipped.append((label, type_id, reason))
+            continue
         ok, reason = _is_exportable_object(obj)
         if ok:
             exportable.append(obj)
             continue
-        label = getattr(obj, "Label", "") or getattr(obj, "Name", "Unknown")
-        type_id = getattr(obj, "TypeId", "UnknownType")
         skipped.append((label, type_id, reason))
     return exportable, skipped
 
@@ -1945,6 +2804,34 @@ def _normalized_object_text(obj) -> str:
     return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii").lower()
 
 
+def _is_bim_space(obj) -> bool:
+    """Return True when an object or linked target represents an IFC/BIM Space."""
+    try:
+        linked = getattr(obj, "LinkedObject", None)
+    except Exception:
+        linked = None
+    for candidate in (obj, linked):
+        if candidate is None:
+            continue
+        try:
+            if str(getattr(candidate, "IfcType", "") or "").strip().lower() == "space":
+                return True
+        except Exception:
+            pass
+        try:
+            proxy = getattr(candidate, "Proxy", None)
+            if str(getattr(proxy, "Type", "") or "").strip().lower() == "space":
+                return True
+        except Exception:
+            pass
+        try:
+            if str(getattr(candidate, "TypeId", "") or "").strip().lower() == "arch::space":
+                return True
+        except Exception:
+            pass
+    return False
+
+
 def _object_export_override(obj) -> Optional[bool]:
     """Return an explicit export choice from object or linked master metadata."""
     try:
@@ -1967,6 +2854,8 @@ def _object_export_override(obj) -> Optional[bool]:
                 return True
         except Exception:
             pass
+    if _is_bim_space(obj):
+        return False
     return None
 
 
@@ -2148,4 +3037,6 @@ __all__: List[str] = [
     "diagnose_export_candidates",
     "apply_x3d_material_lighting_profile",
     "detect_skybox_faces",
+    "photometric_candela",
+    "cct_to_rgb",
 ]

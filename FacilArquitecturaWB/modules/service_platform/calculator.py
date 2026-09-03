@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 from .model import PlatformLayout, PlatformOptions
-from .validation import PlatformValidationError, normalize_options, validate_options
+from .validation import (
+    PlatformValidationError,
+    normalize_options,
+    validate_glass_opening,
+    validate_options,
+)
 
 
 def calculate_layout(values=None) -> PlatformLayout:
@@ -59,3 +64,26 @@ def position_origins(options: PlatformOptions, layout: PlatformLayout):
         if index < layout.divider_count:
             x += options.divider_thickness_mm
     return result
+
+
+def calculate_line_layout(values=None) -> PlatformLayout:
+    """Calculate modules when the selected line is the exact total frontage.
+
+    The line-driven workflow deliberately has no side-margin or divider deduction:
+    a 3000 mm source split into three positions produces three 1000 mm modules.
+    The legacy calculator above remains unchanged for historical platforms.
+    """
+    options = normalize_options(values)
+    validate_options(options)
+    validate_glass_opening(options)
+    width = float(options.total_width_mm)
+    positions = int(options.service_positions)
+    return PlatformLayout(
+        divider_count=max(positions - 1, 0),
+        usable_width_mm=width,
+        position_width_mm=width / float(positions),
+        minimum_total_width_mm=positions * float(options.minimum_position_width_mm),
+        approximate_total_depth_mm=(
+            options.public_zone_depth_mm + options.desk_depth_mm + options.staff_zone_depth_mm
+        ),
+    )

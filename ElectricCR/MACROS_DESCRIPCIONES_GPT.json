@@ -1,0 +1,1747 @@
+{
+  "schema": 1,
+  "generado": "2026-08-12T18:52:43+00:00",
+  "proposito": "Descripciones funcionales preparadas por GPT para integrar en el catalogo del Panel de macros ElectricCR.",
+  "reglas": [
+    "Descripcion y comentario del usuario son campos distintos.",
+    "No sobrescribir comentarios, estado manual, decision ni estadisticas de uso.",
+    "Las descripciones con confianza baja o media pueden revisarse posteriormente.",
+    "Las entradas historicas o de respaldo pueden heredar la descripcion de la version activa cuando comparten el mismo archivo base."
+  ],
+  "conteo": 192,
+  "conteo_confianza": {
+    "alta": 77,
+    "media": 111,
+    "baja": 4
+  },
+  "items": [
+    {
+      "ruta": "Areas/AreaPorClick.FCMacro",
+      "herramienta": "Areas por click",
+      "grupo": "Areas",
+      "descripcion": "Crea poligonos de recintos haciendo clic dentro de zonas delimitadas; detecta los limites cercanos y genera la geometria del area.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "codigo_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Areas/AsignarNombreEstandar.FCMacro",
+      "herramienta": "AsignarNombreEstandar",
+      "grupo": "Areas",
+      "descripcion": "Muestra nombres de recinto definidos en la hoja NombresEstandar y aplica el nombre elegido a los objetos seleccionados; permite editar la lista y marca nombres ya utilizados.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "codigo_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Areas/CrearMurosEntreEspacios.FCMacro",
+      "herramienta": "CrearMurosEntreEspacios",
+      "grupo": "Areas",
+      "descripcion": "Detecta separaciones pequenas entre pares de objetos seleccionados mediante sus BoundBox y dibuja lineas Draft centrales entre ellos; sirve como referencia para divisiones o muros, pero no crea muros BIM.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "codigo_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Areas/Guia_Areas.FCMacro",
+      "herramienta": "Guia Areas",
+      "grupo": "Areas",
+      "descripcion": "Abre la guia operativa de la barra Areas y presenta el flujo recomendado para crear, corregir y nombrar recintos, con accesos a herramientas relacionadas.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "codigo_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Areas/PoligonoFromBoundaryLines.FCMacro",
+      "herramienta": "Poligono desde lineas limite",
+      "grupo": "Areas",
+      "descripcion": "Construye un poligono Draft cerrado de area a partir de aristas o lineas limite seleccionadas, aplicando tolerancias de snap y cierre.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "codigo_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Areas/PoligonosRecintosDesdeArchWalls.FCMacro",
+      "herramienta": "Poligonos de recintos desde muros BIM",
+      "grupo": "Areas",
+      "descripcion": "Crea areas poligonales independientes de recintos a partir de las huellas de muros Arch/BIM, conservando metadatos para su uso por ElectricCR.",
+      "descripcion_original": "Create independent polygonal room areas from Arch/BIM wall footprints.",
+      "fuente_descripcion": "catalogo_y_contexto_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Areas/RectFromBoundaryLines.FCMacro",
+      "herramienta": "RectFromBoundaryLines",
+      "grupo": "Areas",
+      "descripcion": "Crea un rectangulo Draft desde aristas o caras seleccionadas de muros BIM.",
+      "descripcion_original": "Crea un rectangulo Draft desde aristas o caras seleccionadas de muros BIM.",
+      "fuente_descripcion": "catalogo_existente",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Areas/RectFromLines.FCMacro",
+      "herramienta": "RectFromLines",
+      "grupo": "Areas",
+      "descripcion": "Crea un rectangulo en Draft a partir de dos aristas lineales seleccionadas.",
+      "descripcion_original": "Crea un rectangulo en Draft a partir de dos aristas lineales seleccionadas.",
+      "fuente_descripcion": "catalogo_existente",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Areas/RectFromSelection.FCMacro",
+      "herramienta": "RectFromSelection",
+      "grupo": "Areas",
+      "descripcion": "Crea un rectangulo en Draft a partir de una seleccion mixta.",
+      "descripcion_original": "Crea un rectangulo en Draft a partir de una seleccion mixta.",
+      "fuente_descripcion": "catalogo_existente",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Areas/SustituirAreasPorRectangulosNuevos.FCMacro",
+      "herramienta": "Sustituir áreas por rectángulos nuevos",
+      "grupo": "Areas",
+      "descripcion": "Reemplaza la geometria de areas anteriores por rectangulos nuevos creados con RectFromBoundaryLines, conservando nombre, enlaces y metadatos del recinto y recalculando el area.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "codigo_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Cajas/Colocar_Cajas_Octogonales_Mejor_Ubicacion.FCMacro",
+      "herramienta": "Colocar Cajas Octogonales Mejor Ubicacion...",
+      "grupo": "Cajas",
+      "descripcion": "Coloca una caja EMT octogonal por contenedor funcional en una posicion XY optima para los objetos seleccionados; permite altura SNPT y conexion EMT solida o flexible opcional.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "codigo_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Cajas/Colocar_Cajas_Octogonales_Entre_Luminarias.FCMacro",
+      "herramienta": "Colocar Cajas Octogonales entre Luminarias",
+      "grupo": "Cajas",
+      "descripcion": "Agrupa luminarias por circuito y recinto, forma pares o clusters y coloca cajas EMT octogonales entre ellas; ademas genera conexiones 3D desde cada caja hacia sus luminarias.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "codigo_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Cajas/Colocar_Cajas_Octogonales_Sobre_Dispositivos.FCMacro",
+      "herramienta": "Colocar Cajas Octogonales sobre Dispositivos",
+      "grupo": "Cajas",
+      "descripcion": "Coloca una caja EMT octogonal sobre cada tomacorriente o apagador, evita duplicados y la organiza en el circuito o contenedor correspondiente.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "codigo_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Cajas/Conectar_Tomas_a_Cajas_Octogonales_Sobre_Muro.FCMacro",
+      "herramienta": "Conectar Tomas a Cajas Octogonales Sobre Muro...",
+      "grupo": "Cajas",
+      "descripcion": "Conecta cajas o puntos de tomacorriente con cajas EMT octogonales ubicadas sobre el muro, generando el recorrido de conexion correspondiente.",
+      "descripcion_original": "Conecta cajas rectangulares de tomacorriente con cajas EMT octogonales.",
+      "fuente_descripcion": "catalogo_existente_normalizado",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Cajas/Insertar_Caja_Octogonal_En_Grupo.FCMacro",
+      "herramienta": "Insertar Caja Octogonal en Grupo...",
+      "grupo": "Cajas",
+      "descripcion": "Inserta una caja EMT octogonal en el grupo funcional relacionado con la seleccion actual.",
+      "descripcion_original": "Inserta una caja EMT octogonal en el grupo relacionado con la seleccion actual.",
+      "fuente_descripcion": "catalogo_existente_normalizado",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Cajas/Insertar_Cajas_Octogonales_Encima.FCMacro",
+      "herramienta": "Insertar Cajas Octogonales Encima...",
+      "grupo": "Cajas",
+      "descripcion": "Inserta cajas EMT octogonales encima de los objetos seleccionados a una altura SNPT configurable y, opcionalmente, crea conexion EMT solida o flexible hacia cada objeto.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "codigo_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Cajas/Insertar_Cajas_Octogonales.FCMacro",
+      "herramienta": "Insertar Cajas Octogonales...",
+      "grupo": "Cajas",
+      "descripcion": "Inserta cajas EMT octogonales como App::Link reutilizando el modelo maestro moderno de ElectricCR y sus puertos de conexion.",
+      "descripcion_original": "Inserta una caja EMT octogonal como App::Link usando: ElectricCR.electriccr.features.caja_emt_octogonal",
+      "fuente_descripcion": "catalogo_existente_normalizado",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Conectar/Ajustar_Alimentador_o_Ramal_Manual.FCMacro",
+      "herramienta": "Ajustar Ruta...",
+      "grupo": "Conectar",
+      "descripcion": "Permite editar manualmente la ruta de un alimentador o ramal existente sin regenerar toda la red de conexiones.",
+      "descripcion_original": "Macro: Ajustar_Alimentador_o_Ramal_Manual Description: Local manual edit for an existing feeder/branch route.",
+      "fuente_descripcion": "catalogo_existente_normalizado",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Conectar/Backups/ruta_critica_seleccion_20260810/Ajustar_Alimentador_o_Ramal_Manual.FCMacro",
+      "herramienta": "Ajustar Ruta...",
+      "grupo": "Conectar",
+      "descripcion": "Permite editar manualmente la ruta de un alimentador o ramal existente sin regenerar toda la red de conexiones.",
+      "descripcion_original": "Macro: Ajustar_Alimentador_o_Ramal_Manual Description: Local manual edit for an existing feeder/branch route.",
+      "fuente_descripcion": "heredada_de_version_activa",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Conectar/Conectar_Alimentadores_a_Tablero_Auto.FCMacro",
+      "herramienta": "Conectar Alimentadores...",
+      "grupo": "Conectar",
+      "descripcion": "Genera alimentadores ElectricCR desde circuitos o cajas de origen hacia el tablero asignado, usando el motor general de ruteo de alimentadores.",
+      "descripcion_original": "Comando general de alimentadores ElectricCR.",
+      "fuente_descripcion": "catalogo_y_contexto_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Conectar/Conectar_Octogonales_por_Circuito.FCMacro",
+      "herramienta": "Conectar Circuito / Backbone...",
+      "grupo": "Conectar",
+      "descripcion": "Genera el backbone o recorrido principal de un circuito conectando sus cajas octogonales con el motor general de conexiones ElectricCR.",
+      "descripcion_original": "Comando general de backbone ElectricCR.",
+      "fuente_descripcion": "catalogo_y_contexto_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Conectar/Backups/consolidacion_conexiones_20260808/Conectar/Conectar_Circuitos_TCOM_a_Cara_Superior_Tablero.FCMacro",
+      "herramienta": "Conectar Circuitos TCOM a Cara Superior del Tablero...",
+      "grupo": "Conectar",
+      "descripcion": "Alimentadores de TCOM-01..TCOM-05 hacia la cara superior real del tablero TCOM.",
+      "descripcion_original": "Alimentadores de TCOM-01..TCOM-05 hacia la cara superior real del tablero TCOM.",
+      "fuente_descripcion": "catalogo_existente",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Conectar/Backups/consolidacion_conexiones_20260808/Conectar/Conectar_Circuitos_TP_a_Cara_Superior_Tablero.FCMacro",
+      "herramienta": "Conectar Circuitos TP a Cara Superior del Tablero...",
+      "grupo": "Conectar",
+      "descripcion": "Conecta los circuitos TP existentes con la cara superior real del tablero TP.",
+      "descripcion_original": "Conecta los circuitos TP existentes con la cara superior real del tablero TP.",
+      "fuente_descripcion": "catalogo_existente",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Conectar/Conectar_Luminarias_a_Octogonal_Existente.FCMacro",
+      "herramienta": "Conectar Luminarias a Octogonal Existente",
+      "grupo": "Conectar",
+      "descripcion": "Conecta una caja EMT octogonal existente con una o varias luminarias u objetos compatibles mediante una conexion EMT flexible por cada elemento.",
+      "descripcion_original": "Uso: - Seleccione una caja EMT octogonal existente y una o varias luminarias (u otros objetos compatibles). - El orden de seleccion no importa. - Crea una spline EMT_Flexible por cada luminaria hacia la caja.",
+      "fuente_descripcion": "catalogo_existente_normalizado",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Conectar/Conectar_Octogonales_45.FCMacro",
+      "herramienta": "Conectar Octogonales 45 (Diagonal)",
+      "grupo": "Conectar",
+      "descripcion": "Conecta cajas octogonales seleccionadas mediante tramos diagonales a 45 grados, generando una ruta de conexion entre sus posiciones.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Conectar/Backups/consolidacion_conexiones_20260808/Conectar/Conectar_Octogonales_Ortogonal_por_Circuito_TCOM.FCMacro",
+      "herramienta": "Conectar Octogonales Ortogonal por Circuito TCOM...",
+      "grupo": "Conectar",
+      "descripcion": "Backbone EMT ortogonal para TCOM-01..TCOM-05, separado de la red TP.",
+      "descripcion_original": "Backbone EMT ortogonal para TCOM-01..TCOM-05, separado de la red TP.",
+      "fuente_descripcion": "catalogo_existente",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Conectar/Backups/consolidacion_conexiones_20260808/Conectar/Conectar_Octogonales_Ortogonal_por_Circuito_TP.FCMacro",
+      "herramienta": "Conectar Octogonales Ortogonal por Circuito TP...",
+      "grupo": "Conectar",
+      "descripcion": "Genera el backbone EMT interno de los circuitos TP.",
+      "descripcion_original": "Genera el backbone EMT interno de los circuitos TP.",
+      "fuente_descripcion": "catalogo_existente",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Conectar/Conectar_Circuito_Tomas_Plano_2D.FCMacro",
+      "herramienta": "Conectar circuito de tomas en plano 2D...",
+      "grupo": "Conectar",
+      "descripcion": "Dibuja la representacion grafica 2D de un circuito de tomacorrientes para plantas ElectricCR.",
+      "descripcion_original": "Circuito grafico estable de tomacorrientes para plantas ElectricCR.",
+      "fuente_descripcion": "catalogo_existente_normalizado",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Conectar/Backups/consolidacion_conexiones_20260808/Conectar/Conectar_Desconectores_HVAC_a_TP.FCMacro",
+      "herramienta": "Conectar desconectores al tablero asignado y actualizar tablas",
+      "grupo": "Conectar",
+      "descripcion": "Conectar desconectores ElectricCR al tablero que ya tienen asignado.",
+      "descripcion_original": "Conectar desconectores ElectricCR al tablero que ya tienen asignado.",
+      "fuente_descripcion": "catalogo_existente",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Conectar/Backups/consolidacion_conexiones_20260808/Conectar/Conectar_Tableros_Cara_Superior.FCMacro",
+      "herramienta": "Conectar tableros y desconectores por cara superior",
+      "grupo": "Conectar",
+      "descripcion": "Conecta tableros y desconectores utilizando como punto de llegada la cara superior real de cada equipo.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "catalogo_contextual_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Conectar/ConectarObjetosdeunGrupo.FCMacro",
+      "herramienta": "ConectarObjetosdeunGrupo",
+      "grupo": "Conectar",
+      "descripcion": "Conecta consecutivamente los objetos conectables de un grupo, ordenados por su Label, mediante segmentos Draft Wire directos y guarda las conexiones en el grupo Conexiones correspondiente.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "codigo_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Conectar/ConectarObjetosÁrbol.FCMacro",
+      "herramienta": "ConectarObjetosÁrbol",
+      "grupo": "Conectar",
+      "descripcion": "Conecta consecutivamente los objetos numerados de un grupo siguiendo el orden de sus Labels y crea rutas Draft ortogonales entre sus posiciones.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "codigo_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Conectar/ConectarObjetosÁrbol-WIRE.FCMacro",
+      "herramienta": "ConectarObjetosÁrbol-WIRE",
+      "grupo": "Conectar",
+      "descripcion": "Variante de conexion por arbol que une consecutivamente objetos numerados de un grupo con Draft Wire ortogonales y los organiza en el grupo Conexiones.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "codigo_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Conectar/ConectarTomasOrdenados.FCMacro",
+      "herramienta": "ConectarTomasOrdenados",
+      "grupo": "Conectar",
+      "descripcion": "Ordena los tomacorrientes de un grupo por su etiqueta y crea una unica ruta Draft Wire ortogonal continua que los conecta en ese orden.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "codigo_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Conectar/ConectarTomasSnake.FCMacro",
+      "herramienta": "ConectarTomasSnake",
+      "grupo": "Conectar",
+      "descripcion": "Conecta tomacorrientes, vertices, bordes o caras seleccionados mediante una ruta Draft Wire ortogonal tipo snake, con radio de redondeo y soporte de orientacion respecto a pared.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "codigo_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Conectar/Conectar_objetos_en_C.FCMacro",
+      "herramienta": "Conectar_objetos_en_C",
+      "grupo": "Conectar",
+      "descripcion": "Conecta objetos seleccionados mediante una ruta ortogonal con forma de C, agregando puntos intermedios para mantener la geometria del recorrido.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Conectar/crear_conector_flexible.FCMacro",
+      "herramienta": "Crear Conector Flexible (Spline)",
+      "grupo": "Conectar",
+      "descripcion": "Crea una conexion flexible tipo spline entre referencias seleccionadas para representar tuberia o enlace flexible.",
+      "descripcion_original": "Crear conector flexible para la herramienta Conectores.",
+      "fuente_descripcion": "catalogo_existente_normalizado",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Conectar/Normalizar_Grupos_Conexiones.FCMacro",
+      "herramienta": "Normalizar grupos Conexiones",
+      "grupo": "Conectar",
+      "descripcion": "Revisa y normaliza la ubicacion de objetos de conexion dentro de la jerarquia ElectricCR, consolidandolos en los grupos Conexiones correspondientes.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Conectar/Panel_Conexiones_Endpoints.FCMacro",
+      "herramienta": "Panel Conexiones Endpoints (Beta)",
+      "grupo": "Conectar",
+      "descripcion": "Abre un panel beta para revisar y gestionar los extremos de conexiones ElectricCR, facilitando la inspeccion de origen, destino y puntos de enlace.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Conectar/Backups/consolidacion_conexiones_20260808/Conectar/Preparar_Red_TCOM_Completa.FCMacro",
+      "herramienta": "Preparar red TCOM completa",
+      "grupo": "Conectar",
+      "descripcion": "Crea alimentadores y ramales TCOM y colorea los tomas de computo.",
+      "descripcion_original": "Crea alimentadores y ramales TCOM y colorea los tomas de computo.",
+      "fuente_descripcion": "catalogo_existente",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Conectar/Backups/consolidacion_conexiones_20260808/Conectar/Preparar_Red_Iluminacion_Completa.FCMacro",
+      "herramienta": "Preparar red completa de iluminación",
+      "grupo": "Conectar",
+      "descripcion": "Orquesta cajas, ramales y alimentadores para circuitos de iluminacion.",
+      "descripcion_original": "Orquesta cajas, ramales y alimentadores para circuitos de iluminacion.",
+      "fuente_descripcion": "catalogo_existente",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Conectar/Preparar_Red_Iluminacion_Completa.FCMacro",
+      "herramienta": "Preparar red completa de iluminación",
+      "grupo": "Conectar",
+      "descripcion": "Orquesta la preparacion completa de una red de iluminacion, incluyendo cajas, ramales y alimentadores de sus circuitos.",
+      "descripcion_original": "Orquesta cajas, ramales y alimentadores para circuitos de iluminacion.",
+      "fuente_descripcion": "catalogo_existente_normalizado",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Conectar/RutaCritica_CircuitoPorCircuito.FCMacro",
+      "herramienta": "Ruta critica circuito por circuito",
+      "grupo": "Conectar",
+      "descripcion": "Genera o analiza la ruta critica de los circuitos de manera individual, procesando cada circuito por separado para obtener su recorrido principal.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "contexto_revisado_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Conectar/Backups/ruta_critica_seleccion_20260810/RutaCritica_Seleccionados.FCMacro",
+      "herramienta": "Ruta critica solo seleccionados",
+      "grupo": "Conectar",
+      "descripcion": "Calcula y dibuja una ruta critica usando solamente los objetos o subelementos seleccionados, permitiendo definir el recorrido a partir de la seleccion actual.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "heredada_de_version_activa",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Conectar/RutaCritica_Seleccionados.FCMacro",
+      "herramienta": "Ruta critica solo seleccionados",
+      "grupo": "Conectar",
+      "descripcion": "Calcula y dibuja una ruta critica usando solamente los objetos o subelementos seleccionados, permitiendo definir el recorrido a partir de la seleccion actual.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "contexto_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Conectar/Backups/consolidacion_conexiones_20260808/Conectar/Ajustar_Alimentador_o_Ramal_Manual.FCMacro",
+      "herramienta": "[ACTIVA] Ajustar Alimentador o Ramal Manual",
+      "grupo": "Conectar",
+      "descripcion": "Permite editar manualmente la ruta de un alimentador o ramal existente sin regenerar toda la red de conexiones.",
+      "descripcion_original": "Macro: Ajustar_Alimentador_o_Ramal_Manual Description: Local manual edit for an existing feeder/branch route.",
+      "fuente_descripcion": "heredada_de_version_activa",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Conectar/Backups/consolidacion_conexiones_20260808/Conectar/Conectar_Alimentadores_a_Tablero_Auto.FCMacro",
+      "herramienta": "[ACTIVA] Conectar Alimentadores a Tablero",
+      "grupo": "Conectar",
+      "descripcion": "Genera alimentadores ElectricCR desde circuitos o cajas de origen hacia el tablero asignado, usando el motor general de ruteo de alimentadores.",
+      "descripcion_original": "Macro: Conectar_Alimentadores_a_Tablero_Auto Description: Dedicated feeder routing from circuit octagonal boxes to an electrical panel.",
+      "fuente_descripcion": "heredada_de_version_activa",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Conectar/Conectar_Circuitos_Luminarias_Auto.FCMacro",
+      "herramienta": "[ACTIVA] Conectar Circuitos Luminarias",
+      "grupo": "Conectar",
+      "descripcion": "Conecta automaticamente los circuitos de iluminacion utilizando la estructura y metadatos ElectricCR para generar sus recorridos y conexiones.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "contexto_revisado_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Conectar/Conectar_Circuitos_Ramales_Auto.FCMacro",
+      "herramienta": "[ACTIVA] Conectar Circuitos Ramales",
+      "grupo": "Conectar",
+      "descripcion": "Genera automaticamente conexiones de ramales para circuitos ElectricCR, enlazando las cargas o cajas correspondientes segun la informacion del circuito.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "contexto_revisado_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Conectar/Conectar_objetos_en_L.FCMacro",
+      "herramienta": "[ACTIVA] Conectar objetos en L",
+      "grupo": "Conectar",
+      "descripcion": "Conecta objetos seleccionados mediante una ruta ortogonal en forma de L, utilizando puntos intermedios segun su posicion.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Conectar/Proponer_Rutas_Guia_Auto.FCMacro",
+      "herramienta": "[ACTIVA] Proponer Rutas Guia (Auto)",
+      "grupo": "Conectar",
+      "descripcion": "Propone automaticamente lineas o rutas guia para orientar el trazado de conexiones ElectricCR sin impedir el ruteo cuando no existe una guia.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "contexto_revisado_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Conectar/Sustituir_Conexion_EMT_por_Linea.FCMacro",
+      "herramienta": "[ACTIVA] Sustituir Conexion EMT por Linea",
+      "grupo": "Conectar",
+      "descripcion": "Sustituye una conexion EMT seleccionada por una representacion lineal mas simple, conservando el recorrido como referencia grafica.",
+      "descripcion_original": "Macro: Sustituir_Conexion_EMT_por_Linea",
+      "fuente_descripcion": "contexto_revisado_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Conectar/Backups/consolidacion_conexiones_20260808/Conectar/Conectar_Cajas_a_Tablero_Auto.FCMacro",
+      "herramienta": "[LEGACY] Conectar Cajas y Alimentadores a Tablero (v1)",
+      "grupo": "Conectar",
+      "descripcion": "Conecta automaticamente circuitos de tomacorrientes/apagadores hacia cajas octogonales y al tablero (u objeto ancla) seleccionado.",
+      "descripcion_original": "Conecta automaticamente circuitos de tomacorrientes/apagadores hacia cajas octogonales y al tablero (u objeto ancla) seleccionado.",
+      "fuente_descripcion": "catalogo_existente",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Conectar/conectar_objetos_en_eSe.FCMacro",
+      "herramienta": "conectar_objetos_en_eSe",
+      "grupo": "Conectar",
+      "descripcion": "Conecta objetos seleccionados mediante un recorrido ortogonal con forma de S, creando puntos intermedios para evitar un enlace directo.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Conectar/conectar_objetos_por_bordes.FCMacro",
+      "herramienta": "conectar_objetos_por_bordes",
+      "grupo": "Conectar",
+      "descripcion": "Conecta objetos o subelementos seleccionados tomando como referencia sus bordes para construir la ruta de conexion.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Conectar/conectar_objetos_por_bordes_WIRE.FCMacro",
+      "herramienta": "conectar_objetos_por_bordes_WIRE",
+      "grupo": "Conectar",
+      "descripcion": "Variante que conecta objetos o subelementos por sus bordes y materializa el recorrido como Draft Wire.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Conectar/conectar_puntos_seleccionados.FCMacro",
+      "herramienta": "conectar_puntos_seleccionados",
+      "grupo": "Conectar",
+      "descripcion": "Crea una conexion entre puntos o vertices seleccionados, usando la seleccion de subelementos como extremos del recorrido.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Conectar/crear_conector.FCMacro",
+      "herramienta": "crear_conector",
+      "grupo": "Conectar",
+      "descripcion": "Crea un objeto de conexion entre elementos seleccionados para representar un enlace electrico dentro del modelo.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "baja"
+    },
+    {
+      "ruta": "Conectar/medir_distancia_y_dibujar_ruta.FCMacro",
+      "herramienta": "medir_distancia_y_dibujar_ruta",
+      "grupo": "Conectar",
+      "descripcion": "Mide la distancia entre referencias seleccionadas y dibuja una ruta de conexion asociada al recorrido medido.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Conectar/medir_distancia_y_dibujar_ruta_independiente.FCMacro",
+      "herramienta": "medir_distancia_y_dibujar_ruta_independiente",
+      "grupo": "Conectar",
+      "descripcion": "Variante independiente que mide la distancia entre referencias y dibuja una ruta sin depender de la organizacion electrica principal del documento.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Conectar/Conectar_Circuitos_TCOM_a_Cara_Superior_Tablero.FCMacro",
+      "herramienta": "Conectar Circuitos TCOM a Cara Superior del Tablero (Legacy)",
+      "grupo": "Conectar Legacy",
+      "descripcion": "Wrapper compatible TCOM del motor general ElectricCR.",
+      "descripcion_original": "Wrapper compatible TCOM del motor general ElectricCR.",
+      "fuente_descripcion": "catalogo_existente",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Conectar/Conectar_Circuitos_TP_a_Cara_Superior_Tablero.FCMacro",
+      "herramienta": "Conectar Circuitos TP a Cara Superior del Tablero (Legacy)",
+      "grupo": "Conectar Legacy",
+      "descripcion": "Wrapper compatible TP del motor general ElectricCR.",
+      "descripcion_original": "Wrapper compatible TP del motor general ElectricCR.",
+      "fuente_descripcion": "catalogo_existente",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Conectar/Conectar_Octogonales_Ortogonal_por_Circuito_TCOM.FCMacro",
+      "herramienta": "Conectar Octogonales por Circuito TCOM (Legacy)",
+      "grupo": "Conectar Legacy",
+      "descripcion": "Wrapper TCOM del backbone general ElectricCR. Revision: 2026-08-08.",
+      "descripcion_original": "Wrapper TCOM del backbone general ElectricCR. Revision: 2026-08-08.",
+      "fuente_descripcion": "catalogo_existente",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Conectar/Conectar_Octogonales_Ortogonal_por_Circuito_TP.FCMacro",
+      "herramienta": "Conectar Octogonales por Circuito TP (Legacy)",
+      "grupo": "Conectar Legacy",
+      "descripcion": "Wrapper TP del backbone general ElectricCR. Revision: 2026-08-08.",
+      "descripcion_original": "Wrapper TP del backbone general ElectricCR. Revision: 2026-08-08.",
+      "fuente_descripcion": "catalogo_existente",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Conectar/Conectar_Desconectores_HVAC_a_TP.FCMacro",
+      "herramienta": "Conectar desconectores asignados (Legacy)",
+      "grupo": "Conectar Legacy",
+      "descripcion": "Wrapper historico para desconectores HVAC y otros servicios.",
+      "descripcion_original": "Wrapper historico para desconectores HVAC y otros servicios.",
+      "fuente_descripcion": "catalogo_existente",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Conectar/Conectar_Tableros_Cara_Superior.FCMacro",
+      "herramienta": "Conectar tableros y equipos por cara superior (Legacy)",
+      "grupo": "Conectar Legacy",
+      "descripcion": "Wrapper tablero/equipo -> tablero aguas arriba.",
+      "descripcion_original": "Wrapper tablero/equipo -> tablero aguas arriba.",
+      "fuente_descripcion": "catalogo_existente",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Conectar/Preparar_Red_TCOM_Completa.FCMacro",
+      "herramienta": "Preparar red TCOM completa (Legacy)",
+      "grupo": "Conectar Legacy",
+      "descripcion": "Orquestador TCOM basado en los motores generales ElectricCR.",
+      "descripcion_original": "Orquestador TCOM basado en los motores generales ElectricCR.",
+      "fuente_descripcion": "catalogo_existente",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Conectar/Conectar_Cajas_a_Tablero_Auto.FCMacro",
+      "herramienta": "[LEGACY] Conectar Cajas y Alimentadores a Tablero (v1)",
+      "grupo": "Conectar Legacy",
+      "descripcion": "Conecta automaticamente circuitos de tomacorrientes/apagadores hacia cajas octogonales y al tablero (u objeto ancla) seleccionado.",
+      "descripcion_original": "Conecta automaticamente circuitos de tomacorrientes/apagadores hacia cajas octogonales y al tablero (u objeto ancla) seleccionado.",
+      "fuente_descripcion": "catalogo_existente",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Configuracion del proyecto/Asignar_Tableros_y_Circuitos.FCMacro",
+      "herramienta": "Asignar tableros y circuitos (pestanas)",
+      "grupo": "Configuracion del proyecto",
+      "descripcion": "Permite asignar circuitos y cargas a cada tablero mediante pestanas y definir el origen de tableros, desconectores e interruptores; genera las hojas Asignacion_Red y Red_Origenes.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "codigo_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Configuracion del proyecto/Calculo_Circuitos_PanelSchedule.FCMacro",
+      "herramienta": "Calculo de circuitos por tablero",
+      "grupo": "Configuracion del proyecto",
+      "descripcion": "Calcula y organiza la informacion de circuitos por tablero para producir o actualizar el panel schedule electrico con los datos disponibles del proyecto.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "contexto_revisado_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Configuracion del proyecto/Compactar_Proyecto_ElectricCR.FCMacro",
+      "herramienta": "Compactar proyecto ElectricCR",
+      "grupo": "Configuracion del proyecto",
+      "descripcion": "Reduce peso y tiempo de recompute del FCStd: puede desactivar AutoUpdate en Shape2DView ocultas, convertir Draft Clones a App::Link y deduplicar FeaturePython legacy repetidos por hash de Shape.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "codigo_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Configuracion del proyecto/Crear_Arbol_Proyecto_Electrico.FCMacro",
+      "herramienta": "Crear arbol proyecto electrico",
+      "grupo": "Configuracion del proyecto",
+      "descripcion": "Crea de forma idempotente la estructura estandar de grupos para un proyecto ElectricCR, evitando duplicar grupos al volver a ejecutarla.",
+      "descripcion_original": "Macro: Crear_Arbol_Proyecto_Electrico Objetivo: - Crear automaticamente un arbol estandar para proyectos electricos. - Reejecutable sin duplicar grupos.",
+      "fuente_descripcion": "catalogo_existente_normalizado",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Configuracion del proyecto/Gestionar_Visibilidad_ElectricCR.FCMacro",
+      "herramienta": "Gestionar visibilidad ElectricCR",
+      "grupo": "Configuracion del proyecto",
+      "descripcion": "Panel de visibilidad por categorias para proyectos ElectricCR; permite mostrar, ocultar o aislar sistemas y controlar el modo visual 2D/3D de dispositivos.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "codigo_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Configuracion del proyecto/Gestionar_Registro_Electrico.FCMacro",
+      "herramienta": "Gestionar_Registro_Electrico",
+      "grupo": "Configuracion del proyecto",
+      "descripcion": "Abre la herramienta de gestion del registro electrico utilizado por ElectricCR para consultar o mantener tipos y datos de componentes.",
+      "descripcion_original": "Gestionar_Registro_Electrico.FCMacro",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Configuracion del proyecto/Mover_Seleccion_a_Circuito.FCMacro",
+      "herramienta": "Mover Seleccion a Circuito...",
+      "grupo": "Configuracion del proyecto",
+      "descripcion": "Mueve los objetos seleccionados al grupo de un circuito ElectricCR elegido, facilitando la organizacion manual del arbol electrico.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Configuracion del proyecto/Mover_Seleccion_a_Grupo.FCMacro",
+      "herramienta": "Mover Seleccion a Grupo...",
+      "grupo": "Configuracion del proyecto",
+      "descripcion": "Mueve los objetos seleccionados a un grupo del documento elegido por el usuario, sin recrear la geometria.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Configuracion del proyecto/Multirenombrar_ElectricCR.FCMacro",
+      "herramienta": "Multirenombrar",
+      "grupo": "Configuracion del proyecto",
+      "descripcion": "Permite renombrar en lote varios objetos ElectricCR mediante una interfaz de edicion de nombres y criterios comunes.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Configuracion del proyecto/Ordenar_Arbol_Electrico_Auto.FCMacro",
+      "herramienta": "Ordenar arbol electrico (auto)",
+      "grupo": "Configuracion del proyecto",
+      "descripcion": "Ordena automaticamente el arbol de grupos del documento aplicando la prioridad y jerarquia electrica definida por ElectricCR.",
+      "descripcion_original": "Ordena el arbol de grupos del documento con prioridad electrica.",
+      "fuente_descripcion": "catalogo_existente_normalizado",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Configuracion del proyecto/Ordenar_Grupos_ElectricCR.FCMacro",
+      "herramienta": "Ordenar grupos",
+      "grupo": "Configuracion del proyecto",
+      "descripcion": "Reordena los grupos ElectricCR del documento para mantener una estructura de arbol consistente y mas legible.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Configuracion del proyecto/Organizar_Documento_Electrico.FCMacro",
+      "herramienta": "Organizar documento electrico",
+      "grupo": "Configuracion del proyecto",
+      "descripcion": "Reorganiza objetos electricos en una jerarquia canonica de ElectricCR, por ejemplo luminarias por circuito, recinto y apagador y sensores por zona, moviendo los objetos reales a sus grupos correspondientes.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "codigo_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Configuracion del proyecto/Backups/legibilidad_acometida_20260810/Registrar_Acometida_y_Ruta.FCMacro",
+      "herramienta": "Registrar acometida y ruta",
+      "grupo": "Configuracion del proyecto",
+      "descripcion": "Registra datos de acometida, calcula corriente nominal y de diseno, breaker y conductor recomendados, crea o actualiza la ruta entre medidor y tablero principal y guarda historial en la hoja Acometida.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "heredada_de_version_activa",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Configuracion del proyecto/Registrar_Acometida_y_Ruta.FCMacro",
+      "herramienta": "Registrar acometida y ruta",
+      "grupo": "Configuracion del proyecto",
+      "descripcion": "Registra datos de acometida, calcula corriente nominal y de diseno, breaker y conductor recomendados, crea o actualiza la ruta entre medidor y tablero principal y guarda historial en la hoja Acometida.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "codigo_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Deteccion/ColocarDetectores_Poligonos_NFPA.FCMacro",
+      "herramienta": "Sensores de humo en poligonos (NFPA)",
+      "grupo": "Deteccion",
+      "descripcion": "Distribuye detectores de humo sobre recintos poligonales aplicando criterios de separacion y cobertura del flujo NFPA de ElectricCR.",
+      "descripcion_original": "Distribuye sensores de humo sobre caras poligonales de referencia.",
+      "fuente_descripcion": "catalogo_y_contexto_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Deteccion/ColocarDetectores_NFPA.FCMacro",
+      "herramienta": "Sensores de humo en rectangulos (NFPA)",
+      "grupo": "Deteccion",
+      "descripcion": "Distribuye detectores de humo sobre areas rectangulares aplicando criterios de separacion y cobertura definidos para el flujo NFPA de ElectricCR.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "contexto_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "GameEngineExport/AplicarEmissiveColor.FCMacro",
+      "herramienta": "AplicarEmissiveColor",
+      "grupo": "GameEngineExport",
+      "descripcion": "Aplica propiedades de color emisivo a objetos o materiales seleccionados para que las superficies luminosas se exporten con apariencia de emision en motores 3D.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "GameEngineExport/CombinarLucesEdificio.FCMacro",
+      "herramienta": "CombinarLucesEdificio",
+      "grupo": "GameEngineExport",
+      "descripcion": "Combina la informacion de luces del edificio en una estructura o archivo comun para su posterior exportacion al flujo GameEngineExport.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "GameEngineExport/Combinarconarchivoluces.FCMacro",
+      "herramienta": "Combinarconarchivoluces",
+      "grupo": "GameEngineExport",
+      "descripcion": "Combina la exportacion del modelo con un archivo de luces existente para integrar geometria e iluminacion en el flujo hacia el motor 3D.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "baja"
+    },
+    {
+      "ruta": "GameEngineExport/ExportarLucesX3D.FCMacro",
+      "herramienta": "ExportarLucesX3D",
+      "grupo": "GameEngineExport",
+      "descripcion": "Exporta las luces del documento a una representacion X3D para utilizarlas junto con el modelo en un motor grafico o visor compatible.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "GameEngineExport/GameEngineExport.FCMacro",
+      "herramienta": "GameEngineExport",
+      "grupo": "GameEngineExport",
+      "descripcion": "Prepara y exporta elementos del documento FreeCAD para su uso en un motor grafico, integrando geometria y datos auxiliares del flujo GameEngineExport.",
+      "descripcion_original": "GameEngineExport.FCMacro Version: 2025-10-09 16:10 (America/Costa_Rica) Author: Marco + GPT",
+      "fuente_descripcion": "inferencia_contextual_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "GameEngineExport/GameEngineExport Copy 4.FCMacro",
+      "herramienta": "GameEngineExport Copy 4",
+      "grupo": "GameEngineExport",
+      "descripcion": "Copia historica de la macro GameEngineExport utilizada para preparar y exportar contenido de FreeCAD hacia un motor grafico.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "heredada_de_version_activa",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "GameEngineExport/GameEngineExport copy.FCMacro",
+      "herramienta": "GameEngineExport copy",
+      "grupo": "GameEngineExport",
+      "descripcion": "Copia historica de GameEngineExport para preparar y exportar contenido de FreeCAD hacia un motor grafico.",
+      "descripcion_original": "GameEngineExport.FCMacro Version: 2025-10-04 20:00 (America/Costa_Rica) Author: Marco + GPT",
+      "fuente_descripcion": "heredada_de_version_activa",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "GameEngineExport/GameEngineExport copy 2.FCMacro",
+      "herramienta": "GameEngineExport copy 2",
+      "grupo": "GameEngineExport",
+      "descripcion": "Copia historica de GameEngineExport para preparar y exportar contenido de FreeCAD hacia un motor grafico.",
+      "descripcion_original": "GameEngineExport.FCMacro Version: 2025-10-04 20:00 (America/Costa_Rica) Author: Marco + GPT",
+      "fuente_descripcion": "heredada_de_version_activa",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "GameEngineExport/GameEngineExport copy 3.FCMacro",
+      "herramienta": "GameEngineExport copy 3",
+      "grupo": "GameEngineExport",
+      "descripcion": "Copia historica de la macro GameEngineExport utilizada para preparar y exportar contenido de FreeCAD hacia un motor grafico.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "heredada_de_version_activa",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "GameEngineExport/export_selection_via_gui_x3d.FCMacro",
+      "herramienta": "export_selection_via_gui_x3d",
+      "grupo": "GameEngineExport",
+      "descripcion": "Exporta la seleccion actual mediante el flujo GUI de FreeCAD al formato X3D.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "GameEngineExportWB/macros/AgregarPuertasVentanasBIM_QuickExample.FCMacro",
+      "herramienta": "AgregarPuertasVentanasBIM_QuickExample",
+      "grupo": "GameEngineExportWB",
+      "descripcion": "Agregar puertas y ventanas BIM al Quick Example de GameEngineExportWB.",
+      "descripcion_original": "Agregar puertas y ventanas BIM al Quick Example de GameEngineExportWB.",
+      "fuente_descripcion": "catalogo_existente",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "GameEngineExportWB/macros/AgregarTechoBIM_QuickExample.FCMacro",
+      "herramienta": "AgregarTechoBIM_QuickExample",
+      "grupo": "GameEngineExportWB",
+      "descripcion": "Agregar techo sencillo al ultimo Quick Example de GameEngineExportWB.",
+      "descripcion_original": "Agregar techo sencillo al ultimo Quick Example de GameEngineExportWB.",
+      "fuente_descripcion": "catalogo_existente",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "GameEngineExportWB/macros/CrearPuertasBIMDesdeSketch.FCMacro",
+      "herramienta": "CrearPuertasBIMDesdeSketch",
+      "grupo": "GameEngineExportWB",
+      "descripcion": "Crear puertas BIM desde el sketch seleccionado.",
+      "descripcion_original": "Crear puertas BIM desde el sketch seleccionado.",
+      "fuente_descripcion": "catalogo_existente",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "GameEngineExportWB/macros/CrearVentanasBIMDesdeSketch.FCMacro",
+      "herramienta": "CrearVentanasBIMDesdeSketch",
+      "grupo": "GameEngineExportWB",
+      "descripcion": "Crear ventanas BIM desde el sketch seleccionado.",
+      "descripcion_original": "Crear ventanas BIM desde el sketch seleccionado.",
+      "fuente_descripcion": "catalogo_existente",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Iluminación/Actualizar_Iluminacion_Completa.FCMacro",
+      "herramienta": "Actualizar Iluminacion Completa",
+      "grupo": "Iluminación",
+      "descripcion": "Actualiza el calculo integral de iluminacion por recinto: clasifica el uso del espacio, calcula cantidad minima de luminarias y filas/columnas, conserva ajustes manuales cuando corresponde y sincroniza DatosRecintos, tabla legacy y etiquetas.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "codigo_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Iluminación/Asignar_Tipo_Luminaria_Areas.FCMacro",
+      "herramienta": "Asignar Tipo de Luminaria a Areas",
+      "grupo": "Iluminación",
+      "descripcion": "Asigna a las areas seleccionadas un tipo de luminaria del registro ElectricCR y guarda clave, lumenes, potencia, CCT y altura de montaje para calculos y colocacion automatica.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "codigo_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Iluminación/Asignar_Luminarias_Apagadores.FCMacro",
+      "herramienta": "Asignar luminarias a apagadores",
+      "grupo": "Iluminación",
+      "descripcion": "Asigna luminarias a uno o dos apagadores y registra la relacion de control, incluyendo la indicacion grafica del tipo en planta.",
+      "descripcion_original": "Asigna luminarias a uno o dos apagadores y marca el tipo en planta.",
+      "fuente_descripcion": "catalogo_existente_normalizado",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Iluminación/Asignar_Luminarias_Circuitos.FCMacro",
+      "herramienta": "Asignar luminarias a circuitos",
+      "grupo": "Iluminación",
+      "descripcion": "Asigna luminarias a circuitos ElectricCR sin moverlas ni duplicarlas en el arbol del documento.",
+      "descripcion_original": "Asigna luminarias a circuitos sin moverlas ni duplicarlas en el arbol.",
+      "fuente_descripcion": "catalogo_existente_normalizado",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Iluminación/AsisCSV2Pasos.FCMacro",
+      "herramienta": "Asistente CSV eléctrico",
+      "grupo": "Iluminación",
+      "descripcion": "Asistente en dos pasos para trabajar con datos electricos en CSV dentro del flujo de iluminacion, guiando la preparacion e intercambio de la informacion.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "baja"
+    },
+    {
+      "ruta": "Iluminación/Backups/altura_link_20260810/ColocarLuminarias_Link.FCMacro",
+      "herramienta": "Colocar Luminarias Link",
+      "grupo": "Iluminación",
+      "descripcion": "Coloca luminarias como App::Link dentro de areas rectangulares segun la rejilla Rows/Columns y el tipo registrado; distribuye las instancias por celdas y evita usar clones.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "heredada_de_version_activa",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Iluminación/ColocarLuminarias_Link.FCMacro",
+      "herramienta": "Colocar Luminarias Link",
+      "grupo": "Iluminación",
+      "descripcion": "Coloca luminarias como App::Link dentro de areas rectangulares segun la rejilla Rows/Columns y el tipo registrado; distribuye las instancias por celdas y evita usar clones.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "codigo_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Iluminación/ColocarLuminarias_Objeto.FCMacro",
+      "herramienta": "Colocar Luminarias Objeto",
+      "grupo": "Iluminación",
+      "descripcion": "Coloca objetos de luminaria dentro de areas rectangulares segun su rejilla de filas y columnas, utilizando el tipo y parametros de iluminacion asignados.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "contexto_revisado_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Iluminación/ColocarApagadoresEnPuertas.FCMacro",
+      "herramienta": "Colocar apagadores junto a puertas BIM",
+      "grupo": "Iluminación",
+      "descripcion": "Coloca apagadores junto a puertas BIM o aberturas sin hoja, usando la geometria de acceso como referencia.",
+      "descripcion_original": "Coloca apagadores junto a puertas BIM y aberturas sin hoja.",
+      "fuente_descripcion": "catalogo_existente_normalizado",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Iluminación/ColocarApagadores_Sketch.FCMacro",
+      "herramienta": "Crear apagadores en sketch",
+      "grupo": "Iluminación",
+      "descripcion": "Crea o coloca apagadores usando geometria de Sketch como referencia para su posicion en el proyecto.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Iluminación/Guia_Iluminacion.FCMacro",
+      "herramienta": "Guia Iluminacion",
+      "grupo": "Iluminación",
+      "descripcion": "Muestra la guia operativa de la barra Iluminacion y el flujo recomendado para calcular, colocar, asignar y organizar luminarias y apagadores.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "contexto_revisado_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Iluminación/Hoja_Iluminación.FCMacro",
+      "herramienta": "Hoja Iluminacion",
+      "grupo": "Iluminación",
+      "descripcion": "Crea o actualiza la hoja de calculo de iluminacion del proyecto con la informacion de recintos, luminarias y parametros usados por ElectricCR.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "contexto_revisado_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Iluminación/Luminaria_Link_Sketch.FCMacro",
+      "herramienta": "Luminaria Link Sketch",
+      "grupo": "Iluminación",
+      "descripcion": "Crea o coloca una luminaria como App::Link usando una referencia de Sketch para definir su posicion u orientacion.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Iluminación/Organizar_Luminarias_por_Circuito_y_Apagador.FCMacro",
+      "herramienta": "Organizar luminarias por Areas",
+      "grupo": "Iluminación",
+      "descripcion": "Organiza las luminarias en el arbol ElectricCR segun su circuito y el apagador que las controla, manteniendo la relacion funcional entre ambos.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "contexto_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Iluminación/Recalcular_Distribucion_Luminarias_Areas.FCMacro",
+      "herramienta": "Recalcular Distribucion de Luminarias",
+      "grupo": "Iluminación",
+      "descripcion": "Recalcula la distribucion de luminarias de las areas, actualizando filas y columnas a partir de la cantidad requerida y los parametros de cada recinto.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "contexto_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Iluminación/Reemplazar_Luminaria.FCMacro",
+      "herramienta": "Reemplazar_Luminaria",
+      "grupo": "Iluminación",
+      "descripcion": "Reemplaza uno o varios objetos de luminaria seleccionados por otro modelo 3D manteniendo su posicion y rotacion.",
+      "descripcion_original": "Reemplazar_Luminaria.FCMacro Reemplaza uno o varios objetos seleccionados por otro modelo 3D, manteniendo posicion y rotacion.",
+      "fuente_descripcion": "catalogo_existente_normalizado",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Tomacorrientes/contar_tomacorrientes_y_exportar.FCMacro",
+      "herramienta": "Contar tomacorrientes y exportar",
+      "grupo": "Importar y Exportar",
+      "descripcion": "Cuenta los tomacorrientes del proyecto o seleccion y exporta el resultado a un archivo o tabla para su revision externa.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Configuracion del proyecto/Exportar_DXF_DWG_Plano_Trabajo.FCMacro",
+      "herramienta": "Exportar DXF/DWG (plano de trabajo)",
+      "grupo": "Importar y Exportar",
+      "descripcion": "Exporta el plano de trabajo del documento a DXF o DWG para intercambio con aplicaciones CAD externas.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Configuracion del proyecto/Exportar_Imagen_Planta.FCMacro",
+      "herramienta": "Exportar Imagen de Planta",
+      "grupo": "Importar y Exportar",
+      "descripcion": "Exporta una vista ortografica de planta del documento en PNG o JPEG de alta resolucion.",
+      "descripcion_original": "Exporta una planta ortografica en PNG/JPEG de alta resolucion.",
+      "fuente_descripcion": "catalogo_existente_normalizado",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Iluminación/Exportar_Luminarias_CSV_ElectricCR.FCMacro",
+      "herramienta": "Exportar Luminarias CSV",
+      "grupo": "Importar y Exportar",
+      "descripcion": "Exporta a CSV la informacion de luminarias ElectricCR para intercambio o procesamiento externo.",
+      "descripcion_original": "Exportar_Luminarias_CSV_ElectricCR.FCMacro",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Configuracion del proyecto/Exportar_Spreadsheets_a_Excel.FCMacro",
+      "herramienta": "Exportar spreadsheets a Excel",
+      "grupo": "Importar y Exportar",
+      "descripcion": "Exporta las hojas Spreadsheet del documento FreeCAD a un archivo Excel para consulta o procesamiento externo.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Areas/calcular_area_y_exportar_a_spreadsheet.FCMacro",
+      "herramienta": "calcular_area_y_exportar_a_spreadsheet",
+      "grupo": "Importar y Exportar",
+      "descripcion": "Calcula el area de los objetos o recintos seleccionados y registra los resultados en una hoja Spreadsheet de FreeCAD.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "MEPWorkbenchCR_Extraer_HVAC_CAD.FCMacro",
+      "herramienta": "MEPWorkbenchCR_Extraer_HVAC_CAD",
+      "grupo": "Macros",
+      "descripcion": "Extrae o prepara informacion de elementos HVAC del modelo para un flujo CAD asociado a MEPWorkbenchCR.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "baja"
+    },
+    {
+      "ruta": "MEPWorkbenchCR/MEPWorkbenchCRLoader.FCMacro",
+      "herramienta": "MEPWorkbenchCRLoader",
+      "grupo": "MEPWorkbenchCR",
+      "descripcion": "Carga o registra MEPWorkbenchCR en la sesion de FreeCAD para disponer de sus comandos y herramientas.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "MEPWorkbenchCR/MEPWorkbenchCR_CleanHVAC.FCMacro",
+      "herramienta": "MEPWorkbenchCR_CleanHVAC",
+      "grupo": "MEPWorkbenchCR",
+      "descripcion": "Limpia o normaliza elementos HVAC del documento para prepararlos para el flujo de MEPWorkbenchCR.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Objetos/Alinear.FCMacro",
+      "herramienta": "Alinear",
+      "grupo": "Objetos",
+      "descripcion": "Alinea los objetos seleccionados respecto al primero usando sus BoundBox, con opciones izquierda, derecha o centro en X; arriba, abajo o centro en Y; y frente, atras o centro en Z.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "codigo_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Objetos/BorrarCadena.FCMacro",
+      "herramienta": "BorrarCadena",
+      "grupo": "Objetos",
+      "descripcion": "Renombra los objetos seleccionados eliminando de sus Label una cadena de texto indicada por el usuario; evita aplicar un nombre que ya este usado.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "codigo_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Objetos/cambiar_altura_y_rotacion_objetos.FCMacro",
+      "herramienta": "Cambiar altura y rotacion de objetos",
+      "grupo": "Objetos",
+      "descripcion": "Permite modificar de forma conjunta la altura y la rotacion de los objetos seleccionados mediante un dialogo.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Objetos/ContarObjetos.FCMacro",
+      "herramienta": "ContarObjetos",
+      "grupo": "Objetos",
+      "descripcion": "Cuenta objetos del documento o de la seleccion segun los criterios implementados y muestra el resultado al usuario.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Objetos/Copiar_Formato_Electrico.FCMacro",
+      "herramienta": "Copiar Formato Electrico",
+      "grupo": "Objetos",
+      "descripcion": "Copia propiedades electricas y estilo visual de un objeto plantilla a otros seleccionados, incluyendo circuito, canalizacion, LinkKind y metadatos comunes; puede reubicarlos en el subgrupo Alimentador o Ramal correspondiente.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "codigo_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Objetos/Fix_Link_Transform_FreeCAD.FCMacro",
+      "herramienta": "Fix_Link_Transform_FreeCAD",
+      "grupo": "Objetos",
+      "descripcion": "Diagnostica App::Link cuyo Transform o Placement no funciona y los normaliza activando LinkTransform y desbloqueando Placement; puede agrupar enlaces problematicos en REVISAR_LINKS.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "codigo_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Objetos/Habilitar_Transform_en_Links_Dispositivos.FCMacro",
+      "herramienta": "Habilitar Transform en links de dispositivos",
+      "grupo": "Objetos",
+      "descripcion": "Habilita o normaliza la transformacion de App::Link que representan dispositivos ElectricCR como tomas, apagadores, luminarias, sensores, rociadores, altavoces y camaras.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "contexto_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Objetos/Insertar_Dispositivo.FCMacro",
+      "herramienta": "Insertar_Dispositivo",
+      "grupo": "Objetos",
+      "descripcion": "Selector generico de dispositivos ElectricCR que crea una instancia del tipo elegido a partir del registro de componentes.",
+      "descripcion_original": "Insertar_Dispositivo.FCMacro (rev G) Selector genérico desde registro y creación de instancia usando ElectricCR.electriccr.features.objeto_toma_uno.crear_toma_uno.",
+      "fuente_descripcion": "catalogo_existente_normalizado",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Objetos/RenombrarDiálogo.FCMacro",
+      "herramienta": "RenombrarDiálogo",
+      "grupo": "Objetos",
+      "descripcion": "Abre un dialogo para cambiar el nombre visible de uno o varios objetos seleccionados.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Objetos/Resolve_Link_From_Selection.FCMacro",
+      "herramienta": "Resolve Link From Selection",
+      "grupo": "Objetos",
+      "descripcion": "Resuelve una seleccion asociada a un App::Link para identificar el enlace y su objeto vinculado, facilitando operaciones sobre instancias enlazadas.",
+      "descripcion_original": "Resolve Link From Selection",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Objetos/Rotar90.FCMacro",
+      "herramienta": "Rotar90",
+      "grupo": "Objetos",
+      "descripcion": "Rota 90 grados los objetos seleccionados alrededor del eje definido por la macro, como ajuste rapido de orientacion.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Objetos/cuenta_cuántos_objetos_están_seleccionados.FCMacro",
+      "herramienta": "cuenta_cuántos_objetos_están_seleccionados",
+      "grupo": "Objetos",
+      "descripcion": "Cuenta cuantos objetos estan seleccionados actualmente en FreeCAD y muestra el total.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Respaldos/Iluminacion_Completa_Panel_20260610_085902/Actualizar_Iluminacion_Completa.FCMacro",
+      "herramienta": "Actualizar Iluminacion Completa",
+      "grupo": "Respaldos",
+      "descripcion": "Actualiza el calculo integral de iluminacion por recinto: clasifica el uso del espacio, calcula cantidad minima de luminarias y filas/columnas, conserva ajustes manuales cuando corresponde y sincroniza DatosRecintos, tabla legacy y etiquetas.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "heredada_de_version_activa",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Respaldos/Iluminacion_Pasillos_Toolbar_20260610_091937/Actualizar_Iluminacion_Completa.FCMacro",
+      "herramienta": "Actualizar Iluminacion Completa",
+      "grupo": "Respaldos",
+      "descripcion": "Actualiza el calculo integral de iluminacion por recinto: clasifica el uso del espacio, calcula cantidad minima de luminarias y filas/columnas, conserva ajustes manuales cuando corresponde y sincroniza DatosRecintos, tabla legacy y etiquetas.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "heredada_de_version_activa",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Respaldos/Iluminacion_20260608_175346/Actualizar_Tabla_Iluminacion.FCMacro",
+      "herramienta": "Actualizar Tabla Iluminacion",
+      "grupo": "Respaldos",
+      "descripcion": "Actualiza la tabla de iluminacion a partir de los datos disponibles de recintos y luminarias; corresponde a una version historica del flujo de iluminacion.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_contextual_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Respaldos/Iluminacion_Archivadas_20260610_092800/Actualizar_Tabla_Iluminacion.FCMacro",
+      "herramienta": "Actualizar Tabla Iluminacion",
+      "grupo": "Respaldos",
+      "descripcion": "Actualiza la tabla de iluminacion a partir de los datos disponibles de recintos y luminarias; corresponde a una version historica del flujo de iluminacion.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_contextual_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Respaldos/Areas_AreaPorClick_20260608_093836/AreaPorClick.FCMacro",
+      "herramienta": "Areas por click",
+      "grupo": "Respaldos",
+      "descripcion": "Crea poligonos de recintos haciendo clic dentro de zonas delimitadas; detecta los limites cercanos y genera la geometria del area.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "heredada_de_version_activa",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Respaldos/Areas_AreaPorClick_boton_rectangulos_20260608_133939/AreaPorClick.FCMacro",
+      "herramienta": "Areas por click",
+      "grupo": "Respaldos",
+      "descripcion": "Crea poligonos de recintos haciendo clic dentro de zonas delimitadas; detecta los limites cercanos y genera la geometria del area.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "heredada_de_version_activa",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Respaldos/Areas_AreaPorClick_calco_working_20260608_112151/AreaPorClick.FCMacro",
+      "herramienta": "Areas por click",
+      "grupo": "Respaldos",
+      "descripcion": "Crea poligonos de recintos haciendo clic dentro de zonas delimitadas; detecta los limites cercanos y genera la geometria del area.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "heredada_de_version_activa",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Respaldos/Areas_AreaPorClick_compacta_20260608_094731/AreaPorClick.FCMacro",
+      "herramienta": "Areas por click",
+      "grupo": "Respaldos",
+      "descripcion": "Crea poligonos de recintos haciendo clic dentro de zonas delimitadas; detecta los limites cercanos y genera la geometria del area.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "heredada_de_version_activa",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Respaldos/Areas_AreaPorClick_inestable_20260608_120520/AreaPorClick.FCMacro",
+      "herramienta": "Areas por click",
+      "grupo": "Respaldos",
+      "descripcion": "Crea poligonos de recintos haciendo clic dentro de zonas delimitadas; detecta los limites cercanos y genera la geometria del area.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "heredada_de_version_activa",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Respaldos/Areas_AreaPorClick_linea_auxiliar_20260608_121126/AreaPorClick.FCMacro",
+      "herramienta": "Areas por click",
+      "grupo": "Respaldos",
+      "descripcion": "Crea poligonos de recintos haciendo clic dentro de zonas delimitadas; detecta los limites cercanos y genera la geometria del area.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "heredada_de_version_activa",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Respaldos/Areas_AreaPorClick_multiradar_shallow_20260608_114146/AreaPorClick.FCMacro",
+      "herramienta": "Areas por click",
+      "grupo": "Respaldos",
+      "descripcion": "Crea poligonos de recintos haciendo clic dentro de zonas delimitadas; detecta los limites cercanos y genera la geometria del area.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "heredada_de_version_activa",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Respaldos/Areas_AreaPorClick_radar_iterativo_20260608_120315/AreaPorClick.FCMacro",
+      "herramienta": "Areas por click",
+      "grupo": "Respaldos",
+      "descripcion": "Crea poligonos de recintos haciendo clic dentro de zonas delimitadas; detecta los limites cercanos y genera la geometria del area.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "heredada_de_version_activa",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Respaldos/Areas_AreaPorClick_radar_working_20260608_102533/AreaPorClick.FCMacro",
+      "herramienta": "Areas por click",
+      "grupo": "Respaldos",
+      "descripcion": "Crea poligonos de recintos haciendo clic dentro de zonas delimitadas; detecta los limites cercanos y genera la geometria del area.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "heredada_de_version_activa",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Respaldos/Areas_AreaPorClick_raster_failed_20260608_100412/AreaPorClick.FCMacro",
+      "herramienta": "Areas por click",
+      "grupo": "Respaldos",
+      "descripcion": "Crea poligonos de recintos haciendo clic dentro de zonas delimitadas; detecta los limites cercanos y genera la geometria del area.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "heredada_de_version_activa",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Respaldos/Areas_AreaPorClick_rect_auto_boundary_20260608_135618/AreaPorClick.FCMacro",
+      "herramienta": "Areas por click",
+      "grupo": "Respaldos",
+      "descripcion": "Crea poligonos de recintos haciendo clic dentro de zonas delimitadas; detecta los limites cercanos y genera la geometria del area.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "heredada_de_version_activa",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Respaldos/Areas_AreaPorClick_vector_open_failed_20260608_095609/AreaPorClick.FCMacro",
+      "herramienta": "Areas por click",
+      "grupo": "Respaldos",
+      "descripcion": "Crea poligonos de recintos haciendo clic dentro de zonas delimitadas; detecta los limites cercanos y genera la geometria del area.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "heredada_de_version_activa",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Respaldos/Areas_PoligonoFromBoundaryLines_20260608_122238/AreaPorClick.FCMacro",
+      "herramienta": "Areas por click",
+      "grupo": "Respaldos",
+      "descripcion": "Crea poligonos de recintos haciendo clic dentro de zonas delimitadas; detecta los limites cercanos y genera la geometria del area.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "heredada_de_version_activa",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Respaldos/Areas_AsignarNombreEstandar_grupo_hojas_20260622_163722/AsignarNombreEstandar.FCMacro",
+      "herramienta": "AsignarNombreEstandar",
+      "grupo": "Respaldos",
+      "descripcion": "Muestra nombres de recinto definidos en la hoja NombresEstandar y aplica el nombre elegido a los objetos seleccionados; permite editar la lista y marca nombres ya utilizados.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "heredada_de_version_activa",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Respaldos/Areas_AsignarNombreEstandar_pyside_20260608_142311/AsignarNombreEstandar.FCMacro",
+      "herramienta": "AsignarNombreEstandar",
+      "grupo": "Respaldos",
+      "descripcion": "Muestra nombres de recinto definidos en la hoja NombresEstandar y aplica el nombre elegido a los objetos seleccionados; permite editar la lista y marca nombres ya utilizados.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "heredada_de_version_activa",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Respaldos/Areas_AsignarNombreEstandar_refresh_20260608_173932/AsignarNombreEstandar.FCMacro",
+      "herramienta": "AsignarNombreEstandar",
+      "grupo": "Respaldos",
+      "descripcion": "Muestra nombres de recinto definidos en la hoja NombresEstandar y aplica el nombre elegido a los objetos seleccionados; permite editar la lista y marca nombres ya utilizados.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "heredada_de_version_activa",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Respaldos/Iluminacion_legacy_20260324/ColocarLuminarias.FCMacro",
+      "herramienta": "ColocarLuminarias",
+      "grupo": "Respaldos",
+      "descripcion": "Version historica para colocar luminarias en recintos segun la distribucion calculada antes de la migracion al flujo moderno con App::Link.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_contextual_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Respaldos/Reorganizacion_raiz_20260622_095139/Electric_Principal.FCMacro",
+      "herramienta": "Electric_Principal",
+      "grupo": "Respaldos",
+      "descripcion": "Electric_Principal.FCMacro Descripcion (sin acentos): - ObjetoElectromecanico (FeaturePython + GroupExtension) con BasePlacement - Prototipos unicos importados desde Resources: * Toma_2d.step -> ProtoToma2D (Part::Feature unico) * Toma_3d.step -> ProtoToma3D (Part::Feature unico) - Consolidacion del STEP: se crea un solo Part::Feature por proto * 3D: compound de todos los solids (o faces si no hay solids) * 2D: compound de shapes (edges/faces) planos * se ocultan en arbol y se ubican en electrico/_lib * no se reimporta si ya existen protos validos - Instancias: padre + dos App::Link que apuntan a los protos - execute-only: onChanged solo touch; transforms/visibilidad en execute() - AlturaRel solo mueve el Link3D en Z local - Logs [ELEC]",
+      "descripcion_original": "Electric_Principal.FCMacro Descripcion (sin acentos):   - ObjetoElectromecanico (FeaturePython + GroupExtension) con BasePlacement   - Prototipos unicos importados desde Resources:       * Toma_2d.step  -> ProtoToma2D  (Part::Feature unico)       * Toma_3d.step  -> ProtoToma3D  (Part::Feature unico)   - Consolidacion del STEP: se crea un solo Part::Feature por proto       * 3D: compound de todos los solids (o faces si no hay solids)       * 2D: compound de shapes (edges/faces) planos       * se ocultan en arbol y se ubican en electrico/_lib       * no se reimporta si ya existen protos validos   - Instancias: padre + dos App::Link que apuntan a los protos   - execute-only: onChanged solo touch; transforms/visibilidad en execute()   - AlturaRel solo mueve el Link3D en Z local   - Logs [ELEC]",
+      "fuente_descripcion": "catalogo_existente",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Respaldos/Iluminacion_Archivadas_20260610_092800/Etiquetas.FCMacro",
+      "herramienta": "Etiquetas",
+      "grupo": "Respaldos",
+      "descripcion": "Version historica para crear o actualizar etiquetas asociadas a la informacion de iluminacion del proyecto.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_contextual_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Respaldos/Iluminacion_Etiquetas_20260608_181721/Etiquetas.FCMacro",
+      "herramienta": "Etiquetas",
+      "grupo": "Respaldos",
+      "descripcion": "Version historica para crear o actualizar etiquetas asociadas a la informacion de iluminacion del proyecto.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_contextual_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Respaldos/Iluminacion_Guia_Contraste_20260610_105126/Guia_Iluminacion.FCMacro",
+      "herramienta": "Guia Iluminacion",
+      "grupo": "Respaldos",
+      "descripcion": "Muestra la guia operativa de la barra Iluminacion y el flujo recomendado para calcular, colocar, asignar y organizar luminarias y apagadores.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "heredada_de_version_activa",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Respaldos/Iluminacion_Guia_Mejorada_20260610_100837/Guia_Iluminacion.FCMacro",
+      "herramienta": "Guia Iluminacion",
+      "grupo": "Respaldos",
+      "descripcion": "Muestra la guia operativa de la barra Iluminacion y el flujo recomendado para calcular, colocar, asignar y organizar luminarias y apagadores.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "heredada_de_version_activa",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Respaldos/Iluminacion_Guia_Operativa_20260610_101800/Guia_Iluminacion.FCMacro",
+      "herramienta": "Guia Iluminacion",
+      "grupo": "Respaldos",
+      "descripcion": "Muestra la guia operativa de la barra Iluminacion y el flujo recomendado para calcular, colocar, asignar y organizar luminarias y apagadores.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "heredada_de_version_activa",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Respaldos/Iluminacion_20260608_175346/Hoja_Iluminación.FCMacro",
+      "herramienta": "Hoja Iluminacion",
+      "grupo": "Respaldos",
+      "descripcion": "Crea o actualiza la hoja de calculo de iluminacion del proyecto con la informacion de recintos, luminarias y parametros usados por ElectricCR.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "heredada_de_version_activa",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Respaldos/Iluminacion_Archivadas_20260610_092800/Hoja_Iluminación_Legacy.FCMacro",
+      "herramienta": "Hoja Iluminacion Legacy",
+      "grupo": "Respaldos",
+      "descripcion": "Version legacy para crear o actualizar la hoja de calculo de iluminacion utilizada por el flujo anterior de ElectricCR.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_contextual_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Respaldos/Iluminacion_legacy_20260324/Importar_Luminarias_CSV_ElectricCR.FCMacro",
+      "herramienta": "Importar Luminarias CSV",
+      "grupo": "Respaldos",
+      "descripcion": "Importar_Luminarias_CSV_ElectricCR.FCMacro",
+      "descripcion_original": "Importar_Luminarias_CSV_ElectricCR.FCMacro",
+      "fuente_descripcion": "catalogo_existente",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Respaldos/ElectricCR_Tablero_Eaton_20260612_093935/Insertar_Tablero.FCMacro",
+      "herramienta": "Insertar Tablero",
+      "grupo": "Respaldos",
+      "descripcion": "Inserta tableros, desconectores o interruptores ElectricCR como App::Link a partir del registro de equipos y permite ubicarlos sobre la geometria seleccionada.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "heredada_de_version_activa",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Respaldos/Reorganizacion_raiz_20260622_095139/Insertar_Dispositivo - FUNCIONA.FCMacro",
+      "herramienta": "Insertar_Dispositivo - FUNCIONA",
+      "grupo": "Respaldos",
+      "descripcion": "Insertar_Dispositivo.FCMacro (rev G) Selector genérico desde registro y creación de instancia usando ElectricCR.electriccr.features.objeto_toma_uno.crear_toma_uno.",
+      "descripcion_original": "Insertar_Dispositivo.FCMacro (rev G) Selector genérico desde registro y creación de instancia usando ElectricCR.electriccr.features.objeto_toma_uno.crear_toma_uno.",
+      "fuente_descripcion": "catalogo_existente",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Respaldos/Areas_PoligonoFromBoundaryLines_abiertas_20260608_123204/PoligonoFromBoundaryLines.FCMacro",
+      "herramienta": "Poligono desde lineas limite",
+      "grupo": "Respaldos",
+      "descripcion": "Construye un poligono Draft cerrado de area a partir de aristas o lineas limite seleccionadas, aplicando tolerancias de snap y cierre.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "heredada_de_version_activa",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Respaldos/Areas_PoligonoFromBoundaryLines_20260608_122238/RectFromBoundaryLines.FCMacro",
+      "herramienta": "RectFromBoundaryLines",
+      "grupo": "Respaldos",
+      "descripcion": "Crea un rectangulo de Draft usando 2 a N aristas seleccionadas.",
+      "descripcion_original": "Crea un rectangulo de Draft usando 2 a N aristas seleccionadas.",
+      "fuente_descripcion": "catalogo_existente",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Respaldos/Areas_RectFromBoundaryLines_estilo_20260622_150731/RectFromBoundaryLines.FCMacro",
+      "herramienta": "RectFromBoundaryLines",
+      "grupo": "Respaldos",
+      "descripcion": "Crea un rectangulo de Draft usando 2 a N aristas seleccionadas.",
+      "descripcion_original": "Crea un rectangulo de Draft usando 2 a N aristas seleccionadas.",
+      "fuente_descripcion": "catalogo_existente",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Tableros/Electrical_Schedule_Base.FCMacro",
+      "herramienta": "Electrical_Schedule_Base",
+      "grupo": "Tableros",
+      "descripcion": "Crea o sirve como base para una hoja de panel schedule electrico en FreeCAD, estructurando la informacion de circuitos del tablero.",
+      "descripcion_original": "Electrical_Schedule_Base.FCMacro Base macro for FreeCAD electrical panel schedule.",
+      "fuente_descripcion": "catalogo_existente_normalizado",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "ElectricCR/Insertar_Tablero.FCMacro",
+      "herramienta": "Insertar Tablero",
+      "grupo": "Tableros",
+      "descripcion": "Inserta tableros, desconectores o interruptores ElectricCR como App::Link a partir del registro de equipos y permite ubicarlos sobre la geometria seleccionada.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "contexto_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Tableros/Insertar_Desconectores_Aire_Acondicionado.FCMacro",
+      "herramienta": "Instalar desconectores de aire acondicionado",
+      "grupo": "Tableros",
+      "descripcion": "Inserta un desconector ElectricCR por cada equipo HVAC seleccionado y lo asocia al flujo electrico correspondiente.",
+      "descripcion_original": "Instala un desconector ElectricCR por cada equipo HVAC seleccionado.",
+      "fuente_descripcion": "catalogo_existente_normalizado",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Tomacorrientes/Corregir_Desplazamiento_Reemplazo_Tomas.FCMacro",
+      "herramienta": "Corregir desplazamiento de tomas",
+      "grupo": "Tomacorrientes",
+      "descripcion": "Corrige el desplazamiento causado al cambiar un tomacorriente de una clave de registro a otra: calcula la diferencia geometrica entre prototipos antiguo y nuevo y desplaza las tomas para conservar su posicion visual.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "codigo_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Tomacorrientes/CrearCircuitosGeneralesPorParedYRecinto.FCMacro",
+      "herramienta": "Crear circuitos generales por pared y recinto",
+      "grupo": "Tomacorrientes",
+      "descripcion": "Organiza tomacorrientes generales en circuitos ElectricCR considerando su pared y recinto para formar grupos de circuito coherentes.",
+      "descripcion_original": "Organiza los tomacorrientes generales en circuitos ElectricCR.",
+      "fuente_descripcion": "catalogo_existente_normalizado",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Tomacorrientes/Insertar_Etiqueta_Circuito.FCMacro",
+      "herramienta": "Etiqueta de circuito",
+      "grupo": "Tomacorrientes",
+      "descripcion": "Inserta una etiqueta grafica con la identificacion de circuito asociada a tomacorrientes u otros elementos electricos seleccionados.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Tomacorrientes/Etiquetar_Circuitos_Secuencial.FCMacro",
+      "herramienta": "Etiquetar circuitos (secuencial)",
+      "grupo": "Tomacorrientes",
+      "descripcion": "Asigna o actualiza etiquetas de circuito en secuencia para los elementos o circuitos seleccionados.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Tomacorrientes/InsertarTomacorrientesenPoligonos_objeto_toma.FCMacro",
+      "herramienta": "InsertarTomacorrientesenPoligonos_objeto_toma",
+      "grupo": "Tomacorrientes",
+      "descripcion": "Inserta objetos de tomacorriente ElectricCR sobre cada poligono seleccionado usando el tipo de dispositivo registrado.",
+      "descripcion_original": "InsertarTomacorrientesEnPoligonos_objeto_toma.FCMacro Inserta objetos electriccr.features.objeto_toma_uno sobre cada poligono selec cionado.",
+      "fuente_descripcion": "catalogo_existente_normalizado",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Tomacorrientes/Insertar_Tomacorriente.FCMacro",
+      "herramienta": "Insertar_Tomacorriente",
+      "grupo": "Tomacorrientes",
+      "descripcion": "Inserta un tomacorriente ElectricCR en el documento utilizando el modelo o tipo configurado para la herramienta.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Tomacorrientes/InstalarTomacorrientesEnParedesBIM.FCMacro",
+      "herramienta": "Instalar tomacorrientes generales en paredes BIM",
+      "grupo": "Tomacorrientes",
+      "descripcion": "Distribuye de forma asistida tomacorrientes generales sobre paredes Arch/BIM de los recintos seleccionados.",
+      "descripcion_original": "Distribucion asistida de tomacorrientes generales sobre paredes Arch/BIM.",
+      "fuente_descripcion": "catalogo_existente_normalizado",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Tomacorrientes/Mover_Tomacorrientes_a_grupo.FCMacro",
+      "herramienta": "Mover tomacorrientes a grupo...",
+      "grupo": "Tomacorrientes",
+      "descripcion": "Mueve los tomacorrientes seleccionados a un grupo elegido para reorganizarlos en el arbol del proyecto.",
+      "descripcion_original": "Herramientas_Varias_Mover.FCMacro Version: 2025-09-25 15:10 (CR)",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "media"
+    },
+    {
+      "ruta": "Tomacorrientes/Ordenar_Tomas_XY.FCMacro",
+      "herramienta": "Ordenar_Tomas_XY",
+      "grupo": "Tomacorrientes",
+      "descripcion": "Ordena los tomacorrientes de un grupo segun sus coordenadas XY, priorizando los elementos superiores y luego su posicion horizontal.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "contexto_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Tomacorrientes/Ordenar_Tomas_XY_Horario.FCMacro",
+      "herramienta": "Ordenar_Tomas_XY_Horario",
+      "grupo": "Tomacorrientes",
+      "descripcion": "Ordena los tomacorrientes de un grupo en sentido horario alrededor de su centro geometrico, tomando la direccion Y positiva como inicio.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "contexto_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Tomacorrientes/Pintar_Tomacorrientes_Computo_Rojo.FCMacro",
+      "herramienta": "Pintar tomacorrientes de computo en rojo",
+      "grupo": "Tomacorrientes",
+      "descripcion": "Colorea de rojo las instancias identificadas como tomacorrientes de computo para diferenciarlas visualmente.",
+      "descripcion_original": "Colorea de rojo solamente las instancias de tomacorrientes de computo.",
+      "fuente_descripcion": "catalogo_existente_normalizado",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Tomacorrientes/Reemplazar_Tomacorrientes_Registro.FCMacro",
+      "herramienta": "Reemplazar tomacorrientes (registro)",
+      "grupo": "Tomacorrientes",
+      "descripcion": "Reemplaza tomacorrientes por otro tipo del registro ElectricCR; actualiza KeyRegistro en sitio cuando es posible o crea un reemplazo fisico conservando Placement, Label y pertenencia a grupos.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "codigo_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Tomacorrientes/Renombrar_Circuitos_Dialogo.FCMacro",
+      "herramienta": "Renombrar circuitos...",
+      "grupo": "Tomacorrientes",
+      "descripcion": "Abre un editor manual para cambiar los nombres de circuitos de tomacorrientes ElectricCR.",
+      "descripcion_original": "Editor manual de nombres para circuitos de tomacorrientes ElectricCR.",
+      "fuente_descripcion": "catalogo_existente_normalizado",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Tomacorrientes/RotarTomacorriente.FCMacro",
+      "herramienta": "RotarTomacorriente",
+      "grupo": "Tomacorrientes",
+      "descripcion": "Rota los tomacorrientes seleccionados para ajustar su orientacion en el modelo.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "inferencia_nombre_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Tomacorrientes/insertar_tomacorrientes_en_borde.FCMacro",
+      "herramienta": "insertar_tomacorrientes_en_borde",
+      "grupo": "Tomacorrientes",
+      "descripcion": "Distribuye e inserta tomacorrientes ElectricCR a lo largo de bordes o lineas seleccionadas.",
+      "descripcion_original": "insertar_tomacorrientes_en_borde.FCMacro (rev 2026-02-10) Inserta tomacorrientes distribuidos a lo largo de bordes/lineas seleccionadas usando ElectricCR.electriccr.features.objeto_toma_uno.",
+      "fuente_descripcion": "catalogo_existente_normalizado",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Xcluidos/Areas/AnalizarAreasRectangularesDesdeMurosBIM.FCMacro",
+      "herramienta": "Analizar areas rectangulares desde muros BIM",
+      "grupo": "Xcluidos",
+      "descripcion": "Analiza muros BIM seleccionados para inferir recintos rectangulares, generar sus areas y etiquetas y crear una hoja con los resultados del analisis.",
+      "descripcion_original": "ElectricCR entry point for the rectangular BIM-wall area analysis.",
+      "fuente_descripcion": "contexto_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Xcluidos/Cajas/CajaEMT.FCMacro",
+      "herramienta": "CajaEMT",
+      "grupo": "Xcluidos",
+      "descripcion": "Construye geometricamente una caja octogonal EMT con cavidad y perforaciones laterales para tuberia de 1/2 y 3/4 de pulgada; es una implementacion anterior a la caja EMT moderna basada en STEP y App::Link.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "contexto_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Xcluidos/Objetos/HVAC_Etiqueta_Libre.FCMacro",
+      "herramienta": "HVAC_Etiqueta_Libre",
+      "grupo": "Xcluidos",
+      "descripcion": "Crea una etiqueta de texto Draft independiente para identificar equipos HVAC; la etiqueta no queda vinculada de forma estructurada al equipo.",
+      "descripcion_original": "HVAC_Etiqueta_Libre.FCMacro",
+      "fuente_descripcion": "contexto_revisado_gpt",
+      "confianza_descripcion": "alta"
+    },
+    {
+      "ruta": "Xcluidos/Areas/actualizar_rectangulos_con_spreadsheet().FCMacro",
+      "herramienta": "actualizar_rectangulos_con_spreadsheet()",
+      "grupo": "Xcluidos",
+      "descripcion": "Lee datos de una hoja Spreadsheet para actualizar rectangulos, pero la version conservada queda incompleta y no ejecuta la actualizacion geometrica final.",
+      "descripcion_original": "Sin descripcion",
+      "fuente_descripcion": "contexto_revisado_gpt",
+      "confianza_descripcion": "alta"
+    }
+  ]
+}

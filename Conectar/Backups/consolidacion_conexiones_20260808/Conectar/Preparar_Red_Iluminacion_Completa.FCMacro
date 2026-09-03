@@ -1,0 +1,691 @@
+# -*- coding: utf-8 -*-
+# MenuText: Preparar red completa de iluminación
+# Icon: Conectar/Preparar_Red_Iluminacion_Completa.svg
+# Transaction: self
+
+"""Orquesta cajas, ramales y alimentadores para circuitos de iluminacion.
+
+Secuencia:
+1. Cajas EMT octogonales para grupos de hasta dos luminarias.
+2. Conexion local de cada luminaria a su caja.
+3. Caja superior para cada apagador del circuito.
+4. Ramales EMT entre cajas, luminarias y apagadores.
+5. Alimentador desde la caja mas cercana hasta la cara superior real del TP.
+
+Seleccionar luminarias o grupos TP limita el alcance a sus circuitos. Sin
+seleccion procesa todos los circuitos de iluminacion centrales.
+"""
+
+import json
+import math
+import re
+from pathlib import Path
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+
+
+TAG = "[ElectricCR][RED ILUMINACION COMPLETA]"
+GENERATED_BY = "PrepararRedIluminacionCompleta"
+DEFAULT_BOX_Z = 3300.0
+DEFAULT_ROUTE_Z = 3300.0
+DEFAULT_PANEL_ROUTE_Z = 3400.0
+DEFAULT_BEND_RADIUS = 100.0
+DEFAULT_CIRCUITS = ("TP-001", "TP-002", "TP-003", "TP-004")
+PARAM_PATH = "User parameter:BaseApp/Preferences/Mod/ElectricCR/RedIluminacionCompleta"
+
+
+def _qtwidgets():
+    for binding in ("PySide6", "PySide2"):
+        try:
+            return __import__(binding, fromlist=["QtWidgets"]).QtWidgets
+        except Exception:
+            pass
+    try:
+        from PySide import QtGui
+        return QtGui
+    except Exception:
+        return None
+
+
+def _safe(value):
+    try:
+        return str(value or "")
+    except Exception:
+        return ""
+
+
+def _log(message):
+    App.Console.PrintMessage(TAG + " " + str(message) + "\n")
+
+
+def _warn(message):
+    App.Console.PrintWarning(TAG + " " + str(message) + "\n")
+
+
+def _error(message):
+    App.Console.PrintError(TAG + " " + str(message) + "\n")
+
+
+def _is_group(obj):
+    return obj is not None and hasattr(obj, "Group")
+
+
+def _circuit_id(value):
+    match = re.search(r"\bTP\s*[-_]\s*0*(\d+)\b", _safe(value), re.I)
+    if not match:
+        return ""
+    return "TP-%03d" % int(match.group(1))
+
+
+def _group_circuit_id(group):
+    return _circuit_id(getattr(group, "CircuitoID", "")) or _circuit_id(getattr(group, "Label", ""))
+
+
+def _lighting_groups(doc):
+    result = []
+    for obj in doc.Objects:
+        if not _is_group(obj):
+            continue
+        if _safe(getattr(obj, "ECR_TipoCircuito", "")) != "Iluminacion":
+            continue
+        cid = _group_circuit_id(obj)
+        if cid:
+            result.append(obj)
+    result.sort(key=lambda group: _group_circuit_id(group))
+    return result
+
+
+def _selected_scope(doc, groups):
+    by_id = {_group_circuit_id(group): group for group in groups}
+    selected_ids = set()
+    try:
+        selection = list(Gui.Selection.getSelection() or [])
+    except Exception:
+        selection = []
+    for obj in selection:
+        cid = _group_circuit_id(obj) if _is_group(obj) else _circuit_id(getattr(obj, "CircuitoID", ""))
+        if cid in by_id:
+            selected_ids.add(cid)
+    return [by_id[cid] for cid in sorted(selected_ids)] if selected_ids else list(groups)
+
+
+def _load_macro(relative_path, module_name):
+    path = Path(__file__).resolve().parents[1] / relative_path
+    if not path.exists():
+        raise RuntimeError("No se encontro macro auxiliar: " + str(path))
+    namespace = {"__name__": module_name, "__file__": str(path)}
+    with path.open("r", encoding="utf-8-sig", errors="ignore") as handle:
+        exec(compile(handle.read(), str(path), "exec"), namespace, namespace)
+    return namespace
+
+
+def _all_luminaires(groups):
+    result, seen = [], set()
+    for group in groups:
+        for obj in list(getattr(group, "LuminariasAsignadas", []) or []):
+            if obj.Name not in seen:
+                seen.add(obj.Name)
+                result.append(obj)
+    return result
+
+
+def _all_switches(groups):
+    result, seen = [], set()
+    for group in groups:
+        for obj in list(getattr(group, "ApagadoresAsignados", []) or []):
+            if obj.Name not in seen:
+                seen.add(obj.Name)
+                result.append(obj)
+    return result
+
+
+def _is_octagonal_box(obj):
+    if obj is None or _is_group(obj):
+        return False
+    text = (_safe(getattr(obj, "Name", "")) + " " + _safe(getattr(obj, "Label", ""))).lower()
+    if any(token in text for token in ("master", "template", "plantilla", "prototype")):
+        return False
+    if _safe(getattr(obj, "Tipo", "")) == "EMT_Octagon_Box":
+        return True
+    return "PuertosJSON" in getattr(obj, "PropertiesList", []) and "octogonal" in text
+
+
+def _add_prop(obj, prop_type, name, group, description):
+    try:
+        if name not in obj.PropertiesList:
+            obj.addProperty(prop_type, name, group, description)
+    except Exception:
+        pass
+
+
+def _run_luminaire_boxes(doc, groups, cfg):
+    luminaires = _all_luminaires(groups)
+    if not luminaires:
+        raise RuntimeError("Los circuitos no contienen LuminariasAsignadas")
+    ns = _load_macro(Path("Cajas") / "Colocar_Cajas_Octogonales_Entre_Luminarias.FCMacro", "electriccr_lum_boxes")
+    helper_cfg = ns["_default_cfg"](True)
+    helper_cfg.update({
+        "scope": "selection",
+        "altura_mm": float(cfg["box_z"]),
+        "cleanup_prev": bool(cfg.get("rebuild", True)),
+        "row_pair_mode": True,
+        "max_spline_mm": 4000.0,
+    })
+    ns["_collect_candidates"] = lambda _doc: (list(luminaires), True)
+    ns["_run_config_dialog"] = lambda _has_selection: dict(helper_cfg)
+    ns["_find_iluminacion_scope_group"] = lambda _doc: None
+    ns["_source_group_key"] = lambda _doc, _obj, scope_group=None: "Circuito_Asignado"
+    before_boxes = set(obj.Name for obj in doc.Objects if _is_octagonal_box(obj))
+    before_connections = set(obj.Name for obj in doc.Objects if _safe(getattr(obj, "GeneradoPor", "")) == ns["GENERATED_TAG"])
+    ns["main"]()
+    after_boxes = set(obj.Name for obj in doc.Objects if _is_octagonal_box(obj))
+    after_connections = set(obj.Name for obj in doc.Objects if _safe(getattr(obj, "GeneradoPor", "")) == ns["GENERATED_TAG"])
+    return {"luminarias": len(luminaires), "cajas_nuevas": len(after_boxes - before_boxes),
+            "generados": len(after_connections - before_connections)}
+
+
+def _run_switch_boxes(doc, groups, cfg):
+    switches = _all_switches(groups)
+    if not switches:
+        _warn("No hay apagadores asociados; se omite su caja superior")
+        return {"apagadores": 0, "cajas_nuevas": 0}
+    ns = _load_macro(Path("Cajas") / "Colocar_Cajas_Octogonales_Sobre_Dispositivos.FCMacro", "electriccr_switch_boxes")
+    helper_cfg = ns["_default_config"](True)
+    helper_cfg.update({
+        "scope": "selection",
+        "include_toma": False,
+        "include_apagador": True,
+        "group_by_circuit": True,
+        "prefer_group_circuit": False,
+        "preserve_source_hierarchy": False,
+        "place_in_source_circuit_group": False,
+        "strict_devices_only": True,
+        "skip_connection_like": True,
+        "respect_policy": False,
+        "skip_existing": True,
+        "snpt": float(cfg["box_z"]),
+        "z_offset": 0.0,
+        "diameter": 22.2,
+    })
+    ns["_selection_roots"] = lambda: list(switches)
+    ns["_ConfigDialog"].run = lambda _self: dict(helper_cfg)
+    before = set(obj.Name for obj in doc.Objects if _is_octagonal_box(obj))
+    ns["main"]()
+    after = set(obj.Name for obj in doc.Objects if _is_octagonal_box(obj))
+    return {"apagadores": len(switches), "cajas_nuevas": len(after - before)}
+
+
+def _attach_box_references(doc, groups):
+    by_id = {_group_circuit_id(group): group for group in groups}
+    switch_ids = {}
+    for cid, group in by_id.items():
+        for switch in list(getattr(group, "ApagadoresAsignados", []) or []):
+            switch_ids.setdefault(switch.Name, set()).add(cid)
+    boxes_by_circuit = {cid: [] for cid in by_id}
+    for box in [obj for obj in doc.Objects if _is_octagonal_box(obj)]:
+        cids = set()
+        direct = _circuit_id(getattr(box, "CircuitoID", ""))
+        if direct in by_id:
+            cids.add(direct)
+        source_name = _safe(getattr(box, "CajaOrigenName", ""))
+        cids.update(switch_ids.get(source_name, set()))
+        if not cids:
+            cluster = _safe(getattr(box, "ClusterID", ""))
+            found = _circuit_id(cluster)
+            if found in by_id:
+                cids.add(found)
+        if not cids:
+            continue
+        _add_prop(box, "App::PropertyStringList", "CircuitosIluminacion", "Circuito", "Circuitos que usan la caja")
+        box.CircuitosIluminacion = sorted(cids)
+        if len(cids) == 1:
+            _add_prop(box, "App::PropertyString", "CircuitoID", "Circuito", "Circuito principal")
+            try:
+                box.CircuitoID = next(iter(cids))
+            except Exception:
+                pass
+        for cid in cids:
+            boxes_by_circuit[cid].append(box)
+    for cid, group in by_id.items():
+        _add_prop(group, "App::PropertyLinkList", "CajasOctogonalesAsignadas", "Canalizacion", "Cajas usadas por el circuito")
+        group.CajasOctogonalesAsignadas = list(dict((box.Name, box) for box in boxes_by_circuit[cid]).values())
+    return {cid: len(boxes) for cid, boxes in boxes_by_circuit.items()}
+
+
+def _box_ports(box):
+    raw = _safe(getattr(box, "PuertosJSON", "")).strip()
+    try:
+        items = json.loads(raw) if raw else []
+    except Exception:
+        items = []
+    result = []
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        position, direction = item.get("position"), item.get("direction")
+        if not isinstance(position, list) or len(position) != 3:
+            continue
+        try:
+            point = box.Placement.multVec(App.Vector(*[float(v) for v in position]))
+            vector = App.Vector(*[float(v) for v in direction]) if isinstance(direction, list) and len(direction) == 3 else App.Vector()
+            vector = box.Placement.Rotation.multVec(vector)
+            result.append({"name": _safe(item.get("name", "")), "point": point, "dir": vector})
+        except Exception:
+            pass
+    if not result:
+        bb = box.Shape.BoundBox
+        center = App.Vector(bb.Center.x, bb.Center.y, bb.Center.z)
+        result = [{"name": "Center", "point": center, "dir": App.Vector(1, 0, 0)}]
+    return result
+
+
+def _unit_xy(vector, fallback=(1.0, 0.0, 0.0)):
+    result = App.Vector(float(vector.x), float(vector.y), 0.0)
+    if result.Length < 1e-7:
+        result = App.Vector(*fallback)
+    result.normalize()
+    return result
+
+
+def _port_toward(box, target, used=None, prefer_bottom=False):
+    used = set(used or [])
+    ports = _box_ports(box)
+    if prefer_bottom:
+        bottom = [port for port in ports if "bottom" in port["name"].lower() or "infer" in port["name"].lower()]
+        if bottom:
+            return bottom[0]
+    candidates = [port for port in ports if port["name"] not in used and "bottom" not in port["name"].lower()]
+    if not candidates:
+        candidates = ports
+    def score(port):
+        toward = _unit_xy(target - port["point"])
+        direction = _unit_xy(port["dir"])
+        return (-float(direction.dot(toward)), port["point"].distanceToPoint(target))
+    return sorted(candidates, key=score)[0]
+
+
+def _dedupe(points, tolerance=0.01):
+    result = []
+    for point in points:
+        value = App.Vector(point)
+        if not result or result[-1].distanceToPoint(value) > tolerance:
+            result.append(value)
+    return result
+
+
+def _simplify(points, tolerance=0.01):
+    points = _dedupe(points, tolerance)
+    if len(points) < 3:
+        return points
+    result = [points[0]]
+    for index in range(1, len(points) - 1):
+        a, b, c = result[-1], points[index], points[index + 1]
+        first, second = b - a, c - b
+        if first.Length <= tolerance or second.Length <= tolerance:
+            continue
+        if first.cross(second).Length <= tolerance * first.Length * second.Length and first.dot(second) > 0:
+            continue
+        result.append(b)
+    result.append(points[-1])
+    return result
+
+
+def _rounded_wire(points, radius):
+    points = _simplify(points)
+    if len(points) < 2:
+        raise RuntimeError("Ruta con menos de dos puntos")
+    if len(points) == 2 or radius <= 0.1:
+        return Part.makePolygon(points)
+    edges, cursor = [], points[0]
+    for index in range(1, len(points) - 1):
+        a, b, c = points[index - 1], points[index], points[index + 1]
+        incoming, outgoing = b - a, c - b
+        if incoming.Length <= 1e-7 or outgoing.Length <= 1e-7:
+            continue
+        vin, vout = incoming / incoming.Length, outgoing / outgoing.Length
+        if abs(float(vin.dot(vout))) > 0.999:
+            if cursor.distanceToPoint(b) > 1e-7:
+                edges.append(Part.makeLine(cursor, b))
+            cursor = b
+            continue
+        cut = min(float(radius), 0.35 * incoming.Length, 0.35 * outgoing.Length)
+        q1, q2 = b - vin * cut, b + vout * cut
+        if cursor.distanceToPoint(q1) > 1e-7:
+            edges.append(Part.makeLine(cursor, q1))
+        center = b - vin * cut + vout * cut
+        radial = (q1 - center) + (q2 - center)
+        if radial.Length <= 1e-7:
+            edges.append(Part.makeLine(q1, q2))
+        else:
+            midpoint = center + radial / radial.Length * cut
+            edges.append(Part.Arc(q1, midpoint, q2).toShape())
+        cursor = q2
+    if cursor.distanceToPoint(points[-1]) > 1e-7:
+        edges.append(Part.makeLine(cursor, points[-1]))
+    try:
+        return Part.Wire(edges)
+    except Exception:
+        return Part.makePolygon(points)
+
+
+def _box_route_points(box_a, box_b, route_z, used_a=None, used_b=None):
+    center_a, center_b = box_a.Shape.BoundBox.Center, box_b.Shape.BoundBox.Center
+    port_a = _port_toward(box_a, center_b, used=used_a)
+    port_b = _port_toward(box_b, center_a, used=used_b)
+    direction_a, direction_b = _unit_xy(port_a["dir"]), _unit_xy(port_b["dir"])
+    stub = 80.0
+    start, end = port_a["point"], port_b["point"]
+    out_a, out_b = start + direction_a * stub, end + direction_b * stub
+    high_a = App.Vector(out_a.x, out_a.y, route_z)
+    high_b = App.Vector(out_b.x, out_b.y, route_z)
+    if abs(high_b.x - high_a.x) >= abs(high_b.y - high_a.y):
+        corner = App.Vector(high_b.x, high_a.y, route_z)
+    else:
+        corner = App.Vector(high_a.x, high_b.y, route_z)
+    points = [start, out_a, high_a, corner, high_b, out_b, end]
+    return _simplify(points), port_a["name"], port_b["name"]
+
+
+def _top_rectangular_port(device):
+    """Puerto superior real de la caja rectangular del dispositivo.
+
+    Los App::Link de apagador incluyen el simbolo 2D y dos solidos 3D. Usar la
+    Placement/Base o AlturaRel cae en el centro nominal del simbolo, no en la
+    caja. Este calculo replica el metodo ya usado por ElectricCR para los
+    tomacorrientes: centro XY del conjunto de solidos y Z maxima.
+    """
+    shape = getattr(device, "Shape", None)
+    if shape is not None:
+        try:
+            if not shape.isNull():
+                solids = list(getattr(shape, "Solids", []) or [])
+                boxes = []
+                for solid in solids:
+                    try:
+                        if not solid.isNull():
+                            boxes.append(solid.BoundBox)
+                    except Exception:
+                        pass
+                if not boxes:
+                    boxes = [shape.BoundBox]
+                return App.Vector(
+                    0.5 * (min(bb.XMin for bb in boxes) + max(bb.XMax for bb in boxes)),
+                    0.5 * (min(bb.YMin for bb in boxes) + max(bb.YMax for bb in boxes)),
+                    max(bb.ZMax for bb in boxes),
+                )
+        except Exception:
+            pass
+
+    try:
+        base = device.getGlobalPlacement().Base
+    except Exception:
+        base = device.Placement.Base
+    height = 1200.0
+    try:
+        height = float(device.AlturaRel)
+    except Exception:
+        try:
+            height = float(device.AlturaMontaje)
+        except Exception:
+            pass
+    return App.Vector(base.x, base.y, base.z + height)
+
+
+def _switch_route_points(switch, box, route_z):
+    source = _top_rectangular_port(switch)
+    port = _port_toward(box, source, prefer_bottom=True)
+    target = port["point"]
+    rise = App.Vector(source.x, source.y, route_z)
+    approach = App.Vector(target.x, source.y, route_z)
+    return _simplify([source, rise, approach, target]), "SuperiorCajaRectangular", port["name"]
+
+
+def _mst_edges(boxes):
+    boxes = list(boxes or [])
+    if len(boxes) < 2:
+        return []
+    connected = [boxes[0]]
+    pending = boxes[1:]
+    edges = []
+    while pending:
+        best = None
+        for source in connected:
+            a = source.Shape.BoundBox.Center
+            for target in pending:
+                b = target.Shape.BoundBox.Center
+                distance = math.hypot(float(a.x - b.x), float(a.y - b.y))
+                if best is None or distance < best[0]:
+                    best = (distance, source, target)
+        _distance, source, target = best
+        edges.append((source, target))
+        connected.append(target)
+        pending.remove(target)
+    return edges
+
+
+def _ensure_child_group(doc, parent, name, label):
+    group = doc.getObject(name)
+    if group is None:
+        group = doc.addObject("App::DocumentObjectGroup", name)
+    group.Label = label
+    if group not in list(getattr(parent, "Group", []) or []):
+        parent.addObject(group)
+    return group
+
+
+def _cleanup_generated_routes(doc, group):
+    names = []
+    for obj in list(getattr(group, "Group", []) or []):
+        if _safe(getattr(obj, "GeneradoPor", "")) == GENERATED_BY:
+            names.append(obj.Name)
+    for name in names:
+        doc.removeObject(name)
+    return len(names)
+
+
+def _write_route(doc, group, points, circuit_id, origin, destination, kind, index, cfg,
+                 origin_port="", destination_port=""):
+    token = re.sub(r"[^0-9A-Za-z_]+", "_", circuit_id)
+    name = "Ramal_Luz_%s_%03d" % (token, index)
+    obj = doc.getObject(name) or doc.addObject("Part::Feature", name)
+    obj.Shape = _rounded_wire(points, float(cfg["bend_radius"]))
+    obj.Label = "%s %s: %s -> %s" % (kind, circuit_id, getattr(origin, "Label", origin.Name), getattr(destination, "Label", destination.Name))
+    definitions = (
+        ("App::PropertyString", "Tipo", "ElectricCR", "Tipo logico"),
+        ("App::PropertyString", "ConduitType", "ElectricCR", "Canalizacion"),
+        ("App::PropertyFloat", "DiametroConduit", "ElectricCR", "Diametro EMT"),
+        ("App::PropertyString", "CircuitoID", "ElectricCR", "Circuito"),
+        ("App::PropertyString", "GeneradoPor", "ElectricCR", "Macro"),
+        ("App::PropertyString", "LinkKind", "ElectricCR", "Tipo de enlace"),
+        ("App::PropertyString", "OrigenName", "ElectricCR", "Origen"),
+        ("App::PropertyString", "DestinoName", "ElectricCR", "Destino"),
+        ("App::PropertyString", "PuertoOrigen", "Puertos", "Puerto de salida"),
+        ("App::PropertyString", "PuertoDestino", "Puertos", "Puerto de llegada"),
+        ("App::PropertyVector", "PuntoPuertoOrigen", "Puertos", "Punto mundial de salida"),
+        ("App::PropertyVector", "PuntoPuertoDestino", "Puertos", "Punto mundial de llegada"),
+        ("App::PropertyFloat", "AlturaRuta", "ElectricCR", "Nivel de ruta"),
+        ("App::PropertyVectorList", "Points", "Geometria", "Puntos de la ruta"),
+    )
+    for definition in definitions:
+        _add_prop(obj, *definition)
+    obj.Tipo = "ConduitPath"; obj.ConduitType = "EMT"; obj.DiametroConduit = 22.2
+    obj.CircuitoID = circuit_id; obj.GeneradoPor = GENERATED_BY; obj.LinkKind = kind
+    obj.OrigenName = origin.Name; obj.DestinoName = destination.Name; obj.AlturaRuta = float(cfg["route_z"])
+    obj.PuertoOrigen = _safe(origin_port); obj.PuertoDestino = _safe(destination_port)
+    obj.PuntoPuertoOrigen = App.Vector(points[0]); obj.PuntoPuertoDestino = App.Vector(points[-1])
+    obj.Points = list(points)
+    if obj not in list(getattr(group, "Group", []) or []):
+        group.addObject(obj)
+    try:
+        color = (0.10, 0.72, 0.34) if kind == "backbone" else (0.10, 0.55, 0.95)
+        obj.ViewObject.LineColor = color; obj.ViewObject.ShapeColor = color; obj.ViewObject.LineWidth = 2.5
+    except Exception:
+        pass
+    return obj
+
+
+def _run_branches(doc, groups, cfg):
+    total = drops = backbones = removed = 0
+    doc.openTransaction("ElectricCR: ramales completos de iluminacion")
+    try:
+        for group in groups:
+            cid = _group_circuit_id(group)
+            boxes = list(getattr(group, "CajasOctogonalesAsignadas", []) or [])
+            boxes = list(dict((box.Name, box) for box in boxes if _is_octagonal_box(box)).values())
+            if not boxes:
+                raise RuntimeError(cid + " no tiene cajas octogonales")
+            ramal_group = _ensure_child_group(doc, group, "Ramales_Iluminacion_" + cid.replace("-", "_"), "Ramales EMT " + cid)
+            if cfg.get("rebuild", True):
+                removed += _cleanup_generated_routes(doc, ramal_group)
+            index = 1
+            for box_a, box_b in _mst_edges(boxes):
+                points, port_a, port_b = _box_route_points(box_a, box_b, float(cfg["route_z"]))
+                _write_route(doc, ramal_group, points, cid, box_a, box_b, "backbone", index, cfg,
+                             origin_port=port_a, destination_port=port_b)
+                index += 1; total += 1; backbones += 1
+            box_by_source = {_safe(getattr(box, "CajaOrigenName", "")): box for box in boxes if _safe(getattr(box, "CajaOrigenName", ""))}
+            for switch in list(getattr(group, "ApagadoresAsignados", []) or []):
+                box = box_by_source.get(switch.Name)
+                if box is None:
+                    continue
+                points, source_port, box_port = _switch_route_points(switch, box, float(cfg["route_z"]))
+                _write_route(doc, ramal_group, points, cid, switch, box, "drop_box", index, cfg,
+                             origin_port=source_port, destination_port=box_port)
+                index += 1; total += 1; drops += 1
+        doc.recompute()
+        doc.commitTransaction()
+    except Exception:
+        doc.abortTransaction()
+        raise
+    return {"ramales": total, "troncales": backbones, "bajantes_apagador": drops, "anteriores_eliminados": removed}
+
+
+def _run_panel_feeders(doc, groups, cfg):
+    ns = _load_macro(Path("Conectar") / "Conectar_Circuitos_TP_a_Cara_Superior_Tablero.FCMacro", "electriccr_lighting_panel")
+    panel_cfg = {
+        "route_z": float(cfg["panel_route_z"]),
+        "lane_spacing": 50.0,
+        "approach_clearance": 300.0,
+        "bend_radius": float(cfg["bend_radius"]),
+        "port_stub": 80.0,
+        "circuit_ids": [_group_circuit_id(group) for group in groups],
+    }
+    result = ns["main"](doc_override=doc, cfg_override=panel_cfg)
+    if result is None:
+        raise RuntimeError("No se pudieron conectar los circuitos a la cara superior del TP")
+    return result
+
+
+def _default_cfg():
+    params = App.ParamGet(PARAM_PATH)
+    return {
+        "box_z": params.GetFloat("box_z", DEFAULT_BOX_Z),
+        "route_z": params.GetFloat("route_z", DEFAULT_ROUTE_Z),
+        "panel_route_z": params.GetFloat("panel_route_z", DEFAULT_PANEL_ROUTE_Z),
+        "bend_radius": params.GetFloat("bend_radius", DEFAULT_BEND_RADIUS),
+        "rebuild": True,
+        "luminaire_boxes": True,
+        "switch_boxes": True,
+        "branches": True,
+        "panel_feeders": True,
+    }
+
+
+def _dialog(groups):
+    QtWidgets = _qtwidgets()
+    cfg = _default_cfg()
+    if QtWidgets is None:
+        return cfg
+    dialog = QtWidgets.QDialog(Gui.getMainWindow())
+    dialog.setWindowTitle("Preparar red completa de iluminacion")
+    dialog.setMinimumWidth(500)
+    circuits = ", ".join(_group_circuit_id(group) for group in groups)
+    info = QtWidgets.QLabel("Circuitos: %s\nLa canalizacion quedara sobre los muros de 3000 mm." % circuits)
+    info.setWordWrap(True)
+    box_z = QtWidgets.QDoubleSpinBox(); box_z.setRange(3001.0, 10000.0); box_z.setSuffix(" mm"); box_z.setValue(cfg["box_z"])
+    route_z = QtWidgets.QDoubleSpinBox(); route_z.setRange(3001.0, 10000.0); route_z.setSuffix(" mm"); route_z.setValue(cfg["route_z"])
+    panel_z = QtWidgets.QDoubleSpinBox(); panel_z.setRange(3001.0, 10000.0); panel_z.setSuffix(" mm"); panel_z.setValue(cfg["panel_route_z"])
+    bend = QtWidgets.QDoubleSpinBox(); bend.setRange(0.0, 1000.0); bend.setSuffix(" mm"); bend.setValue(cfg["bend_radius"])
+    checks = []
+    for label, key in (("Cajas y conexiones de luminarias", "luminaire_boxes"),
+                       ("Cajas superiores de apagadores", "switch_boxes"),
+                       ("Ramales entre cajas y apagadores", "branches"),
+                       ("Alimentadores hasta tablero TP", "panel_feeders")):
+        check = QtWidgets.QCheckBox(label); check.setChecked(True); checks.append((key, check))
+    rebuild = QtWidgets.QCheckBox("Reconstruir canalizaciones generadas anteriormente"); rebuild.setChecked(True)
+    form = QtWidgets.QFormLayout(); form.addRow(info); form.addRow("Nivel de cajas:", box_z); form.addRow("Nivel de ramales:", route_z); form.addRow("Nivel hacia tablero:", panel_z); form.addRow("Radio de curvas:", bend)
+    for _key, check in checks:
+        form.addRow(check)
+    form.addRow(rebuild)
+    buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+    buttons.accepted.connect(dialog.accept); buttons.rejected.connect(dialog.reject)
+    layout = QtWidgets.QVBoxLayout(dialog); layout.addLayout(form); layout.addWidget(buttons)
+    if dialog.exec() != QtWidgets.QDialog.Accepted:
+        return None
+    cfg.update({"box_z": box_z.value(), "route_z": route_z.value(), "panel_route_z": panel_z.value(), "bend_radius": bend.value(), "rebuild": rebuild.isChecked()})
+    for key, check in checks:
+        cfg[key] = check.isChecked()
+    params = App.ParamGet(PARAM_PATH)
+    for key in ("box_z", "route_z", "panel_route_z", "bend_radius"):
+        params.SetFloat(key, float(cfg[key]))
+    return cfg
+
+
+def run(doc_override=None, cfg_override=None, groups_override=None):
+    doc = doc_override or App.ActiveDocument
+    if doc is None:
+        _error("No hay documento activo")
+        return None
+    groups = list(groups_override or _selected_scope(doc, _lighting_groups(doc)))
+    groups = [group for group in groups if _group_circuit_id(group)]
+    if not groups:
+        _error("No se encontraron circuitos de iluminacion asignados")
+        return None
+    cfg = dict(_default_cfg())
+    if cfg_override is None:
+        chosen = _dialog(groups)
+        if chosen is None:
+            return None
+        cfg.update(chosen)
+    else:
+        cfg.update(cfg_override)
+    try:
+        App.setActiveDocument(doc.Name)
+    except Exception:
+        pass
+    result = {"circuitos": [_group_circuit_id(group) for group in groups]}
+    try:
+        if cfg.get("luminaire_boxes", True):
+            result["luminarias"] = _run_luminaire_boxes(doc, groups, cfg)
+        if cfg.get("switch_boxes", True):
+            result["apagadores"] = _run_switch_boxes(doc, groups, cfg)
+        result["cajas_por_circuito"] = _attach_box_references(doc, groups)
+        if cfg.get("branches", True):
+            result["ramales"] = _run_branches(doc, groups, cfg)
+        if cfg.get("panel_feeders", True):
+            result["tablero"] = _run_panel_feeders(doc, groups, cfg)
+        doc.recompute()
+    except Exception as exc:
+        _error("Proceso incompleto: " + _safe(exc))
+        QtWidgets = _qtwidgets()
+        if QtWidgets is not None and cfg_override is None:
+            QtWidgets.QMessageBox.critical(Gui.getMainWindow(), "Red de iluminacion", _safe(exc))
+        return None
+    _log("Finalizado: " + _safe(result))
+    if cfg_override is None:
+        QtWidgets = _qtwidgets()
+        if QtWidgets is not None:
+            QtWidgets.QMessageBox.information(
+                Gui.getMainWindow(), "Red de iluminacion",
+                "Red completada para: %s\nCajas por circuito: %s\nRamales: %s\nAlimentadores al TP: %s" % (
+                    ", ".join(result["circuitos"]), result.get("cajas_por_circuito", {}),
+                    result.get("ramales", {}).get("ramales", 0), result.get("tablero", {}).get("circuitos", 0)
+                ),
+            )
+    return result
+
+
+if __name__ == "__main__":
+    run()

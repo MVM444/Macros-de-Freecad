@@ -125,7 +125,8 @@ def main():
     assert all(door.TypeId == "Part::FeaturePython" for door in doors)
     assert all(door.Proxy.__class__.__module__ == "ArchWindow" for door in doors)
     assert all(door.Hosts == [door.FA_HostWall] for door in doors)
-    assert all(door in level.Group and door.Base in level.Group for door in doors)
+    assert all(door not in level.Group and door.Base not in level.Group for door in doors)
+    assert all(door.FA_TargetLevel == level.Name and door.Base.FA_TargetLevel == level.Name for door in doors)
     assert doc.getObject("FA_Doors") is None
     door_volumes = {wall_a.Name: wall_a.Shape.Volume, wall_b.Name: wall_b.Shape.Volume}
     assert all(door_volumes[name] < volume for name, volume in initial_volumes.items())
@@ -155,7 +156,8 @@ def main():
     assert window_summary["created_count"] == 2
     assert len({window.FA_HostWall.Name for window in windows}) == 2
     assert all(window.Hosts == [window.FA_HostWall] for window in windows)
-    assert all(window in level.Group and window.Base in level.Group for window in windows)
+    assert all(window not in level.Group and window.Base not in level.Group for window in windows)
+    assert all(window.FA_TargetLevel == level.Name and window.Base.FA_TargetLevel == level.Name for window in windows)
     assert doc.getObject("FA_Windows") is None
 
     doc.openTransaction("Repeat FA doors")
@@ -188,7 +190,8 @@ def main():
     assert all(obj.Hosts == [obj.FA_HostWall] for obj in reopened_doors + reopened_windows)
     assert all(float(obj.FA_CutVolume_mm3) > 0.0 for obj in reopened_doors + reopened_windows)
     reopened_level = next(obj for obj in reopened.Objects if getattr(obj, "IfcType", "") == "Building Storey")
-    assert all(obj in reopened_level.Group and obj.Base in reopened_level.Group for obj in reopened_doors + reopened_windows)
+    assert all(obj not in reopened_level.Group and obj.Base not in reopened_level.Group for obj in reopened_doors + reopened_windows)
+    assert all(obj.FA_TargetLevel == reopened_level.Name and obj.Base.FA_TargetLevel == reopened_level.Name for obj in reopened_doors + reopened_windows)
     assert reopened.getObject("FA_Doors") is None
     assert reopened.getObject("FA_Windows") is None
     FreeCAD.closeDocument(reopened.Name)

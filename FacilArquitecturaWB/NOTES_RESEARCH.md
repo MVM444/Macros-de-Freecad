@@ -224,3 +224,99 @@ abertura. En un muro compuesto con decenas de puertas/ventanas el resultado sigu
 siendo correcto, pero puede tardar varios minutos. La prueba automatica de La Cruz
 usa todas las paredes y columnas y una muestra real de cada abertura para mantener
 un tiempo acotado; el asistente permite seleccionar todas las fuentes en uso normal.
+
+## 9. Actualizacion 2026-08-10 - plataforma de atencion desde linea
+
+Se revisaron la documentacion y el catalogo oficial antes de implementar el flujo:
+
+- BIM/Arch incluye objetos parametricos generales —muros, ventanas, paneles y
+  mobiliario—, pero no un generador especifico de mostradores de atencion con
+  paños de vidrio y puestos repetidos:
+  <https://github.com/FreeCAD/FreeCAD-documentation/blob/main/wiki/Arch_Workbench.md>.
+- Draft admite lineas y objetos 2D con cualquier posicion/orientacion y estos pueden
+  servir de base a objetos 3D:
+  <https://github.com/FreeCAD/FreeCAD-documentation/blob/main/wiki/Draft_Workbench.md>.
+- Sketcher aporta la linea parametrica, su `Placement` y restricciones, por lo que
+  no conviene copiar ni reemplazar el Sketch seleccionado:
+  <https://github.com/FreeCAD/FreeCAD-documentation/blob/main/wiki/Sketcher_Workbench.md>.
+- El catalogo oficial contiene workbenches de gabinetes/madera, pero sus objetivos
+  son manufactura de muebles y no resuelven el contrato BIM/CCSS de una plataforma
+  institucional: <https://www.freecad.org/addons.php?lang=eng>.
+
+Decision: no instalar una dependencia adicional. FacilArquitectura reutiliza la
+seleccion de aristas/Sketches, `Placement`, `Part.makeBox`, `Part.makeCompound` y los
+muros Arch existentes. El resultado conserva `SourceObject`, `SourceSubelement` y
+`HostWall`, y mantiene en una ruta separada el generador historico de seis Sketches.
+
+## 10. Actualizacion 2026-08-10 - abertura de atencion en vidrio
+
+El detalle lateral y frontal confirma mostrador a 740 mm y vidrio hasta 1800 mm.
+La ficha PL-01 identifica el frente Vc002 como vidrio de 16 mm con intercomunicador,
+pero no aporta una cota inequivoca para el hueco de atencion. Vc003 (60 x 60) es una
+ventana distinta y no se usa para dimensionar el frente.
+
+Decision: generar una abertura real por modulo mediante piezas simples dentro del
+mismo compound `Vidrios_Plataforma`. El valor inicial 300 x 300 mm es provisional,
+editable y expresamente no normativo. El builder historico no cambia.
+
+## 11. Actualizacion 2026-08-12 - Opening Element desde Sketch
+
+La revision de fuentes primarias y del codigo instalado de FreeCAD 1.1.3 confirmo:
+
+- `ArchWindowPresets.WindowPresets` incluye `Opening only`.
+- Ese preset crea un rectangulo cerrado, usa `Arch.makeWindow(..., parts=[])` y
+  asigna `IfcType = Opening Element`.
+- `ArchWindow.getSubVolume()` usa el mayor wire del `Base`, calcula la profundidad
+  desde el Wall anfitrion y devuelve el volumen que el Wall sustrae.
+- La prueba oficial `TestArchWindow.test_custom_subvolume_creates_opening` valida
+  que un Arch Window hospedado reduce realmente el volumen del muro.
+
+Fuentes oficiales:
+
+- <https://github.com/FreeCAD/FreeCAD/blob/main/src/Mod/BIM/ArchWindowPresets.py>
+- <https://github.com/FreeCAD/FreeCAD/blob/main/src/Mod/BIM/ArchWindow.py>
+- <https://github.com/FreeCAD/FreeCAD/blob/main/src/Mod/BIM/Arch.py>
+- <https://github.com/FreeCAD/FreeCAD-documentation/blob/main/wiki/Arch_Window.md>
+
+Decision: extender `core/opening_utils.py` con el tipo `opening`. Para lotes se
+reproduce el mecanismo nativo del preset mediante perfil cerrado y
+`Arch.makeWindow(parts=[])`, evitando las recomputaciones internas por instancia.
+No se crean booleanos FA, hojas, marcos, vidrios ni simbolos.
+# Investigacion 2026-08-13 - cambio de tipo de puerta
+
+La instalacion real FreeCAD 1.1.3 publica `WindowPresets` como lista de nombres y
+solo contiene dos nombres de puerta: `Simple door` y `Glass door`; no contiene
+`Sliding door`. `ArchWindowPresets.makeWindowPreset()` crea un Sketch, llama a
+`Arch.makeWindow`, asigna `Preset`, `Frame`, `Offset` e `IfcType = Door` y hace
+varios recomputes. `ArchWindow._Window.onChanged()` reacciona a Base,
+`WindowParts`, Placement, dimensiones, Hosts y Opening, pero no a `Preset`.
+La prueba real confirmo que transferir Base/WindowParts al mismo objeto conserva su
+identidad y mantiene el Wall perforado.
+
+# Investigacion 2026-08-23 - ElementData, tablas y herramientas nativas
+
+Para transferir propiedades de ventanas entre versiones de un mismo proyecto se reviso primero la arquitectura existente de FacilArquitecturaWB y las herramientas nativas de FreeCAD/BIM.
+
+Hallazgos y decisiones:
+
+- Las ventanas FA ya son `ArchWindow._Window` nativas. No crear un objeto paralelo `FA_Window`.
+- `Spreadsheet::Sheet` es adecuado como representacion visible, copiable y editable de datos por categoria.
+- Evitar una Spreadsheet unica con todas las categorias y muchas columnas vacias. Usar tablas visibles separadas por categoria con un nucleo comun.
+- Evitar una red bidireccional permanente de Expressions entre la misma hoja y los objetos si introduce ciclos o dependencias dificiles de mantener. Preferir operaciones explicitas `extraer -> validar -> aplicar`.
+- FreeCAD/BIM dispone de mecanismos de Schedule/reporte/consulta y administracion de puertas/ventanas que deben verificarse mediante MCP antes de duplicar seleccion, consulta o GUI.
+- El antepecho debe tratarse como dato transferible explicito y aplicarse mediante la API/Placement nativa validada en FreeCAD 1.1.3; no asumir una propiedad `SillHeight` estable sin comprobarla.
+- El matching entre una tabla vieja y un Sketch nuevo no debe depender solamente de `GeometryIndex`; usar tambien firma geometrica `centro + longitud + angulo` con tolerancias y estados `MATCH/CAMBIO/NO_MATCH/AMBIGUO`.
+- El Sketch es autoridad de posicion, orientacion y ancho. La tabla es autoridad de altura, antepecho, preset/tipo y datos descriptivos. El host y Level se resuelven de nuevo en el modelo destino.
+
+Se creo la especificacion `DISENO_ELEMENTDATA_TABLAS.md` como contrato previo a Codex.
+
+Fuentes base:
+
+- https://github.com/FreeCAD/FreeCAD/blob/main/src/Mod/BIM/ArchWindow.py
+- https://github.com/FreeCAD/FreeCAD/blob/main/src/Mod/BIM/ArchWindowPresets.py
+- https://github.com/FreeCAD/FreeCAD-documentation/blob/main/wiki/Spreadsheet_Workbench.md
+- https://github.com/FreeCAD/FreeCAD-documentation/blob/main/wiki/Expressions.md
+- https://github.com/FreeCAD/FreeCAD-documentation
+
+La disponibilidad exacta de Schedule/Report/Manage Doors and Windows debe comprobarse con MCP en la instalacion real FreeCAD 1.1.3 antes de implementar una capa paralela.
+

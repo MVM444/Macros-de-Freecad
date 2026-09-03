@@ -9,8 +9,8 @@ import FreeCADGui
 from PySide import QtWidgets
 
 from ..core.command_errors import UserFacingError, handle_command_exception
-from ..core.project_structure import active_or_new_document
-from ..modules.service_platform.builder import create_service_platform_front
+from ..modules.service_platform.builder import create_service_platform_from_axis
+from ..modules.service_platform.source import resolve_axis_from_selection
 from ..modules.service_platform.validation import PlatformValidationError
 from ..ui.dialog_service_platform import ServicePlatformDialog
 
@@ -25,8 +25,8 @@ class CommandClass:
 
     def GetResources(self):  # noqa: N802
         return {
-            "MenuText": "FA Crear frente de plataforma",
-            "ToolTip": "Crear un frente parametrico para puestos de atencion al publico.",
+            "MenuText": "FA Plataforma desde linea",
+            "ToolTip": "Crear una plataforma compacta desde una linea o un Sketch de una sola linea.",
             "Pixmap": ICON_PATH,
         }
 
@@ -34,28 +34,33 @@ class CommandClass:
         doc = None
         transaction_open = False
         try:
-            dialog = ServicePlatformDialog(parent=FreeCADGui.getMainWindow())
+            if FreeCAD.ActiveDocument is None:
+                raise UserFacingError("Abra un documento y seleccione la linea fuente de la plataforma.")
+            axis = resolve_axis_from_selection(FreeCADGui.Selection.getSelectionEx())
+            dialog = ServicePlatformDialog(
+                parent=FreeCADGui.getMainWindow(), axis_length_mm=axis.frame().length_mm
+            )
             accepted = dialog.exec() if hasattr(dialog, "exec") else dialog.exec_()
             if accepted != QtWidgets.QDialog.Accepted:
                 return
             values = dialog.options()
-            doc = active_or_new_document()
-            doc.openTransaction("FA Crear frente de plataforma")
+            doc = FreeCAD.ActiveDocument
+            doc.openTransaction("FA Plataforma desde linea")
             transaction_open = True
-            result = create_service_platform_front(doc, values)
+            result = create_service_platform_from_axis(doc, axis, values)
             doc.recompute()
             doc.commitTransaction()
             transaction_open = False
             _select_and_fit(result["root"], axonometric=values.create_3d_furniture)
         except PlatformValidationError as exc:
             _abort(doc, transaction_open)
-            handle_command_exception("FA Crear frente de plataforma", UserFacingError(str(exc)))
+            handle_command_exception("FA Plataforma desde linea", UserFacingError(str(exc)))
         except Exception as exc:
             _abort(doc, transaction_open)
-            handle_command_exception("FA Crear frente de plataforma", exc)
+            handle_command_exception("FA Plataforma desde linea", exc)
 
     def IsActive(self):  # noqa: N802
-        return True
+        return bool(FreeCADGui.ActiveDocument)
 
 
 def _select_and_fit(root, axonometric=True):

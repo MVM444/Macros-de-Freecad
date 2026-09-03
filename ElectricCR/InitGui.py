@@ -302,7 +302,7 @@ def _wrap_command(cmd_name: str) -> str:
                         menu_text = str(res.get("MenuText") or "")
                 except Exception:
                     menu_text = ""
-                usage_log.log_tool(cmd_name, {"source": "toolbar", "menu": menu_text})
+                usage_log.log_tool(cmd_name, {"source": "toolbar", "menu": menu_text, "usage_kind": "real"})
             except Exception:
                 pass
             try:
@@ -482,7 +482,7 @@ def _should_log_cmd(cmd_name: str) -> bool:
         return False
     if cmd_name.startswith("ElectricCR_"):
         return False
-    return cmd_name.startswith("Draft_") or cmd_name.startswith("BIM_") or cmd_name.startswith("Arch_")
+    return cmd_name.startswith(("CRBIM_", "Draft_", "BIM_", "Arch_"))
 
 
 def _on_toolbar_action(action) -> None:
@@ -497,7 +497,7 @@ def _on_toolbar_action(action) -> None:
             meta["text"] = action.text()
         except Exception:
             pass
-        usage_log.log_tool(cmd_name, {"source": "toolbar_action", **meta})
+        usage_log.log_tool(cmd_name, {"source": "toolbar_action", "usage_kind": "real", **meta})
     except Exception:
         pass
 
@@ -569,6 +569,13 @@ class ElectricCRWorkbench(Gui.Workbench):
             pass
 
         available = set(Gui.listCommands())
+        common_room_commands = []
+        try:
+            from CRBIMCore.commands.common_rooms import ensure_common_room_commands_registered
+
+            common_room_commands = ensure_common_room_commands_registered()
+        except Exception as e:
+            App.Console.PrintWarning(f"[ElectricCR][Rooms] command_warning={e}\n")
         cfg = load_config()
         show_bim_toolbar = _cfg_bool(cfg, "show_bim_toolbar", False)
         show_draft_toolbars = _cfg_bool(cfg, "show_draft_toolbars", False)
@@ -690,9 +697,27 @@ class ElectricCRWorkbench(Gui.Workbench):
                         show_toolbar = mode_manager.should_create_toolbar(title, cfg)
                     else:
                         show_toolbar = _should_show_macro_toolbar(title, cfg)
-                    if show_toolbar:
+                    # La antigua barra Areas se conserva en menu, pero su acceso
+                    # principal pasa a la barra comun Espacios y Recintos.
+                    if show_toolbar and _normalize_toolbar_key(title) != "areas":
                         self.appendToolbar(title, cmds)
                     self.appendMenu(title, cmds)
+
+            producer_commands = [
+                "ElectricCR_Areas_AreaPorClick",
+                "ElectricCR_Areas_RectFromBoundaryLines",
+                "ElectricCR_Areas_PoligonosRecintosDesdeArchWalls",
+            ]
+            producer_commands = [cmd for cmd in producer_commands if cmd in set(Gui.listCommands())]
+            if common_room_commands:
+                room_toolbar = (
+                    common_room_commands[:3]
+                    + ["Separator"]
+                    + producer_commands
+                    + ["Separator", common_room_commands[3]]
+                )
+                self.appendToolbar("Espacios y Recintos", room_toolbar)
+                self.appendMenu("Espacios y Recintos", room_toolbar)
 
             # Mantener el acceso principal al flujo de deteccion junto al
             # selector de modos. En algunas sesiones de FreeCAD las barras
@@ -825,6 +850,26 @@ class ElectricCRWorkbench(Gui.Workbench):
                 init_draft_statusbar.show_draft_statusbar()
         except Exception:
             pass
+        try:
+            from CRBIMCore.commands.common_rooms import schedule_room_toolbar_layout
+
+            schedule_room_toolbar_layout(
+                [
+                    "CRBIM_SelectRoom", "CRBIM_RoomInfo", "CRBIM_NameRoom",
+                    "Separator",
+                    "ElectricCR_Areas_AreaPorClick",
+                    "ElectricCR_Areas_RectFromBoundaryLines",
+                    "ElectricCR_Areas_PoligonosRecintosDesdeArchWalls",
+                    "Separator", "CRBIM_RoomGuide",
+                ],
+                label_overrides={
+                    "ElectricCR_Areas_AreaPorClick": "Recinto por click",
+                    "ElectricCR_Areas_RectFromBoundaryLines": "Rectangulo desde limites",
+                    "ElectricCR_Areas_PoligonosRecintosDesdeArchWalls": "Recintos desde muros BIM",
+                },
+            )
+        except Exception as e:
+            App.Console.PrintWarning(f"[ElectricCR][Rooms] toolbar_warning={e}\n")
 
     def Deactivated(self):
         global _LOG_ENABLED

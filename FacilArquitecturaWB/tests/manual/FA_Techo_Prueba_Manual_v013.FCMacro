@@ -1,0 +1,397 @@
+"""FA_Techo_Prueba_Manual.FCMacro
+
+Nombre: FA_Techo_Prueba_Manual
+Proposito: prueba visual y geometrica manual del flujo de techo de Facil Arquitectura.
+Funcion principal: crea un documento temporal con Sketches fuente, ejes BIM,
+cerchas Arch Truss, clavadores Arch Frame con perfil C y cubierta Arch Roof.
+FreeCAD objetivo: 1.1.3.
+Version: 0.1.3-manual
+Fecha y hora: 2026-08-30 14:20 America/Costa_Rica
+
+Instrucciones para futuras modificaciones:
+- Esta macro es diagnostica y autosuficiente; no reemplaza los modulos del Workbench.
+- No debe abrir, modificar ni guardar documentos de usuario existentes.
+- Mantener dimensiones claramente identificadas como geometricas, no estructurales.
+- Si una parte falla, conservar el documento generado para inspeccion manual.
+"""
+
+from __future__ import annotations
+
+import math
+import os
+import traceback
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+import Sketcher
+import Arch
+
+try:
+    from PySide import QtWidgets
+except Exception:
+    QtWidgets = None
+
+
+DOC_BASE = "FA_Techo_Prueba_Manual"
+WIDTH = 8000.0
+LENGTH = 12000.0
+EAVE_Z = 3000.0
+PITCH_DEG = 20.0
+ROOF_THICKNESS = 50.0
+OVERHANG = 600.0
+TRUSS_SPACING = 3000.0
+TRUSS_EAVE_HEIGHT = 150.0
+PURLIN_W = 50.0
+PURLIN_H = 100.0
+PURLIN_T = 2.0
+
+
+def _msg(text):
+    App.Console.PrintMessage("[FA TECHO MANUAL] " + str(text) + "\n")
+
+
+def _warn(text):
+    App.Console.PrintWarning("[FA TECHO MANUAL] " + str(text) + "\n")
+
+
+def _unique_doc_name(base):
+    """Devuelve un nombre que no choque con documentos actualmente abiertos."""
+    existing = set(App.listDocuments().keys())
+    if base not in existing:
+        return base
+    index = 2
+    while (base + "_%02d" % index) in existing:
+        index += 1
+    return base + "_%02d" % index
+
+
+def _test_output_dir():
+    """Directorio local de resultados; queda dentro del directorio de macros."""
+    try:
+        macro_dir = App.getUserMacroDir()
+    except Exception:
+        macro_dir = App.ParamGet("User parameter:BaseApp/Preferences/Macro").GetString("MacroPath")
+    if not macro_dir:
+        macro_dir = os.path.expanduser("~")
+    out_dir = os.path.join(macro_dir, "FA_Techo_Pruebas")
+    os.makedirs(out_dir, exist_ok=True)
+    return out_dir
+
+
+def _save_doc(doc):
+    """Guarda el documento de prueba con un nombre asociado al documento FreeCAD."""
+    out_path = os.path.join(_test_output_dir(), doc.Name + ".FCStd")
+    try:
+        doc.recompute()
+    except Exception:
+        pass
+    doc.saveAs(out_path)
+    _msg("Documento guardado: %s" % out_path)
+    return out_path
+
+
+def _add_group(doc, name, label):
+    group = doc.addObject("App::DocumentObjectGroup", name)
+    group.Label = label
+    return group
+
+
+def _make_line_sketch(doc, name, label, lines, z=0.0):
+    sketch = doc.addObject("Sketcher::SketchObject", name)
+    sketch.Label = label
+    sketch.Placement.Base.z = float(z)
+    for x1, y1, x2, y2 in lines:
+        sketch.addGeometry(
+            Part.LineSegment(
+                App.Vector(float(x1), float(y1), 0.0),
+                App.Vector(float(x2), float(y2), 0.0),
+            ),
+            False,
+        )
+    return sketch
+
+
+def _make_roof_sketch(doc):
+    points = [(0.0, 0.0), (WIDTH, 0.0), (WIDTH, LENGTH), (0.0, LENGTH)]
+    lines = []
+    for i in range(4):
+        a = points[i]
+        b = points[(i + 1) % 4]
+        lines.append((a[0], a[1], b[0], b[1]))
+    return _make_line_sketch(
+        doc,
+        "Sketch_Cubierta_Prueba",
+        "Sketch cubierta 8 x 12 m",
+        lines,
+        z=EAVE_Z,
+    )
+
+
+def _shape_ok(obj):
+    try:
+        shape = obj.Shape
+        return (not shape.isNull()) and shape.isValid()
+    except Exception:
+        return False
+
+
+def _make_arch_axis(doc, index, y):
+    """Eje BIM individual paralelo al vano de la cercha."""
+    axis = Arch.makeAxis(num=1, size=WIDTH + 1000.0, name="Eje_Cercha_%02d" % (index + 1))
+    axis.Label = "Eje cercha %02d" % (index + 1)
+    axis.CustomNumber = str(index + 1)
+    axis.Placement = App.Placement(
+        App.Vector(-500.0, float(y), EAVE_Z),
+        App.Rotation(App.Vector(0, 0, 1), -90.0),
+    )
+    try:
+        axis.ViewObject.BubblePosition = "Both"
+        axis.ViewObject.DrawStyle = "Dashdot"
+    except Exception:
+        pass
+    return axis
+
+
+def _make_truss(doc, index, y):
+    baseline = doc.addObject("Part::Feature", "Base_Cercha_%02d" % (index + 1))
+    baseline.Label = "Base oculta cercha %02d" % (index + 1)
+    baseline.Shape = Part.makeLine(
+        App.Vector(0.0, float(y), EAVE_Z),
+        App.Vector(WIDTH, float(y), EAVE_Z),
+    )
+    try:
+        baseline.ViewObject.Visibility = False
+    except Exception:
+        pass
+
+    truss = Arch.makeTruss(baseline)
+    if truss is None:
+        raise RuntimeError("Arch.makeTruss devolvio None para cercha %02d" % (index + 1))
+    truss.Label = "Cercha BIM %02d" % (index + 1)
+    truss.SlantType = "Double"
+    truss.Normal = App.Vector(0, 0, 1)
+    truss.HeightStart = TRUSS_EAVE_HEIGHT
+    truss.HeightEnd = TRUSS_EAVE_HEIGHT + (WIDTH * 0.5) * math.tan(math.radians(PITCH_DEG))
+    truss.StrutStartOffset = 0.0
+    truss.StrutEndOffset = 0.0
+    truss.StrutHeight = 50.0
+    truss.StrutWidth = 50.0
+    truss.RodType = "Square"
+    truss.RodDirection = "Forward"
+    truss.RodSize = 25.0
+    truss.RodSections = 6
+    truss.RodEnd = True
+    truss.RodMode = "/|\\|/|\\"
+    return baseline, truss
+
+
+def _c_profile_face(width, height, thickness):
+    w = float(width)
+    h = float(height)
+    t = float(thickness)
+    pts = [
+        App.Vector(-w / 2.0, -h / 2.0, 0),
+        App.Vector(w / 2.0, -h / 2.0, 0),
+        App.Vector(w / 2.0, -h / 2.0 + t, 0),
+        App.Vector(-w / 2.0 + t, -h / 2.0 + t, 0),
+        App.Vector(-w / 2.0 + t, h / 2.0 - t, 0),
+        App.Vector(w / 2.0, h / 2.0 - t, 0),
+        App.Vector(w / 2.0, h / 2.0, 0),
+        App.Vector(-w / 2.0, h / 2.0, 0),
+    ]
+    wire = Part.makePolygon(pts + [pts[0]])
+    return Part.Face(wire)
+
+
+def _roof_z_at_x(x):
+    run = min(float(x), WIDTH - float(x))
+    return EAVE_Z + run * math.tan(math.radians(PITCH_DEG))
+
+
+def _make_purlins(doc):
+    """Crea Sketch 2D fuente + layout 3D + un Arch Frame con perfil C."""
+    x_positions = [300.0, 1500.0, 2800.0, 4000.0, 5200.0, 6500.0, 7700.0]
+    source_lines = [(x, 0.0, x, LENGTH) for x in x_positions]
+    source_sketch = _make_line_sketch(
+        doc,
+        "Sketch_Clavadores_Prueba",
+        "Sketch clavadores en planta",
+        source_lines,
+        z=EAVE_Z,
+    )
+
+    wires = []
+    for x in x_positions:
+        z = _roof_z_at_x(x)
+        edge = Part.makeLine(App.Vector(x, 0.0, z), App.Vector(x, LENGTH, z))
+        wires.append(Part.Wire([edge]))
+
+    layout = doc.addObject("Part::Feature", "Layout_Clavadores_3D")
+    layout.Label = "Layout 3D proyectado de clavadores"
+    layout.Shape = Part.makeCompound(wires)
+
+    profile = doc.addObject("Part::Feature", "Perfil_C_Clavadores")
+    profile.Label = "Perfil C 50 x 100 x 2 mm (geometrico)"
+    profile.Shape = _c_profile_face(PURLIN_W, PURLIN_H, PURLIN_T)
+
+    doc.recompute()
+    frame = Arch.makeFrame(layout, profile, name="Clavadores_BIM")
+    if frame is None:
+        raise RuntimeError("Arch.makeFrame devolvio None")
+    frame.Label = "Clavadores BIM - perfil C"
+    try:
+        frame.Align = True
+        frame.Fuse = False
+        frame.IfcType = "Beam"
+    except Exception:
+        pass
+
+    try:
+        layout.ViewObject.Visibility = False
+        profile.ViewObject.Visibility = False
+    except Exception:
+        pass
+    return source_sketch, layout, profile, frame
+
+
+def _make_roof(doc, source_sketch):
+    doc.recompute()
+    roof = Arch.makeRoof(
+        source_sketch,
+        angles=[90.0, PITCH_DEG, 90.0, PITCH_DEG],
+        run=[0.0, WIDTH * 0.5, 0.0, WIDTH * 0.5],
+        thickness=[ROOF_THICKNESS] * 4,
+        overhang=[OVERHANG] * 4,
+        name="Cubierta_BIM_Prueba",
+    )
+    if roof is None:
+        raise RuntimeError("Arch.makeRoof devolvio None")
+    roof.Label = "Cubierta BIM a dos aguas"
+    try:
+        roof.ViewObject.Transparency = 72
+    except Exception:
+        pass
+    return roof
+
+
+def run():
+    _msg("VERSION 0.1.3-manual")
+    doc_name = _unique_doc_name(DOC_BASE)
+    doc = App.newDocument(doc_name)
+    _msg("Documento creado: %s" % doc_name)
+    _save_doc(doc)
+    doc.openTransaction("FA Techo - prueba manual")
+    try:
+        sketches_group = _add_group(doc, "00_Sketches", "00 Sketches fuente")
+        axes_group = _add_group(doc, "01_Ejes", "01 Ejes BIM")
+        truss_group = _add_group(doc, "02_Cerchas", "02 Cerchas BIM")
+        purlin_group = _add_group(doc, "03_Clavadores", "03 Clavadores BIM")
+        roof_group = _add_group(doc, "04_Cubierta", "04 Cubierta BIM")
+
+        truss_y = [0.0, 3000.0, 6000.0, 9000.0, 12000.0]
+        truss_lines = [(0.0, y, WIDTH, y) for y in truss_y]
+        truss_sketch = _make_line_sketch(
+            doc,
+            "Sketch_Ejes_Cerchas_Prueba",
+            "Sketch ejes de cerchas",
+            truss_lines,
+            z=EAVE_Z,
+        )
+        sketches_group.addObject(truss_sketch)
+
+        axes = []
+        trusses = []
+        for i, y in enumerate(truss_y):
+            axis = _make_arch_axis(doc, i, y)
+            baseline, truss = _make_truss(doc, i, y)
+            axes_group.addObject(axis)
+            truss_group.addObject(baseline)
+            truss_group.addObject(truss)
+            axes.append(axis)
+            trusses.append(truss)
+
+        purlin_sketch, purlin_layout, purlin_profile, purlins = _make_purlins(doc)
+        sketches_group.addObject(purlin_sketch)
+        purlin_group.addObject(purlin_layout)
+        purlin_group.addObject(purlin_profile)
+        purlin_group.addObject(purlins)
+
+        roof_sketch = _make_roof_sketch(doc)
+        sketches_group.addObject(roof_sketch)
+        roof = _make_roof(doc, roof_sketch)
+        roof_group.addObject(roof)
+
+        doc.recompute()
+        doc.commitTransaction()
+
+        checks = {
+            "cerchas": all(_shape_ok(obj) for obj in trusses),
+            "clavadores": _shape_ok(purlins),
+            "cubierta": _shape_ok(roof),
+        }
+
+        _msg("--- RESULTADO GEOMETRICO ---")
+        _msg("Cerchas: %d | validas=%s" % (len(trusses), checks["cerchas"]))
+        _msg("Clavadores: 7 | Frame valido=%s" % checks["clavadores"])
+        _msg("Cubierta: Roof valido=%s" % checks["cubierta"])
+        _msg("Pendiente: %.1f deg | alero: %.0f mm | nivel alero: %.0f mm" % (PITCH_DEG, OVERHANG, EAVE_Z))
+        _msg("Revise especialmente: orientacion de celosia, orientacion del perfil C y ajuste clavadores/cubierta.")
+
+        try:
+            Gui.activeDocument().activeView().viewAxonometric()
+            Gui.activeDocument().activeView().fitAll()
+        except Exception:
+            pass
+
+        ok = all(checks.values())
+        _save_doc(doc)
+        if QtWidgets is not None:
+            text = (
+                "Documento: %s\n\n"
+                "Cerchas: %s\n"
+                "Clavadores: %s\n"
+                "Cubierta: %s\n\n"
+                "Revise visualmente:\n"
+                "1. Cerchas a dos aguas y apoyadas en Z=3000 mm.\n"
+                "2. Clavadores paralelos a la cumbrera y apoyados sobre ambos faldones.\n"
+                "3. Orientacion del perfil C.\n"
+                "4. Cubierta semitransparente, pendiente 20 grados y alero 600 mm.\n"
+                "5. Arbol: Sketches -> Ejes -> Cerchas -> Clavadores -> Cubierta."
+            ) % (
+                doc_name,
+                "OK" if checks["cerchas"] else "REVISAR",
+                "OK" if checks["clavadores"] else "REVISAR",
+                "OK" if checks["cubierta"] else "REVISAR",
+            )
+            if ok:
+                QtWidgets.QMessageBox.information(None, "FA Techo - prueba manual", text)
+            else:
+                QtWidgets.QMessageBox.warning(None, "FA Techo - prueba manual", text)
+        return doc
+
+    except Exception as exc:
+        try:
+            doc.abortTransaction()
+        except Exception:
+            pass
+        _warn("FALLO: %s" % exc)
+        App.Console.PrintError(traceback.format_exc() + "\n")
+        try:
+            _save_doc(doc)
+        except Exception as save_exc:
+            _warn("No se pudo guardar diagnostico: %s" % save_exc)
+        try:
+            Gui.activeDocument().activeView().fitAll()
+        except Exception:
+            pass
+        if QtWidgets is not None:
+            QtWidgets.QMessageBox.critical(
+                None,
+                "FA Techo - fallo de prueba",
+                "La prueba se detuvo:\n\n%s\n\nEl documento se conserva para diagnostico." % exc,
+            )
+        return doc
+
+
+run()

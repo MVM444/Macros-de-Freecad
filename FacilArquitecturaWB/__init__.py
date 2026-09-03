@@ -3,8 +3,8 @@
 Descripcion: paquete base del workbench Facil Arquitectura.
 Objetivo: publicar version y build sin dependencias de Codex/MCP.
 FreeCAD objetivo: 1.1.3.
-Fecha y hora: 2026-08-09 23:40 UTC-06:00.
-Version: 0.9.0.
+Fecha: 2026-09-01.
+Version: 0.14.11.
 Instrucciones de mantenimiento: mantener este paquete pequeno y modular.
 """
 

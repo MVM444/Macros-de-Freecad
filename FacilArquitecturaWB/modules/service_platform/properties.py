@@ -11,7 +11,7 @@ from .validation import normalize_options
 
 GENERATED_BY = "FA_CreateServicePlatformFront"
 MODULE_TYPE = "service_platform_front"
-MODULE_VERSION = "0.2"
+MODULE_VERSION = "0.4"
 PROPERTY_GROUP = "FacilArquitectura - Plataforma"
 PARAMETER_ROWS = (
     ("total_width_mm", "Ancho total", "mm"),
@@ -23,6 +23,16 @@ PARAMETER_ROWS = (
     ("divider_thickness_mm", "Espesor de division", "mm"),
     ("divider_depth_mm", "Profundidad de division", "mm"),
     ("divider_height_mm", "Altura de division", "mm"),
+    ("counter_depth_mm", "Profundidad de mostrador", "mm"),
+    ("front_panel_thickness_mm", "Espesor de panel frontal", "mm"),
+    ("glass_thickness_mm", "Espesor de vidrio", "mm"),
+    ("glass_top_mm", "Cota superior de vidrio", "mm"),
+    ("glass_opening_width_mm", "Ancho de abertura de vidrio", "mm"),
+    ("glass_opening_height_mm", "Alto de abertura de vidrio", "mm"),
+    ("glass_opening_bottom_mm", "Altura inferior de abertura de vidrio", "mm"),
+    ("glass_opening_enabled", "Mostrar abertura de vidrio", "boolean"),
+    ("mullion_width_mm", "Ancho de parante", "mm"),
+    ("mullion_depth_mm", "Profundidad de parante", "mm"),
     ("staff_zone_depth_mm", "Profundidad area funcionario", "mm"),
     ("public_zone_depth_mm", "Profundidad area publica", "mm"),
     ("origin_x_mm", "Coordenada X inicial", "mm"),
@@ -30,6 +40,9 @@ PARAMETER_ROWS = (
     ("minimum_position_width_mm", "Ancho minimo por puesto", "mm"),
     ("create_3d_furniture", "Crear mobiliario 3D", "boolean"),
     ("create_functional_zones", "Crear zonas funcionales", "boolean"),
+    ("staff_side", "Lado del funcionario", "left/right"),
+    ("invert_direction", "Invertir direccion del eje", "boolean"),
+    ("show_service_areas", "Mostrar areas de atencion", "boolean"),
 )
 
 
@@ -65,8 +78,15 @@ def read_parameter_sheet(sheet) -> PlatformOptions:
     """Read aliases first and retain defaults for missing values."""
     values = {}
     defaults = PlatformOptions()
-    bool_names = {"create_3d_furniture", "create_functional_zones"}
+    bool_names = {
+        "create_3d_furniture",
+        "create_functional_zones",
+        "invert_direction",
+        "show_service_areas",
+        "glass_opening_enabled",
+    }
     int_names = {"service_positions"}
+    string_names = {"staff_side"}
     for item in fields(PlatformOptions):
         name = item.name
         raw = None
@@ -88,6 +108,8 @@ def read_parameter_sheet(sheet) -> PlatformOptions:
             values[name] = str(raw).strip().lower() not in ("", "0", "false", "no", "off")
         elif name in int_names:
             values[name] = int(float(raw))
+        elif name in string_names:
+            values[name] = str(raw).strip().lower()
         else:
             values[name] = float(getattr(raw, "Value", raw))
     return normalize_options(values)
@@ -103,10 +125,15 @@ def set_root_properties(root, options: PlatformOptions, layout: PlatformLayout, 
         ("App::PropertyLength", "FA_PositionWidth_mm", "Ancho por puesto", layout.position_width_mm),
         ("App::PropertyLength", "FA_DeskDepth_mm", "Profundidad escritorio", options.desk_depth_mm),
         ("App::PropertyLength", "FA_DeskHeight_mm", "Altura escritorio", options.desk_height_mm),
+        ("App::PropertyLength", "FA_CounterDepth_mm", "Profundidad mostrador", options.counter_depth_mm),
+        ("App::PropertyLength", "FA_GlassTop_mm", "Cota superior vidrio", options.glass_top_mm),
         ("App::PropertyLength", "FA_StaffZoneDepth_mm", "Profundidad funcionario", options.staff_zone_depth_mm),
         ("App::PropertyLength", "FA_PublicZoneDepth_mm", "Profundidad publica", options.public_zone_depth_mm),
         ("App::PropertyDistance", "FA_OriginX_mm", "Coordenada X inicial", options.origin_x_mm),
         ("App::PropertyDistance", "FA_OriginY_mm", "Coordenada Y del frente", options.front_offset_mm),
+        ("App::PropertyString", "FA_StaffSide", "Lado del funcionario", options.staff_side),
+        ("App::PropertyBool", "FA_InvertDirection", "Invertir direccion", options.invert_direction),
+        ("App::PropertyBool", "FA_ShowServiceAreas", "Mostrar areas", options.show_service_areas),
         ("App::PropertyString", "FA_GeneratedBy", "Generador", GENERATED_BY),
         ("App::PropertyString", "FA_SourceStandard", "Referencia", "CCSS_PL-01_reference"),
         ("App::PropertyString", "FA_ReferenceDocument", "Documento", "Guia Estandarizacion 050626 2"),

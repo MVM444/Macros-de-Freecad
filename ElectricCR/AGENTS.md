@@ -2,7 +2,7 @@
 
 **Proposito:** Definir las reglas permanentes para ChatGPT, Codex y otros agentes que trabajen dentro de `ElectricCR/`.
 
-**Version:** 2026-08-08 13:01, America/Costa_Rica.
+**Version:** 2026-08-14, America/Costa_Rica.
 
 **Alcance:** Este archivo aplica a todos los archivos y subdirectorios contenidos en `ElectricCR/`, salvo que exista un `AGENTS.md` mas especifico en un subdirectorio.
 
@@ -68,6 +68,42 @@ Si la documentacion contradice el codigo actual, prevalece el codigo para descri
 - No eliminar funciones, propiedades, grupos, recursos ni compatibilidad existente sin autorizacion expresa.
 - Preferir cambios pequenos, reversibles y verificables.
 
+## Evaluacion obligatoria de herramientas nativas antes de desarrollar
+
+Una busqueda general en Internet o en el repositorio no se considera suficiente.
+Antes de crear una herramienta propia para una funcion que FreeCAD podria ofrecer,
+el agente debe realizar una evaluacion funcional explicita de las capacidades
+nativas de FreeCAD, BIM, Draft, Arch y los Workbenches relacionados disponibles.
+
+La evaluacion minima debe incluir:
+
+1. Identificar comandos, objetos y API nativos relacionados con la necesidad.
+2. Leer su documentacion vigente y revisar sus limitaciones conocidas.
+3. Probar la alternativa mas prometedora en la version objetivo de FreeCAD con
+   un caso pequeno y controlado.
+4. Comparar requisitos contra capacidades mediante una tabla o lista verificable.
+5. Clasificar cada alternativa como:
+   - REUTILIZAR;
+   - EXTENDER O ADAPTAR;
+   - COEXISTIR;
+   - DESCARTAR CON JUSTIFICACION;
+   - SOLUCION PROPIA NECESARIA.
+6. Registrar por que una capacidad nativa no es suficiente antes de programar
+   una solucion paralela.
+
+Reglas adicionales:
+
+- Preferir un adaptador o extension sobre una herramienta nativa util antes de
+  duplicar completamente su funcion.
+- No dejar de lado una herramienta nativa solo porque sea poco conocida, antigua,
+  tenga una interfaz diferente o requiera una prueba adicional.
+- Si una herramienta util se descubre despues de desarrollar una solucion propia,
+  detener la ampliacion, comparar ambas y buscar integracion o reutilizacion.
+- No archivar ni eliminar la solucion previa durante esa comparacion. Conservar
+  algoritmos y capacidades unicas hasta validar funcionalmente la integracion.
+- La documentacion de esta evaluacion debe quedar en la tarea, decisiones tecnicas
+  o resultado correspondiente; no debe permanecer solamente en una conversacion.
+
 ## Control de nuevas macros y cambios generados con IA
 
 No asumir que una solucion nueva es mejor que una existente.
@@ -77,8 +113,9 @@ Antes de crear una nueva macro, comando, modulo o variante:
 1. Buscar primero dentro del repositorio si ya existe una herramienta que resuelva total o parcialmente el problema.
 2. Revisar versiones anteriores, documentacion, resultados y pruebas relacionadas.
 3. Determinar si conviene corregir, ampliar o reutilizar una herramienta existente antes de crear otra.
-4. Revisar tambien si FreeCAD, algun Workbench, macro o plugin existente ofrece una solucion similar.
-5. Si se crea una nueva variante, documentar por que era necesaria y que diferencia funcional aporta.
+4. Aplicar la evaluacion obligatoria de herramientas nativas definida en este archivo.
+5. Revisar tambien si FreeCAD, algun Workbench, macro o plugin existente ofrece una solucion similar.
+6. Si se crea una nueva variante, documentar por que era necesaria y que diferencia funcional aporta.
 
 Evitar crear varias macros paralelas para resolver el mismo problema sin una justificacion tecnica clara.
 

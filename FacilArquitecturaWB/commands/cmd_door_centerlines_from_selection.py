@@ -1,8 +1,8 @@
 """FA_DoorCenterlinesFromSelection command.
 
 Descripcion: crea un Sketch_Centros con el eje cerrado de cada simbolo de puerta.
-Fecha: 2026-07-14
-Version: 0.1.0
+Fecha y hora: 2026-09-01 14:35 America/Costa_Rica
+Version: 0.2.0
 Instrucciones: seleccionar un layer, grupo o shapes que representen puertas antes de ejecutar.
 """
 
@@ -13,7 +13,8 @@ import FreeCADGui
 
 from ..core.centerline_utils import create_centerline_sketch_from_objects
 from ..core.command_errors import UserFacingError, handle_command_exception
-from ..core.project_structure import ensure_project_structure, msg
+from ..core.bim_structure_utils import adopt_auxiliary_sources, ensure_auxiliary_parent
+from ..core.project_structure import active_or_new_document, msg
 
 ICON_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "resources", "icons", "door_centerlines.svg")
@@ -37,13 +38,16 @@ class CommandClass:
             selection = list(FreeCADGui.Selection.getSelection() or [])
             if not selection:
                 raise UserFacingError("Seleccione un layer, grupo o shapes de puertas antes de ejecutar el comando.")
-            doc, _root, groups = ensure_project_structure()
+            doc = active_or_new_document()
+            support_parent, target_level = ensure_auxiliary_parent(doc, selection, legacy_key="master_sketches")
             sketch, segments = create_centerline_sketch_from_objects(
                 doc,
-                groups["master_sketches"],
+                support_parent,
                 selection,
                 extraction_strategy="door_swing",
             )
+            if target_level is not None:
+                adopt_auxiliary_sources(doc, target_level, [sketch] + selection)
             doc.recompute()
             try:
                 FreeCADGui.Selection.clearSelection()

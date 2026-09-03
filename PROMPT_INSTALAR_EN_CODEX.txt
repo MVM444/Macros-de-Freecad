@@ -1,0 +1,11 @@
+Instala y activa la skill repo-scoped `.agents/skills/freecad-project-memory` en este repositorio.
+
+Instrucciones:
+1. Lee primero AGENTS.md y no lo reemplaces.
+2. Revisa SKILL.md y sus referencias.
+3. Ejecuta `.agents/skills/freecad-project-memory/scripts/init_memory.py` desde la raiz del repositorio, sin --force.
+4. Agrega al final de AGENTS.md el bloque de `AGENTS_APPEND_BLOCK.md` solo si aun no existe.
+5. No modifiques codigo de los Workbenches durante esta instalacion.
+6. No hagas commit ni push sin mi autorizacion.
+7. Al terminar, ejecuta un diagnostico FreeCAD mediante MCP usando `scripts/freecad_diag.py`, guarda el JSON en `Memoria_FreeCAD/equipos/<HOST>.json` y actualiza RESULTADO_CODEX.md.
+8. Informa que archivos creaste o modificaste y si el diagnostico quedo VERIFICADO_MCP.

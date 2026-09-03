@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # MenuText: Habilitar Transform en links de dispositivos
-# Icon: RotarTomacorriente.svg
+# Icon: Habilitar_Transform_en_Links_Dispositivos.svg
 # Toolbar: Objetos
 
 import FreeCAD as App

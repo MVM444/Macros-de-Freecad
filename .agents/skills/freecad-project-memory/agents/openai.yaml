@@ -1,0 +1,7 @@
+interface:
+  display_name: "FreeCAD Project Memory"
+  short_description: "Memoria tecnica, diagnostico MCP y continuidad de Workbenches"
+  default_prompt: "Usa la skill para recuperar el estado del proyecto FreeCAD, verificar el entorno por MCP y continuar de forma segura."
+
+policy:
+  allow_implicit_invocation: true

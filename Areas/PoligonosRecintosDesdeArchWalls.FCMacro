@@ -2,12 +2,14 @@
 # MenuText: Poligonos de recintos desde muros BIM
 # ToolTip: Genera areas poligonales desde los huecos cerrados de muros Arch/BIM.
 # Icon: PoligonosRecintosDesdeArchWalls.svg
+# Revision: 2026-08-11 19:12 America/Costa_Rica
+# FreeCAD: 1.1.3
 
 """Create independent polygonal room areas from Arch/BIM wall footprints.
 
-The macro never edits rectangular areas or source walls.  It writes exact Part
-faces into its own group and tags them as ElectricCR areas for downstream HVAC,
-smoke-detector and suspended-ceiling workflows.
+The macro never edits rectangular areas or source walls.  It writes editable,
+closed Draft Wires with faces into its own group and tags them as ElectricCR
+areas for downstream HVAC, smoke-detector and suspended-ceiling workflows.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from __future__ import annotations
 import math
 import re
 
+import Draft
 import FreeCAD as App
 import FreeCADGui as Gui
 import Part
@@ -371,14 +374,60 @@ def unique_label(doc, base):
     return "%s %02d" % (base, index)
 
 
+def ordered_outer_wire_points(room_face):
+    """Return ordered local points from a planar face without a closing duplicate."""
+    try:
+        vertices = list(room_face.OuterWire.OrderedVertexes)
+    except Exception as exc:
+        raise RuntimeError("No se pudo ordenar el contorno interior: %s" % exc)
+    if len(vertices) < 3:
+        raise RuntimeError("El contorno interior tiene menos de tres vertices.")
+
+    source_z = float(room_face.BoundBox.ZMin)
+    points = []
+    for vertex in vertices:
+        point = vertex.Point
+        local = App.Vector(float(point.x), float(point.y), float(point.z) - source_z)
+        if points and local.isEqual(points[-1], GEOMETRY_TOLERANCE_MM):
+            continue
+        points.append(local)
+
+    if len(points) > 1 and points[0].isEqual(points[-1], GEOMETRY_TOLERANCE_MM):
+        points.pop()
+    if len(points) < 3:
+        raise RuntimeError("El contorno interior valido tiene menos de tres puntos distintos.")
+    if any(abs(float(point.z)) > GEOMETRY_TOLERANCE_MM for point in points):
+        raise RuntimeError("El contorno interior no es plano en Z.")
+    return points, source_z
+
+
+def make_editable_room_wire(doc, room_face):
+    """Create the native Draft Wire used as editable room geometry."""
+    if App.ActiveDocument is not doc:
+        raise RuntimeError("El documento destino debe estar activo para crear el Draft Wire.")
+    points, source_z = ordered_outer_wire_points(room_face)
+    maker = getattr(Draft, "make_wire", None) or getattr(Draft, "makeWire", None)
+    if maker is None:
+        raise RuntimeError("Draft.make_wire no esta disponible en esta instalacion de FreeCAD.")
+    obj = maker(points, closed=True, face=True)
+    if obj is None:
+        raise RuntimeError("Draft.make_wire no pudo crear el recinto poligonal.")
+    if getattr(obj, "Document", None) is not doc:
+        raise RuntimeError("Draft.make_wire creo el objeto en un documento distinto al esperado.")
+    obj.Closed = True
+    obj.MakeFace = True
+    obj.Placement = App.Placement(
+        App.Vector(0.0, 0.0, source_z + DISPLAY_ELEVATION_MM),
+        App.Rotation(),
+    )
+    return obj, points
+
+
 def create_room_object(doc, group, room_face, walls, name_candidates, index):
     matches = candidates_inside(room_face, name_candidates)
     room_name = matches[0]["name"] if matches else "Recinto poligonal %02d" % index
-    display_face = room_face.copy()
-    display_face.translate(App.Vector(0.0, 0.0, DISPLAY_ELEVATION_MM))
-    obj = doc.addObject("Part::Feature", "FA_PolygonalRoom")
+    obj, points = make_editable_room_wire(doc, room_face)
     obj.Label = unique_label(doc, "Poligono - " + room_name)
-    obj.Shape = display_face
     area_m2 = float(room_face.Area) / 1000000.0
     perimeter = float(room_face.OuterWire.Length)
     set_property(obj, "App::PropertyString", "ElectricCRTipo", "ElectricCR", "Tipo logico", "Area")
@@ -391,12 +440,14 @@ def create_room_object(doc, group, room_face, walls, name_candidates, index):
     set_property(obj, "App::PropertyString", "FA_RoomName", "FacilArquitectura", "Nombre del recinto", room_name)
     set_property(obj, "App::PropertyArea", "FA_Area", "FacilArquitectura", "Area exacta", float(room_face.Area))
     set_property(obj, "App::PropertyLength", "FA_Perimeter", "FacilArquitectura", "Perimetro interior", perimeter)
-    set_property(obj, "App::PropertyInteger", "FA_VertexCount", "FacilArquitectura", "Vertices del poligono", len(room_face.OuterWire.Vertexes))
+    set_property(obj, "App::PropertyInteger", "FA_VertexCount", "FacilArquitectura", "Vertices del poligono", len(points))
     set_property(obj, "App::PropertyInteger", "FA_NameCandidateCount", "FacilArquitectura", "Rotulos dentro del recinto", len(matches))
     set_property(obj, "App::PropertyStringList", "FA_NameCandidates", "FacilArquitectura", "Nombres candidatos", [item["name"] for item in matches])
     set_property(obj, "App::PropertyLinkList", "FA_SourceWalls", "FacilArquitectura", "Muros fuente", list(walls))
     set_property(obj, "App::PropertyString", "FA_SourceMethod", "FacilArquitectura", "Metodo geometrico", "Huecos de huella superior Arch Wall")
     set_property(obj, "App::PropertyString", "FA_UsableFor", "FacilArquitectura", "Flujos consumidores", "HVAC; sensores de humo; cielo suspendido; ElectricCR")
+    set_property(obj, "App::PropertyString", "FA_GeometrySource", "FacilArquitectura", "Origen de la geometria", "AUTO_BIM")
+    set_property(obj, "App::PropertyString", "FA_GeometryType", "FacilArquitectura", "Tipo de geometria editable", "DraftWire")
     try:
         group.addObject(obj)
         obj.ViewObject.LineColor = (0.85, 0.30, 0.00)
@@ -405,6 +456,18 @@ def create_room_object(doc, group, room_face, walls, name_candidates, index):
         obj.ViewObject.LineWidth = 2.0
     except Exception:
         pass
+    log(
+        "Creado %s: TypeId=%s | Proxy=%s | puntos=%d | Closed=%s | MakeFace=%s | Z=%.3f"
+        % (
+            obj.Name,
+            str(getattr(obj, "TypeId", "")),
+            str(getattr(getattr(obj, "Proxy", None), "Type", "")),
+            len(points),
+            bool(obj.Closed),
+            bool(obj.MakeFace),
+            float(obj.Placement.Base.z),
+        )
+    )
     return obj, matches
 
 
@@ -492,6 +555,18 @@ def generate_polygonal_rooms(doc=None, walls=None, minimum_area_m2=MIN_ROOM_AREA
                 ambiguous.append(obj)
         sheet = write_schedule(doc, group, created)
         doc.recompute()
+        invalid = [
+            obj
+            for obj in created
+            if not bool(getattr(obj, "Closed", False))
+            or not bool(getattr(obj, "MakeFace", False))
+            or not list(getattr(getattr(obj, "Shape", None), "Faces", []) or [])
+        ]
+        if invalid:
+            raise RuntimeError(
+                "Los siguientes recintos Draft no generaron una cara valida: %s"
+                % ", ".join(object_label(obj) for obj in invalid)
+            )
         doc.commitTransaction()
     except Exception:
         try:

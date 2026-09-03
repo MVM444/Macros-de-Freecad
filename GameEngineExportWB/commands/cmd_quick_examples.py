@@ -1,4 +1,12 @@
-"""Command to generate quick GameEngineExport example scenes."""
+"""Quick Example command for GameEngineExportWB.
+
+Name: commands/cmd_quick_examples.py
+Purpose: generate small test scenes and optionally copy an AI-ready prompt + JSON context.
+Main behavior: keeps stable Quick Example generation while exposing the manual JSON/AI bridge.
+Modification notes: preserve saved option keys and canonical internal building type values.
+Version: 2026-08-21-ai-context-v1
+Date and time: 2026-08-21 07:49 -06:00
+"""
 
 from __future__ import annotations
 
@@ -8,6 +16,8 @@ import time
 
 import FreeCAD
 import FreeCADGui
+
+from .. import i18n
 
 from ..core import quick_examples
 from ..ui.panel_export import _ensure_qt_compat
@@ -33,8 +43,8 @@ class CommandClass:
 
     def GetResources(self):  # noqa: N802
         return {
-            "MenuText": "Ejemplo rapido / Quick Example",
-            "ToolTip": "Generar casa u oficina de prueba con sketches, Arch Wall y buques.",
+            "MenuText": i18n.tr("Quick Example"),
+            "ToolTip": i18n.tr("Generate a test house, office, photometric scene or maze."),
             "Pixmap": ICON_PATH,
         }
 
@@ -60,7 +70,7 @@ class QuickExampleDialog(QtGui.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.params = FreeCAD.ParamGet(PARAM_GROUP)
-        self.setWindowTitle("GameEngineExport - Ejemplo rapido")
+        self.setWindowTitle(i18n.tr("GameEngineExport - Quick Example"))
         self._build_ui()
         self._load()
 
@@ -69,71 +79,108 @@ class QuickExampleDialog(QtGui.QDialog):
         form = QtGui.QFormLayout()
 
         self.building_type = QtGui.QComboBox()
-        self.building_type.addItems(["Casa", "Oficina", "Aleatorio"])
-        form.addRow("Tipo", self.building_type)
+        for visible, key in [
+            (i18n.tr("House"), "Casa"),
+            (i18n.tr("Office"), "Oficina"),
+            (i18n.tr("Photometric"), "Fotometria"),
+            (i18n.tr("Maze"), "Laberinto"),
+            (i18n.tr("Random"), "Aleatorio"),
+        ]:
+            self.building_type.addItem(visible, key)
+        self.building_type.setToolTip(
+            i18n.bi(
+                "Fotometria crea dos recintos pequenos con luminarias calibradas y acceso principal. Laberinto crea un mapa aleatorio tipo Doom y guarda su geometria en JSON.",
+                "Photometric creates two small rooms with calibrated luminaires and a main entrance. Maze creates a random Doom-like map and stores its geometry in JSON.",
+            )
+        )
+        form.addRow(i18n.tr("Type"), self.building_type)
+
+        self.maze_rows = QtGui.QSpinBox()
+        self.maze_rows.setRange(2, 30)
+        self.maze_rows.setValue(7)
+        form.addRow(i18n.tr("Maze: rows"), self.maze_rows)
+
+        self.maze_cols = QtGui.QSpinBox()
+        self.maze_cols.setRange(2, 30)
+        self.maze_cols.setValue(10)
+        form.addRow(i18n.tr("Maze: columns"), self.maze_cols)
+
+        self.maze_cell_mm = QtGui.QSpinBox()
+        self.maze_cell_mm.setRange(800, 5000)
+        self.maze_cell_mm.setSingleStep(100)
+        self.maze_cell_mm.setValue(2000)
+        self.maze_cell_mm.setSuffix(" mm")
+        form.addRow(i18n.tr("Maze: cell width"), self.maze_cell_mm)
+
+        self.maze_include_ceiling = QtGui.QCheckBox(i18n.tr("Maze: include ceiling/roof"))
+        self.maze_include_ceiling.setToolTip(
+            i18n.tr("Creates the upper Doom-style slab above the maze. Disabled by default so the maze can be inspected from above.")
+        )
+        form.addRow("", self.maze_include_ceiling)
 
         self.seed = QtGui.QSpinBox()
         self.seed.setRange(0, 2147483647)
-        self.seed.setSpecialValueText("Aleatoria")
-        form.addRow("Semilla", self.seed)
+        self.seed.setSpecialValueText(i18n.tr("Automatic"))
+        form.addRow(i18n.tr("Seed"), self.seed)
 
         self.width_mm = QtGui.QDoubleSpinBox()
         self.width_mm.setRange(0, 100000)
         self.width_mm.setDecimals(0)
         self.width_mm.setSingleStep(500)
         self.width_mm.setSpecialValueText("Auto")
-        form.addRow("Ancho mm", self.width_mm)
+        form.addRow(i18n.tr("Width mm"), self.width_mm)
 
         self.depth_mm = QtGui.QDoubleSpinBox()
         self.depth_mm.setRange(0, 100000)
         self.depth_mm.setDecimals(0)
         self.depth_mm.setSingleStep(500)
         self.depth_mm.setSpecialValueText("Auto")
-        form.addRow("Fondo mm", self.depth_mm)
+        form.addRow(i18n.tr("Depth mm"), self.depth_mm)
 
         self.ext_wall_mm = QtGui.QSpinBox()
         self.ext_wall_mm.setRange(100, 500)
-        form.addRow("Muro exterior mm", self.ext_wall_mm)
+        form.addRow(i18n.tr("Exterior wall mm"), self.ext_wall_mm)
 
         self.int_wall_mm = QtGui.QSpinBox()
         self.int_wall_mm.setRange(50, 300)
-        form.addRow("Pared interior mm", self.int_wall_mm)
+        form.addRow(i18n.tr("Interior wall mm"), self.int_wall_mm)
 
         self.wall_height_mm = QtGui.QSpinBox()
         self.wall_height_mm.setRange(1000, 8000)
         self.wall_height_mm.setSingleStep(100)
-        form.addRow("Altura muro mm", self.wall_height_mm)
+        form.addRow(i18n.tr("Wall height mm"), self.wall_height_mm)
 
-        self.create_terrain = QtGui.QCheckBox("Crear terreno irregular y piso")
+        self.create_terrain = QtGui.QCheckBox(i18n.tr("Create irregular terrain and floor"))
         form.addRow("", self.create_terrain)
 
-        self.flatten_pad = QtGui.QCheckBox("Aplanar terreno bajo edificio")
+        self.flatten_pad = QtGui.QCheckBox(i18n.tr("Flatten terrain under building"))
         form.addRow("", self.flatten_pad)
 
         self.pad_margin_mm = QtGui.QSpinBox()
         self.pad_margin_mm.setRange(0, 8000)
         self.pad_margin_mm.setSingleStep(250)
-        form.addRow("Margen plataforma mm", self.pad_margin_mm)
+        form.addRow(i18n.tr("Platform margin mm"), self.pad_margin_mm)
 
         self.terrain_margin_mm = QtGui.QSpinBox()
         self.terrain_margin_mm.setRange(2000, 30000)
         self.terrain_margin_mm.setSingleStep(500)
-        form.addRow("Margen terreno mm", self.terrain_margin_mm)
+        form.addRow(i18n.tr("Terrain margin mm"), self.terrain_margin_mm)
 
         self.terrain_variation_mm = QtGui.QSpinBox()
         self.terrain_variation_mm.setRange(0, 3000)
         self.terrain_variation_mm.setSingleStep(100)
-        form.addRow("Relieve terreno mm", self.terrain_variation_mm)
+        form.addRow(i18n.tr("Terrain relief mm"), self.terrain_variation_mm)
 
         self.floor_overhang_mm = QtGui.QSpinBox()
         self.floor_overhang_mm.setRange(0, 2000)
         self.floor_overhang_mm.setSingleStep(50)
-        form.addRow("Sobresaliente piso mm", self.floor_overhang_mm)
+        form.addRow(i18n.tr("Floor overhang mm"), self.floor_overhang_mm)
 
-        self.copy_context = QtGui.QCheckBox("Copiar contexto JSON al portapapeles")
+        self.copy_context = QtGui.QCheckBox(i18n.bi("Copiar contexto para IA (prompt + JSON)", "Copy AI context (prompt + JSON)"))
+        self.copy_context.setToolTip(i18n.bi("Copia instrucciones para la IA seguidas del JSON actual, listas para pegar en un chat.", "Copies AI instructions followed by the current JSON, ready to paste into a chat."))
         form.addRow("", self.copy_context)
 
-        self.clear_previous = QtGui.QCheckBox("Borrar ejemplos rapidos anteriores")
+        self.clear_previous = QtGui.QCheckBox(i18n.tr("Delete previous Quick Examples"))
         form.addRow("", self.clear_previous)
 
         layout.addLayout(form)
@@ -142,9 +189,12 @@ class QuickExampleDialog(QtGui.QDialog):
         buttons.accepted.connect(self._accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+        self.building_type.currentIndexChanged.connect(self._update_type_controls)
 
     def _load(self):
-        self.building_type.setCurrentText(self.params.GetString("building_type", "Casa"))
+        saved_type = self.params.GetString("building_type", "Casa")
+        saved_index = self.building_type.findData(saved_type)
+        self.building_type.setCurrentIndex(saved_index if saved_index >= 0 else 0)
         self.seed.setValue(self.params.GetInt("seed", 0))
         self.width_mm.setValue(self.params.GetFloat("width_mm", 0.0))
         self.depth_mm.setValue(self.params.GetFloat("depth_mm", 0.0))
@@ -163,10 +213,15 @@ class QuickExampleDialog(QtGui.QDialog):
         )
         self.copy_context.setChecked(self.params.GetBool("copy_context", False))
         self.clear_previous.setChecked(self.params.GetBool("clear_previous", True))
+        self.maze_rows.setValue(self.params.GetInt("maze_rows", 7))
+        self.maze_cols.setValue(self.params.GetInt("maze_cols", 10))
+        self.maze_cell_mm.setValue(self.params.GetInt("maze_cell_mm", 2000))
+        self.maze_include_ceiling.setChecked(self.params.GetBool("maze_include_ceiling", False))
+        self._update_type_controls()
 
     def _state(self):
         return {
-            "building_type": self.building_type.currentText(),
+            "building_type": str(self.building_type.currentData() or "Casa"),
             "seed": int(self.seed.value()),
             "width_mm": float(self.width_mm.value()),
             "depth_mm": float(self.depth_mm.value()),
@@ -181,6 +236,11 @@ class QuickExampleDialog(QtGui.QDialog):
             "floor_overhang_mm": int(self.floor_overhang_mm.value()),
             "copy_context": bool(self.copy_context.isChecked()),
             "clear_previous": bool(self.clear_previous.isChecked()),
+            "maze_rows": int(self.maze_rows.value()),
+            "maze_cols": int(self.maze_cols.value()),
+            "maze_cell_mm": int(self.maze_cell_mm.value()),
+            "include_ceiling": bool(self.maze_include_ceiling.isChecked()),
+            "ai_prompt_language": i18n.current_language(),
         }
 
     def _save(self):
@@ -200,6 +260,19 @@ class QuickExampleDialog(QtGui.QDialog):
         self.params.SetInt("floor_overhang_mm", state["floor_overhang_mm"])
         self.params.SetBool("copy_context", state["copy_context"])
         self.params.SetBool("clear_previous", state["clear_previous"])
+        self.params.SetInt("maze_rows", state["maze_rows"])
+        self.params.SetInt("maze_cols", state["maze_cols"])
+        self.params.SetInt("maze_cell_mm", state["maze_cell_mm"])
+        self.params.SetBool("maze_include_ceiling", state["include_ceiling"])
+
+    def _update_type_controls(self, *_args):
+        maze_enabled = str(self.building_type.currentData() or "") == "Laberinto"
+        self.maze_rows.setEnabled(maze_enabled)
+        self.maze_cols.setEnabled(maze_enabled)
+        self.maze_cell_mm.setEnabled(maze_enabled)
+        self.maze_include_ceiling.setEnabled(maze_enabled)
+        self.width_mm.setEnabled(not maze_enabled)
+        self.depth_mm.setEnabled(not maze_enabled)
 
     def _accept(self):
         self._save()
@@ -214,4 +287,4 @@ class QuickExampleDialog(QtGui.QDialog):
             self.accept()
         except Exception as exc:
             FreeCAD.Console.PrintError(LOG_PREFIX + "Quick example error: " + str(exc) + "\n")
-            QtGui.QMessageBox.critical(self, "GameEngineExport - Ejemplo rapido", str(exc))
+            QtGui.QMessageBox.critical(self, i18n.tr("Quick Example error"), str(exc))

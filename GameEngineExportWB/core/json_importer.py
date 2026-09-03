@@ -116,6 +116,9 @@ def validate_quick_example_payload(payload: Dict) -> List[str]:
     rooms = payload.get("rooms", [])
     if rooms is not None and not isinstance(rooms, list):
         raise ValueError("rooms must be a list when present.")
+    maze = payload.get("maze")
+    if maze is not None and not isinstance(maze, dict):
+        raise ValueError("maze must be an object when present.")
     return warnings
 
 
@@ -164,12 +167,23 @@ def normalize_quick_example_payload(payload: Dict) -> Dict:
         },
         "rooms": list(payload.get("rooms") or []),
     }
+    for key in ("maze", "ai_editing"):
+        value = payload.get(key)
+        if isinstance(value, dict):
+            normalized[key] = dict(value)
     return normalized
 
 
 def generate_quick_example_from_payload(payload: Dict, options: Optional[Dict] = None):
     """Generate a FreeCAD quick example from a normalized or raw payload."""
     normalized = normalize_quick_example_payload(payload)
+    build_options = dict(options or {})
+    payload_extensions = dict(build_options.get("payload_extensions", {}) or {})
+    for key in ("maze", "ai_editing"):
+        if isinstance(normalized.get(key), dict):
+            payload_extensions[key] = normalized[key]
+    if payload_extensions:
+        build_options["payload_extensions"] = payload_extensions
     return quick_examples.build_quick_example_from_data(
         normalized["building_type"],
         normalized["building_variant"],
@@ -178,5 +192,5 @@ def generate_quick_example_from_payload(payload: Dict, options: Optional[Dict] =
         normalized["terrain"],
         normalized["segments"],
         normalized.get("rooms", []),
-        dict(options or {}),
+        build_options,
     )

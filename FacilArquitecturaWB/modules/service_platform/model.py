@@ -18,6 +18,16 @@ class PlatformOptions:
     divider_thickness_mm: float = 40.0
     divider_depth_mm: float = 600.0
     divider_height_mm: float = 450.0
+    counter_depth_mm: float = 300.0
+    front_panel_thickness_mm: float = 40.0
+    glass_thickness_mm: float = 10.0
+    glass_top_mm: float = 1800.0
+    glass_opening_width_mm: float = 300.0
+    glass_opening_height_mm: float = 300.0
+    glass_opening_bottom_mm: float = 740.0
+    glass_opening_enabled: bool = True
+    mullion_width_mm: float = 40.0
+    mullion_depth_mm: float = 40.0
     staff_zone_depth_mm: float = 1800.0
     public_zone_depth_mm: float = 1500.0
     origin_x_mm: float = 0.0
@@ -25,6 +35,9 @@ class PlatformOptions:
     minimum_position_width_mm: float = 1200.0
     create_3d_furniture: bool = True
     create_functional_zones: bool = True
+    staff_side: str = "left"
+    invert_direction: bool = False
+    show_service_areas: bool = False
 
 
 @dataclass(frozen=True)

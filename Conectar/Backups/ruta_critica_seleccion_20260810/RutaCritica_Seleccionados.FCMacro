@@ -1,0 +1,299 @@
+# -*- coding: utf-8 -*-
+# MenuText: Ruta critica solo seleccionados
+# ToolTip: Dibuja rutas criticas desde el primer objeto hacia los demas objetos seleccionados
+# Icon: medir_distancia_y_dibujar_ruta.svg
+
+# Qt compatibility for FreeCAD 1.x (PySide6) and older builds.
+def _ensure_qt_compat():
+    import sys
+    import types
+
+    QtCore = QtGui = QtWidgets = None
+    binding_name = None
+
+    for candidate in ("PySide6", "PySide2", "PySide"):
+        try:
+            if candidate == "PySide":
+                from PySide import QtCore as _QtCore, QtGui as _QtGui
+                _QtWidgets = _QtGui
+            else:
+                module = __import__(candidate, fromlist=["QtCore", "QtGui", "QtWidgets"])
+                _QtCore = module.QtCore
+                _QtGui = module.QtGui
+                _QtWidgets = module.QtWidgets
+            QtCore, QtGui, QtWidgets = _QtCore, _QtGui, _QtWidgets
+            binding_name = candidate
+            break
+        except Exception:
+            continue
+
+    if QtCore is None:
+        return
+
+    qtgui_compat = types.ModuleType("QtGui")
+    qtgui_compat.__dict__.update(getattr(QtGui, "__dict__", {}))
+    qtgui_compat.__dict__.update(getattr(QtWidgets, "__dict__", {}))
+
+    qtsvg_compat = None
+    for module_name in ("QtSvg", "QtSvgWidgets"):
+        try:
+            module = __import__(binding_name, fromlist=[module_name])
+            qt_module = getattr(module, module_name)
+        except Exception:
+            continue
+        if qtsvg_compat is None:
+            qtsvg_compat = types.ModuleType("QtSvg")
+        qtsvg_compat.__dict__.update(getattr(qt_module, "__dict__", {}))
+
+    qtuitools_compat = None
+    try:
+        module = __import__(binding_name, fromlist=["QtUiTools"])
+        qtuitools_compat = module.QtUiTools
+    except Exception:
+        pass
+
+    for package_name in ("PySide2", "PySide"):
+        package = sys.modules.get(package_name)
+        if package is None:
+            package = types.ModuleType(package_name)
+            sys.modules[package_name] = package
+        package.QtCore = QtCore
+        package.QtGui = qtgui_compat
+        package.QtWidgets = QtWidgets
+        sys.modules[package_name + ".QtCore"] = QtCore
+        sys.modules[package_name + ".QtGui"] = qtgui_compat
+        sys.modules[package_name + ".QtWidgets"] = QtWidgets
+        if qtsvg_compat is not None:
+            package.QtSvg = qtsvg_compat
+            sys.modules[package_name + ".QtSvg"] = qtsvg_compat
+        if qtuitools_compat is not None:
+            package.QtUiTools = qtuitools_compat
+            sys.modules[package_name + ".QtUiTools"] = qtuitools_compat
+
+
+_ensure_qt_compat()
+
+
+import os
+import importlib.util
+import importlib.machinery
+
+import FreeCAD
+import FreeCADGui
+
+try:
+    from PySide2 import QtWidgets as QtGui
+except Exception:
+    from PySide import QtGui
+
+
+TAG = "[RUTA-SEL]"
+USE_RESULTS_SHEET = False
+
+
+def log_info(msg):
+    FreeCAD.Console.PrintMessage(f"{TAG}[INFO] {msg}\n")
+
+
+def log_warn(msg):
+    FreeCAD.Console.PrintWarning(f"{TAG}[WARN] {msg}\n")
+
+
+def log_err(msg):
+    FreeCAD.Console.PrintError(f"{TAG}[ERROR] {msg}\n")
+
+
+def _selected_objects():
+    sel = list(FreeCADGui.Selection.getSelection() or [])
+    if sel:
+        return sel
+    try:
+        sel_ex = FreeCADGui.Selection.getSelectionEx() or []
+        return [s.Object for s in sel_ex if getattr(s, "Object", None)]
+    except Exception:
+        return []
+
+
+def _unique_objects(objs):
+    out = []
+    seen = set()
+    for obj in objs or []:
+        if obj is None:
+            continue
+        key = str(getattr(obj, "Name", "") or "")
+        if not key:
+            key = str(id(obj))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(obj)
+    return out
+
+
+def _load_base_macro():
+    this_dir = os.path.dirname(__file__) if "__file__" in globals() else ""
+    path = os.path.join(this_dir, "medir_distancia_y_dibujar_ruta.FCMacro")
+    if not os.path.isfile(path):
+        raise RuntimeError(f"No se encontro macro base: {path}")
+
+    name = "ruta_critica_base_macro_selected"
+    loader = importlib.machinery.SourceFileLoader(name, path)
+    spec = importlib.util.spec_from_loader(name, loader)
+    if spec is None:
+        raise RuntimeError("No se pudo crear spec para macro base")
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+def _is_valid_target(base, obj):
+    if obj is None:
+        return False
+    if hasattr(obj, "Group"):
+        return False
+    if not hasattr(obj, "Placement"):
+        return False
+    try:
+        if base.is_ruta_obj(obj):
+            return False
+    except Exception:
+        pass
+    try:
+        if base.is_non_socket_annotation(obj):
+            return False
+    except Exception:
+        pass
+    return True
+
+
+def _parent_group_for_target(base, doc, target):
+    mod = getattr(base, "_conexiones_grouping_mod", None)
+    if mod is None:
+        return None
+    try:
+        return mod.get_parent_group(doc, target)
+    except Exception:
+        return None
+
+
+def ruta_critica_solo_seleccionados():
+    doc = FreeCAD.ActiveDocument
+    if doc is None:
+        log_err("No hay documento activo")
+        return
+
+    sel = _selected_objects()
+    if len(sel) < 2:
+        log_err("Seleccione primero el objeto inicial y luego uno o mas destinos")
+        return
+
+    objeto_inicial = sel[0]
+    if not hasattr(objeto_inicial, "Placement"):
+        log_err("El primer elemento seleccionado no tiene Placement")
+        return
+
+    try:
+        base = _load_base_macro()
+    except Exception as ex:
+        log_err(f"No se pudo cargar macro base: {ex}")
+        return
+
+    raw_targets = _unique_objects(sel[1:])
+    targets = []
+    skipped = []
+    origin_name = str(getattr(objeto_inicial, "Name", "") or "")
+
+    for obj in raw_targets:
+        obj_name = str(getattr(obj, "Name", "") or "")
+        if obj_name and obj_name == origin_name:
+            continue
+        if _is_valid_target(base, obj):
+            targets.append(obj)
+        else:
+            skipped.append(obj)
+
+    if not targets:
+        log_err("No hay destinos validos en la seleccion. Seleccione objetos con Placement.")
+        return
+
+    altura, ok = QtGui.QInputDialog.getDouble(
+        None, "Altura", "Ingrese altura Z de las rutas (mm):",
+        3000, -100000, 100000, 2
+    )
+    if not ok:
+        log_warn("Operacion cancelada por el usuario")
+        return
+
+    hoja = base.ensure_results_sheet(doc) if USE_RESULTS_SHEET else None
+    next_row = 2 if USE_RESULTS_SHEET else None
+    p_ini = base.get_connection_point(objeto_inicial)
+    total_wires = 0
+
+    log_info(f"Destinos a procesar: {len(targets)}")
+    for idx, target in enumerate(targets, 1):
+        t_label = getattr(target, "Label", getattr(target, "Name", "Destino"))
+        try:
+            p_fin = base.get_connection_point(target)
+            dist = p_ini.distanceToPoint(p_fin)
+            z_route = base.route_z_level(altura, p_ini, p_fin)
+            pts = base.ortho_points_path(p_ini, p_fin, altura)
+
+            wire = base.create_draft_wire(pts)
+            wire.Label = f"Ruta Critica hacia {t_label}"
+            if hasattr(wire, "FilletRadius"):
+                try:
+                    wire.FilletRadius = 500.0
+                except Exception as exf:
+                    log_warn(f"No se pudo aplicar FilletRadius en '{t_label}': {exf}")
+
+            parent_group = _parent_group_for_target(base, doc, target)
+            grupo_conexiones = base.ensure_conexiones_group(doc, parent_group)
+            try:
+                grupo_conexiones.addObject(wire)
+            except Exception as ex:
+                log_warn(f"No se pudo mover WIRE a 'Conexiones' para '{t_label}': {ex}")
+
+            if USE_RESULTS_SHEET and hoja is not None and next_row is not None:
+                g_label = getattr(parent_group, "Label", getattr(parent_group, "Name", "SinGrupo"))
+                base.set_text(hoja, f"A{next_row}", g_label)
+                base.set_text(hoja, f"B{next_row}", t_label)
+                base.set_number(hoja, f"C{next_row}", round(dist, 2), decimals=2)
+                base.set_text(hoja, f"D{next_row}", wire.Name)
+                next_row += 1
+
+            total_wires += 1
+            log_info(
+                "[{}/{}] '{}' distancia={:.2f} mm z_ruta={:.2f}".format(
+                    idx, len(targets), t_label, dist, z_route
+                )
+            )
+        except Exception as ex:
+            log_err(f"Fallo en '{t_label}': {ex}")
+            if USE_RESULTS_SHEET and hoja is not None and next_row is not None:
+                try:
+                    base.set_text(hoja, f"A{next_row}", "ERROR")
+                    base.set_text(hoja, f"B{next_row}", t_label)
+                    base.set_text(hoja, f"C{next_row}", "0")
+                    base.set_text(hoja, f"D{next_row}", "WIRE_ERROR")
+                    next_row += 1
+                except Exception:
+                    pass
+
+    if USE_RESULTS_SHEET and hoja is not None and next_row is not None:
+        try:
+            base.bump_e1(hoja, next_row)
+        except Exception as ex:
+            log_warn(f"No se pudo actualizar E1: {ex}")
+
+    try:
+        doc.recompute()
+    except Exception as ex:
+        log_warn(f"Error en recompute: {ex}")
+
+    if skipped:
+        log_warn(f"Se omitieron {len(skipped)} objetos no validos de la seleccion")
+    log_info(f"Listo. Rutas creadas: {total_wires}")
+
+
+if __name__ == "__main__":
+    ruta_critica_solo_seleccionados()

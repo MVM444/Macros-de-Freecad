@@ -1,0 +1,26 @@
+# Python / FreeCAD runtime artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.FCStd1
+
+# Local/DEV artifacts
+.codex_tmp/
+logs/
+Respaldos_*/
+archive/
+*.log
+
+# Project coordination files not intended for the public Addon
+TAREA_ACTUAL.md
+TAREA_ANTERIOR*.md
+PROMPT_CODEX*.md
+RESULTADO_CODEX.md
+ESTADO_PROYECTO.md
+PENDIENTE_*.md
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

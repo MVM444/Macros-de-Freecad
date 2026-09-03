@@ -676,9 +676,78 @@ aprobacion visual en un proyecto real.
 
 ## Registro de decisiones confirmadas
 
+## Revision provisional - analisis rectangular desde muros BIM
+
+| Herramienta | Rol funcional | Madurez | Resultado comprobado | Decision ElectricCR provisional |
+|---|---|---|---|---|
+| `Xcluidos/Areas/AnalizarAreasRectangularesDesdeMurosBIM.FCMacro` | Lanzador historico de analisis rectangular | ARCHIVADA / ARCHIVABLE | El motor reusable permanece probado | RESPALDO |
+
+Hechos confirmados: el lanzador anterior apuntaba fuera del repositorio. La
+implementacion historica era una interfaz de 1961 bytes que delegaba en
+`CrearAnalisisAreasRectangulares.FCMacro` de 28666 bytes. El motor recuperado
+mantiene cuatro modos de inferencia, rectangulos Draft, rotulos,
+`FA_RectangularAreas`, `Spreadsheet_Analisis_Areas` y metadatos ElectricCR. La
+logica reusable vive ahora en
+`FacilArquitecturaWB/core/rectangular_area_analysis.py`; el lanzador se
+conserva solo como respaldo y ya no se registra. No se reemplaza el flujo
+poligonal ni se crea `ArchSpace`.
+
 Todavia no asumir decisiones definitivas solamente a partir del inventario general.
 
 Las decisiones se agregaran aqui conforme Marco, GPT y Codex revisen cada herramienta con evidencia suficiente.
+
+## Revision provisional - Panel de macros ElectricCR 2026-08-12
+
+| Herramienta | Rol funcional | Madurez | Resultado comprobado | Decision ElectricCR provisional |
+|---|---|---|---|---|
+| `ElectricCR/commands/macro_launcher.py` | Lanzador y diagnostico de comandos de macros | ACTIVA | COMPROBADA TECNICAMENTE y validada visualmente en MCP | MANTENER |
+| `ElectricCR/commands/macros.py` | Registro y fuente de metadatos de macros | ACTIVA | COMPROBADA TECNICAMENTE con 122 registros simulados | MANTENER / POR VERIFICAR |
+| `ElectricCR/catalog.py` | Catalogo JSON/Markdown y revision manual | ACTIVA | COMPROBADA TECNICAMENTE y validada visualmente en MCP | MANTENER |
+
+Hechos confirmados: el panel consume los metadatos del registro de comandos,
+reutiliza `usage_log.py`, persiste preferencias con `QSettings` y clasifica
+`Rayo.svg` como `REVISAR`, no como error. El modo diagnostico distingue
+`OK`, `REVISAR` y `ERROR`. La validacion visual MCP mostro 12 grupos, 122
+herramientas, filtros, detalles, botones y modo diagnostico. La captura minima
+anterior fue causada por la prueba segura, que reemplazo temporalmente
+`_MACRO_GROUPS` con un grupo de prueba; no fue una perdida de metadatos.
+
+## Revision provisional - Panel Fase 2 2026-08-12
+
+El catalogo contiene 192 entradas: 122 activas y 70 historicas no activas.
+La fuente Excel `Inventario_Clasificacion_ElectricCR_2026-08-08.xlsx` no estaba
+disponible en la copia local revisada; por eso no se inventaron clasificaciones
+historicas desde esa fuente. Las descripciones encontradas provienen de
+metadatos oficiales/encabezados de 69 macros; las restantes muestran
+explicitamente `Sin descripcion`.
+
+La persistencia de comentarios, estado manual y decision utiliza escritura
+atomica en `ElectricCR/data/macros_catalog.json`; el Markdown se regenera desde
+ese JSON. Los conteos previos se conservan como `historical_count`, mientras
+las nuevas ejecuciones se separan en `real_count` y `test_count`. El panel
+mantiene las funciones de la Fase 1 y agrega filtros, historicas,
+Contraer/Expandir y Probar.
+
+Revision posterior: se corrigio el guardado de comentarios durante
+`currentItemChanged` para usar el elemento anterior; se verifico que el texto
+no pasa a la herramienta siguiente. Tambien se cachearon filas, estadisticas,
+recursos de comandos y catalogo para evitar reconstrucciones por cada tecla.
+
+## Revision provisional - Integracion de descripciones GPT 2026-08-12
+
+La fuente `ElectricCR/MACROS_DESCRIPCIONES_GPT.json` contiene 192 entradas y
+se integro por la ruta estable `ruta`. El resultado conserva 192
+descripciones: 133 reemplazaron campos vacios o genericos y 59 descripciones
+locales concretas se preservaron. En 36 entradas la descripcion local difiere
+de la propuesta GPT; la alternativa se guardo para revision sin sobrescribir
+el texto local.
+
+La procedencia queda registrada en `fuente_descripcion` y
+`confianza_descripcion` (ademas de aliases internos para el Panel). La
+integracion no cambio comentarios, estado manual, decision ni los archivos de
+estadisticas de uso. El Panel incorpora la descripcion a la busqueda, al
+detalle y al diagnostico copiable. Resultado provisional: **COMPROBADA /
+VALIDADA_MCP / VALIDADA_VISUALMENTE**; decision: **MANTENER**.
 
 ## Relacion con el inventario
 
@@ -715,3 +784,30 @@ Necesito de Marco solamente confirmar:
 ```
 
 El objetivo es reducir la carga de memoria del usuario y convertir el repositorio en la memoria operativa del proyecto.
+
+## Revision provisional - limpieza de interfaz ElectricCR 2026-08-12
+
+| Herramienta | Rol funcional | Madurez | Resultado comprobado | Decision ElectricCR provisional |
+|---|---|---|---|---|
+| `Tomacorrientes/Ordenar_Tomas_XY.FCMacro` | Operativa de ordenamiento de tomas | ACTIVA | POR VERIFICAR tras reubicacion | MANTENER COMO MACRO |
+| `Tomacorrientes/Ordenar_Tomas_XY_Horario.FCMacro` | Operativa de ordenamiento horario de tomas | ACTIVA | POR VERIFICAR tras reubicacion | MANTENER COMO MACRO |
+| `Objetos/Habilitar_Transform_en_Links_Dispositivos.FCMacro` | Mantenimiento generico de Links | ACTIVA | COMPROBADA-PARCIAL antes del cambio de icono | MANTENER COMO MACRO |
+| `Configuracion del proyecto/Asignar_Tableros_y_Circuitos.FCMacro` | Configuracion de asignacion de red | ACTIVA | POR VERIFICAR visualmente | MANTENER COMO MACRO |
+| `Objetos/Alinear.FCMacro` | Soporte de alineacion generica | ACTIVA | POR VERIFICAR | POR VERIFICAR |
+| `Xcluidos/Objetos/HVAC_Etiqueta_Libre.FCMacro` | Herramienta HVAC especializada | ARCHIVADA / ARCHIVABLE | POR VERIFICAR | RESPALDO |
+| `Xcluidos/Areas/actualizar_rectangulos_con_spreadsheet().FCMacro` | Herramienta auxiliar de areas | ARCHIVADA / ARCHIVABLE | POR VERIFICAR | RESPALDO |
+| `Xcluidos/Areas/AnalizarAreasRectangularesDesdeMurosBIM.FCMacro` | Lanzador historico de areas rectangulares | ARCHIVADA / ARCHIVABLE | El motor reusable permanece probado | RESPALDO |
+| `Xcluidos/Cajas/CajaEMT.FCMacro` | Generador legacy de caja EMT | ARCHIVADA / ARCHIVABLE | POR VERIFICAR | RESPALDO |
+
+Hechos de organizacion confirmados:
+
+- Las dos macros de ordenar tomas ya no se registran bajo `Objetos`; el escaner
+  las encuentra solamente bajo `Tomacorrientes`.
+- `Xcluidos` esta excluido del escaneo normal de `ElectricCR/commands/macros.py`.
+- No se retiro `FacilArquitecturaWB/core/rectangular_area_analysis.py` ni la
+  implementacion moderna `ElectricCR/electriccr/features/caja_emt_octogonal.py`.
+- `Alinear` conserva deliberadamente `Rayo.svg`: reutilizar
+  `MEPWorkbenchCR/resources/icons/hvac_align.svg` exigiria una dependencia o
+  copia no justificada por esta tarea.
+- Las referencias de uso en logs se conservaron como evidencia historica y no
+  se interpretan como prueba de madurez.

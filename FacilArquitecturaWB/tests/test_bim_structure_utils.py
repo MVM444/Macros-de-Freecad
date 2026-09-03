@@ -20,6 +20,7 @@ if "Arch" not in sys.modules:
     sys.modules["Arch"] = types.ModuleType("Arch")
 
 from FacilArquitecturaWB.core import bim_structure_utils as structure  # noqa: E402
+from FacilArquitecturaWB.core import project_structure as project  # noqa: E402
 
 
 class FakeObject:
@@ -47,6 +48,17 @@ class FakeDocument:
 
     def recompute(self):
         pass
+
+    def getObject(self, name):
+        for obj in self.Objects:
+            if obj.Name == name:
+                return obj
+        return None
+
+    def addObject(self, _type_id, name):
+        obj = FakeObject(name)
+        self.Objects.append(obj)
+        return obj
 
 
 class FakeArch:
@@ -99,12 +111,51 @@ class BIMStructureTests(unittest.TestCase):
         self.assertEqual(level.Name, wall.FA_TargetLevel)
         self.assertFalse(hasattr(sketch, "FA_TargetLevel"))
 
+    def test_tag_target_level_does_not_add_second_group_membership(self):
+        level = FakeObject("Level", "Building Storey")
+        opening = FakeObject("Window001", "Window")
+
+        structure.tag_target_level(level, opening)
+
+        self.assertNotIn(opening, level.Group)
+        self.assertEqual(level.Name, opening.FA_TargetLevel)
+
     def test_selected_child_resolves_its_level(self):
         level = FakeObject("Level", "Building Storey")
         wall = FakeObject("Wall", "Wall")
         level.addObject(wall)
 
         self.assertIs(level, structure.selected_level([wall]))
+
+    def test_auxiliary_group_is_reused_inside_level(self):
+        doc = FakeDocument()
+        level = FakeObject("Level", "Building Storey")
+        doc.Objects.append(level)
+
+        first = structure.ensure_level_auxiliary_group(doc, level)
+        second = structure.ensure_level_auxiliary_group(doc, level)
+
+        self.assertIs(first, second)
+        self.assertIn(first, level.Group)
+        self.assertEqual("auxiliary_group", first.FA_Role)
+        self.assertEqual(level.Name, first.FA_TargetLevel)
+
+    def test_support_structure_does_not_create_empty_legacy_branches(self):
+        doc = FakeDocument()
+
+        _doc, root, groups = project.ensure_project_support_structure(
+            doc, keys=("parameters", "master_sketches")
+        )
+
+        self.assertEqual({"parameters", "master_sketches"}, set(groups))
+        names = {obj.Name for obj in doc.Objects}
+        self.assertIn("FA_Project", names)
+        self.assertIn("FA_Parameters", names)
+        self.assertIn("FA_MasterSketches", names)
+        self.assertNotIn("FA_BIM", names)
+        self.assertNotIn("FA_Areas", names)
+        self.assertNotIn("FA_Electromechanical", names)
+        self.assertEqual(2, len(root.Group))
 
 
 if __name__ == "__main__":

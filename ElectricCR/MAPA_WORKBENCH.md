@@ -56,6 +56,13 @@ Consecuencia importante:
 
 Esta forma de auto-registro debe considerarse una arquitectura de transicion, no el criterio final de seleccion del Workbench.
 
+El Panel de macros mantiene un catalogo informativo versionado en
+`ElectricCR/data/macros_catalog.json` y su vista humana generada en
+`ElectricCR/MACROS_CATALOGO.md`. El catalogo puede contener herramientas activas
+e historicas sin ejecutar decisiones de movimiento o retiro. Las estadisticas de
+`usage_log.py` conservan el conteo previo como historico sin clasificar y
+separan las nuevas ejecuciones en uso real y pruebas.
+
 ## Capas conceptuales actuales
 
 ### 1. Capa Workbench
@@ -96,6 +103,12 @@ Incluye modulos Python internos, por ejemplo:
 Aqui existen comportamientos propios de objetos ElectricCR, incluyendo objetos `FeaturePython`, `App::Link`, maestros y propiedades semanticas.
 
 Esta capa es parte de la evolucion hacia un Workbench mas formal y mantenible.
+
+El analisis rectangular historico se conserva bajo
+`Xcluidos/Areas/AnalizarAreasRectangularesDesdeMurosBIM.FCMacro` como respaldo;
+su logica reusable vive en `FacilArquitecturaWB/core/rectangular_area_analysis.py`.
+El lanzador archivado ya no se registra en la interfaz y el motor no depende de
+`Scripts Varios` ni reemplaza el analisis poligonal.
 
 La familia `connections/` separa asignaciones, tableros, puertos, ruteo,
 alimentadores y backbone. TP, TCOM y otros codigos son datos, no algoritmos.

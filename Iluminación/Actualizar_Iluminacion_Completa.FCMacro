@@ -86,6 +86,9 @@ import FreeCAD
 import FreeCADGui
 import Draft
 
+from CRBIMCore import room_resolver_core as _room_core
+from ElectricCR.electriccr.lighting.room_calculation import collect_lighting_rooms
+
 try:
     from PySide2 import QtCore, QtWidgets
 except Exception:
@@ -864,54 +867,146 @@ def _collect_area_rows(area_group, old_descriptions):
             continue
         if not _valid_area_object(obj):
             continue
-        label = _safe_text(getattr(obj, "Label", getattr(obj, "Name", ""))).strip()
-        key = _canonical_recinto_key(label)
-        existing_desc = old_descriptions.get(key, "")
-        desc, source = _clean_description(existing_desc, label)
+        identity = {
+            "source_kind": _room_core.SOURCE_LEGACY_AREA,
+            "name": _safe_text(getattr(obj, "Label", getattr(obj, "Name", ""))).strip(),
+            "object_name": _safe_text(getattr(obj, "Name", "")),
+            "room_uid": "",
+            "room_id": "",
+            "area_m2": _shape_area_m2(obj),
+            "polygon_mm": [],
+        }
+        row, source = _lighting_row_from_room(obj, identity, old_descriptions, persist_legacy_layout=True)
         stats[source] = stats.get(source, 0) + 1
         if source == "respaldo":
-            _warn("Descripcion no inferida para '{}'; se usa '{}'.".format(label, desc))
-        bounds = getattr(getattr(obj, "Shape", None), "BoundBox", None)
+            _warn("Descripcion no inferida para '{}'; se usa '{}'.".format(row["recinto"], row["descripcion"]))
+        rows.append(row)
+    return rows, stats
+
+
+def _legacy_object_names(area_group):
+    if area_group is None:
+        return None
+    names = set()
+    pending = [area_group]
+    seen = set()
+    while pending:
+        current = pending.pop()
+        name = _safe_text(getattr(current, "Name", ""))
+        if name in seen:
+            continue
+        seen.add(name)
+        for child in list(getattr(current, "Group", []) or []):
+            if _is_group(child):
+                pending.append(child)
+            else:
+                child_name = _safe_text(getattr(child, "Name", ""))
+                if child_name:
+                    names.add(child_name)
+    return names
+
+
+def _room_dimensions_m(obj, identity):
+    """Return plan dimensions and their provenance without changing the room."""
+    bounds = getattr(getattr(obj, "Shape", None), "BoundBox", None)
+    source_kind = _safe_text(identity.get("source_kind"))
+    largo = ancho = 0.0
+    dimension_source = "unavailable"
+    if source_kind == _room_core.SOURCE_LEGACY_AREA:
         largo = _to_float(getattr(obj, "Length", 0.0), 0.0) / 1000.0
         ancho = _to_float(getattr(obj, "Height", 0.0), 0.0) / 1000.0
-        if largo <= 0.0:
-            largo = _to_float(getattr(bounds, "XLength", 0.0), 0.0) / 1000.0 if bounds else 0.0
-        if ancho <= 0.0:
-            ancho = _to_float(getattr(bounds, "YLength", 0.0), 0.0) / 1000.0 if bounds else 0.0
-        altura = _to_float(getattr(bounds, "ZLength", 0.0), 0.0) / 1000.0 if bounds else 0.0
+        if largo > 0.0 and ancho > 0.0:
+            dimension_source = "legacy_properties"
+    polygon = list(identity.get("polygon_mm") or [])
+    if (largo <= 0.0 or ancho <= 0.0) and polygon:
+        xs = [float(point[0]) for point in polygon]
+        ys = [float(point[1]) for point in polygon]
+        largo = (max(xs) - min(xs)) / 1000.0
+        ancho = (max(ys) - min(ys)) / 1000.0
+        dimension_source = "polygon_bounds_approximation"
+    if largo <= 0.0 and bounds is not None:
+        largo = _to_float(getattr(bounds, "XLength", 0.0), 0.0) / 1000.0
+        dimension_source = "shape_bounds_approximation"
+    if ancho <= 0.0 and bounds is not None:
+        ancho = _to_float(getattr(bounds, "YLength", 0.0), 0.0) / 1000.0
+        dimension_source = "shape_bounds_approximation"
+    altura = _to_float(getattr(bounds, "ZLength", 0.0), 0.0) / 1000.0 if bounds else 0.0
+    return largo, ancho, altura, dimension_source
+
+
+def _lighting_row_from_room(obj, identity, old_descriptions, persist_legacy_layout=False):
+    label = _safe_text(identity.get("name") or getattr(obj, "Label", getattr(obj, "Name", ""))).strip()
+    key = _canonical_recinto_key(label)
+    desc, desc_source = _clean_description(old_descriptions.get(key, ""), label)
+    largo, ancho, altura, dimension_source = _room_dimensions_m(obj, identity)
+    area_m2 = _to_float(identity.get("area_m2"), 0.0)
+    if area_m2 <= 0.0:
         area_m2 = _shape_area_m2(obj)
-        type_key = _safe_text(getattr(obj, "LightingTypeKey", "")).strip()
-        type_info = LIGHTING_REGISTRY_TYPES.get(type_key, {}) if type_key else {}
-        electrical = type_info.get("electrical", {}) if isinstance(type_info, dict) else {}
-        lumens = _to_float(getattr(obj, "LightingLumens", 0.0), 0.0)
-        if lumens <= 0.0:
-            lumens = _to_float(electrical.get("lumens", LUMEN_POR_LUMINARIA), LUMEN_POR_LUMINARIA)
-        power_w = _to_float(getattr(obj, "LightingPowerW", 0.0), 0.0)
-        if power_w <= 0.0:
-            power_w = _to_float(electrical.get("power_w", 0.0), 0.0)
-        required = _required_luminaires(area_m2, desc, lumens)
-        filas, columnas, quantity, auto_recalculated, manual = _layout_for_area(obj, largo, ancho, required)
+    type_key = _safe_text(getattr(obj, "LightingTypeKey", "")).strip()
+    type_info = LIGHTING_REGISTRY_TYPES.get(type_key, {}) if type_key else {}
+    electrical = type_info.get("electrical", {}) if isinstance(type_info, dict) else {}
+    lumens = _to_float(getattr(obj, "LightingLumens", 0.0), 0.0)
+    if lumens <= 0.0:
+        lumens = _to_float(electrical.get("lumens", LUMEN_POR_LUMINARIA), LUMEN_POR_LUMINARIA)
+    power_w = _to_float(getattr(obj, "LightingPowerW", 0.0), 0.0)
+    if power_w <= 0.0:
+        power_w = _to_float(electrical.get("power_w", 0.0), 0.0)
+    required = _required_luminaires(area_m2, desc, lumens)
+    filas, columnas, quantity, auto_recalculated, manual = _layout_for_area(obj, largo, ancho, required)
+    if persist_legacy_layout:
         _set_lighting_layout_properties(
             obj, filas, columnas, required, quantity,
             auto_recalculated=auto_recalculated, manual=manual,
         )
-        rows.append({
-            "recinto": label,
-            "area": round(area_m2, 2),
-            "largo": round(largo, 2),
-            "ancho": round(ancho, 2),
-            "altura": round(altura, 2),
-            "filas": filas,
-            "columnas": columnas,
-            "cantidad": quantity,
-            "cantidad_requerida": required,
-            "descripcion": desc,
-            "tipo_luminaria": type_key or "Luminaria 60x60",
-            "lumens_unitarios": lumens,
-            "potencia_unitaria": power_w,
-            "obj": obj,
-        })
-    return rows, stats
+    return {
+        "recinto": label,
+        "area": round(area_m2, 2),
+        "largo": round(largo, 2),
+        "ancho": round(ancho, 2),
+        "altura": round(altura, 2),
+        "filas": filas,
+        "columnas": columnas,
+        "cantidad": quantity,
+        "cantidad_requerida": required,
+        "descripcion": desc,
+        "tipo_luminaria": type_key or "Luminaria 60x60",
+        "lumens_unitarios": lumens,
+        "potencia_unitaria": power_w,
+        "obj": obj,
+        "room_source": _safe_text(identity.get("source_kind")),
+        "room_uid": _safe_text(identity.get("room_uid")),
+        "room_id": _safe_text(identity.get("room_id")),
+        "dimension_source": dimension_source,
+    }, desc_source
+
+
+def _collect_resolved_room_rows(doc, area_group, old_descriptions):
+    audit = collect_lighting_rooms(doc, legacy_object_names=_legacy_object_names(area_group))
+    rows = []
+    stats = {"existente": 0, "inferida": 0, "respaldo": 0}
+    for identity in list(audit.get("rooms") or []):
+        obj = doc.getObject(_safe_text(identity.get("object_name")))
+        if obj is None:
+            _warn("RoomResolver devolvio un objeto inexistente: '{}'.".format(identity.get("object_name")))
+            continue
+        persist_legacy = identity.get("source_kind") == _room_core.SOURCE_LEGACY_AREA
+        row, source = _lighting_row_from_room(
+            obj, identity, old_descriptions, persist_legacy_layout=persist_legacy
+        )
+        stats[source] = stats.get(source, 0) + 1
+        if source == "respaldo":
+            _warn("Descripcion no inferida para '{}'; se usa '{}'.".format(row["recinto"], row["descripcion"]))
+        rows.append(row)
+    for diagnostic in list(audit.get("diagnostics") or []):
+        status = _safe_text(diagnostic.get("status"))
+        if status in (_room_core.STATUS_AMBIGUOUS, _room_core.STATUS_NOT_FOUND):
+            _warn("RoomResolver {}: {}.".format(status, diagnostic.get("reason") or diagnostic.get("object_name")))
+    _info(
+        "RoomResolver: {} candidato(s), {} recinto(s) autoritativo(s), {} diagnostico(s).".format(
+            audit.get("candidate_count", 0), len(rows), len(audit.get("diagnostics") or [])
+        )
+    )
+    return rows, stats, audit
 
 
 def _clear_rows(sheet, first_row, last_row, last_col_letter):
@@ -926,9 +1021,10 @@ def _clear_rows(sheet, first_row, last_row, last_col_letter):
 def update_datos_recintos(doc, area_group, calc_group, datos_sheet_label, review_descriptions=False):
     sheet = _ensure_sheet(doc, _doc_name_token(datos_sheet_label, "DatosRecintos"), datos_sheet_label, calc_group, clear=False)
     old_descriptions = _read_existing_descriptions(sheet)
-    rows, stats = _collect_area_rows(area_group, old_descriptions)
+    rows, stats, _audit = _collect_resolved_room_rows(doc, area_group, old_descriptions)
     if not rows:
-        raise Exception("No se encontraron recintos validos en '{}'.".format(getattr(area_group, "Label", area_group.Name)))
+        group_label = getattr(area_group, "Label", getattr(area_group, "Name", "automatico")) if area_group else "automatico"
+        raise Exception("RoomResolver no encontro recintos no ambiguos en '{}'.".format(group_label))
     if review_descriptions:
         if not _review_descriptions_dialog(rows):
             raise SystemExit
@@ -1175,9 +1271,9 @@ def run():
     if area_group is None:
         area_group = _pick_area_group(doc)
     if area_group is None:
-        raise Exception("Seleccione el grupo de Areas/Recintos o un objeto dentro de ese grupo.")
-
-    _info("Grupo de recintos: '{}'.".format(getattr(area_group, "Label", area_group.Name)))
+        _info("Sin grupo legacy seleccionado; RoomResolver buscara Spaces/Areas en el documento.")
+    else:
+        _info("Grupo legacy de recintos: '{}'.".format(getattr(area_group, "Label", area_group.Name)))
     calc_group = _ensure_calculation_group(doc)
     try:
         doc.openTransaction("ElectricCR: Actualizar iluminacion completa")
@@ -1197,12 +1293,16 @@ def run():
         calc_group,
         options.get("legacy_sheet_label", DEFAULT_LEGACY_SHEET_LABEL),
     )
-    update_labels(
-        doc,
-        area_group,
-        legacy_sheet,
-        options.get("label_group_label", DEFAULT_LABEL_GROUP_LABEL),
-    )
+    native_rows = [row for row in _rows if row.get("room_source") == _room_core.SOURCE_NATIVE_SPACE]
+    if area_group is not None and not native_rows:
+        update_labels(
+            doc,
+            area_group,
+            legacy_sheet,
+            options.get("label_group_label", DEFAULT_LABEL_GROUP_LABEL),
+        )
+    else:
+        _info("Etiquetas legacy omitidas en el piloto RoomResolver; los Arch Spaces no se mueven ni se duplican.")
 
     try:
         datos_sheet.recompute()

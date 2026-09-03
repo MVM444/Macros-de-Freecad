@@ -24,6 +24,24 @@ HOSTNAME = socket.gethostname()
 
 _EVENT_SEQ = 0
 _LAST_EVENT = None
+_NEXT_EXECUTION_KIND = ""
+
+
+def mark_next_execution(kind: str) -> None:
+    """Classify the next logged command as real or test.
+
+    This is used by the Panel's Probar button because FreeCAD runCommand does
+    not accept arbitrary metadata. If the command does not emit a usage event,
+    the marker is harmless and is cleared by the next explicit log call.
+    """
+    global _NEXT_EXECUTION_KIND
+    value = str(kind or "").strip().lower()
+    _NEXT_EXECUTION_KIND = value if value in {"real", "test"} else ""
+
+
+def clear_execution_kind() -> None:
+    global _NEXT_EXECUTION_KIND
+    _NEXT_EXECUTION_KIND = ""
 
 
 def _ensure_logs_dir() -> str:
@@ -179,7 +197,7 @@ def _append_event(tool_id: str, meta: dict, ts: str) -> None:
     try:
         _EVENT_SEQ += 1
         event = {
-            "version": 1,
+            "version": 2,
             "ts": ts,
             "session_id": SESSION_ID,
             "session_started": SESSION_STARTED,
@@ -187,6 +205,7 @@ def _append_event(tool_id: str, meta: dict, ts: str) -> None:
             "host": HOSTNAME,
             "tool_id": tool_id,
             "meta": meta,
+            "usage_kind": meta.get("usage_kind", "legacy/unclassified"),
         }
         event.update(_tool_context(tool_id, meta))
         event.update(_active_document_context())
@@ -223,7 +242,16 @@ def log_tool(tool_id: str, meta=None) -> None:
         return
 
     tool_id = str(tool_id)
+    global _NEXT_EXECUTION_KIND
     clean_meta = _clean_meta(meta)
+    requested_kind = str(clean_meta.get("usage_kind") or "").strip().lower()
+    if _NEXT_EXECUTION_KIND:
+        requested_kind = _NEXT_EXECUTION_KIND
+    elif requested_kind not in {"real", "test", "legacy/unclassified"}:
+        requested_kind = "legacy/unclassified"
+    if _NEXT_EXECUTION_KIND:
+        _NEXT_EXECUTION_KIND = ""
+    clean_meta["usage_kind"] = requested_kind
     ts = _now_iso()
 
     try:
@@ -234,6 +262,13 @@ def log_tool(tool_id: str, meta=None) -> None:
         rec = tools.get(tool_id)
         if not isinstance(rec, dict):
             rec = {"count": 0, "first_ts": ts}
+        if "historical_count" not in rec:
+            try:
+                rec["historical_count"] = max(0, int(rec.get("count", 0)))
+            except Exception:
+                rec["historical_count"] = 0
+        rec.setdefault("real_count", 0)
+        rec.setdefault("test_count", 0)
         if not rec.get("first_ts"):
             rec["first_ts"] = ts
         try:
@@ -241,6 +276,14 @@ def log_tool(tool_id: str, meta=None) -> None:
         except Exception:
             rec["count"] = 1
         rec["last_ts"] = ts
+        if requested_kind == "real":
+            rec["real_count"] = int(rec.get("real_count", 0)) + 1
+            rec["last_real_ts"] = ts
+        elif requested_kind == "test":
+            rec["test_count"] = int(rec.get("test_count", 0)) + 1
+            rec["last_test_ts"] = ts
+        else:
+            rec["historical_count"] = int(rec.get("historical_count", 0)) + 1
         rec["last_session_id"] = SESSION_ID
         if clean_meta:
             rec["last_meta"] = clean_meta

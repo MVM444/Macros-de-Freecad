@@ -3,7 +3,7 @@
 Descripcion: asistente unico para reconstruir BIM nativo desde Sketches existentes.
 Objetivo: clasificar, confirmar y coordinar Building, Level, muros, columnas y aberturas.
 FreeCAD objetivo: 1.1.3.
-Fecha y hora: 2026-08-09 23:05 UTC-06:00.
+Fecha y hora: 2026-09-01 13:55 America/Costa_Rica.
 Version: 0.1.0.
 Instrucciones de mantenimiento: conservar CommandName estable y una sola transaccion.
 """
@@ -22,7 +22,7 @@ from ..ui.dialog_rebuild_bim_model import RebuildBIMModelDialog
 
 
 ICON_PATH = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "resources", "icons", "facilarq.svg")
+    os.path.join(os.path.dirname(__file__), "..", "resources", "icons", "rebuild_bim.svg")
 ).replace(os.sep, "/")
 
 

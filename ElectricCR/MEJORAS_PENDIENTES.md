@@ -2,7 +2,7 @@
 
 **Proposito:** Mantener una memoria viva de mejoras, observaciones funcionales y hallazgos que todavia no constituyen cambios aceptados. Este archivo sirve como puente para Marco, GPT y Codex.
 
-**Version:** 2026-08-10 19:14, America/Costa_Rica.
+**Version:** 2026-08-14, America/Costa_Rica.
 
 **FreeCAD objetivo:** 1.1.3
 
@@ -17,6 +17,21 @@
 ---
 
 ## 1. Areas - dependencia faltante de AnalizarAreasDesdeMuroBIM
+
+### Estado tecnico 2026-08-11
+
+RESUELTA EN EL REPOSITORIO / VALIDACION FUNCIONAL DE MARCO PENDIENTE.
+
+- La macro visible carga ahora
+  `FacilArquitecturaWB/core/rectangular_area_analysis.py` mediante una ruta
+  relativa al repositorio.
+- La copia historica y su motor se localizaron en `Scripts Varios`, se leyeron
+  completos y permanecen sin modificar.
+- Se conservaron `FA_RectangularAreas`, `Spreadsheet_Analisis_Areas`, los
+  cuatro modos de inferencia, rotulos, colores y propiedades ElectricCR.
+- La prueba temporal aprobo seleccion de dos muros, reejecucion, Undo/Redo,
+  guardar/reabrir y consumidores de cielos, tomacorrientes e iluminacion.
+- FreeCAD MCP 1.1.3 ejecuto la `.FCMacro` visible desde el repositorio.
 
 ### Hallazgo
 
@@ -46,33 +61,86 @@ La documentacion de FacilArquitectura indica que esta macro fue validada y gener
 
 ### Pendiente
 
-- Recuperar la version correcta dentro del repositorio.
 - No borrar la copia localizada en `Scripts Varios` hasta verificar la migracion.
-- Evitar que una instalacion limpia dependa de archivos residuales fuera de `Macros-de-Freecad`.
-- Revisar si la logica debe integrarse posteriormente a `FacilArquitecturaWB/core` en vez de mantenerse como macro externa.
+- Marco debe validar el resultado con muros y rotulos de un proyecto real.
+- No retirar la copia historica hasta que esa validacion sea aceptada.
 
 ---
 
-## 2. Areas como fuente espacial comun de ElectricCR
+## 2. Espacio BIM como fuente espacial comun de ElectricCR
 
-Los objetos Area deberian evolucionar hacia una fuente espacial comun para otras disciplinas.
+### Decision aceptada 2026-08-14
 
-Informacion deseable por Area:
+Conservar los algoritmos actuales de deteccion y calculo de recintos, pero usar
+Espacio BIM como objeto base cuando funcione correctamente.
+
+El objetivo no es descartar el trabajo existente. Los algoritmos actuales deben
+poder seguir generando el contorno, nombre y medidas del recinto, y utilizar ese
+resultado para crear o actualizar un `Arch Space` cuando sea seguro.
+
+Informacion espacial comun deseable:
 
 - nombre normalizado del recinto;
 - tipo o descripcion funcional;
 - geometria;
 - area en m2;
-- largo;
-- ancho;
-- altura;
-- propiedades de iluminacion;
-- propiedades de tomacorrientes;
-- propiedades de deteccion de incendio;
-- propiedades HVAC;
-- otros sistemas futuros.
+- perimetro;
+- largo y ancho cuando sean aplicables;
+- altura y volumen;
+- nivel o piso;
+- identificacion estable para que los calculos lo referencien.
 
-La tabla real de La Cruz muestra que esta estructura ya empieza a existir y puede servir como caso de prueba.
+Iluminacion, tomacorrientes, deteccion de incendio, HVAC y otros sistemas deben
+usar el mismo espacio como fuente. Cada calculo puede indicar si el recinto
+aplica y conservar un area ajustada. No se requiere otra geometria si solamente
+cambia el uso del dato o el valor efectivo del calculo.
+
+Los objetos Area actuales se mantienen como compatibilidad y fallback para
+contornos o flujos que Espacio BIM no resuelva correctamente.
+
+### Herramientas y logica que deben preservarse
+
+- `Areas/AreaPorClick.FCMacro` mientras siga siendo parte del flujo activo.
+- `Areas/RectFromLines.FCMacro`.
+- `Areas/RectFromSelection.FCMacro`.
+- El motor reutilizable
+  `FacilArquitecturaWB/core/rectangular_area_analysis.py`.
+- Algoritmos poligonales y consumidores actuales de nombre, area y recinto que
+  se confirmen al revisar el codigo.
+
+El lanzador historico
+`AnalizarAreasRectangularesDesdeMurosBIM.FCMacro` puede permanecer archivado;
+esto no autoriza a eliminar su motor reusable.
+
+### Pendientes de investigacion e implementacion
+
+1. Inventariar que tipos de objetos Area producen actualmente las herramientas
+   activas y que propiedades consumen las tablas.
+2. Crear una prueba controlada que genere un Espacio BIM a partir del resultado
+   de los algoritmos existentes, sin modificar proyectos reales.
+3. Comparar Area, nombre, perimetro y geometria entre el objeto actual y el
+   Espacio BIM.
+4. Probar recintos rectangulares, poligonales, no convexos, abiertos y con
+   cambios posteriores en los muros o limites.
+5. Verificar Undo/Redo, guardar/reabrir, etiquetas y visibilidad en planta.
+6. Revisar la actualizacion de `DatosRecintos`, hojas de iluminacion y demas
+   tablas sin cambiar inicialmente sus contratos.
+7. Definir una relacion estable entre Espacio BIM y cada calculo, incluyendo:
+   `Usar`, `AreaBase`, `AreaAjustada`, sistema y motivo del ajuste.
+8. Preparar un adaptador de compatibilidad para que los consumidores puedan leer
+   primero Espacio BIM y usar Area legacy como fallback.
+9. Probar primero en La Cruz Version 2.1 y despues en un proyecto completo como
+   Puriscal.
+10. No migrar automaticamente documentos existentes ni eliminar Areas hasta que
+    Marco valide funcionalmente el nuevo flujo.
+11. Preparar antes de programar una comparacion documentada entre Area actual y
+    Espacio BIM: creacion, limites, propiedades, actualizacion, tablas,
+    limitaciones y capacidades que deben conservarse de cada solucion.
+
+Estado actual: DECISION DEFINIDA / IMPLEMENTACION Y VALIDACION PENDIENTES.
+
+La tabla real de La Cruz muestra que esta estructura ya empieza a existir y
+puede servir como caso de prueba.
 
 ### Observacion de nombres
 
@@ -481,3 +549,161 @@ Este documento contiene PENDIENTES y observaciones.
 No implica que las mejoras ya esten implementadas, probadas o aceptadas.
 
 Cuando una observacion pase a desarrollo, Codex debe registrar el resultado tecnico y Marco debe validar el comportamiento real en FreeCAD antes de integrarla definitivamente.
+
+---
+
+## Reorganizacion de macros e iconos - 2026-08-12
+
+La tarea de depuracion de interfaz fue programada y ejecutada parcialmente en
+esta sesion. Falta recargar ElectricCR en FreeCAD y confirmar visualmente que
+las barras no conserven comandos cacheados de las rutas antiguas.
+
+Pendientes de validacion:
+
+- confirmar que `Ordenar_Tomas_XY` y `Ordenar_Tomas_XY_Horario` aparecen solo en
+  `Tomacorrientes`;
+- confirmar que las cuatro macros bajo `Xcluidos` no aparecen en menus ni barras;
+- ejecutar ambas macros movidas en un documento temporal;
+- confirmar que `Alinear` conserva `Rayo.svg` por la decision documentada;
+- confirmar que la barra global `Programacion` no cambia.
+
+---
+
+## 13. Interfaz - advertencia PySide6 en selector de modos
+
+### Archivo
+
+`ElectricCR/ui/mode_combo.py`
+
+### Hallazgo
+
+La funcion `_disconnect_combo(combo)` ejecuta actualmente:
+
+`combo.currentIndexChanged.disconnect()`
+
+sin especificar un receptor. Cuando `ensure_mode_combo()` acaba de crear el
+selector, la senal todavia no tiene un manejador conectado y PySide6 puede
+emitir:
+
+`RuntimeWarning: Failed to disconnect (None)`
+
+El `try/except` no evita necesariamente el aviso porque Qt puede emitirlo como
+advertencia de ejecucion y no como una excepcion Python convencional.
+
+### Impacto
+
+- severidad baja;
+- no bloquea la activacion de ElectricCR;
+- no altera actualmente el cambio de modos;
+- el `disconnect()` general tiene el riesgo adicional de desconectar receptores
+  ajenos si en el futuro otras partes de ElectricCR escuchan
+  `currentIndexChanged`.
+
+### Correccion recomendada
+
+Mantener un manejador propio asociado al combo y desconectar solamente ese
+manejador durante una recarga:
+
+1. comprobar si el combo conserva un manejador anterior;
+2. si existe, ejecutar `disconnect(manejador_anterior)`;
+3. crear el nuevo manejador;
+4. guardarlo como atributo del combo;
+5. conectarlo una sola vez.
+
+### Decision
+
+PENDIENTE DE MANTENIMIENTO MENOR. No requiere cambiar la logica de modos ni
+mezclarse con la tarea actual de reorganizacion de macros e iconos.
+
+---
+
+## 14. Panel de macros ElectricCR - lanzador y diagnostico
+
+### Objetivo
+
+Evolucionar `Panel de macros ElectricCR` desde un lanzador buscable hacia un centro ligero de herramientas y diagnostico, manteniendo una vista normal simple para uso diario.
+
+### Mejoras acordadas
+
+- columnas con ancho automatico en primera apertura y persistencia despues de ajuste manual;
+- icono visible y de tamano legible junto al nombre de herramienta;
+- mostrar grupo, cantidad de usos y ultimo uso en la vista normal;
+- panel de detalles con ruta, comando, icono resuelto, estado del icono, estadisticas y gestion de transaccion cuando pueda determinarse;
+- botones `Ejecutar`, `Copiar ruta` y `Copiar diagnostico`;
+- modo `Diagnostico` con estado OK / REVISAR / ERROR;
+- filtros utiles como Todas, Mas usadas, Nunca usadas y Con Rayo;
+- reutilizar `ElectricCR/usage_log.py` en vez de crear otro sistema de estadisticas;
+- exponer metadatos desde el registro de comandos para evitar que el Panel duplique la resolucion de archivos/iconos/toolbars.
+
+### Regla de iconos
+
+`Rayo.svg` no es automaticamente un error. Si la funcion o el icono apropiado son dudosos, mantener Rayo y marcar la herramienta como pendiente/revisar. No inventar un icono solo para eliminar el Rayo.
+
+### Fase 2 futura
+
+Dejar para una tarea posterior el registro estructurado de ejecuciones correctas/fallidas, ultimo error e historial de errores por herramienta.
+
+### Referencia de tarea
+
+Preparada como tarea separada: `TAREA_PANEL_MACROS_ELECTRICCR.md`.
+
+
+---
+
+## 15. Panel de macros ElectricCR - catalogo vivo, comentarios y uso real/pruebas
+
+### Estado
+
+IMPLEMENTADA / PROBADA TECNICAMENTE / VALIDADA VISUALMENTE EN MCP.
+
+### Objetivo
+
+Ampliar la Fase 1 ya funcional del Panel para convertirlo en un inventario vivo
+que pueda leer directamente GPT/Codex y que permita registrar la evaluacion
+humana de cada herramienta.
+
+### Mejoras acordadas
+
+- botones `Contraer grupos` y `Expandir grupos`;
+- descripcion objetiva de que hace cada macro;
+- comentario editable por macro;
+- estado manual y decision separados del diagnostico tecnico automatico;
+- catalogo versionado `ElectricCR/data/macros_catalog.json`;
+- reporte humano `ElectricCR/MACROS_CATALOGO.md` generado desde el JSON;
+- usar `Inventario_Clasificacion_ElectricCR_2026-08-08.xlsx` como semilla
+  historica, reconciliandola con decisiones mas recientes;
+- separar estadisticas nuevas en uso real, pruebas e historico sin clasificar;
+- boton `Probar` separado de `Ejecutar`;
+- filtros por comentarios, pendientes de revisar, decision y uso real;
+- ampliar `Copiar diagnostico` con descripcion, comentario, decision y
+  estadisticas separadas.
+
+### Regla de datos
+
+El Excel no debe convertirse en dependencia de runtime. Se usa como fuente de
+migracion/inventario historico. El JSON sera el registro estructurado del Panel
+y el Markdown una vista generada para lectura humana/Codex.
+
+Los conteos anteriores a la separacion uso/prueba no deben reclasificarse como
+uso real; conservarlos como historico sin clasificar.
+
+### Referencia de tarea
+
+`TAREA_PANEL_MACROS_ELECTRICCR_FASE2.md`
+
+### Resultado Fase 2 - 2026-08-12
+
+Se generaron 192 entradas en el catalogo JSON: 122 herramientas activas
+reconciliadas con el registro de ElectricCR y 70 entradas historicas no activas.
+Se encontraron 69 descripciones desde metadatos oficiales o encabezados de
+macro; el resto queda explicitamente sin descripcion. No se encontro una copia
+local del Excel indicado, por lo que no se usaron datos historicos del Excel.
+El Panel ahora permite editar comentario, estado manual y decision, contraer o
+expandir grupos, consultar historicas y separar uso real, pruebas e historico.
+Las ejecuciones normales se clasifican como `real` y el boton `Probar` como
+`test`; los conteos anteriores permanecen como `legacy/unclassified`.
+
+Correccion posterior verificada: al cambiar de macro, el comentario se guarda
+contra la seleccion anterior antes de cargar la nueva. Se agrego cache de filas,
+estadisticas, recursos de comandos y catalogo para que buscar no reconstruya
+192 entradas en cada tecla.

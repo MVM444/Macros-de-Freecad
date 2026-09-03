@@ -8,7 +8,9 @@ from pathlib import Path
 import FreeCAD
 import FreeCADGui
 
-from ..core import lights, persist
+from .. import i18n
+
+from ..core import exporter_x3d, lights, persist
 from ..ui.panel_export import _ensure_qt_compat
 
 
@@ -39,11 +41,10 @@ class CommandClass:
 
     def GetResources(self):  # noqa: N802
         return {
-            "MenuText": "Agregar propiedades a luz / Add Light Properties",
-            "ToolTip": (
-                "Define propiedades de luz en la luminaria master. "
-                "Los Links heredaran la configuracion.\n"
-                "Define light properties on the master luminaire. Links inherit the configuration."
+            "MenuText": i18n.bi("Agregar propiedades a luz", "Add Light Properties"),
+            "ToolTip": i18n.bi(
+                "Define propiedades de luz en la luminaria master. Los Links heredaran la configuracion.",
+                "Define light properties on the master luminaire. Links inherit the configuration.",
             ),
             "Pixmap": ICON_PATH,
         }
@@ -53,8 +54,8 @@ class CommandClass:
         if not selection:
             QtGui.QMessageBox.warning(
                 None,
-                "Agregar propiedades a luz / Add Light Properties",
-                "Seleccione una luminaria master o una instancia Link.",
+                i18n.bi("Agregar propiedades a luz", "Add Light Properties"),
+                i18n.bi("Seleccione una luminaria master o una instancia Link.", "Select a master luminaire or a Link instance."),
             )
             _warn("Seleccione una luminaria master o una instancia Link.")
             return
@@ -75,23 +76,23 @@ class AddLightPropertiesDialog(QtGui.QDialog):
         self.source_obj = None
         self.master_obj = None
         self.current_color = (1.0, 0.95, 0.85)
-        self.setWindowTitle("Agregar propiedades a luz / Add Light Properties")
+        self.setWindowTitle(i18n.bi("Agregar propiedades a luz", "Add Light Properties"))
         self._build_ui()
         self._load_selection(selected_obj)
 
     def _build_ui(self):
         main = QtGui.QVBoxLayout(self)
 
-        select_group = QtGui.QGroupBox("Seleccionar master")
+        select_group = QtGui.QGroupBox(i18n.bi("Seleccionar master", "Select master"))
         select_layout = QtGui.QGridLayout(select_group)
-        select_layout.addWidget(QtGui.QLabel("Objeto master:"), 0, 0)
+        select_layout.addWidget(QtGui.QLabel(i18n.bi("Objeto master:", "Master object:")), 0, 0)
         self.master_line = QtGui.QLineEdit()
         self.master_line.setReadOnly(True)
         select_layout.addWidget(self.master_line, 0, 1)
-        self.btn_take_selection = QtGui.QPushButton("Tomar seleccion")
+        self.btn_take_selection = QtGui.QPushButton(i18n.bi("Tomar seleccion", "Use selection"))
         self.btn_take_selection.clicked.connect(self._take_selection)
         select_layout.addWidget(self.btn_take_selection, 0, 2)
-        self.links_label = QtGui.QLabel("Links detectados: 0")
+        self.links_label = QtGui.QLabel(i18n.bi("Links detectados: 0", "Detected links: 0"))
         select_layout.addWidget(self.links_label, 1, 0, 1, 3)
         self.selection_info = QtGui.QLabel(
             "Las propiedades se guardan en el master. Todas las instancias Link heredaran esta configuracion."
@@ -100,47 +101,47 @@ class AddLightPropertiesDialog(QtGui.QDialog):
         select_layout.addWidget(self.selection_info, 2, 0, 1, 3)
         main.addWidget(select_group)
 
-        type_group = QtGui.QGroupBox("Tipo y distribucion")
+        type_group = QtGui.QGroupBox(i18n.bi("Tipo y distribucion", "Type and distribution"))
         type_layout = QtGui.QGridLayout(type_group)
-        self.chk_enabled = QtGui.QCheckBox("Luz habilitada / Light enabled")
+        self.chk_enabled = QtGui.QCheckBox(i18n.bi("Luz habilitada", "Light enabled"))
         type_layout.addWidget(self.chk_enabled, 0, 0, 1, 2)
-        type_layout.addWidget(QtGui.QLabel("Tipo de luz:"), 1, 0)
+        type_layout.addWidget(QtGui.QLabel(i18n.bi("Tipo de luz:", "Light type:")), 1, 0)
         self.combo_type = QtGui.QComboBox()
         self.combo_type.addItems(lights.CGE_LIGHT_TYPES)
         type_layout.addWidget(self.combo_type, 1, 1)
-        type_layout.addWidget(QtGui.QLabel("Patron:"), 2, 0)
+        type_layout.addWidget(QtGui.QLabel(i18n.bi("Patron:", "Pattern:")), 2, 0)
         self.combo_pattern = QtGui.QComboBox()
         self.combo_pattern.addItems(lights.CGE_LIGHT_PATTERNS)
         type_layout.addWidget(self.combo_pattern, 2, 1)
-        type_layout.addWidget(QtGui.QLabel("Filas:"), 3, 0)
+        type_layout.addWidget(QtGui.QLabel(i18n.bi("Filas:", "Rows:")), 3, 0)
         self.spin_rows = QtGui.QSpinBox()
         self.spin_rows.setRange(1, 25)
         type_layout.addWidget(self.spin_rows, 3, 1)
-        type_layout.addWidget(QtGui.QLabel("Columnas:"), 4, 0)
+        type_layout.addWidget(QtGui.QLabel(i18n.bi("Columnas:", "Columns:")), 4, 0)
         self.spin_cols = QtGui.QSpinBox()
         self.spin_cols.setRange(1, 25)
         type_layout.addWidget(self.spin_cols, 4, 1)
-        type_layout.addWidget(QtGui.QLabel("Cantidad:"), 5, 0)
+        type_layout.addWidget(QtGui.QLabel(i18n.bi("Cantidad:", "Count:")), 5, 0)
         self.spin_count = QtGui.QSpinBox()
         self.spin_count.setRange(1, 25)
         type_layout.addWidget(self.spin_count, 5, 1)
         main.addWidget(type_group)
 
-        position_group = QtGui.QGroupBox("Posicion y direccion")
+        position_group = QtGui.QGroupBox(i18n.bi("Posicion y direccion", "Position and direction"))
         position_layout = QtGui.QGridLayout(position_group)
-        position_layout.addWidget(QtGui.QLabel("Direccion de emision:"), 0, 0)
+        position_layout.addWidget(QtGui.QLabel(i18n.bi("Direccion de emision:", "Emission direction:")), 0, 0)
         self.combo_direction = QtGui.QComboBox()
         self.combo_direction.addItems(lights.CGE_LIGHT_DIRECTIONS)
         position_layout.addWidget(self.combo_direction, 0, 1)
-        position_layout.addWidget(QtGui.QLabel("Origen de luz:"), 1, 0)
+        position_layout.addWidget(QtGui.QLabel(i18n.bi("Origen de luz:", "Light origin:")), 1, 0)
         self.combo_origin = QtGui.QComboBox()
-        self.combo_origin.addItem("Automatico desde cara emisora", "AutoFaceCenter")
-        self.combo_origin.addItem("Punto local manual", "ManualLocalPoint")
-        self.combo_origin.addItem("Marcador de referencia", "ReferenceMarker")
-        self.combo_origin.setToolTip("ReferenceMarker: Disponible en una proxima version.")
+        self.combo_origin.addItem(i18n.bi("Automatico desde cara emisora", "Automatic from emitting face"), "AutoFaceCenter")
+        self.combo_origin.addItem(i18n.bi("Punto local manual", "Manual local point"), "ManualLocalPoint")
+        self.combo_origin.addItem(i18n.bi("Marcador de referencia", "Reference marker"), "ReferenceMarker")
+        self.combo_origin.setToolTip(i18n.bi("ReferenceMarker: disponible en una proxima version.", "ReferenceMarker: available in a future version."))
         position_layout.addWidget(self.combo_origin, 1, 1)
         self._disable_reference_marker_item()
-        position_layout.addWidget(QtGui.QLabel("Offset fuera de luminaria (mm):"), 2, 0)
+        position_layout.addWidget(QtGui.QLabel(i18n.bi("Offset fuera de luminaria (mm):", "Offset outside luminaire (mm):")), 2, 0)
         self.spin_offset = QtGui.QDoubleSpinBox()
         self.spin_offset.setRange(0.0, 10000.0)
         self.spin_offset.setDecimals(1)
@@ -149,33 +150,55 @@ class AddLightPropertiesDialog(QtGui.QDialog):
         self.spin_local_x = self._length_spin()
         self.spin_local_y = self._length_spin()
         self.spin_local_z = self._length_spin()
-        position_layout.addWidget(QtGui.QLabel("Local X (mm):"), 3, 0)
+        position_layout.addWidget(QtGui.QLabel(i18n.bi("Local X (mm):", "Local X (mm):")), 3, 0)
         position_layout.addWidget(self.spin_local_x, 3, 1)
-        position_layout.addWidget(QtGui.QLabel("Local Y (mm):"), 4, 0)
+        position_layout.addWidget(QtGui.QLabel(i18n.bi("Local Y (mm):", "Local Y (mm):")), 4, 0)
         position_layout.addWidget(self.spin_local_y, 4, 1)
-        position_layout.addWidget(QtGui.QLabel("Local Z (mm):"), 5, 0)
+        position_layout.addWidget(QtGui.QLabel(i18n.bi("Local Z (mm):", "Local Z (mm):")), 5, 0)
         position_layout.addWidget(self.spin_local_z, 5, 1)
         main.addWidget(position_group)
 
-        props_group = QtGui.QGroupBox("Propiedades de luz")
+        props_group = QtGui.QGroupBox(i18n.bi("Propiedades de luz", "Light properties"))
         props_layout = QtGui.QGridLayout(props_group)
-        self.btn_color = QtGui.QPushButton("Color...")
+        self.btn_color = QtGui.QPushButton(i18n.bi("Color...", "Color..."))
         self.btn_color.clicked.connect(self._choose_color)
         props_layout.addWidget(self.btn_color, 0, 0)
-        props_layout.addWidget(QtGui.QLabel("Intensidad:"), 1, 0)
+        props_layout.addWidget(QtGui.QLabel(i18n.bi("Intensidad:", "Intensity:")), 1, 0)
         self.spin_intensity = QtGui.QDoubleSpinBox()
         self.spin_intensity.setRange(0.0, 20.0)
         self.spin_intensity.setDecimals(2)
         self.spin_intensity.setSingleStep(0.1)
         props_layout.addWidget(self.spin_intensity, 1, 1)
-        props_layout.addWidget(QtGui.QLabel("Alcance (m):"), 2, 0)
+        props_layout.addWidget(QtGui.QLabel(i18n.bi("Alcance (m):", "Range (m):")), 2, 0)
         self.spin_range = QtGui.QDoubleSpinBox()
         self.spin_range.setRange(0.1, 500.0)
         self.spin_range.setDecimals(2)
         self.spin_range.setSuffix(" m")
         props_layout.addWidget(self.spin_range, 2, 1)
-        self.chk_preview = QtGui.QCheckBox("Mostrar objeto representativo")
-        props_layout.addWidget(self.chk_preview, 3, 0, 1, 2)
+        props_layout.addWidget(QtGui.QLabel(i18n.bi("Flujo luminoso (lm):", "Luminous flux (lm):")), 3, 0)
+        self.spin_lumens = QtGui.QDoubleSpinBox()
+        self.spin_lumens.setRange(0.0, 200000.0)
+        self.spin_lumens.setDecimals(0)
+        self.spin_lumens.setSingleStep(100.0)
+        props_layout.addWidget(self.spin_lumens, 3, 1)
+        props_layout.addWidget(QtGui.QLabel(i18n.bi("Angulo completo de haz (°):", "Full beam angle (deg):")), 4, 0)
+        self.spin_beam_angle = QtGui.QDoubleSpinBox()
+        self.spin_beam_angle.setRange(1.0, 179.0)
+        self.spin_beam_angle.setDecimals(1)
+        self.spin_beam_angle.setSingleStep(5.0)
+        props_layout.addWidget(self.spin_beam_angle, 4, 1)
+        props_layout.addWidget(QtGui.QLabel(i18n.bi("Intensidad calculada (cd):", "Calculated intensity (cd):")), 5, 0)
+        self.line_candela = QtGui.QLineEdit()
+        self.line_candela.setReadOnly(True)
+        props_layout.addWidget(self.line_candela, 5, 1)
+        props_layout.addWidget(QtGui.QLabel(i18n.bi("Temperatura de color CCT (K):", "Color temperature CCT (K):")), 6, 0)
+        self.spin_cct = QtGui.QDoubleSpinBox()
+        self.spin_cct.setRange(1800.0, 10000.0)
+        self.spin_cct.setDecimals(0)
+        self.spin_cct.setSingleStep(100.0)
+        props_layout.addWidget(self.spin_cct, 6, 1)
+        self.chk_preview = QtGui.QCheckBox(i18n.bi("Mostrar objeto representativo", "Show representative object"))
+        props_layout.addWidget(self.chk_preview, 7, 0, 1, 2)
         main.addWidget(props_group)
 
         self.status_label = QtGui.QLabel("")
@@ -183,9 +206,9 @@ class AddLightPropertiesDialog(QtGui.QDialog):
         main.addWidget(self.status_label)
 
         buttons = QtGui.QHBoxLayout()
-        self.btn_preview = QtGui.QPushButton("Vista previa")
-        self.btn_apply = QtGui.QPushButton("Aplicar")
-        self.btn_cancel = QtGui.QPushButton("Cancelar")
+        self.btn_preview = QtGui.QPushButton(i18n.bi("Vista previa", "Preview"))
+        self.btn_apply = QtGui.QPushButton(i18n.bi("Aplicar", "Apply"))
+        self.btn_cancel = QtGui.QPushButton(i18n.bi("Cancelar", "Cancel"))
         self.btn_preview.clicked.connect(self._preview)
         self.btn_apply.clicked.connect(self._apply)
         self.btn_cancel.clicked.connect(self.reject)
@@ -198,6 +221,8 @@ class AddLightPropertiesDialog(QtGui.QDialog):
         self.combo_type.currentIndexChanged.connect(self._update_control_states)
         self.combo_pattern.currentIndexChanged.connect(self._update_control_states)
         self.combo_origin.currentIndexChanged.connect(self._update_control_states)
+        self.spin_lumens.valueChanged.connect(self._update_candela)
+        self.spin_beam_angle.valueChanged.connect(self._update_candela)
 
     def _length_spin(self):
         spin = QtGui.QDoubleSpinBox()
@@ -211,7 +236,7 @@ class AddLightPropertiesDialog(QtGui.QDialog):
             index = self.combo_origin.findData("ReferenceMarker")
             item = self.combo_origin.model().item(index)
             item.setEnabled(False)
-            item.setToolTip("Disponible en una proxima version.")
+            item.setToolTip(i18n.bi("Disponible en una proxima version.", "Available in a future version."))
         except Exception:
             pass
 
@@ -257,6 +282,9 @@ class AddLightPropertiesDialog(QtGui.QDialog):
             "offset_mm": float(self.params.GetFloat("default_light_offset", 50.0)),
             "intensity": float(self.params.GetFloat("default_light_intensity", 1.0)),
             "range_m": float(self.params.GetFloat("default_light_range", 8.0)),
+            "lumens": float(self.params.GetFloat("default_light_lumens", lights.DEFAULT_LUMENS)),
+            "beam_angle_deg": float(self.params.GetFloat("default_light_beam_angle", lights.DEFAULT_BEAM_ANGLE_DEG)),
+            "cct_kelvin": float(self.params.GetFloat("default_light_cct", lights.DEFAULT_CCT_K)),
             "rows": 2,
             "cols": 2,
             "count": 6,
@@ -274,6 +302,9 @@ class AddLightPropertiesDialog(QtGui.QDialog):
         self.spin_offset.setValue(float(values.get("offset_mm", 50.0)))
         self.spin_intensity.setValue(float(values.get("intensity", 1.0)))
         self.spin_range.setValue(float(values.get("range_m", 8.0)))
+        self.spin_lumens.setValue(float(values.get("lumens", lights.DEFAULT_LUMENS)))
+        self.spin_beam_angle.setValue(float(values.get("beam_angle_deg", lights.DEFAULT_BEAM_ANGLE_DEG)))
+        self.spin_cct.setValue(float(values.get("cct_kelvin", lights.DEFAULT_CCT_K)))
         self.spin_rows.setValue(int(values.get("rows", 2)))
         self.spin_cols.setValue(int(values.get("cols", 2)))
         self.spin_count.setValue(int(values.get("count", 6)))
@@ -286,6 +317,7 @@ class AddLightPropertiesDialog(QtGui.QDialog):
         self.chk_preview.setChecked(bool(values.get("preview_enabled", True)))
         self._update_color_button()
         self._update_control_states()
+        self._update_candela()
 
     def _values_from_ui(self) -> dict:
         return {
@@ -297,6 +329,9 @@ class AddLightPropertiesDialog(QtGui.QDialog):
             "offset_mm": float(self.spin_offset.value()),
             "intensity": float(self.spin_intensity.value()),
             "range_m": float(self.spin_range.value()),
+            "lumens": float(self.spin_lumens.value()),
+            "beam_angle_deg": float(self.spin_beam_angle.value()),
+            "cct_kelvin": float(self.spin_cct.value()),
             "rows": int(self.spin_rows.value()),
             "cols": int(self.spin_cols.value()),
             "count": int(self.spin_count.value()),
@@ -363,6 +398,9 @@ class AddLightPropertiesDialog(QtGui.QDialog):
         self.params.SetFloat("default_light_offset", float(values.get("offset_mm", 50.0)))
         self.params.SetFloat("default_light_intensity", float(values.get("intensity", 1.0)))
         self.params.SetFloat("default_light_range", float(values.get("range_m", 8.0)))
+        self.params.SetFloat("default_light_lumens", float(values.get("lumens", lights.DEFAULT_LUMENS)))
+        self.params.SetFloat("default_light_beam_angle", float(values.get("beam_angle_deg", lights.DEFAULT_BEAM_ANGLE_DEG)))
+        self.params.SetFloat("default_light_cct", float(values.get("cct_kelvin", lights.DEFAULT_CCT_K)))
         doc = FreeCAD.ActiveDocument
         if doc is None or not getattr(doc, "FileName", ""):
             return
@@ -373,6 +411,9 @@ class AddLightPropertiesDialog(QtGui.QDialog):
             "default_light_offset": float(values.get("offset_mm", 50.0)),
             "default_light_intensity": float(values.get("intensity", 1.0)),
             "default_light_range": float(values.get("range_m", 8.0)),
+            "default_light_lumens": float(values.get("lumens", lights.DEFAULT_LUMENS)),
+            "default_light_beam_angle": float(values.get("beam_angle_deg", lights.DEFAULT_BEAM_ANGLE_DEG)),
+            "default_light_cct": float(values.get("cct_kelvin", lights.DEFAULT_CCT_K)),
         }
         persist.save_sidecar(path, data)
 
@@ -396,6 +437,12 @@ class AddLightPropertiesDialog(QtGui.QDialog):
         self.btn_color.setStyleSheet(
             "background-color: " + color.name() + "; color: " + text_color + "; border: 1px solid #444;"
         )
+
+    def _update_candela(self, *_args):
+        value = exporter_x3d.photometric_candela(
+            float(self.spin_lumens.value()), float(self.spin_beam_angle.value())
+        )
+        self.line_candela.setText(f"{value:.1f} cd")
 
     def _update_control_states(self):
         light_type = str(self.combo_type.currentText())

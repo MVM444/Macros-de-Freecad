@@ -1,5 +1,36 @@
 # ElectricCR
 
+## Barra comun Espacios y Recintos
+
+ElectricCR registra directamente los cuatro comandos compartidos de
+`CRBIMCore`, por lo que funciona aunque Facil Arquitectura no este activo. La
+barra agrega sus productores existentes: Recinto por click, Rectangulo desde
+limites y `PoligonosRecintosDesdeArchWalls.FCMacro`, mostrado como **Recintos
+desde muros BIM**.
+
+La macro poligonal es un productor geometrico transversal, no una herramienta
+legacy: genera Draft Wires cerrados con Points editables, MakeFace, cara valida,
+metadatos y enlaces a muros. Tambien puede alimentar cielorrasos y otros
+consumidores 2D. Su algoritmo y su comportamiento de regeneracion no fueron
+modificados en esta fase.
+
+## RoomResolver en calculo de iluminacion
+
+La fase 2A integra `CRBIMCore.RoomResolver` solamente en la lectura/calculo de
+`Iluminación/Actualizar_Iluminacion_Completa.FCMacro`.
+
+- `Arch/BIM Space` tiene prioridad sobre una Area heredada superpuesta.
+- `AMBIGUOUS` y `NOT_FOUND` no producen asignaciones silenciosas.
+- `DatosRecintos` conserva sus 12 columnas y la formula existente de cantidad,
+  filas y columnas.
+- Areas legacy conservan sus propiedades de layout; los Spaces se leen sin
+  agregarles propiedades ElectricCR.
+- No se crean ni se colocan luminarias durante el calculo.
+
+El contrato auditado del arbol se documenta en
+`ElectricCR/docs/CONTRATO_ARBOL_SEMANTICO.md`. La jerarquia visual es una
+proyeccion; no es la fuente autoritativa de recinto, circuito, tablero o control.
+
 ## Barra de herramientas compacta
 
 ElectricCR arranca en modo compacto: muestra una barra principal con el

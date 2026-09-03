@@ -1,8 +1,8 @@
 """Project structure helpers for FacilArquitecturaWB.
 
 Descripcion: crea y localiza grupos base del proyecto.
-Fecha: 2026-07-23
-Version: 0.2.0
+Fecha y hora: 2026-08-27 16:28 UTC-06:00
+Version: 0.3.0
 Instrucciones: las funciones deben ser idempotentes y no destruir trabajo del usuario.
 """
 
@@ -72,9 +72,8 @@ def ensure_group(doc, name: str, label: str, parent=None):
     return obj
 
 
-def ensure_project_structure(doc=None):
-    """Create FA_Project and standard child groups."""
-    doc = doc or active_or_new_document()
+def _ensure_project_root(doc):
+    """Create/reuse the FA support root and keep its metadata current."""
     root = ensure_group(doc, ROOT_GROUP_NAME, ROOT_GROUP_NAME)
     set_prop(root, "App::PropertyBool", "FA_Workbench", "FacilArquitectura", "Proyecto Facil Arquitectura", True)
     set_prop(root, "App::PropertyString", "FA_ProjectVersion", "FacilArquitectura", "Version del proyecto", VERSION)
@@ -100,11 +99,36 @@ def ensure_project_structure(doc=None):
         "FA_Description",
         "FacilArquitectura",
         "Descripcion",
-        "Base arquitectonica organizada para instalaciones electromecanicas",
+        "Datos auxiliares de Facil Arquitectura; el modelo permanente reside en Building/Level",
     )
     set_prop(root, "App::PropertyString", "FA_CreatedBy", "FacilArquitectura", "Creado por", CREATED_BY)
+    return root
 
+
+def ensure_project_support_structure(doc=None, keys=("parameters",)):
+    """Create only the FA support groups explicitly required by the caller.
+
+    New workflows must not manufacture empty legacy branches. Permanent BIM
+    objects belong to the native Building/Level hierarchy. The full legacy
+    structure remains available through ensure_project_structure().
+    """
+    doc = doc or active_or_new_document()
+    root = _ensure_project_root(doc)
+    groups = {}
+    for key in tuple(keys or ()):
+        if key not in GROUPS:
+            raise KeyError("Grupo FA desconocido: %s" % key)
+        name, label = GROUPS[key]
+        groups[key] = ensure_group(doc, name, label, root)
+    return doc, root, groups
+
+
+def ensure_project_structure(doc=None):
+    """Create the complete legacy FA_Project tree for compatibility only."""
+    doc = doc or active_or_new_document()
+    root = _ensure_project_root(doc)
     groups = {}
     for key, (name, label) in GROUPS.items():
         groups[key] = ensure_group(doc, name, label, root)
     return doc, root, groups
+

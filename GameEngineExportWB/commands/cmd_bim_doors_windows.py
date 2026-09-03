@@ -8,6 +8,8 @@ import time
 import FreeCAD
 import FreeCADGui
 
+from .. import i18n
+
 
 LOG_PREFIX = "[GAMEEXPORT] "
 COMMAND_VERSION = str(int(time.time()))
@@ -29,17 +31,17 @@ class CommandClass:
 
     def GetResources(self):  # noqa: N802
         return {
-            "MenuText": "Puertas y ventanas BIM",
-            "ToolTip": "Agregar puertas abiertas y ventanas BIM al ultimo Quick Example generado.",
+            "MenuText": i18n.bi("Puertas y ventanas BIM", "BIM Doors and Windows"),
+            "ToolTip": i18n.bi("Agregar puertas abiertas y ventanas BIM al ultimo Quick Example generado.", "Add open doors and BIM windows to the last generated Quick Example."),
             "Pixmap": ICON_PATH,
         }
 
     def Activated(self):  # noqa: N802
         macro = _macro_path()
         if not os.path.exists(macro):
-            FreeCAD.Console.PrintError(LOG_PREFIX + "Macro not found: " + macro + "\n")
+            FreeCAD.Console.PrintError(LOG_PREFIX + "Macro not found: " + os.path.basename(macro) + "\n")
             return
-        FreeCAD.Console.PrintMessage(LOG_PREFIX + "Running BIM doors/windows macro: " + macro + "\n")
+        FreeCAD.Console.PrintMessage(LOG_PREFIX + "Running BIM doors/windows macro: " + os.path.basename(macro) + "\n")
         namespace = {"__name__": "__main__", "__file__": macro}
         with open(macro, "r", encoding="utf-8-sig") as handle:
             code = compile(handle.read(), macro, "exec")

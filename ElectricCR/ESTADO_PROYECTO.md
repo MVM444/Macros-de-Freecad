@@ -1,8 +1,88 @@
 # ElectricCR - Estado actual del proyecto
 
+## Barra comun Espacios y Recintos v0.1
+
+Ultima actualizacion: 2026-09-02 America/Costa_Rica
+Estado: **INTEGRADA Y VERIFICADA MCP EN FREECAD 1.1.3**.
+
+ElectricCR puede cargar los comandos comunes sin activar Facil Arquitectura.
+El registro es idempotente y la barra fue verificada visualmente. Se conserva
+visible `PoligonosRecintosDesdeArchWalls.FCMacro` como **Recintos desde muros
+BIM**, sin cambiar su algoritmo, metadatos, enlaces ni regeneracion.
+
+Esta integracion no migra Areas, no crea Spaces y no modifica dispositivos.
+
+## Estado vigente - Prototipo luminaria semantica y arbol idempotente
+
+Ultima actualizacion: 2026-09-02 America/Costa_Rica
+FreeCAD objetivo: 1.1.3
+Estado: **CERRADO / IMPLEMENTADO / VERIFICADO MCP EN FREECAD 1.1.3**.
+
+Revalidado el 2026-09-02 sin cambios funcionales: modulos cargados desde DEV,
+pruebas puras y smoke integral aprobados, cero documentos/temporales residuales.
+
+La fase 2A de RoomResolver permanece cerrada y verificada. No se reabre ni se modifica su baseline.
+
+Hallazgo principal de esta fase: ElectricCR ya posee un nucleo generico en
+`electriccr/features/objeto_toma_uno.py`. El modulo soporta dispositivos directos
+`Part::FeaturePython` y `App::Link` con masters ocultos, combina simbolo 2D y modelo
+3D en una sola identidad geometrica, mantiene el 2D en Z local 0 y desplaza solo
+el 3D mediante `AlturaRel`.
+
+Por tanto, la direccion vigente es **auditar y evolucionar este nucleo**. `Arch
+Equipment` se compara como posible capacidad nativa BIM/IFC o adaptador; no se
+adopta como reemplazo automatico.
+
+El contrato `relaciones -> arbol` permanece autoritativo. El trabajo actual define
+los futuros enlaces `Space`, `Circuit`, `Panel`, `Control`, `System`, `Level` y
+`Host`, la compatibilidad con masters/App::Link y la reconstruccion idempotente del
+arbol. No se han modificado dispositivos, FCStd, masters ni codigo.
+
+Documento de diseno:
+`ElectricCR/docs/DISENO_OBJETO_ELECTROMECANICO_COMUN.md`.
+
+La matriz de decision ya se cerro a nivel de diseno: `App::Link` vigente es la identidad operativa preferida para el primer prototipo; `TomaUnoProxy` conserva el nucleo geometrico/masters y `Arch Equipment` se compara especificamente por BIM/IFC. El contrato minimo propone `ElementUID`, `Space` y `Circuit`, derivando Level/Panel cuando sea posible.
+
+El prototipo reversible ya fue implementado y probado con una sola luminaria
+temporal. La identidad operativa sigue siendo el `App::Link` actual, enriquecido
+solo con `ElementUID` y `Space`. El arbol se deriva de `Space`, `CircuitoID` y
+los LinkList existentes de Control, usa claves estables y es idempotente.
+
+La rama visual utiliza un `App::Link` de indice marcado como referencia de
+proyeccion. Esto evita retirar la luminaria fisica de su grupo manual, porque
+los `App::DocumentObjectGroup` de FreeCAD mantienen pertenencia visual
+exclusiva. Los masters permanecen ocultos en `_lib/_lib_devices`.
+
+El comparador `Arch Equipment` confirma propiedades BIM/IFC y `IfcType=Light
+Fixture`, pero requiere Base/copia geometrica. No sustituye el esquema de master
+compartido. No se autoriza desde este cierre una migracion de dispositivos ni
+el inicio de tomacorrientes/apagadores.
+
+---
+
+## Estado vigente - RoomResolver fase 2A
+
+Ultima actualizacion: 2026-09-01 America/Costa_Rica
+FreeCAD: 1.1.3 revision 20260725
+Estado: **CERRADA / VERIFICADA MCP**.
+
+El calculo integral de iluminacion enumera recintos mediante `CRBIMCore`.
+Space tiene prioridad sobre Area heredada, la hoja `DatosRecintos` conserva su
+contrato de 12 columnas y el comando no escribe propiedades de layout en
+Spaces. La compatibilidad legacy de Areas permanece.
+
+El contrato `relaciones -> arbol` esta documentado, pero no migrado. Controles
+ya usan LinkList; Room, Panel, Level y System aun no tienen enlaces uniformes.
+No se redefinieron ni migraron dispositivos y no se reorganizaron modelos.
+
+Siguiente fase posible, no iniciada: objeto electromecanico comun y
+reconstruccion idempotente del arbol desde relaciones.
+
+---
+
 **Proposito:** Resumir la arquitectura vigente y el estado de integracion que debe conocerse antes de modificar objetos ElectricCR.
 
-**Version:** 2026-08-08 13:01, America/Costa_Rica.
+**Version:** 2026-08-12 14:30, America/Costa_Rica.
 
 ## Entorno
 
@@ -74,7 +154,70 @@ La revision se realiza inicialmente en este orden:
 
 `Conectar` se deja para una fase avanzada debido a la cantidad de estrategias geometricas, solapamientos y dependencias historicas.
 
+## Estado de la tarea activa - Panel de macros ElectricCR
+
+El lanzador de macros ya dispone de una implementacion local ampliada en
+`ElectricCR/commands/macro_launcher.py`. La fuente de metadatos es
+`ElectricCR/commands/macros.py` y las estadisticas siguen viniendo de
+`ElectricCR/usage_log.py`; no se creo un segundo sistema de conteo ni se
+escanea el repositorio desde el panel.
+
+Estado: **PROGRAMADO / COMPILADO / PROBADO TECNICAMENTE / VALIDADO VISUALMENTE EN MCP**.
+
+La prueba simulada con FreeCADCmd 1.1.3 registro 16 grupos y 122 comandos con
+iconos especificos o `Rayo.svg`. El intento de validacion visual mediante MCP
+expiró por timeout de la sesion GUI, por lo que la validacion visual en el
+FreeCAD de Marco queda pendiente en ese primer intento. La verificacion
+posterior esta documentada abajo. No se modificaron documentos FCStd.
+
 ## Arquitectura de dispositivos ElectricCR
+
+## Estado de la tarea activa - Integracion de descripciones GPT
+
+Estado: **IMPLEMENTADA / COMPILADA / PROBADA / VERIFICADA_MCP /
+VALIDADA_VISUALMENTE**.
+
+Se integraron por `ruta` las 192 entradas de
+`ElectricCR/MACROS_DESCRIPCIONES_GPT.json`. El catalogo conserva 192
+descripciones funcionales: 133 sustituyeron textos vacios o genericos y 59
+descripciones locales concretas se mantuvieron. En 36 casos se registro la
+alternativa GPT y la discrepancia sin reemplazar el texto local.
+
+Los campos manuales de comentario, estado, decision y las estadisticas de
+uso real, prueba e historico no fueron modificados. El Panel busca tambien
+en la descripcion y muestra descripcion, fuente, confianza y discrepancias
+en el detalle y en `Copiar diagnostico`.
+
+La prueba en FreeCAD 1.1.3 valido 12 grupos, 192 filas catalogadas, una
+busqueda por texto exclusivo de descripcion, diagnostico con descripcion y
+comentario, y una herramienta visible de cada grupo principal. No se
+modificaron documentos FCStd ni se hizo commit o push.
+
+## Estado de la tarea activa - Panel Fase 2
+
+Estado: **IMPLEMENTADA / COMPILADA / PROBADA / VERIFICADA_MCP /
+VALIDADA_VISUALMENTE**.
+
+El catalogo JSON contiene 192 entradas: 122 activas y 70 historicas. El Panel
+lee descripciones, permite comentarios/estado/decision manuales, conserva la
+Fase 1, separa uso real/pruebas/historico y ofrece filtros de auditoria,
+historicas y contraer/expandir grupos. La prueba MCP con FreeCAD 1.1.3 mostro
+12 grupos y 122 herramientas activas; la prueba de botones registro una
+ejecucion real y una prueba en un log temporal. No se modificaron FCStd.
+
+Correccion posterior: el comentario ahora se guarda contra el elemento
+anterior de `currentItemChanged`, evitando que pase a la macro nueva. Las filas,
+estadisticas, recursos de comandos y catalogo se cachean durante la apertura;
+la busqueda ya no recalcula todo por cada tecla.
+
+### Verificacion visual posterior del Panel
+
+La validacion MCP posterior confirmo que la captura minima provenia de la
+prueba segura: esa prueba habia sustituido en memoria `_MACRO_GROUPS` por un
+grupo unico, aunque el registro de metadatos conservaba 122 comandos reales.
+Al reconstruir los grupos desde el registro, el Panel real mostro 12 grupos y
+122 filas, filtros, panel de detalles, botones y modo diagnostico. No se
+modificaron documentos FCStd.
 
 El modulo central revisado es:
 

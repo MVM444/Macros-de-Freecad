@@ -35,7 +35,9 @@ def load_sidecar(doc_path: Path) -> Dict[str, object]:
     """Read sidecar JSON if present."""
     FreeCAD = __import__("FreeCAD")
     sidecar = doc_path.with_suffix(".gee.json")
-    FreeCAD.Console.PrintMessage(f"[GAMEEXPORT] load_sidecar checking {sidecar}\n")
+    FreeCAD.Console.PrintMessage(
+        f"[GAMEEXPORT] load_sidecar checking {sidecar.name}\n"
+    )
     if not sidecar.exists():
         return {}
     try:
@@ -50,7 +52,7 @@ def save_sidecar(doc_path: Path, data: Dict[str, object]) -> Path:
     sidecar = doc_path.with_suffix(".gee.json")
     FreeCAD = __import__("FreeCAD")
     sidecar.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
-    FreeCAD.Console.PrintMessage(f"[GAMEEXPORT] Sidecar saved at {sidecar}\n")
+    FreeCAD.Console.PrintMessage(f"[GAMEEXPORT] Sidecar saved: {sidecar.name}\n")
     return sidecar
 
 

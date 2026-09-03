@@ -1,11 +1,11 @@
-"""Command to import a Quick Example JSON payload.
+"""Import JSON / AI command for GameEngineExportWB.
 
-Fecha: 2026-07-11.
-Objetivo: pegar JSON de ChatGPT y reconstruir una casa u oficina BIM.
-Instrucciones principales:
-- Usar dialogo local, sin API externa.
-- Aceptar JSON puro o texto con JSON embebido.
-- Delegar validacion y generacion a core.json_importer.
+Name: commands/cmd_import_json_example.py
+Purpose: use copy/paste JSON as a manual bridge between FreeCAD and an external AI assistant.
+Main behavior: copies an AI-ready prompt + current JSON, accepts returned JSON, validates it and rebuilds a Quick Example.
+Modification notes: keep the workflow local, without external APIs, and delegate JSON validation/generation to core.json_importer.
+Version: 2026-08-21-ai-json-prompt-v1
+Date and time: 2026-08-21 07:49 -06:00
 """
 
 from __future__ import annotations
@@ -16,7 +16,9 @@ import os
 import FreeCAD
 import FreeCADGui
 
-from ..core import json_importer
+from .. import i18n
+
+from ..core import json_ai, json_importer
 from ..ui.panel_export import _ensure_qt_compat
 
 
@@ -38,8 +40,8 @@ class CommandClass:
 
     def GetResources(self):  # noqa: N802
         return {
-            "MenuText": "Importar JSON / Import JSON",
-            "ToolTip": "Pegar JSON de ChatGPT y reconstruir casa u oficina",
+            "MenuText": i18n.bi("Importar JSON", "Import JSON"),
+            "ToolTip": i18n.bi("Copiar prompt/contexto para una IA o pegar JSON devuelto y reconstruir el ejemplo", "Copy an AI prompt/context or paste returned JSON and rebuild the example"),
             "Pixmap": ICON_PATH,
         }
 
@@ -60,20 +62,37 @@ class ImportJSONDialog(QtGui.QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("GameEngineExport - Import JSON")
+        self.setWindowTitle(i18n.bi("GameEngineExport - Importar JSON", "GameEngineExport - Import JSON"))
         self.resize(760, 560)
         self._build_ui()
 
     def _build_ui(self):
         layout = QtGui.QVBoxLayout(self)
 
+        intro = QtGui.QLabel(i18n.bi(
+            "Puente IA por copiar y pegar: copie prompt + JSON, pida cambios en lenguaje natural y pegue aqui el JSON devuelto.",
+            "Copy/paste AI bridge: copy prompt + JSON, request changes in natural language, and paste the returned JSON here.",
+        ))
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        ai_buttons = QtGui.QHBoxLayout()
+        self.btn_ai_prompt = QtGui.QPushButton(i18n.bi("Copiar prompt", "Copy prompt"))
+        self.btn_ai_package = QtGui.QPushButton(i18n.bi("Copiar prompt + JSON actual", "Copy prompt + current JSON"))
+        self.btn_ai_prompt.clicked.connect(self._copy_ai_prompt)
+        self.btn_ai_package.clicked.connect(self._copy_ai_package)
+        ai_buttons.addWidget(self.btn_ai_prompt)
+        ai_buttons.addWidget(self.btn_ai_package)
+        ai_buttons.addStretch(1)
+        layout.addLayout(ai_buttons)
+
         self.text = QtGui.QPlainTextEdit()
-        self.text.setPlaceholderText("Pegue aqui JSON puro o texto con un bloque JSON.")
+        self.text.setPlaceholderText(i18n.bi("Pegue aqui JSON puro o texto con un bloque JSON.", "Paste plain JSON or text containing a JSON block here."))
         layout.addWidget(self.text, 1)
 
         top_buttons = QtGui.QHBoxLayout()
-        self.btn_paste = QtGui.QPushButton("Pegar portapapeles")
-        self.btn_file = QtGui.QPushButton("Cargar archivo JSON")
+        self.btn_paste = QtGui.QPushButton(i18n.bi("Pegar portapapeles", "Paste clipboard"))
+        self.btn_file = QtGui.QPushButton(i18n.bi("Cargar archivo JSON", "Load JSON file"))
         self.btn_paste.clicked.connect(self._paste_clipboard)
         self.btn_file.clicked.connect(self._load_file)
         top_buttons.addWidget(self.btn_paste)
@@ -81,22 +100,68 @@ class ImportJSONDialog(QtGui.QDialog):
         top_buttons.addStretch(1)
         layout.addLayout(top_buttons)
 
-        self.clear_previous = QtGui.QCheckBox("Borrar ejemplos rapidos anteriores")
+        self.clear_previous = QtGui.QCheckBox(i18n.bi("Borrar ejemplos rapidos anteriores", "Delete previous Quick Examples"))
         self.clear_previous.setChecked(True)
-        self.copy_context = QtGui.QCheckBox("Copiar contexto actualizado al portapapeles")
+        self.copy_context = QtGui.QCheckBox(i18n.bi("Copiar contexto actualizado para IA (prompt + JSON)", "Copy updated AI context (prompt + JSON)"))
         self.copy_context.setChecked(False)
         layout.addWidget(self.clear_previous)
         layout.addWidget(self.copy_context)
 
         bottom = QtGui.QHBoxLayout()
         bottom.addStretch(1)
-        self.btn_generate = QtGui.QPushButton("Generar")
-        self.btn_cancel = QtGui.QPushButton("Cancelar")
+        self.btn_generate = QtGui.QPushButton(i18n.bi("Generar", "Generate"))
+        self.btn_cancel = QtGui.QPushButton(i18n.bi("Cancelar", "Cancel"))
         self.btn_generate.clicked.connect(self._generate)
         self.btn_cancel.clicked.connect(self.reject)
         bottom.addWidget(self.btn_generate)
         bottom.addWidget(self.btn_cancel)
         layout.addLayout(bottom)
+
+    def _clipboard(self):
+        app = QtGui.QApplication.instance()
+        return app.clipboard() if app is not None else None
+
+    def _current_document_context(self):
+        doc = FreeCAD.ActiveDocument
+        if doc is None:
+            return ""
+        for obj in reversed(list(getattr(doc, "Objects", []) or [])):
+            props = list(getattr(obj, "PropertiesList", []) or [])
+            if "GEE_ContextJSON" in props:
+                value = str(getattr(obj, "GEE_ContextJSON", "") or "").strip()
+                if value:
+                    return value
+        return ""
+
+    def _editor_context(self):
+        raw = self.text.toPlainText().strip()
+        if not raw:
+            return ""
+        try:
+            return json_importer.extract_json_text(raw)
+        except Exception:
+            return ""
+
+    def _copy_ai_prompt(self):
+        clipboard = self._clipboard()
+        if clipboard is None:
+            return
+        clipboard.setText(json_ai.get_prompt_template(i18n.current_language()))
+        FreeCAD.Console.PrintMessage(LOG_PREFIX + "AI JSON prompt copied to clipboard\n")
+
+    def _copy_ai_package(self):
+        clipboard = self._clipboard()
+        if clipboard is None:
+            return
+        context = self._editor_context() or self._current_document_context()
+        clipboard.setText(json_ai.build_ai_prompt(context, i18n.current_language()))
+        FreeCAD.Console.PrintMessage(LOG_PREFIX + "AI prompt + JSON context copied to clipboard\n")
+        if not context:
+            QtGui.QMessageBox.information(
+                self,
+                i18n.bi("IA / JSON", "AI / JSON"),
+                i18n.bi("No se encontro JSON actual; se copio solamente el prompt.", "No current JSON was found; only the prompt was copied."),
+            )
 
     def _paste_clipboard(self):
         app = QtGui.QApplication.instance()
@@ -107,9 +172,9 @@ class ImportJSONDialog(QtGui.QDialog):
     def _load_file(self):
         path, _selected = QtGui.QFileDialog.getOpenFileName(
             self,
-            "Cargar archivo JSON",
+            i18n.bi("Cargar archivo JSON", "Load JSON file"),
             "",
-            "JSON (*.json);;Texto (*.txt);;Todos (*.*)",
+            i18n.bi("JSON (*.json);;Texto (*.txt);;Todos (*.*)", "JSON (*.json);;Text (*.txt);;All files (*.*)"),
         )
         if not path:
             return
@@ -139,7 +204,7 @@ class ImportJSONDialog(QtGui.QDialog):
             if self.copy_context.isChecked():
                 app = QtGui.QApplication.instance()
                 if app is not None:
-                    app.clipboard().setText(context_text)
+                    app.clipboard().setText(json_ai.build_ai_prompt(context_text, i18n.current_language()))
             FreeCAD.Console.PrintMessage(LOG_PREFIX + "JSON example imported: " + str(root.Label) + "\n")
             self.accept()
         except Exception as exc:

@@ -23,7 +23,7 @@ class CommandClass:
     def GetResources(self):  # noqa: N802
         return {
             "MenuText": "FA Actualizar frente de plataforma",
-            "ToolTip": "Reconstruir el frente seleccionado desde Spreadsheet_Platform sin duplicar objetos.",
+            "ToolTip": "Releer la linea fuente y actualizar la plataforma sin duplicar objetos.",
             "Pixmap": ICON_PATH,
         }
 

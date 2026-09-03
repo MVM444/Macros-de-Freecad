@@ -1,0 +1,77 @@
+# ESTADO DEL PROYECTO
+
+Ultima actualizacion: 2026-08-13 12:35 America/Costa_Rica
+
+## Proyecto activo
+
+`Macros-de-Freecad` / `FacilArquitecturaWB`.
+
+Ultima tarea: `FA Cambiar tipo de puerta`.
+
+## Estado actual
+
+PROGRAMADO / COMPILADO / PROBADO / VERIFICADO_MCP / VERIFICADO_VISUAL.
+
+Version actual: `0.13.1`  
+Build: `2026.08.13.2`  
+FreeCAD probado: `1.1.3`
+
+## Funciona
+
+- `FA_ChangeDoorType` aparece una sola vez en `FA Aberturas BIM`;
+- el boton `Aplicar` acepta el dialogo y permite ejecutar el cambio seleccionado;
+- consulta los presets integrados en `ArchWindowPresets`;
+- en este equipo ofrece `Simple door` y `Glass door`;
+- conserva la identidad del objeto, ancho, alto, Placement, Hosts, Normal,
+  IfcType, contenedor y propiedades `FA_*`;
+- valida que el Wall siga perforado antes de retirar auxiliares;
+- admite seleccion multiple y puertas con dimensiones distintas;
+- conserva o restablece `Opening` segun la casilla del dialogo;
+- rechaza ventanas, Opening Elements, Parts genericos y puertas dobles FA
+  incompatibles sin modificarlos;
+- guarda el override individual por indice en `FA_DoorTypeOverrides` del Sketch;
+- `FA_CreateDoorsFromSketch` respeta ese override al regenerar;
+- guardar/cerrar/reabrir un FCStd temporal conserva tipos, hosts y cortes.
+
+## Verificacion
+
+- 148/148 pruebas Python: aprobadas;
+- smoke GUI del boton `Aplicar`: aprobado en FreeCAD 1.1.3;
+- `compileall`: aprobado;
+- XML de paquete e icono: aprobado;
+- prueba integral FreeCADCmd 1.1.3: aprobada;
+- regresiones de puertas/ventanas, Opening Element y puerta doble: aprobadas;
+- MCP real: FreeCAD 1.1.3, Workbench cargado desde OneDrive local, version/build
+  correctos, 24 comandos principales y una barra de Aberturas;
+- smoke MCP geometrico: misma identidad, dimensiones/Placement/Hosts/Normal
+  preservados, residuo Wall/hueco `0.0 mm3` y cero puertas auxiliares.
+- captura isometrica MCP: `Glass door` a 35% visible y coherente dentro del Wall.
+
+## Seguridad
+
+`La_Cruz_Versión_2_1` permanecio abierto y activo. No se guardo ni se modifico.
+Solo se crearon y cerraron documentos temporales de prueba. FreeCAD no se cerro.
+
+ElectricCR, MEPWorkbenchCR y GameEngineExportWB no fueron modificados por esta
+tarea. Sus cambios locales previos se conservaron.
+
+## Riesgos y pendientes
+
+- `Sliding door` no existe en FreeCAD 1.1.3 instalado y no se ofrece.
+- Parts Library no forma parte de esta primera version.
+- La puerta doble FA se rechaza deliberadamente por incompatibilidad de familia.
+- Pendiente solamente la validacion manual del usuario sobre una copia de proyecto
+  real; los criterios de `FacilArquitecturaWB/TAREA_ACTUAL.md` estan cumplidos.
+
+## Git
+
+- Rama: `agent/respaldo-electriccr-2026-08-10`
+- Commit base: `707a0fc Respaldar avances ElectricCR y workbenches`
+- Cambios sin commit: si, incluidos cambios anteriores ajenos a esta tarea
+- Commit realizado: no
+- Push realizado: no
+
+## Siguiente paso
+
+En una copia de proyecto, seleccionar varias puertas normales, ejecutar
+`FA Cambiar tipo de puerta`, guardar/reabrir y confirmar visualmente la tipologia.

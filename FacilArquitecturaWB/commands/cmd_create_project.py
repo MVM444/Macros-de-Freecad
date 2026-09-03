@@ -1,8 +1,8 @@
 """FA_CreateProject command.
 
-Descripcion: crea estructura base y hoja de parametros.
-Fecha: 2026-07-13
-Version: 0.1.0
+Descripcion: crea Building/Level nativos y solo los datos auxiliares necesarios.
+Fecha y hora: 2026-08-27 16:28 UTC-06:00
+Version: 0.2.0
 Instrucciones: comando idempotente; no destruir trabajo del usuario.
 """
 
@@ -16,7 +16,8 @@ import FreeCADGui
 
 from ..core.parameters import ensure_parameter_sheet
 from ..core.command_errors import handle_command_exception
-from ..core.project_structure import ensure_project_structure, msg
+from ..core.bim_structure_utils import ensure_bim_structure
+from ..core.project_structure import active_or_new_document, ensure_project_support_structure, msg
 
 ICON_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "resources", "icons", "facilarq.svg")).replace(
     os.sep, "/"
@@ -32,16 +33,21 @@ class CommandClass:
     def GetResources(self):  # noqa: N802
         return {
             "MenuText": "FA Crear proyecto",
-            "ToolTip": "Crear estructura base y Spreadsheet_Parametros para Facil Arquitectura.",
+            "ToolTip": "Crear Edificio/Nivel BIM nativos y los datos auxiliares minimos de Facil Arquitectura.",
             "Pixmap": ICON_PATH,
         }
 
     def Activated(self):  # noqa: N802
         try:
-            doc, _root, groups = ensure_project_structure()
+            doc = active_or_new_document()
+            spatial = ensure_bim_structure(doc)
+            _doc, _root, groups = ensure_project_support_structure(doc, keys=("parameters",))
             ensure_parameter_sheet(doc, groups["parameters"])
             doc.recompute()
-            msg("FA_CreateProject completado.")
+            msg(
+                "FA_CreateProject completado: Building=%s | Level=%s | sin ramas legacy vacias."
+                % (spatial["building"].Label, spatial["level"].Label)
+            )
         except Exception as exc:
             handle_command_exception("FA Crear proyecto", exc)
 

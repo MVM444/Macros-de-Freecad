@@ -17,6 +17,7 @@ from .. import usage_log
 
 PKG_DIR = os.path.dirname(os.path.dirname(__file__))
 ICONS_DIR = os.path.join(PKG_DIR, "icons")
+_REGISTERED_MACRO_METADATA = {}
 
 
 def _roots():
@@ -198,6 +199,57 @@ def _macro_self_manages_transaction(src: str) -> bool:
     return bool(has_open and has_close)
 
 
+def _transaction_kind(src: str) -> str:
+    """Return a conservative transaction classification for diagnostics."""
+    text = str(src or "").lower()
+    if "# transaction: self" in text or "# transaction:self" in text:
+        return "propia"
+    if "opentransaction(" in text and ("committransaction(" in text or "aborttransaction(" in text):
+        return "propia"
+    return "wrapper ElectricCR"
+
+
+def _icon_status(path: str) -> str:
+    name = os.path.basename(str(path or "")).lower()
+    if name in {"rayo.svg", "rayo.png", "rayo"}:
+        return "RAYO"
+    if path and os.path.isfile(path):
+        return "ESPECIFICO"
+    return "NO RESUELTO"
+
+
+def _record_macro_metadata(cmd_name: str, macro_path: str, label: str,
+                           group: str = "", toolbar: str = "", icon: str = "") -> None:
+    try:
+        macro_path = os.path.abspath(str(macro_path))
+        with open(macro_path, "r", encoding="utf-8-sig", errors="ignore") as fh:
+            src = fh.read()
+    except Exception:
+        src = ""
+    resolved_icon = os.path.abspath(icon) if icon and os.path.isfile(icon) else icon or icon_path("Rayo")
+    _REGISTERED_MACRO_METADATA[str(cmd_name)] = {
+        "command": str(cmd_name),
+        "label": str(label or cmd_name),
+        "group": str(group or "Macros"),
+        "toolbar": str(toolbar or group or "Macros"),
+        "macro": macro_path,
+        "macro_rel": usage_log._rel_macro_path(macro_path),
+        "icon": resolved_icon,
+        "icon_status": _icon_status(resolved_icon),
+        "transaction": _transaction_kind(src),
+        "file_exists": bool(os.path.isfile(macro_path)),
+    }
+
+
+def get_registered_macro_metadata() -> dict:
+    """Return a copy of metadata resolved while commands were registered."""
+    return {key: dict(value) for key, value in _REGISTERED_MACRO_METADATA.items()}
+
+
+def clear_registered_macro_metadata() -> None:
+    _REGISTERED_MACRO_METADATA.clear()
+
+
 def _run_macro_file(macro_abspath: str):
     """Ejecuta un archivo .FCMacro/.py en la sesi??n actual."""
     try:
@@ -278,6 +330,8 @@ def register_macro_command(cmd_name: str, macro_path: str, menu_text: str, toolt
     if not icon:
         icon = icon_path('Rayo')
 
+    _record_macro_metadata(cmd_name, macro_abspath, menu_text, icon=icon)
+
     class _MacroCmd:
         def GetResources(self):
             return {
@@ -289,7 +343,8 @@ def register_macro_command(cmd_name: str, macro_path: str, menu_text: str, toolt
         def Activated(self):
             try:
                 tool_id = f"macro:{macro_abspath}"
-                meta = {"cmd": cmd_name, "macro": macro_abspath, "label": menu_text}
+                meta = {"cmd": cmd_name, "macro": macro_abspath, "label": menu_text,
+                        "usage_kind": "real", "source": "macro_command"}
                 usage_log.log_tool(tool_id, meta)
             except Exception:
                 pass
@@ -311,6 +366,7 @@ def register_predefined_macros(base_dir: str):
       ├─ <Grupo2>/ *.FCMacro | *.py
       └─ *.FCMacro | *.py (macros sueltas en la raíz)
     """
+    clear_registered_macro_metadata()
     # Directorio raiz donde residen las macros del usuario para ElectricCR
     base_dir = os.path.abspath(base_dir)
 
@@ -411,6 +467,8 @@ def register_predefined_macros(base_dir: str):
                 cmd = register_macro_command(cmd_id, macro_path, label, icon=per_icon)
                 if cmd:
                     toolbar_override = _toolbar_for_macro(dirname, name, label)
+                    _record_macro_metadata(cmd, macro_path, label, group=title,
+                                           toolbar=toolbar_override or title, icon=per_icon)
                     if toolbar_override:
                         _append_to_group(toolbar_override, cmd)
                     else:
@@ -437,6 +495,10 @@ def register_predefined_macros(base_dir: str):
                         cmd = register_macro_command(cmd_id, macro_path, label, icon=per_icon)
                         if cmd:
                             toolbar_override = _toolbar_for_macro(dir_key, fname, label)
+                            _record_macro_metadata(cmd, macro_path, label,
+                                                   group=f"{title} - {sub}",
+                                                   toolbar=toolbar_override or f"{title} - {sub}",
+                                                   icon=per_icon)
                             if toolbar_override:
                                 _append_to_group(toolbar_override, cmd)
                             else:
@@ -481,6 +543,8 @@ def register_predefined_macros(base_dir: str):
                 cmd = register_macro_command(cmd_id, macro_path, label, icon=per_icon)
                 if cmd:
                     toolbar_override = _toolbar_for_macro('', name, label)
+                    _record_macro_metadata(cmd, macro_path, label, group="Macros",
+                                           toolbar=toolbar_override or "Macros", icon=per_icon)
                     if toolbar_override:
                         _append_to_group(toolbar_override, cmd)
                     else:
@@ -514,6 +578,8 @@ def register_predefined_macros(base_dir: str):
             cmd = register_macro_command(cmd_id, macro_path, label, icon=per_icon)
             if cmd:
                 toolbar_override = _toolbar_for_macro("ElectricCR", name, label)
+                _record_macro_metadata(cmd, macro_path, label, group="ElectricCR",
+                                       toolbar=toolbar_override or "ElectricCR", icon=per_icon)
                 if toolbar_override:
                     _append_to_group(toolbar_override, cmd)
                 else:

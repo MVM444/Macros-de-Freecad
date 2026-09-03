@@ -1,0 +1,127 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-31T12:03:32-06:00",
+  "host": "DESKTOP-5586S7P",
+  "freecad": {
+    "version_text": "1.1.3",
+    "version_tuple": [
+      "1",
+      "1",
+      "3",
+      "20260725 (Git shallow)",
+      "Unknown",
+      "2026/07/25 04:52:02",
+      "grafted,grafted",
+      "145529fe741292ff0b3977a01195bf0247425794"
+    ]
+  },
+  "python": {
+    "version": "3.11.14 | packaged by conda-forge | (main, Oct 13 2025, 14:00:26) [MSC v.1944 64 bit (AMD64)]",
+    "executable": "C:\\Users\\marco\\AppData\\Local\\Programs\\FreeCAD 1.1\\bin\\FreeCAD.exe"
+  },
+  "qt": {
+    "binding": "PySide6",
+    "binding_version": "6.8.3",
+    "qt_version": "6.8.3"
+  },
+  "active_workbench": "BIMWorkbench",
+  "active_document": {
+    "name": "_1416_Levantamiento_250424_Depurado",
+    "label": "1416 Levantamiento 250424 Depurado",
+    "objects": 157,
+    "touched": false,
+    "file_name": "C:/Users/marco/OneDrive - Caja Costarricense de Seguro Social/Documentos/FreeCAD/Sucursales/1416 Levantamiento 250424 Depurado.FCStd"
+  },
+  "paths": {
+    "user_app_data_dir": "C:\\Users\\marco\\AppData\\Roaming\\FreeCAD\\v1-1\\",
+    "user_macro_dir": "C:\\Users\\marco\\AppData\\Roaming\\FreeCAD\\v1-1\\Macro\\",
+    "macro_path": "C:/Users/marco/OneDrive - Caja Costarricense de Seguro Social/Documentos/FreeCAD/Macros",
+    "repo": "C:/Users/marco/OneDrive - Caja Costarricense de Seguro Social/Documentos/FreeCAD/Macros/Macros-de-Freecad",
+    "repo_is_onedrive": true
+  },
+  "workbenches": [
+    "AssemblyWorkbench",
+    "BIMWorkbench",
+    "CAMWorkbench",
+    "CablesWorkbench",
+    "DraftWorkbench",
+    "DynamicDataWorkbench",
+    "FacilArquitecturaWorkbench",
+    "FemWorkbench",
+    "FreeCADMCPAddonWorkbench",
+    "GameEngineExportWorkbench",
+    "GearWorkbench",
+    "HVAC",
+    "InspectionWorkbench",
+    "MaterialWorkbench",
+    "MeshWorkbench",
+    "NodesWorkbench",
+    "NoneWorkbench",
+    "OpenSCADWorkbench",
+    "PartDesignWorkbench",
+    "PartWorkbench",
+    "PointsWorkbench",
+    "ReverseEngineeringWorkbench",
+    "RobotWorkbench",
+    "SMWorkbench",
+    "SketcherWorkbench",
+    "SpreadsheetWorkbench",
+    "SurfaceWorkbench",
+    "TechDrawWorkbench",
+    "TestWorkbench"
+  ],
+  "commands": {
+    "FA_CreateDoorsFromSketch": true,
+    "FA_CreateDoorsBIM": true,
+    "FA_DoorTable": true,
+    "FA_WindowTable": true
+  },
+  "facilarq": {
+    "version": "0.14.11",
+    "build": "2026.08.31.3"
+  },
+  "modules": {
+    "FacilArquitecturaWB.InitGui": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\FacilArquitecturaWB\\InitGui.py",
+    "FacilArquitecturaWB.core.constants": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\FacilArquitecturaWB\\core\\constants.py",
+    "FacilArquitecturaWB.core.opening_utils": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\FacilArquitecturaWB\\core\\opening_utils.py",
+    "FacilArquitecturaWB.core.door_corner_utils": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\FacilArquitecturaWB\\core\\door_corner_utils.py",
+    "FacilArquitecturaWB.core.door_table_utils": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\FacilArquitecturaWB\\core\\door_table_utils.py",
+    "FacilArquitecturaWB.core.reloadable_command": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\FacilArquitecturaWB\\core\\reloadable_command.py",
+    "FacilArquitecturaWB.commands.cmd_create_doors_bim": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\FacilArquitecturaWB\\commands\\cmd_create_doors_bim.py"
+  },
+  "key_files": {
+    "FacilArquitecturaWB/InitGui.py": {
+      "sha256": "A437D0BE473B19BA8510661629108FDFB09DD61E2DA141548F201DA9F8F54CDC",
+      "size": 11090
+    },
+    "FacilArquitecturaWB/core/constants.py": {
+      "sha256": "5C517A8F89933817D8862DEBC27AB5F1D7E8F8FBD45555D2A98D813CA6B391A4",
+      "size": 1788
+    },
+    "FacilArquitecturaWB/core/opening_utils.py": {
+      "sha256": "548E6D3D03A0B570B926D4E65ABA33A573AC320BEBC143B189449E554A3AE034",
+      "size": 62790
+    },
+    "FacilArquitecturaWB/core/door_corner_utils.py": {
+      "sha256": "256EAD081EA7637AEFDE7706FAE60C1AA41080CA7FA09242A521855B336444FE",
+      "size": 22565
+    },
+    "FacilArquitecturaWB/core/door_table_utils.py": {
+      "sha256": "000A846E049B102D998AD798CC3918A95CC85BE54C49C7A5CF1861731FCA9CC7",
+      "size": 37237
+    },
+    "FacilArquitecturaWB/core/reloadable_command.py": {
+      "sha256": "1A029AC137FD67557380BAF38D0CB63248CBAD7AE140EC0EC2B0029239CDD8AE",
+      "size": 1152
+    },
+    "FacilArquitecturaWB/commands/cmd_create_doors_bim.py": {
+      "sha256": "E96B98CAEC6EF1A67A4E39DB4554F287FF71C497E4359F7645F3619C8BC0A8B6",
+      "size": 6840
+    }
+  },
+  "notes": [
+    "Cierre tecnico FA Puertas BIM: baseline 0.14.11 / 2026.08.31.3 verificada por MCP.",
+    "GeometryIndex 1 registrado como limitacion visual conocida; no se modifico el algoritmo durante el cierre.",
+    "Copia temporal cerrada y eliminada; original unico abierto con 157 objetos y sin cambios pendientes."
+  ]
+}

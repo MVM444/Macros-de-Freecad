@@ -1,7 +1,11 @@
 """GameStart helpers for Game Engine Export WB.
 
-Descripcion rapida: crea, localiza y lee metadata del marcador GameStart.
-Fecha y hora: 2026-06-24 19:05 UTC.
+Name: core/gamestart.py
+Purpose: create, locate, place and read the GameStart marker used as the X3D initial viewpoint.
+Main behavior: keeps one reusable marker and can place it outside a main boundary entrance, facing inward.
+Modification notes: keep the geometry-independent entrance calculation reusable from Quick Examples and future MCP adapters.
+Version: 2026-08-19-main-entrance-v1
+Date and time: 2026-08-19 16:13 -06:00
 """
 
 from __future__ import annotations
@@ -16,6 +20,8 @@ PROPERTY_GROUP = "GameEngineExport"
 DEFAULT_LABEL = "GameStart"
 DEFAULT_FOV_DEG = 60.0
 DEFAULT_HEIGHT_OFFSET_MM = 1600.0
+DEFAULT_ENTRANCE_DISTANCE_MM = 1800.0
+DEFAULT_BOUNDARY_TOLERANCE_MM = 5.0
 
 
 def ensure_gamestart(doc, label: str = DEFAULT_LABEL):
@@ -56,6 +62,123 @@ def ensure_gamestart(doc, label: str = DEFAULT_LABEL):
     action = "Created" if created else "Updated"
     FreeCAD.Console.PrintMessage(LOG_PREFIX + action + " GameStart marker: " + obj.Label + "\n")
     return obj
+
+
+def compute_main_entrance_pose(
+    door_segments,
+    width_mm: float,
+    depth_mm: float,
+    distance_mm: float = DEFAULT_ENTRANCE_DISTANCE_MM,
+    z_mm: float = 0.0,
+) -> Optional[Dict[str, object]]:
+    """Return a JSON-friendly pose outside the first door on the outer boundary."""
+    width = float(width_mm)
+    depth = float(depth_mm)
+    distance = max(0.0, float(distance_mm))
+    tolerance = max(DEFAULT_BOUNDARY_TOLERANCE_MM, max(width, depth) * 1e-7)
+    for index, segment in enumerate(list(door_segments or [])):
+        try:
+            x1, y1, x2, y2 = [float(value) for value in segment[:4]]
+        except Exception:
+            continue
+        mid_x = (x1 + x2) * 0.5
+        mid_y = (y1 + y2) * 0.5
+        side = None
+        outward = (0.0, 0.0)
+        inward = (0.0, 0.0)
+        if abs(y1) <= tolerance and abs(y2) <= tolerance:
+            side, outward, inward = "south", (0.0, -1.0), (0.0, 1.0)
+        elif abs(y1 - depth) <= tolerance and abs(y2 - depth) <= tolerance:
+            side, outward, inward = "north", (0.0, 1.0), (0.0, -1.0)
+        elif abs(x1) <= tolerance and abs(x2) <= tolerance:
+            side, outward, inward = "west", (-1.0, 0.0), (1.0, 0.0)
+        elif abs(x1 - width) <= tolerance and abs(x2 - width) <= tolerance:
+            side, outward, inward = "east", (1.0, 0.0), (-1.0, 0.0)
+        if side is None:
+            continue
+        yaw_deg = math.degrees(math.atan2(inward[0], -inward[1]))
+        yaw_deg = ((yaw_deg + 180.0) % 360.0) - 180.0
+        if abs(yaw_deg + 180.0) <= 1e-9:
+            yaw_deg = 180.0
+        return {
+            "position_mm": (mid_x + outward[0] * distance, mid_y + outward[1] * distance, float(z_mm)),
+            "yaw_deg": yaw_deg,
+            "pitch_deg": 0.0,
+            "roll_deg": 0.0,
+            "boundary_side": side,
+            "door_index": index,
+            "door_segment": (x1, y1, x2, y2),
+            "fallback": False,
+        }
+    return None
+
+
+def place_gamestart_at_main_entrance(
+    doc,
+    root,
+    door_segments,
+    width_mm: float,
+    depth_mm: float,
+    label: str = DEFAULT_LABEL,
+    distance_mm: float = DEFAULT_ENTRANCE_DISTANCE_MM,
+    height_offset_mm: float = DEFAULT_HEIGHT_OFFSET_MM,
+    fov_deg: float = DEFAULT_FOV_DEG,
+):
+    """Create/update GameStart outside the main entrance and point it inward."""
+    FreeCAD = __import__("FreeCAD")
+    marker = ensure_gamestart(doc, label)
+    if marker is None:
+        return None
+    pose = compute_main_entrance_pose(door_segments, width_mm, depth_mm, distance_mm)
+    if pose is None:
+        pose = {
+            "position_mm": (float(width_mm) * 0.5, -float(distance_mm), 0.0),
+            "yaw_deg": 180.0,
+            "pitch_deg": 0.0,
+            "roll_deg": 0.0,
+            "boundary_side": "south_fallback",
+            "door_index": -1,
+            "door_segment": None,
+            "fallback": True,
+        }
+        FreeCAD.Console.PrintWarning(LOG_PREFIX + "No boundary entrance found; GameStart uses controlled south fallback\n")
+    position = pose["position_mm"]
+    marker.Placement.Base = FreeCAD.Vector(float(position[0]), float(position[1]), float(position[2]))
+    for name, value in (
+        ("Yaw", float(pose["yaw_deg"])),
+        ("Pitch", float(pose["pitch_deg"])),
+        ("Roll", float(pose["roll_deg"])),
+        ("HeightOffset", float(height_offset_mm)),
+        ("FOV", float(fov_deg)),
+        ("FieldOfView", float(fov_deg)),
+    ):
+        try:
+            setattr(marker, name, value)
+        except Exception:
+            pass
+    _ensure_property(marker, "App::PropertyString", "EntranceSide", str(pose["boundary_side"]))
+    _ensure_property(marker, "App::PropertyFloat", "EntranceDistance_mm", float(distance_mm))
+    try:
+        marker.EntranceSide = str(pose["boundary_side"])
+        marker.EntranceDistance_mm = float(distance_mm)
+    except Exception:
+        pass
+    if root is not None:
+        try:
+            root.addObject(marker)
+        except Exception:
+            pass
+    try:
+        doc.recompute()
+    except Exception:
+        pass
+    FreeCAD.Console.PrintMessage(
+        LOG_PREFIX + "GameStart placed at main entrance: side=" + str(pose["boundary_side"])
+        + ", position_mm=" + ",".join(f"{float(value):.1f}" for value in position)
+        + ", yaw_deg=" + f"{float(pose['yaw_deg']):.1f}"
+        + (", fallback=true" if pose.get("fallback") else "") + "\n"
+    )
+    return marker
 
 
 def find_gamestart(doc, label: str = DEFAULT_LABEL):
@@ -260,4 +383,10 @@ def _safe_object_name(label: str) -> str:
     return name
 
 
-__all__: List[str] = ["ensure_gamestart", "find_gamestart", "get_metadata"]
+__all__: List[str] = [
+    "compute_main_entrance_pose",
+    "ensure_gamestart",
+    "find_gamestart",
+    "get_metadata",
+    "place_gamestart_at_main_entrance",
+]

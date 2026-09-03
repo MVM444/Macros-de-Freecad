@@ -1,9 +1,11 @@
-"""BIM floor and test-terrain helpers for FacilArquitecturaWB.
+"""BIM floor and terrain helpers for FacilArquitecturaWB.
 
-Descripcion: crea una losa BIM y un sitio de prueba desde sketches arquitectonicos.
-Fecha: 2026-07-23
-Version: 0.1.0
-Instrucciones: usar Arch.makeStructure y Arch.makeSite; mantener las fuentes enlazadas.
+Descripcion: crea una losa BIM y un sitio/terreno desde sketches arquitectonicos.
+Funcion principal: integrar Site -> Building -> Level -> Slab y evitar terreno superpuesto bajo la losa.
+Mantenimiento: conservar Arch.makeStructure/Arch.makeSite y las dependencias nativas; no duplicar contencion.
+FreeCAD objetivo: 1.1.3.
+Fecha y hora: 2026-09-01 15:15 America/Costa_Rica.
+Version: 0.3.0.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ import FreeCAD
 import Part
 
 from .command_errors import UserFacingError
+from .bim_structure_utils import add_to_level, is_building, is_level
 from .project_structure import msg, set_prop, warn
 
 try:
@@ -91,10 +94,14 @@ def combined_sketch_bounds(sketches):
     return bounds
 
 
-def create_site_floor_from_sketches(doc, bim_group, sketches, options):
-    """Create a dynamic footprint, Arch slab and Arch site with test terrain."""
+def create_site_floor_from_sketches(doc, bim_group, sketches, options, building=None, level=None):
+    """Create a dynamic footprint, BIM slab and Site, preferring native spatial containment."""
     if Arch is None or not hasattr(Arch, "makeStructure") or not hasattr(Arch, "makeSite"):
         raise UserFacingError("Arch/BIM no esta disponible. Active o instale el Workbench BIM.")
+    if building is not None and not is_building(building):
+        raise UserFacingError("El contenedor de edificio no es un Building BIM nativo.")
+    if level is not None and not is_level(level):
+        raise UserFacingError("El contenedor de piso no es un Building Storey BIM nativo.")
 
     usable = _unique_plan_sketches(sketches)
     combined_sketch_bounds(usable)
@@ -110,10 +117,13 @@ def create_site_floor_from_sketches(doc, bim_group, sketches, options):
     footprint.Overhang = float(options.get("floor_overhang_mm", 100.0))
     footprint.TopZ = float(options.get("floor_top_z_mm", 0.0))
     _tag_generated(footprint, "floor_footprint")
-    try:
-        bim_group.addObject(footprint)
-    except Exception:
-        pass
+    # La huella es Base de la losa. En el flujo BIM nativo no se agrega tambien
+    # al Level para evitar una segunda aparicion visual en el arbol.
+    if level is None and bim_group is not None:
+        try:
+            bim_group.addObject(footprint)
+        except Exception:
+            pass
     doc.recompute()
     if getattr(footprint, "Shape", None) is None or footprint.Shape.isNull():
         raise UserFacingError("No fue posible construir la huella del piso desde los sketches.")
@@ -121,14 +131,18 @@ def create_site_floor_from_sketches(doc, bim_group, sketches, options):
     slab = _make_bim_slab(footprint, float(options.get("floor_thickness_mm", 150.0)))
     slab.Label = "Losa BIM desde sketches"
     _tag_generated(slab, "floor_slab")
-    set_prop(
+    _set_source_name_metadata(
         slab,
-        "App::PropertyLinkList",
-        "FA_SourceSketches",
-        "FacilArquitectura",
-        "Sketches usados para calcular la huella",
         usable,
+        "Sketches usados para calcular la huella; la dependencia geometrica real reside en la Base",
     )
+    if level is not None:
+        add_to_level(level, slab)
+    elif bim_group is not None:
+        try:
+            bim_group.addObject(slab)
+        except Exception:
+            pass
 
     terrain = None
     if bool(options.get("create_test_terrain", True)):
@@ -143,7 +157,8 @@ def create_site_floor_from_sketches(doc, bim_group, sketches, options):
             options.get("floor_thickness_mm", 150.0)
         )
         terrain.Seed = int(options.get("terrain_seed", 12345))
-        _tag_generated(terrain, "terrain_test")
+        terrain.CutUnderBuilding = bool(options.get("cut_terrain_under_building", True))
+        _tag_generated(terrain, "terrain")
         set_prop(
             terrain,
             "App::PropertyBool",
@@ -154,26 +169,44 @@ def create_site_floor_from_sketches(doc, bim_group, sketches, options):
         )
         doc.recompute()
 
+    site_objects = [building] if building is not None else [slab]
     try:
-        site = Arch.makeSite(objectslist=[slab], baseobj=terrain, name="FA_Site")
+        site = Arch.makeSite(objectslist=site_objects, baseobj=terrain, name="FA_Site")
     except TypeError:
-        site = Arch.makeSite([slab], terrain, "FA_Site")
+        site = Arch.makeSite(site_objects, terrain, "FA_Site")
     if site is None:
         raise UserFacingError("Arch.makeSite no pudo crear el sitio BIM.")
-    site.Label = "Sitio BIM - Piso y terreno"
+    site.Label = "Sitio BIM"
     _tag_generated(site, "site")
-    set_prop(
+    _set_source_name_metadata(
         site,
-        "App::PropertyLinkList",
-        "FA_SourceSketches",
-        "FacilArquitectura",
-        "Sketches arquitectonicos de referencia",
         usable,
+        "Sketches arquitectonicos de referencia; se guardan por nombre para no reclamar hijos en el arbol",
     )
-    try:
-        bim_group.addObject(site)
-    except Exception:
-        pass
+    if building is not None:
+        set_prop(
+            site,
+            "App::PropertyString",
+            "FA_BuildingName",
+            "FacilArquitectura",
+            "Building contenido por el Site",
+            str(getattr(building, "Name", "") or ""),
+        )
+    if level is not None:
+        set_prop(
+            site,
+            "App::PropertyString",
+            "FA_LevelName",
+            "FacilArquitectura",
+            "Level que contiene la losa",
+            str(getattr(level, "Name", "") or ""),
+        )
+    # En el flujo nativo el Site es raiz espacial y no se agrega tambien a 03_BIM.
+    if building is None and bim_group is not None:
+        try:
+            bim_group.addObject(site)
+        except Exception:
+            pass
 
     _set_view(footprint, visible=False)
     _set_view(slab, color=(0.78, 0.72, 0.62), transparency=0)
@@ -191,6 +224,32 @@ def create_site_floor_from_sketches(doc, bim_group, sketches, options):
     return {"site": site, "slab": slab, "terrain": terrain, "footprint": footprint}
 
 
+
+
+def _set_source_name_metadata(obj, sketches, description):
+    """Store source names without creating extra dependency children in the tree.
+
+    Earlier builds used ``App::PropertyLinkList FA_SourceSketches`` on Site and
+    Slab only for traceability. Those links made the Sketches appear under Site
+    even though their semantic parent is a Wall/Footprint/Auxiliares FA. New
+    objects use names only; generated legacy properties are cleared on rerun.
+    """
+    names = [str(getattr(sketch, "Name", "") or "") for sketch in list(sketches or [])]
+    names = [name for name in names if name]
+    if hasattr(obj, "FA_SourceSketches"):
+        try:
+            obj.FA_SourceSketches = []
+        except Exception:
+            pass
+    set_prop(
+        obj,
+        "App::PropertyStringList",
+        "FA_SourceSketchNames",
+        "FacilArquitectura",
+        description,
+        names,
+    )
+
 def remove_previous_site_floor(doc):
     """Remove only objects generated by this command, in dependency order."""
     tagged = [
@@ -198,7 +257,7 @@ def remove_previous_site_floor(doc):
         for obj in list(getattr(doc, "Objects", []) or [])
         if str(getattr(obj, "FA_GeneratedBy", "") or "") == GENERATED_BY_SITE_FLOOR
     ]
-    role_order = {"site": 0, "floor_slab": 1, "terrain_test": 2, "floor_footprint": 3}
+    role_order = {"site": 0, "floor_slab": 1, "terrain": 2, "terrain_test": 2, "floor_footprint": 3}
     tagged.sort(key=lambda obj: role_order.get(str(getattr(obj, "FA_Role", "")), 99))
     removed = 0
     for obj in tagged:
@@ -274,7 +333,7 @@ class FloorFootprintProxy:
 
 
 class TestTerrainProxy:
-    """Simple deterministic terrain surface with a flat building pad."""
+    """Simple deterministic terrain surface with a flat pad and optional building cutout."""
 
     def __init__(self, obj=None):
         self.Type = "FacilArquitectura_TestTerrain"
@@ -288,6 +347,14 @@ class TestTerrainProxy:
         set_prop(obj, "App::PropertyLength", "Variation", "FacilArquitectura", "Variacion vertical maxima", 500.0)
         set_prop(obj, "App::PropertyLength", "SurfaceZ", "FacilArquitectura", "Cota de plataforma", -150.0)
         set_prop(obj, "App::PropertyInteger", "Seed", "FacilArquitectura", "Semilla del terreno", 12345)
+        set_prop(
+            obj,
+            "App::PropertyBool",
+            "CutUnderBuilding",
+            "FacilArquitectura",
+            "No generar caras de terreno bajo la huella de la losa",
+            True,
+        )
         obj.Proxy = self
 
     def execute(self, obj):
@@ -307,12 +374,15 @@ class TestTerrainProxy:
                 _quantity_value(obj.Variation),
                 _quantity_value(obj.SurfaceZ),
                 int(obj.Seed),
+                bool(getattr(obj, "CutUnderBuilding", True)),
             )
         except Exception as exc:
             warn("No se pudo actualizar el terreno de prueba: %s" % exc)
 
     def onDocumentRestored(self, obj):  # noqa: N802
-        obj.Proxy = self
+        # Reaplica el esquema sin sobrescribir valores guardados. Esto agrega
+        # CutUnderBuilding a terrenos creados por versiones anteriores.
+        self.attach(obj)
 
     def __getstate__(self):
         return {"Type": self.Type}
@@ -338,7 +408,9 @@ def _make_bim_slab(base, thickness):
     return slab
 
 
-def _test_terrain_shape(x_min, y_min, x_max, y_max, margin, pad_margin, variation, surface_z, seed):
+def _test_terrain_shape(
+    x_min, y_min, x_max, y_max, margin, pad_margin, variation, surface_z, seed, cut_under_building=True
+):
     margin = max(500.0, float(margin))
     pad_margin = max(0.0, min(float(pad_margin), margin))
     x0, x1 = x_min - margin, x_max + margin
@@ -364,6 +436,12 @@ def _test_terrain_shape(x_min, y_min, x_max, y_max, margin, pad_margin, variatio
     faces = []
     for row in range(len(ys) - 1):
         for column in range(len(xs) - 1):
+            cell_cx = (xs[column] + xs[column + 1]) / 2.0
+            cell_cy = (ys[row] + ys[row + 1]) / 2.0
+            if bool(cut_under_building) and x_min <= cell_cx <= x_max and y_min <= cell_cy <= y_max:
+                # La losa ocupa esta zona. Omitir estas caras evita superficies
+                # coincidentes y el efecto visual de terreno atravesando el piso.
+                continue
             p00 = points[row][column]
             p10 = points[row][column + 1]
             p01 = points[row + 1][column]

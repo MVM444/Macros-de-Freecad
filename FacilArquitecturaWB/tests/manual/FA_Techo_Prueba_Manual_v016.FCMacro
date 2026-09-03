@@ -1,0 +1,473 @@
+"""FA_Techo_Prueba_Manual_v015.FCMacro
+
+Nombre: FA_Techo_Prueba_Manual_v015
+Proposito: validar manualmente el apilado geometrico cercha -> clavador -> cubierta.
+Funcion principal: crea un documento temporal con una unica superficie maestra,
+una cercha Arch Truss maestra repetida por un unico Arch Axis, clavadores Arch Frame separados
+por faldon y una cubierta Arch Roof apoyada sobre la cara superior de los clavadores.
+FreeCAD objetivo: 1.1.3.
+Version: 0.1.6-manual
+Fecha y hora: 2026-08-30 16:27 America/Costa_Rica
+
+Instrucciones para futuras modificaciones:
+- Macro diagnostica y autosuficiente; no modifica documentos existentes.
+- La referencia maestra es la cara superior del cordon superior de las cerchas.
+- Existe una sola Base nativa para la cercha maestra; Arch/BIM la oculta al asignarla.
+- El Truss usa su propiedad nativa Axis para materializar cinco posiciones en una sola Shape compuesta.
+- Los clavadores proyectados se dividen por faldon y usan origen de perfil en el
+  centro de la cara inferior; el path es la linea real de contacto con la cercha.
+- La base de Arch Roof se eleva PURLIN_H/cos(pendiente), equivalente a una distancia
+  normal PURLIN_H sobre la superficie maestra.
+- No representa calculo estructural; solo geometria y coordinacion BIM.
+"""
+
+from __future__ import annotations
+
+import math
+import traceback
+from datetime import datetime
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+import Sketcher
+import Arch
+
+try:
+    from PySide import QtWidgets
+except Exception:
+    QtWidgets = None
+
+
+DOC_BASE = "FA_Techo_Prueba_Manual_v016"
+WIDTH = 8000.0
+LENGTH = 12000.0
+SUPPORT_EAVE_Z = 3000.0
+PITCH_DEG = 20.0
+ROOF_THICKNESS = 50.0
+OVERHANG = 600.0
+TRUSS_HEIGHT_START = 150.0
+TRUSS_STRUT_H = 50.0
+TRUSS_STRUT_W = 50.0
+PURLIN_W = 50.0
+PURLIN_H = 100.0
+PURLIN_T = 2.0
+CONTACT_TOL_MM = 0.25
+OVERLAP_TOL_MM3 = 100.0
+
+
+def _msg(text):
+    App.Console.PrintMessage("[FA TECHO v016] " + str(text) + "\n")
+
+
+def _warn(text):
+    App.Console.PrintWarning("[FA TECHO v016] " + str(text) + "\n")
+
+
+def _new_doc_name(base):
+    return "%s_%s" % (base, datetime.now().strftime("%Y%m%d_%H%M%S_%f"))
+
+
+def _add_group(doc, name, label):
+    group = doc.addObject("App::DocumentObjectGroup", name)
+    group.Label = label
+    return group
+
+
+def _make_line_sketch(doc, name, label, lines, z=0.0):
+    sketch = doc.addObject("Sketcher::SketchObject", name)
+    sketch.Label = label
+    sketch.Placement.Base.z = float(z)
+    for x1, y1, x2, y2 in lines:
+        sketch.addGeometry(
+            Part.LineSegment(App.Vector(float(x1), float(y1), 0), App.Vector(float(x2), float(y2), 0)),
+            False,
+        )
+    return sketch
+
+
+def _shape_ok(obj):
+    try:
+        return (not obj.Shape.isNull()) and obj.Shape.isValid()
+    except Exception:
+        return False
+
+
+def _support_z(x):
+    run = min(float(x), WIDTH - float(x))
+    return SUPPORT_EAVE_Z + run * math.tan(math.radians(PITCH_DEG))
+
+
+def _side_normal(side):
+    s = math.sin(math.radians(PITCH_DEG))
+    c = math.cos(math.radians(PITCH_DEG))
+    if side == "LEFT":
+        return App.Vector(-s, 0.0, c)
+    if side == "RIGHT":
+        return App.Vector(s, 0.0, c)
+    return App.Vector(0.0, 0.0, 1.0)
+
+
+def _make_master_surfaces(doc):
+    ridge_z = SUPPORT_EAVE_Z + (WIDTH * 0.5) * math.tan(math.radians(PITCH_DEG))
+    left = Part.Face(Part.makePolygon([
+        App.Vector(0, 0, SUPPORT_EAVE_Z),
+        App.Vector(WIDTH * 0.5, 0, ridge_z),
+        App.Vector(WIDTH * 0.5, LENGTH, ridge_z),
+        App.Vector(0, LENGTH, SUPPORT_EAVE_Z),
+        App.Vector(0, 0, SUPPORT_EAVE_Z),
+    ]))
+    right = Part.Face(Part.makePolygon([
+        App.Vector(WIDTH * 0.5, 0, ridge_z),
+        App.Vector(WIDTH, 0, SUPPORT_EAVE_Z),
+        App.Vector(WIDTH, LENGTH, SUPPORT_EAVE_Z),
+        App.Vector(WIDTH * 0.5, LENGTH, ridge_z),
+        App.Vector(WIDTH * 0.5, 0, ridge_z),
+    ]))
+    obj = doc.addObject("Part::Feature", "Superficie_Maestra")
+    obj.Label = "SUPERFICIE MAESTRA - cara superior de cerchas"
+    obj.Shape = Part.makeCompound([left, right])
+    try:
+        obj.ViewObject.Transparency = 88
+    except Exception:
+        pass
+    return obj
+
+
+def _make_arch_axis_family(doc, positions):
+    """Un solo Arch Axis con todas las posiciones de la familia de cerchas."""
+    ordered = sorted([float(v) for v in positions], reverse=True)
+    axis = Arch.makeAxis(num=len(ordered), size=WIDTH + 1000.0, name="Ejes")
+    axis.Label = "Ejes"
+    axis.Distances = [0.0] + [ordered[i - 1] - ordered[i] for i in range(1, len(ordered))]
+    axis.Angles = [0.0] * len(ordered)
+    axis.Length = WIDTH + 1000.0
+    # Con rotacion -90, +X local del Axis avanza hacia -Y global y +Y local
+    # dibuja cada eje a lo largo de +X global. El primer eje queda en y=max.
+    axis.Placement = App.Placement(
+        App.Vector(-500.0, ordered[0], SUPPORT_EAVE_Z),
+        App.Rotation(App.Vector(0, 0, 1), -90.0),
+    )
+    try:
+        axis.ViewObject.NumberingStyle = "01,02,03"
+        axis.ViewObject.BubblePosition = "Both"
+        axis.ViewObject.DrawStyle = "Dashdot"
+    except Exception:
+        pass
+    return axis
+
+
+def _make_master_truss(doc, axis):
+    """Una sola Base local + un solo Truss repetido por la propiedad nativa Axis."""
+    # El primer punto del Axis esta en (-500, LENGTH, SUPPORT_EAVE_Z).
+    # La Base local comienza 500 mm despues del inicio grafico del eje y 150 mm
+    # por debajo de la cara superior de apoyo de la cercha.
+    baseline = doc.addObject("Part::Feature", "Base_Cercha_01")
+    baseline.Label = "Base cercha 01"
+    baseline.Shape = Part.makeLine(
+        App.Vector(500.0, 0.0, -TRUSS_HEIGHT_START),
+        App.Vector(500.0 + WIDTH, 0.0, -TRUSS_HEIGHT_START),
+    )
+
+    truss = Arch.makeTruss(baseline)
+    if truss is None:
+        raise RuntimeError("Arch.makeTruss no creo la cercha maestra")
+    truss.Label = "Cercha BIM 01"
+    truss.SlantType = "Double"
+    truss.Normal = App.Vector(0, 0, 1)
+    truss.HeightStart = TRUSS_HEIGHT_START
+    truss.HeightEnd = TRUSS_HEIGHT_START + (WIDTH * 0.5) * math.tan(math.radians(PITCH_DEG))
+    truss.StrutStartOffset = 0.0
+    truss.StrutEndOffset = 0.0
+    truss.StrutHeight = 50.0
+    truss.StrutWidth = 50.0
+    truss.RodType = "Square"
+    truss.RodDirection = "Forward"
+    truss.RodSize = 25.0
+    truss.RodSections = 6
+    truss.RodEnd = True
+    truss.RodMode = "/|\\|/|\\"
+    truss.Axis = axis
+    return baseline, truss
+
+
+
+def _c_profile_bottom_face(width, height, thickness):
+    """Crea la cara cerrada de un perfil C con origen en el centro de su cara inferior."""
+    w, h, t = float(width), float(height), float(thickness)
+    pts = [
+        App.Vector(-w / 2.0, 0.0, 0),
+        App.Vector(w / 2.0, 0.0, 0),
+        App.Vector(w / 2.0, t, 0),
+        App.Vector(-w / 2.0 + t, t, 0),
+        App.Vector(-w / 2.0 + t, h - t, 0),
+        App.Vector(w / 2.0, h - t, 0),
+        App.Vector(w / 2.0, h, 0),
+        App.Vector(-w / 2.0, h, 0),
+    ]
+    return Part.Face(Part.makePolygon(pts + [pts[0]]))
+
+
+def _frame_rotation(normal, path_start, path_end):
+    """Devuelve la orientacion del perfil para un path de clavador."""
+    bvec = path_end.sub(path_start)
+    return App.Rotation(App.Vector(), normal, bvec, "ZYX")
+
+
+def _make_purlin_side(doc, profile, side, x_positions):
+    """Crea el layout y Arch Frame de un solo faldon."""
+    wires = []
+    paths = []
+    for x in x_positions:
+        z = _support_z(x)
+        p0 = App.Vector(x, 0.0, z)
+        p1 = App.Vector(x, LENGTH, z)
+        paths.append((p0, p1))
+        wires.append(Part.Wire([Part.makeLine(p0, p1)]))
+
+    layout = doc.addObject("Part::Feature", "Layout_Clavadores_%s" % side)
+    layout.Label = "Layout clavadores %s - contacto con cercha" % side
+    layout.Shape = wires[0] if len(wires) == 1 else Part.makeCompound(wires)
+
+    doc.recompute()
+    frame = Arch.makeFrame(layout, profile, name="Clavadores_%s" % side)
+    if frame is None:
+        raise RuntimeError("Arch.makeFrame devolvio None para %s" % side)
+    frame.Label = "Clavadores BIM - faldon %s" % side
+    frame.Align = False
+    frame.BasePoint = 0
+    frame.ProfilePlacement = App.Placement(
+        App.Vector(),
+        _frame_rotation(_side_normal(side), paths[0][0], paths[0][1]),
+    )
+    frame.Rotation = 0.0
+    frame.Fuse = False
+    try:
+        frame.IfcType = "Beam"
+    except Exception:
+        pass
+    try:
+        layout.ViewObject.Visibility = False
+    except Exception:
+        pass
+    return layout, frame
+
+def _make_purlins(doc):
+    # Se evita el clavador exactamente en cumbrera porque requiere un detalle de coronacion propio.
+    left_x = [300.0, 1500.0, 2800.0]
+    right_x = [5200.0, 6500.0, 7700.0]
+    x_positions = left_x + right_x
+    source_sketch = _make_line_sketch(
+        doc,
+        "Sketch_Clavadores_Prueba",
+        "Sketch clavadores en planta - sin clavador de cumbrera",
+        [(x, 0.0, x, LENGTH) for x in x_positions],
+        z=SUPPORT_EAVE_Z,
+    )
+    profile = doc.addObject("Part::Feature", "Perfil_C_Clavadores")
+    profile.Label = "Perfil C 50 x 100 x 2 - origen inferior"
+    profile.Shape = _c_profile_bottom_face(PURLIN_W, PURLIN_H, PURLIN_T)
+
+    left_layout, left_frame = _make_purlin_side(doc, profile, "LEFT", left_x)
+    right_layout, right_frame = _make_purlin_side(doc, profile, "RIGHT", right_x)
+    try:
+        profile.ViewObject.Visibility = False
+    except Exception:
+        pass
+    return source_sketch, profile, [left_layout, right_layout], [left_frame, right_frame]
+
+
+def _make_roof_source_sketch(doc):
+    points = [(0.0, 0.0), (WIDTH, 0.0), (WIDTH, LENGTH), (0.0, LENGTH)]
+    return _make_line_sketch(
+        doc,
+        "Sketch_Cubierta_Prueba",
+        "Sketch cubierta - referencia estructural",
+        [(points[i][0], points[i][1], points[(i + 1) % 4][0], points[(i + 1) % 4][1]) for i in range(4)],
+        z=SUPPORT_EAVE_Z,
+    )
+
+
+def _make_roof(doc, source_sketch):
+    # Separacion vertical equivalente a PURLIN_H medido NORMAL al faldon.
+    vertical_offset = PURLIN_H / math.cos(math.radians(PITCH_DEG))
+    z = SUPPORT_EAVE_Z + vertical_offset
+    pts = [
+        App.Vector(0, 0, z),
+        App.Vector(WIDTH, 0, z),
+        App.Vector(WIDTH, LENGTH, z),
+        App.Vector(0, LENGTH, z),
+    ]
+    base = doc.addObject("Part::Feature", "Base_Cubierta_Elevada")
+    base.Label = "Base cubierta elevada hasta cara superior de clavadores"
+    base.Shape = Part.makePolygon(pts + [pts[0]])
+    try:
+        base.ViewObject.Visibility = False
+    except Exception:
+        pass
+
+    doc.recompute()
+    roof = Arch.makeRoof(
+        base,
+        angles=[90.0, PITCH_DEG, 90.0, PITCH_DEG],
+        run=[0.0, WIDTH * 0.5, 0.0, WIDTH * 0.5],
+        thickness=[ROOF_THICKNESS] * 4,
+        overhang=[OVERHANG] * 4,
+        name="Cubierta_BIM_Prueba",
+    )
+    if roof is None:
+        raise RuntimeError("Arch.makeRoof devolvio None")
+    roof.Label = "Cubierta BIM apoyada sobre clavadores"
+    try:
+        roof.ViewObject.Transparency = 72
+    except Exception:
+        pass
+    return base, roof, vertical_offset
+
+
+def _distance_and_overlap(a, b):
+    try:
+        distance = float(a.Shape.distToShape(b.Shape)[0])
+    except Exception:
+        distance = float("inf")
+    try:
+        overlap = float(a.Shape.common(b.Shape).Volume)
+    except Exception:
+        overlap = float("inf")
+    return distance, overlap
+
+
+def _contact_ok(a, b):
+    distance, overlap = _distance_and_overlap(a, b)
+    return distance <= CONTACT_TOL_MM and overlap <= OVERLAP_TOL_MM3, distance, overlap
+
+
+def run():
+    doc_name = _new_doc_name(DOC_BASE)
+    doc = App.newDocument(doc_name)
+    _msg("Documento creado: %s" % doc_name)
+    doc.openTransaction("FA Techo v016 - prueba manual")
+    try:
+        sketches_group = _add_group(doc, "00_Sketches", "00 Sketches fuente")
+        ref_group = _add_group(doc, "01_Referencia", "01 Superficie maestra")
+        purlin_group = _add_group(doc, "04_Clavadores", "04 Clavadores BIM")
+        roof_group = _add_group(doc, "05_Cubierta", "05 Cubierta BIM")
+
+        master = _make_master_surfaces(doc)
+        ref_group.addObject(master)
+
+        truss_y = [0.0, 3000.0, 6000.0, 9000.0, 12000.0]
+        truss_sketch = _make_line_sketch(
+            doc,
+            "Sketch_Ejes_Cerchas_Prueba",
+            "Sketch cara superior de cerchas",
+            [(0.0, y, WIDTH, y) for y in truss_y],
+            z=SUPPORT_EAVE_Z,
+        )
+        sketches_group.addObject(truss_sketch)
+
+        axis = _make_arch_axis_family(doc, truss_y)
+        baseline, truss = _make_master_truss(doc, axis)
+        trusses = [truss]
+
+        purlin_sketch, purlin_profile, layouts, purlin_frames = _make_purlins(doc)
+        sketches_group.addObject(purlin_sketch)
+        purlin_group.addObject(purlin_profile)
+        for obj in layouts + purlin_frames:
+            purlin_group.addObject(obj)
+
+        roof_sketch = _make_roof_source_sketch(doc)
+        sketches_group.addObject(roof_sketch)
+        roof_base, roof, roof_offset = _make_roof(doc, roof_sketch)
+        roof_group.addObject(roof_base)
+        roof_group.addObject(roof)
+
+        doc.recompute()
+        doc.commitTransaction()
+
+        axis_points = list(axis.Proxy.getPoints(axis) or []) if getattr(axis, "Proxy", None) else []
+        family_extent_ok = _shape_ok(truss) and truss.Shape.BoundBox.YLength >= (LENGTH - 1.0)
+        shape_checks = {
+            "cerchas": all(_shape_ok(obj) for obj in trusses) and len(axis_points) == len(truss_y) and family_extent_ok,
+            "clavadores": all(_shape_ok(obj) for obj in purlin_frames),
+            "cubierta": _shape_ok(roof),
+        }
+
+        truss_contacts = []
+        for frame in purlin_frames:
+            for truss in trusses:
+                truss_contacts.append(_contact_ok(frame, truss))
+        roof_contacts = [_contact_ok(frame, roof) for frame in purlin_frames]
+        contact_checks = {
+            "cercha_clavador": all(v[0] for v in truss_contacts),
+            "clavador_cubierta": all(v[0] for v in roof_contacts),
+        }
+
+        _msg("--- GEOMETRIA MAESTRA ---")
+        _msg("Cara superior cercha en alero: Z=%.3f mm" % SUPPORT_EAVE_Z)
+        _msg("Base nativa cercha: Z=%.3f mm" % (SUPPORT_EAVE_Z - TRUSS_HEIGHT_START))
+        _msg("Altura normal clavador: %.3f mm" % PURLIN_H)
+        _msg("Elevacion vertical base Roof: %.3f mm" % roof_offset)
+        _msg("Base Roof en alero: Z=%.3f mm" % (SUPPORT_EAVE_Z + roof_offset))
+        _msg("--- VALIDACION ---")
+        _msg("Familia cerchas: 1 Base + 1 Truss + Axis(%d posiciones)" % len(axis_points))
+        _msg("Shapes cerchas=%s clavadores=%s cubierta=%s" % (shape_checks["cerchas"], shape_checks["clavadores"], shape_checks["cubierta"]))
+        _msg("Contacto cercha-clavador=%s" % contact_checks["cercha_clavador"])
+        _msg("Contacto clavador-cubierta=%s" % contact_checks["clavador_cubierta"])
+        for i, (ok, dist, vol) in enumerate(roof_contacts, start=1):
+            _msg("Faldon %d vs Roof: distancia=%.6f mm | solape=%.6f mm3 | %s" % (i, dist, vol, "OK" if ok else "REVISAR"))
+        worst_dist = max((v[1] for v in truss_contacts), default=0.0)
+        worst_overlap = max((v[2] for v in truss_contacts), default=0.0)
+        _msg("Cercha-clavador peor caso: distancia=%.6f mm | solape=%.6f mm3" % (worst_dist, worst_overlap))
+
+        try:
+            master.ViewObject.Visibility = False
+            Gui.activeDocument().activeView().viewAxonometric()
+            Gui.activeDocument().activeView().fitAll()
+        except Exception:
+            pass
+
+        ok = all(shape_checks.values()) and all(contact_checks.values())
+        if QtWidgets is not None:
+            text = (
+                "Documento: %s\n\n"
+                "Cerchas validas: %s\n"
+                "Clavadores validos: %s\n"
+                "Cubierta valida: %s\n"
+                "Contacto cercha-clavador: %s\n"
+                "Contacto clavador-cubierta: %s\n\n"
+                "La prueba usa una sola superficie maestra.\n"
+                "Los clavadores de ambos faldones son Frames independientes.\n"
+                "No se incluyo clavador exactamente en cumbrera porque requiere detalle propio.\n\n"
+                "Revise visualmente que no existan separaciones ni penetraciones visibles."
+            ) % (
+                doc_name,
+                "OK" if shape_checks["cerchas"] else "REVISAR",
+                "OK" if shape_checks["clavadores"] else "REVISAR",
+                "OK" if shape_checks["cubierta"] else "REVISAR",
+                "OK" if contact_checks["cercha_clavador"] else "REVISAR",
+                "OK" if contact_checks["clavador_cubierta"] else "REVISAR",
+            )
+            if ok:
+                QtWidgets.QMessageBox.information(None, "FA Techo v014", text)
+            else:
+                QtWidgets.QMessageBox.warning(None, "FA Techo v014", text)
+        return doc
+
+    except Exception as exc:
+        try:
+            doc.abortTransaction()
+        except Exception:
+            pass
+        _warn("FALLO: %s" % exc)
+        App.Console.PrintError(traceback.format_exc() + "\n")
+        try:
+            Gui.activeDocument().activeView().fitAll()
+        except Exception:
+            pass
+        if QtWidgets is not None:
+            QtWidgets.QMessageBox.critical(None, "FA Techo v014 - fallo", "La prueba se detuvo:\n\n%s" % exc)
+        return doc
+
+
+run()

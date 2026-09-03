@@ -1,10 +1,11 @@
 """Quick example scene generators for GameEngineExportWB.
 
-Descripcion rapida: genera escenas BIM pequenas para probar exportacion X3D.
-Instrucciones clave:
-- Usar sketches como fuente parametrica de paredes y buques.
-- Crear Arch Wall cuando el modulo Arch este disponible.
-- Mantener propiedades CGE/TestExample utiles para filtrar o exportar.
+Name: core/quick_examples.py
+Purpose: generate small BIM-like scenes used to validate FreeCAD to X3D to Castle workflows.
+Main behavior: creates walls/openings/site objects and specialized photometric or maze examples.
+Modification notes: preserve existing examples; maze gets a 1000 mm perimeter sidewalk plus exterior ground, and every example receives GameStart at its main entrance.
+Version: 2026-08-21-ai-json-prompt-v1
+Date and time: 2026-08-21 07:49 -06:00
 """
 
 from __future__ import annotations
@@ -17,6 +18,8 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import FreeCAD
 import Part
+
+from . import example_layouts, gamestart, json_ai, lights, maze_generator
 
 try:
     import Arch
@@ -51,6 +54,11 @@ DEFAULT_FLOOR_TOP_Z_MM = 60.0
 DEFAULT_FLATTEN_PAD = True
 DEFAULT_PAD_MARGIN_MM = 1800.0
 DEFAULT_PAD_Z_MM = -260.0
+DEFAULT_MAZE_SIDEWALK_MM = 1000.0
+DEFAULT_MAZE_OUTER_GROUND_MARGIN_MM = 6000.0
+DEFAULT_MAZE_FLOOR_THICKNESS_MM = 120.0
+DEFAULT_MAZE_GROUND_TOP_Z_MM = -60.0
+DEFAULT_MAZE_GROUND_THICKNESS_MM = 120.0
 
 Segment = Tuple[float, float, float, float]
 
@@ -553,16 +561,13 @@ def _room(name: str, kind: str, x: float, y: float, width: float, depth: float) 
     }
 
 
-def _create_context_document(doc, root, payload: Dict):
+def _create_context_document(doc, root, payload: Dict, language="es"):
     text = json.dumps(payload, ensure_ascii=False, indent=2)
+    ai_text = json_ai.build_ai_prompt(text, language)
     try:
         obj = doc.addObject("App::TextDocument", "AI_Contexto_QuickExample")
         obj.Label = "AI_Contexto_QuickExample"
-        obj.Text = (
-            "Contexto generado por GameEngineExportWB Quick Example.\n"
-            "Copiar este JSON para revisar o pedir cambios a una IA externa.\n\n"
-            + text
-        )
+        obj.Text = ai_text
     except Exception:
         obj = doc.addObject("App::FeaturePython", "AI_Contexto_QuickExample")
         obj.Label = "AI_Contexto_QuickExample"
@@ -882,6 +887,11 @@ def _generate_quick_example_from_data(
         "rooms": rooms,
         "objects": {},
     }
+    payload_extensions = options.get("payload_extensions", {})
+    if isinstance(payload_extensions, dict):
+        for key, value in payload_extensions.items():
+            if key not in payload and key not in {"objects", "root_group"}:
+                payload[key] = value
 
     sketch_group = doc.addObject("App::DocumentObjectGroup", "Sketches")
     wall_group = doc.addObject("App::DocumentObjectGroup", "ArchWalls")
@@ -945,7 +955,7 @@ def _generate_quick_example_from_data(
         "exterior": exterior_ok,
         "interior": interior_ok,
     }
-    context_obj, context_text = _create_context_document(doc, root, payload)
+    context_obj, context_text = _create_context_document(doc, root, payload, options.get("ai_prompt_language", "es"))
     payload["objects"]["context"] = _object_ref(context_obj)
     _set_prop(
         root,
@@ -965,8 +975,8 @@ def _generate_quick_example_from_data(
 
             app = QtGui.QApplication.instance()
             if app is not None:
-                app.clipboard().setText(context_text)
-                _info("Quick example JSON context copied to clipboard")
+                app.clipboard().setText(json_ai.build_ai_prompt(context_text, options.get("ai_prompt_language", "es")))
+                _info("Quick example AI prompt + JSON context copied to clipboard")
         except Exception as exc:
             _warn("Could not copy JSON context to clipboard: %s" % exc)
     return root, payload, context_text
@@ -992,6 +1002,36 @@ def build_quick_example_from_data(
     root, payload, context_text = _generate_quick_example_from_data(
         doc, building_type, variant, int(seed or 0), dimensions, terrain, segments, rooms, options
     )
+    if building_type == "Laberinto":
+        extensions = options.get("payload_extensions", {})
+        maze_meta = extensions.get("maze", {}) if isinstance(extensions, dict) else {}
+        include_ceiling = bool(options.get("include_ceiling", True))
+        _add_maze_environment_objects(
+            doc,
+            root,
+            float(dimensions.get("width_mm", 0.0)),
+            float(dimensions.get("depth_mm", 0.0)),
+            float(dimensions.get("wall_height_mm", DEFAULT_WALL_HEIGHT_MM)),
+            maze_meta,
+            include_ceiling=include_ceiling,
+            sidewalk_mm=float(options.get("maze_sidewalk_mm", DEFAULT_MAZE_SIDEWALK_MM)),
+            outer_ground_margin_mm=float(
+                options.get("maze_outer_ground_margin_mm", DEFAULT_MAZE_OUTER_GROUND_MARGIN_MM)
+            ),
+        )
+        _tag_quick_example_tree(root, building_type, int(seed or 0), variant)
+        doc.recompute()
+
+    gamestart.place_gamestart_at_main_entrance(
+        doc,
+        root,
+        list(segments.get("door_openings", []) or []),
+        float(dimensions.get("width_mm", 0.0)),
+        float(dimensions.get("depth_mm", 0.0)),
+        distance_mm=float(options.get("gamestart_distance_mm", gamestart.DEFAULT_ENTRANCE_DISTANCE_MM)),
+        height_offset_mm=float(options.get("gamestart_height_mm", gamestart.DEFAULT_HEIGHT_OFFSET_MM)),
+        fov_deg=float(options.get("gamestart_fov_deg", gamestart.DEFAULT_FOV_DEG)),
+    )
     return root, payload, context_text
 
 
@@ -1006,9 +1046,60 @@ def generate_quick_example(options: Optional[Dict] = None):
     building_type = options.get("building_type", "Casa")
     if building_type == "Aleatorio":
         building_type = rng.choice(["Casa", "Oficina"])
-    width = float(options.get("width_mm", 0) or (12000 if building_type == "Casa" else 22000))
-    depth = float(options.get("depth_mm", 0) or (9000 if building_type == "Casa" else 14000))
-    segments_raw = _house_segments(width, depth, rng) if building_type == "Casa" else _office_segments(width, depth, rng)
+    if building_type == "Laberinto":
+        maze_layout = maze_generator.generate_maze_layout(
+            rows=int(options.get("maze_rows", 7)),
+            cols=int(options.get("maze_cols", 10)),
+            cell_size_mm=float(options.get("maze_cell_mm", 2000.0)),
+            seed=seed,
+        )
+        maze_meta = dict(maze_layout["maze"])
+        width = float(maze_meta["cols"]) * float(maze_meta["cell_size_mm"])
+        depth = float(maze_meta["rows"]) * float(maze_meta["cell_size_mm"])
+        segments_raw = {
+            "variant": "laberinto_doom_perfecto",
+            "exterior": maze_layout["exterior"],
+            "interior": maze_layout["interior"],
+            "doors": maze_layout["doors"],
+            "windows": maze_layout["windows"],
+            "rooms": maze_layout["rooms"],
+        }
+        options["create_terrain"] = False
+        options["payload_extensions"] = {
+            "maze": maze_meta,
+            "ai_editing": {
+                "workflow": "Copiar AI_Contexto_QuickExample, modificar JSON con IA e importar con Importar JSON",
+                "geometry_source": "segments",
+                "preserve_units": "mm",
+                "requirements": [
+                    "Mantener al menos una entrada y una salida",
+                    "Mantener corredores conectados",
+                    "Usar segmentos [x1,y1,x2,y2] alineados a los ejes",
+                ],
+            },
+        }
+    elif building_type == "Fotometria":
+        width = float(options.get("width_mm", 0) or 10000.0)
+        depth = float(options.get("depth_mm", 0) or 5000.0)
+        wall_height = float(options.get("wall_height_mm", 0) or 2800.0)
+        photometric_layout = example_layouts.photometric_two_room_layout(width, depth)
+        segments_raw = dict(photometric_layout["segments"])
+        segments_raw["rooms"] = list(photometric_layout["rooms"])
+        options["create_terrain"] = False
+        options["wall_height_mm"] = wall_height
+        payload_extensions = options.get("payload_extensions", {})
+        payload_extensions = dict(payload_extensions) if isinstance(payload_extensions, dict) else {}
+        payload_extensions.update(
+            {
+                "photometric_example": dict(photometric_layout["photometric_example"]),
+                "gamestart": dict(photometric_layout["gamestart"]),
+            }
+        )
+        options["payload_extensions"] = payload_extensions
+    else:
+        width = float(options.get("width_mm", 0) or (12000 if building_type == "Casa" else 22000))
+        depth = float(options.get("depth_mm", 0) or (9000 if building_type == "Casa" else 14000))
+        segments_raw = _house_segments(width, depth, rng) if building_type == "Casa" else _office_segments(width, depth, rng)
     variant = str(segments_raw.get("variant", "default"))
     dimensions = {
         "width_mm": width,
@@ -1044,4 +1135,232 @@ def generate_quick_example(options: Optional[Dict] = None):
         segments_raw.get("rooms", []),
         options,
     )
+    if building_type == "Fotometria":
+        _add_photometric_calibration_objects(
+            FreeCAD.ActiveDocument, root, width, depth, dimensions["wall_height_mm"]
+        )
+        _tag_quick_example_tree(root, building_type, seed, variant)
+        FreeCAD.ActiveDocument.recompute()
     return root
+
+
+def _add_maze_environment_objects(
+    doc,
+    root,
+    width: float,
+    depth: float,
+    height: float,
+    maze_meta: Optional[Dict] = None,
+    include_ceiling: bool = True,
+    sidewalk_mm: float = DEFAULT_MAZE_SIDEWALK_MM,
+    outer_ground_margin_mm: float = DEFAULT_MAZE_OUTER_GROUND_MARGIN_MM,
+) -> None:
+    """Add a closed Doom-like shell and visible start/exit markers.
+
+    ``include_ceiling`` lets callers omit the ceiling slab so the maze can be
+    inspected from above without an extra solid at the top of the walls.
+    """
+    maze_meta = dict(maze_meta or {})
+    group = doc.addObject("App::DocumentObjectGroup", "GEE_MazeEnvironment")
+    group.Label = "Entorno laberinto tipo Doom"
+    root.addObject(group)
+
+    sidewalk = max(0.0, float(sidewalk_mm))
+    outer_margin = max(1000.0, float(outer_ground_margin_mm))
+    floor_thickness = DEFAULT_MAZE_FLOOR_THICKNESS_MM
+    slab_x = -sidewalk
+    slab_y = -sidewalk
+    slab_width = width + 2.0 * sidewalk
+    slab_depth = depth + 2.0 * sidewalk
+
+    floor = doc.addObject("Part::Feature", "GEE_MazeFloor")
+    floor.Label = "Piso y acera perimetral laberinto"
+    floor.Shape = Part.makeBox(
+        slab_width,
+        slab_depth,
+        floor_thickness,
+        FreeCAD.Vector(slab_x, slab_y, -floor_thickness),
+    )
+    _set_prop(
+        floor,
+        "App::PropertyFloat",
+        "SidewalkWidth_mm",
+        "GameEngineExport",
+        "Perimeter sidewalk width",
+        sidewalk,
+    )
+    _set_view(floor, (0.28, 0.30, 0.32))
+    group.addObject(floor)
+
+    # Build exterior ground as a ring outside the sidewalk. Its top is below
+    # the sidewalk top, so no coplanar faces or z-fighting are introduced.
+    ground_top = DEFAULT_MAZE_GROUND_TOP_Z_MM
+    ground_thickness = DEFAULT_MAZE_GROUND_THICKNESS_MM
+    outer_x = slab_x - outer_margin
+    outer_y = slab_y - outer_margin
+    outer_width = slab_width + 2.0 * outer_margin
+    outer_depth = slab_depth + 2.0 * outer_margin
+    ground = doc.addObject("Part::Feature", "GEE_MazeOuterGround")
+    ground.Label = "Suelo exterior laberinto"
+    outer_shape = Part.makeBox(
+        outer_width,
+        outer_depth,
+        ground_thickness,
+        FreeCAD.Vector(outer_x, outer_y, ground_top - ground_thickness),
+    )
+    cutter = Part.makeBox(
+        slab_width,
+        slab_depth,
+        ground_thickness + 20.0,
+        FreeCAD.Vector(slab_x, slab_y, ground_top - ground_thickness - 10.0),
+    )
+    try:
+        ground.Shape = outer_shape.cut(cutter)
+    except Exception:
+        ground.Shape = outer_shape
+    _set_prop(
+        ground,
+        "App::PropertyBool",
+        "CGE_GroundCandidate",
+        "GameEngineExport",
+        "Can be used as exterior ground",
+        True,
+    )
+    _set_prop(
+        ground,
+        "App::PropertyFloat",
+        "GroundTopZ_mm",
+        "GameEngineExport",
+        "Exterior ground top elevation",
+        ground_top,
+    )
+    _set_view(ground, (0.34, 0.29, 0.20))
+    group.addObject(ground)
+
+    if include_ceiling:
+        ceiling = doc.addObject("Part::Feature", "GEE_MazeCeiling")
+        ceiling.Label = "Cielo laberinto"
+        ceiling.Shape = Part.makeBox(width, depth, 120.0, FreeCAD.Vector(0.0, 0.0, height))
+        _set_view(ceiling, (0.20, 0.22, 0.24))
+        group.addObject(ceiling)
+
+    rows = max(1, int(maze_meta.get("rows", 1) or 1))
+    cols = max(1, int(maze_meta.get("cols", 1) or 1))
+    cell_size = float(
+        maze_meta.get("cell_size_mm", min(width / cols, depth / rows)) or 1000.0
+    )
+    entrance = maze_meta.get("entrance_cell", [0, 0])
+    exit_cell = maze_meta.get("exit_cell", [rows - 1, cols - 1])
+    for name, label, cell, color in (
+        ("GEE_MazeStart", "Inicio laberinto", entrance, (0.15, 0.80, 0.25)),
+        ("GEE_MazeExit", "Salida laberinto", exit_cell, (0.90, 0.18, 0.12)),
+    ):
+        row = max(0, min(rows - 1, int(cell[0])))
+        col = max(0, min(cols - 1, int(cell[1])))
+        marker_size = min(900.0, cell_size * 0.45)
+        marker = doc.addObject("Part::Feature", name)
+        marker.Label = label
+        marker.Shape = Part.makeBox(
+            marker_size,
+            marker_size,
+            20.0,
+            FreeCAD.Vector(
+                (col + 0.5) * cell_size - marker_size * 0.5,
+                (row + 0.5) * cell_size - marker_size * 0.5,
+                0.0,
+            ),
+        )
+        _set_view(marker, color)
+        group.addObject(marker)
+
+
+def _add_photometric_calibration_objects(doc, root, width: float, depth: float, height: float) -> None:
+    """Add a floor, ceiling and two calibrated luminaires to the small test scene."""
+    group = doc.addObject("App::DocumentObjectGroup", "GEE_PhotometricCalibration")
+    group.Label = "Calibracion fotometrica: 2 recintos"
+    root.addObject(group)
+
+    floor = doc.addObject("Part::Feature", "GEE_PhotometricFloor")
+    floor.Label = "Piso calibracion"
+    floor.Shape = Part.makeBox(width, depth, 100.0, FreeCAD.Vector(0.0, 0.0, -100.0))
+    _set_view(floor, (0.72, 0.72, 0.72))
+    group.addObject(floor)
+
+    ceiling = doc.addObject("Part::Feature", "GEE_PhotometricCeiling")
+    ceiling.Label = "Cielo calibracion"
+    ceiling.Shape = Part.makeBox(width, depth, 100.0, FreeCAD.Vector(0.0, 0.0, height))
+    _set_view(ceiling, (0.82, 0.82, 0.82))
+    group.addObject(ceiling)
+
+    for index, x_pos in enumerate((width * 0.25, width * 0.75), start=1):
+        luminaire = doc.addObject("Part::Feature", f"GEE_PhotometricLuminaire_{index}")
+        luminaire.Label = f"Luminaria fotometrica {index} - 3600 lm"
+        luminaire.Shape = Part.makeBox(
+            600.0,
+            600.0,
+            40.0,
+            FreeCAD.Vector(x_pos - 300.0, depth * 0.5 - 300.0, height - 40.0),
+        )
+        _set_view(luminaire, (1.0, 0.95, 0.72))
+        lights.write_cge_light_properties(
+            luminaire,
+            {
+                "enabled": True,
+                "type": "Point",
+                "pattern": "Single",
+                "direction": "Down",
+                "origin_mode": "AutoFaceCenter",
+                "offset_mm": 20.0,
+                "intensity": 1.0,
+                "range_m": 6.0,
+                "lumens": 3600.0,
+                "beam_angle_deg": 120.0,
+                "cct_kelvin": 4000.0,
+                "rows": 1,
+                "cols": 1,
+                "count": 1,
+                "color": (1.0, 0.95, 0.85),
+                "preview_enabled": False,
+            },
+        )
+        group.addObject(luminaire)
+
+
+def _add_photometric_gamestart(doc, root, settings: Optional[Dict] = None):
+    """Create and place the standard GameStart inside photometric room A."""
+    settings = dict(settings or {})
+    marker = gamestart.ensure_gamestart(doc, "GameStart")
+    if marker is None:
+        raise RuntimeError("No se pudo crear GameStart para el ejemplo fotometrico.")
+
+    position = list(settings.get("position_mm", [1800.0, 2500.0, 0.0]))
+    if len(position) != 3:
+        position = [1800.0, 2500.0, 0.0]
+    marker.Placement.Base = FreeCAD.Vector(
+        float(position[0]), float(position[1]), float(position[2])
+    )
+    for name, value in (
+        ("Yaw", float(settings.get("yaw_deg", -90.0))),
+        ("Pitch", float(settings.get("pitch_deg", 0.0))),
+        ("Roll", float(settings.get("roll_deg", 0.0))),
+        ("HeightOffset", float(settings.get("height_offset_mm", 1600.0))),
+        ("FOV", float(settings.get("fov_deg", 60.0))),
+        ("FieldOfView", float(settings.get("fov_deg", 60.0))),
+    ):
+        try:
+            setattr(marker, name, value)
+        except Exception:
+            pass
+    root.addObject(marker)
+    FreeCAD.Console.PrintMessage(
+        "[GAMEEXPORT] Photometric GameStart ready: object="
+        + str(getattr(marker, "Name", "GameStart"))
+        + ", position_mm="
+        + ",".join(f"{float(value):.1f}" for value in position)
+        + ", yaw_deg="
+        + f"{float(settings.get('yaw_deg', -90.0)):.1f}"
+        + ", height_offset_mm="
+        + f"{float(settings.get('height_offset_mm', 1600.0)):.1f}"
+        + "\n"
+    )
+    return marker

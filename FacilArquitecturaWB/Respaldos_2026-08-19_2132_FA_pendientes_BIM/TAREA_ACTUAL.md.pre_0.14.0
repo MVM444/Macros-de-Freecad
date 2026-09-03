@@ -1,0 +1,308 @@
+\# TAREA\_ACTUAL \- FA Cambiar tipo de puerta
+
+Fecha y hora: 2026-08-13 11:45 \-06:00  
+Proyecto: Macros-de-Freecad / FacilArquitecturaWB  
+FreeCAD objetivo: 1.1.3  
+Estado inicial: PENDIENTE DE EJECUCION  
+Prioridad: Alta
+
+\#\# Objetivo
+
+Implementar en Facil Arquitectura una herramienta para cambiar el tipo/preset BIM nativo de una o varias puertas Arch/BIM YA CREADAS, sin obligar al usuario a borrarlas y volverlas a insertar.
+
+Nombre visible recomendado:
+
+\`FA Cambiar tipo de puerta\`
+
+Nombre interno recomendado:
+
+\`FA\_ChangeDoorType\`
+
+La herramienta debe usar exclusivamente los tipos de puerta disponibles en el BIM instalado de FreeCAD. Por ahora NO crear familias o presets propios de Facil Arquitectura.
+
+\#\# Investigacion previa ya realizada por GPT
+
+Se reviso codigo/documentacion oficial de FreeCAD antes de definir esta tarea.
+
+Hallazgos:
+
+1\. \`ArchWindowPresets.WindowPresets\` es la fuente nativa de presets.  
+2\. En el codigo oficial actual aparecen, entre otros:  
+   \- \`Simple door\`  
+   \- \`Sliding door\`  
+   \- \`Glass door\`  
+3\. \`ArchWindowPresets.makeWindowPreset(...)\` crea un Sketch de preset y despues un \`Arch.makeWindow(...)\`; cuando el nombre contiene \`door\`, fija \`IfcType \= "Door"\`.  
+4\. La propiedad \`Preset\` de \`ArchWindow.\_Window\` es \`App::PropertyInteger\`, bloqueada/solo lectura y documentada como el numero de preset en que se basa.  
+5\. \`Preset\` NO aparece entre las propiedades que \`ArchWindow.\_Window.onChanged()\` usa para reconstruir la geometria.  
+6\. La geometria real depende principalmente de \`Base\`, \`WindowParts\`, \`Width\`, \`Height\`, \`Normal\`, \`Hosts\` y \`Opening\`.  
+7\. Por tanto, NO asumir que cambiar solamente \`obj.Preset\` cambia el tipo. Debe verificarse en FreeCAD 1.1.3 real.
+
+Fuentes primarias a volver a verificar desde Codex si hay diferencia con la instalacion local:  
+\- FreeCAD \`src/Mod/BIM/ArchWindowPresets.py\`  
+\- FreeCAD \`src/Mod/BIM/ArchWindow.py\`  
+\- documentacion oficial de Arch/BIM Window/Door
+
+\#\# Regla de arquitectura
+
+Usar primero capacidades BIM nativas.
+
+No crear geometria de puerta propia si el preset nativo ya la define.
+
+No duplicar el algoritmo interno de los presets de FreeCAD salvo que no exista otra forma segura. Preferir invocar/reutilizar \`ArchWindowPresets\` de la instalacion.
+
+\#\# Entrada
+
+El usuario selecciona una o varias puertas existentes en el arbol o vista 3D.
+
+Aceptar objetos que cumplan realmente la semantica Arch/BIM Door, por ejemplo:  
+\- objeto \`ArchWindow.\_Window\` / tipo Draft equivalente Window;  
+\- \`IfcType \== "Door"\`.
+
+No aceptar ventanas, Opening Elements, muros u objetos Part genericos.
+
+Puertas dobles especiales de FA: soportarlas solo si su arquitectura resulta compatible con el cambio de preset. Si no, rechazarlas claramente sin dañarlas.
+
+\#\# Presets disponibles
+
+NO codificar una lista cerrada como unica fuente de verdad.
+
+En tiempo de ejecucion consultar el modulo instalado, preferentemente:
+
+\`ArchWindowPresets.WindowPresets\`
+
+Filtrar solamente presets que correspondan a puertas.
+
+Como base, en codigo oficial actual existen:  
+\- \`Simple door\`  
+\- \`Sliding door\`  
+\- \`Glass door\`
+
+Pero la herramienta debe obedecer lo que realmente exista en FreeCAD 1.1.3 instalado en la computadora.
+
+Si hay presets adicionales provenientes de Parts Library, estudiar si el mecanismo nativo permite tratarlos de forma segura. Si no, esta primera version puede limitarse a presets integrados de \`ArchWindowPresets\`, documentandolo.
+
+\#\# Interfaz
+
+Dialogo sencillo y consistente con Facil Arquitectura.
+
+Mostrar:  
+\- \`Puertas seleccionadas: N\`  
+\- \`Tipo actual:\` si todas comparten tipo; si no, \`Varios\`  
+\- combo \`Nuevo tipo BIM\`  
+\- casilla \`Conservar ancho y alto\` activada por defecto  
+\- casilla \`Conservar apertura (%)\` activada por defecto cuando tenga sentido  
+\- botones Aplicar / Cancelar
+
+Host, posicion, nivel y trazabilidad SIEMPRE deben conservarse; no exponer una opcion para perderlos accidentalmente.
+
+\#\# Propiedades que deben conservarse
+
+Por cada puerta, conservar como minimo cuando existan:  
+\- mismo objeto/identidad si tecnicamente es seguro;  
+\- \`Label\`;  
+\- \`Placement\`;  
+\- \`Width\`;  
+\- \`Height\`;  
+\- \`Hosts\`;  
+\- \`Normal\`;  
+\- \`HoleDepth\`;  
+\- \`Opening\` cuando el nuevo preset lo soporte;  
+\- \`SymbolPlan\`;  
+\- \`SymbolElevation\`;  
+\- \`IfcType \= "Door"\`;  
+\- pertenencia a Building/Level/contenedor;  
+\- \`FA\_GeneratedBy\`;  
+\- \`FA\_SourceSketch\`;  
+\- \`FA\_SourceGeometryIndex\`;  
+\- \`FA\_HostWall\`;  
+\- cualquier otra propiedad \`FA\_\*\` existente;  
+\- materiales/propiedades IFC que no dependan estrictamente del preset, cuando sea seguro conservarlos.
+
+El cambio de tipo NO debe mover la puerta ni cambiar su vano exterior si \`Conservar ancho y alto\` esta activo.
+
+\#\# Procedimiento tecnico a evaluar
+
+\#\#\# Opcion preferida: conservar identidad del objeto
+
+Investigar primero si puede conservarse el mismo \`ArchWindow.\_Window\`.
+
+Como \`Preset\` por si solo no reconstruye geometria, evaluar este flujo:
+
+1\. capturar estado de la puerta actual;  
+2\. generar mediante el mecanismo nativo de FreeCAD la geometria/base y \`WindowParts\` del preset destino;  
+3\. transferir al objeto existente solamente las piezas necesarias: Base compatible, WindowParts, Preset, Frame/Offset si corresponde;  
+4\. restaurar/confirmar Width, Height, Placement, Hosts, Normal, IfcType y metadatos;  
+5\. recompute;  
+6\. validar que el host sigue perforado y que la puerta es valida;  
+7\. eliminar auxiliares temporales solo despues de validar.
+
+IMPORTANTE: \`makeWindowPreset()\` crea un objeto nuevo y varios recomputes. Si se usa como generador temporal, no dejar objetos Door/Sketch temporales visibles ni duplicados. No eliminar el Base final que quede ligado a la puerta.
+
+\#\#\# Opcion alternativa: reemplazo transaccional
+
+Si conservar el mismo objeto no es fiable en FreeCAD 1.1.3, hacer reemplazo transaccional:
+
+1\. crear nueva puerta con preset nativo;  
+2\. copiar dimensiones, placement, host, normal, contenedor y metadatos;  
+3\. recompute y validar corte real;  
+4\. solo si todo es correcto eliminar la puerta anterior;  
+5\. conservar Label/nombre legible cuando sea posible;  
+6\. si falla, abortar transaccion y dejar la puerta original intacta.
+
+Codex debe elegir la opcion que resulte mas segura despues de probarla en FreeCAD real mediante MCP/smoke test.
+
+\#\# No hacer
+
+\- No cambiar solo \`Preset\` esperando que reconstruya.  
+\- No crear puerta como \`Part::Feature\` artesanal.  
+\- No perder \`Hosts\`.  
+\- No perder el corte del Wall.  
+\- No cambiar la ubicacion.  
+\- No crear duplicados.  
+\- No borrar la puerta original antes de validar la nueva.  
+\- No tocar otras puertas no seleccionadas.  
+\- No modificar ElectricCR, MEPWorkbenchCR o GameEngineExportWB.
+
+\#\# Seleccion multiple
+
+Requisito obligatorio.
+
+Ejemplo: seleccionar 5 puertas \`Simple door\`, elegir \`Glass door\` y aplicar. Las 5 deben cambiar conservando sus respectivos anchos, alturas, posiciones y muros anfitriones.
+
+Tambien debe aceptar seleccion heterogenea siempre que todas sean puertas compatibles.
+
+\#\# Interaccion con la regla de Sketches
+
+Se mantiene la regla general:
+
+\`1 Sketch \= 1 tipo/familia \+ N instancias\`
+
+Pero esta herramienta permite una excepcion individual posterior sobre puertas ya generadas.
+
+No modificar automaticamente el Sketch fuente ni regenerar todo el Sketch.
+
+Si una puerta tiene \`FA\_SourceSketch\`, conservar ese vinculo como trazabilidad.
+
+Agregar, si aporta valor real, una marca de override manual como \`FA\_TypeOverride \= True\`. Revisar como \`FA\_CreateDoorsFromSketch\` maneja reemplazos para evitar que una futura regeneracion borre sin aviso el cambio manual. Si existe riesgo, documentarlo y preferiblemente hacer que la regeneracion respete el override.
+
+\#\# Integracion con FA actual
+
+Revisar primero los archivos actuales, especialmente:  
+\- \`FacilArquitecturaWB/core/opening\_utils.py\`  
+\- \`FacilArquitecturaWB/commands/cmd\_create\_doors\_bim.py\`  
+\- \`FacilArquitecturaWB/ui/dialog\_opening\_parameters.py\`  
+\- implementacion de puerta doble BIM  
+\- \`FacilArquitecturaWB/InitGui.py\`  
+\- \`FacilArquitecturaWB/core/constants.py\`  
+\- \`FacilArquitecturaWB/DOCUMENTACION\_WORKBENCH.md\`  
+\- \`FacilArquitecturaWB/README.md\`  
+\- pruebas actuales de puertas/ventanas/openings
+
+No confiar en una copia vieja de GitHub si Drive/OneDrive local contiene una version mas nueva. Google Drive/OneDrive sincronizado es la fuente principal; GitHub es respaldo/historial.
+
+Estado documentado antes de esta tarea:  
+\- FacilArquitecturaWB v0.12.0  
+\- build 2026.08.12.3  
+\- FreeCAD 1.1.3
+
+Confirmar localmente antes de editar.
+
+\#\# Comando y barra
+
+Agregar el comando al grupo de herramientas de puertas/aberturas de Facil Arquitectura.
+
+Icono:  
+1\. revisar iconos existentes;  
+2\. reutilizar uno adecuado si existe;  
+3\. si se crea uno nuevo, SVG simple, transparente y coherente;  
+4\. debe sugerir cambio de tipo de puerta, no creacion de puerta.
+
+\#\# Logging
+
+Usar mensajes de depuracion, por ejemplo:
+
+\`\`\`text  
+\[FACILARQ\]\[PUERTAS\] Cambiar tipo \- seleccionadas: 3  
+\[FACILARQ\]\[PUERTAS\] Preset destino: Glass door  
+\[FACILARQ\]\[PUERTAS\] Door005 host preservado: Wall002  
+\[FACILARQ\]\[PUERTAS\] Door005 dimensiones: 900 x 2100 mm  
+\[FACILARQ\]\[PUERTAS\] Door005 corte validado  
+\[FACILARQ\]\[PUERTAS\] Cambio completado: 3/3  
+\`\`\`
+
+\#\# Transacciones y seguridad
+
+Toda la operacion debe estar dentro de una transaccion FreeCAD.
+
+Si una puerta falla, no dejarla a medias ni perder el original. Informar claramente.
+
+Decidir si conviene rollback global o aislamiento por puerta segun los patrones del Workbench, pero nunca dejar geometria corrupta.
+
+\#\# Rendimiento
+
+Procesar por lote y minimizar recomputes.
+
+El generador nativo \`makeWindowPreset()\` puede ejecutar varios recomputes; si se usa temporalmente, minimizar su impacto y documentarlo.
+
+\#\# Pruebas obligatorias
+
+1\. \`Simple door\` \-\> \`Glass door\`.  
+2\. \`Simple door\` \-\> \`Sliding door\` si ese preset existe en la instalacion.  
+3\. \`Glass door\` \-\> \`Simple door\`.  
+4\. Seleccion multiple.  
+5\. Puertas con anchos distintos.  
+6\. Puertas con alturas distintas.  
+7\. Conservar Placement.  
+8\. Conservar Width/Height.  
+9\. Conservar Hosts.  
+10\. Conservar Normal.  
+11\. Conservar IfcType Door.  
+12\. Validar que el Wall sigue realmente perforado.  
+13\. No crear objetos auxiliares visibles sobrantes.  
+14\. No duplicar puertas.  
+15\. Guardar/cerrar/reabrir FCStd.  
+16\. Repetir cambio de tipo varias veces sobre la misma puerta.  
+17\. Rechazar ventana seleccionada.  
+18\. Rechazar Opening Element seleccionado.  
+19\. Comprobar una puerta generada por \`FA\_CreateDoorsFromSketch\`.  
+20\. Comprobar que \`FA\_CreateDoorsFromSketch\` sigue funcionando despues del cambio.  
+21\. Probar comportamiento frente a \`FA\_SourceSketch\` y regeneracion.  
+22\. Probar puerta doble FA: soportarla solo si es seguro; de lo contrario rechazarla con mensaje claro.  
+23\. \`compileall\` y tests existentes sin regresiones.
+
+\#\# Version y documentacion
+
+Actualizar version/build siguiendo exactamente la politica actual.
+
+Actualizar README, DOCUMENTACION\_WORKBENCH.md, registro de comandos/toolbar, tests y RESULTADO\_CODEX.md / ESTADO\_PROYECTO.md segun AGENTS.md y skills aplicables.
+
+\#\# Resultado Codex
+
+Documentar:  
+\- investigacion realizada;  
+\- presets detectados en FreeCAD 1.1.3 real;  
+\- procedimiento tecnico elegido;  
+\- si conserva identidad o reemplaza transaccionalmente;  
+\- archivos modificados;  
+\- pruebas realizadas;  
+\- resultado MCP/FreeCAD real;  
+\- version/build final;  
+\- instrucciones exactas de prueba para el usuario;  
+\- limitaciones reales.
+
+\#\# Criterio de aceptacion
+
+La tarea queda aprobada cuando el usuario puede:
+
+1\. seleccionar una o varias puertas existentes;  
+2\. pulsar \`FA Cambiar tipo de puerta\`;  
+3\. escoger un preset de puerta BIM nativo disponible;  
+4\. aplicar;  
+5\. ver la nueva tipologia;  
+6\. conservar ancho, alto, ubicacion y host;  
+7\. mantener el hueco correcto en el muro;  
+8\. guardar/reabrir sin perdida;  
+9\. cambiar nuevamente a otro preset;  
+10\. hacerlo sin duplicar ni dañar otros objetos.
+
+Prioridad absoluta: seguridad del modelo y reutilizacion del BIM nativo de FreeCAD.  

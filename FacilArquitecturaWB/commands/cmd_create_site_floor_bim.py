@@ -1,9 +1,11 @@
 """FA_CreateSiteFloorBIM command.
 
-Descripcion: crea losa BIM y terreno de prueba desde sketches arquitectonicos.
-Fecha: 2026-07-23
-Version: 0.1.0
-Instrucciones: conservar parametros entre ejecuciones y usar una transaccion para Ctrl-Z.
+Descripcion: crea losa BIM y terreno desde sketches arquitectonicos.
+Funcion principal: integrar Site -> Building -> Level -> Slab y recortar el terreno bajo la losa.
+Instrucciones: conservar parametros entre ejecuciones, dependencias nativas y una transaccion para Ctrl-Z.
+FreeCAD objetivo: 1.1.3.
+Fecha y hora: 2026-08-19 21:32 UTC-06:00.
+Version: 0.2.0.
 """
 
 from __future__ import annotations
@@ -15,8 +17,9 @@ import FreeCAD
 import FreeCADGui
 from PySide import QtWidgets
 
+from ..core.bim_structure_utils import ensure_bim_structure, is_building, selected_level
 from ..core.command_errors import UserFacingError, handle_command_exception
-from ..core.project_structure import ensure_project_structure, msg
+from ..core.project_structure import active_or_new_document, msg
 from ..core.site_floor_utils import collect_plan_sketches, create_site_floor_from_sketches
 
 ICON_PATH = os.path.abspath(
@@ -32,7 +35,7 @@ class SiteFloorDialog(QtWidgets.QDialog):
     def __init__(self, source_count, selected_sources, parent=None):
         super().__init__(parent)
         self.params = FreeCAD.ParamGet(PREFERENCES_PATH)
-        self.setWindowTitle("FA Piso BIM y terreno de prueba")
+        self.setWindowTitle("FA Piso BIM y terreno")
         self.setMinimumWidth(430)
 
         layout = QtWidgets.QVBoxLayout(self)
@@ -63,6 +66,10 @@ class SiteFloorDialog(QtWidgets.QDialog):
         self.create_terrain = QtWidgets.QCheckBox("Crear terreno irregular de prueba")
         self.create_terrain.setChecked(self.params.GetBool("create_test_terrain", True))
         form.addRow("", self.create_terrain)
+
+        self.cut_terrain = QtWidgets.QCheckBox("Recortar terreno bajo la losa")
+        self.cut_terrain.setChecked(self.params.GetBool("cut_terrain_under_building", True))
+        form.addRow("", self.cut_terrain)
 
         self.terrain_margin = self._length_spin(500.0, 50000.0, 500.0)
         self.terrain_margin.setValue(self.params.GetFloat("terrain_margin_mm", 5000.0))
@@ -108,6 +115,7 @@ class SiteFloorDialog(QtWidgets.QDialog):
             "floor_overhang_mm": float(self.floor_overhang.value()),
             "floor_top_z_mm": float(self.floor_top_z.value()),
             "create_test_terrain": bool(self.create_terrain.isChecked()),
+            "cut_terrain_under_building": bool(self.cut_terrain.isChecked()),
             "terrain_margin_mm": float(self.terrain_margin.value()),
             "pad_margin_mm": float(self.pad_margin.value()),
             "terrain_variation_mm": float(self.terrain_variation.value()),
@@ -125,8 +133,17 @@ class SiteFloorDialog(QtWidgets.QDialog):
             self.params.SetFloat(key, values[key])
         self.params.SetInt("terrain_seed", values["terrain_seed"])
         self.params.SetBool("create_test_terrain", values["create_test_terrain"])
+        self.params.SetBool("cut_terrain_under_building", values["cut_terrain_under_building"])
         self.params.SetBool("replace_previous", values["replace_previous"])
         return values
+
+
+def _building_parent(level):
+    """Return the unique native Building parent of a Level when available."""
+    if level is None:
+        return None
+    parents = [obj for obj in list(getattr(level, "InList", []) or []) if is_building(obj)]
+    return parents[0] if len(parents) == 1 else None
 
 
 class CommandClass:
@@ -139,7 +156,7 @@ class CommandClass:
             "MenuText": "FA Piso BIM y terreno",
             "ToolTip": (
                 "Crear una losa BIM desde sketches de muros, ventanas y puertas, "
-                "con un terreno irregular de prueba."
+                "integrada al Level, con terreno de prueba recortado bajo la losa."
             ),
             "Pixmap": ICON_PATH,
         }
@@ -148,7 +165,7 @@ class CommandClass:
         doc = None
         transaction_open = False
         try:
-            doc, _root, groups = ensure_project_structure()
+            doc = active_or_new_document()
             selection = list(FreeCADGui.Selection.getSelection() or [])
             sketches = collect_plan_sketches(doc, selection=selection)
             if selection and not sketches:
@@ -170,12 +187,27 @@ class CommandClass:
                 return
             options = dialog.options()
 
+            preferred_level = selected_level(selection)
+            preferred_building = _building_parent(preferred_level)
+
             try:
                 doc.openTransaction("FA Piso BIM y terreno")
                 transaction_open = True
             except Exception:
                 transaction_open = False
-            created = create_site_floor_from_sketches(doc, groups["bim"], sketches, options)
+            spatial = ensure_bim_structure(
+                doc,
+                building=preferred_building,
+                level=preferred_level,
+            )
+            created = create_site_floor_from_sketches(
+                doc,
+                doc.getObject("FA_BIM"),
+                sketches,
+                options,
+                building=spatial["building"],
+                level=spatial["level"],
+            )
             doc.recompute()
             if transaction_open:
                 doc.commitTransaction()

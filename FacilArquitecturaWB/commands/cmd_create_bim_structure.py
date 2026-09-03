@@ -23,7 +23,7 @@ from ..ui.dialog_bim_structure import BIMStructureDialog
 
 
 ICON_PATH = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "resources", "icons", "facilarq.svg")
+    os.path.join(os.path.dirname(__file__), "..", "resources", "icons", "bim_structure.svg")
 ).replace(os.sep, "/")
 PREFERENCES_PATH = "User parameter:BaseApp/Preferences/Mod/FacilArquitecturaWB/BIMStructure"
 

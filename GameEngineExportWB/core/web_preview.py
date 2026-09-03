@@ -73,7 +73,7 @@ def generate_x3dom_preview(
     target.parent.mkdir(parents=True, exist_ok=True)
 
     _log_debug("Web preview HTML generation started")
-    _log_debug("Web preview X3D source: " + str(x3d_file))
+    _log_debug("Web preview X3D source: " + x3d_file.name)
     scene_markup = extract_scene_markup(_read_x3d_text(x3d_file))
 
     # X3D exporters normally emit relative asset URLs. This extra pass handles
@@ -88,7 +88,7 @@ def generate_x3dom_preview(
 
     page_title = title or (x3d_file.stem + " Web Preview")
     target.write_text(_build_preview_html(scene_markup, page_title, x3d_file.name), encoding="utf-8")
-    _log_debug("Web preview HTML generated: " + str(target))
+    _log_debug("Web preview HTML generated: " + target.name)
     return target
 
 
@@ -303,7 +303,7 @@ def _rewrite_asset_reference(reference: str, source_root: Path, preview_root: Pa
     # Never retain file:// even when its target is missing. A relative missing
     # URL gives a clear HTTP 404 and avoids reintroducing a file security origin.
     fallback_name = resolved.name or "missing_asset"
-    _log_warning("Web preview local asset not found: " + str(resolved))
+    _log_warning("Web preview local asset not found: " + (resolved.name or "missing_asset"))
     return urllib.parse.quote(fallback_name, safe="")
 
 
@@ -327,7 +327,7 @@ def _copy_external_asset(source: Path, preview_root: Path) -> str:
     target = asset_dir / (digest + "_" + safe_name)
     shutil.copy2(str(source), str(target))
     relative = target.relative_to(preview_root).as_posix()
-    _log_debug("Web preview asset copied: " + str(source) + " -> " + relative)
+    _log_debug("Web preview asset copied: " + source.name + " -> " + relative)
     return urllib.parse.quote(relative, safe="/")
 
 
@@ -460,7 +460,7 @@ class LocalPreviewServer:
 
         _log_info("Web preview server started")
         _log_debug("Web preview server port: " + str(self.port))
-        _log_debug("Web preview served folder: " + str(self.served_folder))
+        _log_debug("Web preview served folder: " + self.served_folder.name)
         _log_debug("Web preview server URL: " + self.url)
 
     def touch(self) -> None:

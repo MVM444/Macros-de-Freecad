@@ -42,6 +42,24 @@ Evitar problemas repetitivos de UI en macros ElectricCR:
 4. Cerrar/reabrir la macro conserva estado flotante esperado.
 5. El panel no bloquea seleccion en vista 3D.
 
+## Regla canonica de ciclo de vida Qt6 (2026-08-10)
+
+1. Los docks propios de ElectricCR son reutilizables e idempotentes.
+2. Una herramienta no debe crear mas de un `QDockWidget` vivo con el mismo
+   `objectName`.
+3. Buscar todas las instancias con `findChildren()`; `findChild()` no basta
+   para limpiar duplicados historicos.
+4. Preferir reutilizacion sobre `close()`, `deleteLater()` y recreacion.
+5. Si cada ejecucion necesita closures nuevos, reutilizar el dock y reemplazar
+   solamente su widget interior.
+6. No tabular automaticamente docks ElectricCR con Combo View o Tasks.
+7. No llamar `resizeDocks()` sobre MainWindow desde una herramienta.
+8. No modificar `centralWidget`, splitters ni estado global de MainWindow.
+9. Un callback `destroyed` solo puede limpiar una referencia global si el
+   objeto destruido sigue siendo la instancia registrada.
+10. Todo dock nuevo debe superar 10 ciclos abrir/cerrar con conteo estable y
+    sin `objectName` duplicados en Qt6/PySide6.
+
 ## Recurrente 2026-04-15: lista de seleccion sobredimensionada
 
 Sintoma reportado:
@@ -88,3 +106,30 @@ Regla canonica:
 4. En modo reemplazo, normalizar orden de endpoints (`A/B`) de forma canonica para evitar alternancia por ruta invertida.
 5. En objetos rotados, no depender de nombres `PuertosJSON` para cardinales; resolver salida por cara local (`face center`) usando ejes del objeto.
 6. Para robustez en piezas rotadas/no ortogonales, calcular endpoint cardinal con muestra de borde real de `Shape` en direccion mundial (no solo bounding box).
+
+
+## Recurrente 2026-09-02: Hot restart duplica docks y reduce la vista 3D
+
+Sintoma reportado:
+- Despues de un Hot restart, un `QDockWidget` propio puede seguir vivo como hijo de `MainWindow` aunque el modulo Python haya perdido su referencia global.
+- Al volver a abrir la herramienta se crea otro dock con el mismo `objectName`; Qt reorganiza el area de docks y puede comprimir u obstruir severamente la vista 3D.
+- Caso confirmado en `FacilArquitecturaWB`: `FA_DemoGuidedDock`.
+
+Causa canonica:
+1. Los globals Python no son autoridad suficiente para el ciclo de vida de widgets parentados a `FreeCADGui.getMainWindow()`.
+2. Un Hot restart puede recargar el modulo sin destruir los widgets Qt creados por la version anterior.
+3. `close()` / `deleteLater()` pueden dejar limpieza diferida hasta regresar al event loop.
+
+Regla canonica para todos los Workbenches:
+1. Todo dock propio debe tener `objectName` estable y unico.
+2. En registro/recarga y antes de crear un dock, buscar **todas** las instancias con `MainWindow.findChildren(QDockWidget)` y filtrar por `objectName`; no confiar solo en globals ni en `findChild()`.
+3. Si una instancia pertenece a una carga anterior, retirarla inmediatamente del layout con `removeDockWidget()` antes de `close()` / `deleteLater()`.
+4. Durante limpieza diferida, cambiar o invalidar el `objectName` del dock retirado para que no coexistan dos instancias vivas con el identificador autoritativo.
+5. Un callback de cierre/destruccion solo puede limpiar la referencia global si esa referencia sigue apuntando al mismo dock; nunca debe borrar la referencia de un reemplazo nuevo.
+6. El Hot restart debe limpiar exclusivamente docks propiedad del Workbench. No cerrar, mover, tabular ni redimensionar `Tasks`, `Model`, `Report View`, `Python console` u otros docks nativos.
+7. No usar `resizeDocks()`, `tabifyDockWidget()` ni cambios sobre `centralWidget` como solucion de este problema.
+8. Verificacion minima: 10 ciclos abrir -> cerrar/Hot restart -> abrir, con conteo estable 0/1 por `objectName` y sin reduccion anomala de la vista 3D.
+
+Aplicacion inicial:
+- `FacilArquitecturaWB/commands/cmd_demo_building.py` limpia `FA_DemoGuidedDock` durante `register()` y antes de crear una nueva Demo guiada.
+- La limpieza retira el dock viejo del layout de forma sincrona, detiene su timer y deja la destruccion Qt diferida sin permitir un segundo `FA_DemoGuidedDock` autoritativo.

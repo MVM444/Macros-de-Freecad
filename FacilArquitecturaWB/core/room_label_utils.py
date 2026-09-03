@@ -1,8 +1,13 @@
 """Room-label collection helpers for FacilArquitecturaWB.
 
 Descripcion: recopila rotulos Draft/Text y los consolida en una hoja de calculo.
-Fecha: 2026-07-25
-Version: 0.3.0
+Funcionamiento principal: si el comando recibe capas Draft seleccionadas, toma
+sus textos como alcance explicito sin intentar adivinar su contenido; sin capas
+seleccionadas, usa deteccion automatica conservadora sobre el documento.
+Mantenimiento: la seleccion de capa tiene prioridad sobre las heuristicas. No
+endurecer reglas CAD (altura de texto, nombre de layer, etc.) como universales.
+Version: 0.4.0
+Fecha y hora: 2026-08-27 08:45 America/Costa_Rica
 """
 
 from __future__ import annotations
@@ -17,10 +22,12 @@ SHEET_NAME = "Spreadsheet_Rotulos_Recintos"
 SHEET_LABEL = "Rotulos de recintos"
 GENERATED_BY = "FA_CollectRoomLabels"
 AREA_RE = re.compile(r"^\s*([0-9]+(?:[.,][0-9]+)?)\s*m(?:2|\u00b2)\s*$", re.IGNORECASE)
+HEIGHT_RE = re.compile(r"^\s*H\s*=\s*[+-]?[0-9]+(?:[.,][0-9]+)?(?:\s*m)?\s*$", re.IGNORECASE)
+NUMBER_ONLY_RE = re.compile(r"^\s*[+-]?[0-9]+(?:[.,][0-9]+)?\s*$")
 
 
 def text_lines(obj):
-    """Return non-empty visible lines from a Draft/Feature text object."""
+    """Return non-empty lines from an object exposing FreeCAD's Text property."""
     if not hasattr(obj, "Text"):
         return []
     try:
@@ -49,15 +56,114 @@ def area_value(lines):
     return None
 
 
-def looks_like_room_label(obj, lines):
-    """Recognize structured room labels and ordinary Draft text candidates."""
-    if not lines:
+def _proxy_identity(obj):
+    """Return a stable lower-case module/class identity for a FeaturePython proxy."""
+    try:
+        proxy = obj.Proxy
+    except Exception:
+        return ""
+    if proxy is None:
+        return ""
+    cls = getattr(proxy, "__class__", None)
+    module = str(getattr(cls, "__module__", "") or "")
+    name = str(getattr(cls, "__name__", "") or "")
+    return (module + "." + name).strip(".").lower()
+
+
+def is_draft_text(obj):
+    """Recognize Draft Text even though its TypeId is App::FeaturePython."""
+    if not text_lines(obj):
         return False
+    proxy_id = _proxy_identity(obj)
+    if proxy_id == "draftobjects.text.text" or proxy_id.endswith(".text.text"):
+        return True
+    # Fallback for FreeCAD/Draft variants where Proxy introspection differs.
+    type_id = str(getattr(obj, "TypeId", "") or "").lower()
+    if "text" in type_id:
+        return True
+    return hasattr(obj, "Text") and hasattr(obj, "DxfTextHeight")
+
+
+def is_draft_layer(obj):
+    """Return True for a Draft Layer, but not for the LayerContainer itself."""
+    if str(getattr(obj, "TypeId", "") or "") != "App::FeaturePython":
+        return False
+    if not hasattr(obj, "Group"):
+        return False
+    proxy_id = _proxy_identity(obj)
+    if "layer" in proxy_id:
+        return True
+    # Conservative fallback: Draft layers expose Group as a LinkList and are
+    # App::FeaturePython. Avoid accepting arbitrary FeaturePython groups unless
+    # the property type can be confirmed as a link list.
+    try:
+        return str(obj.getTypeIdOfProperty("Group")) == "App::PropertyLinkList"
+    except Exception:
+        return False
+
+
+def selected_draft_layers(selection):
+    """Filter a GUI selection down to explicit Draft Layer objects."""
+    return [obj for obj in list(selection or []) if is_draft_layer(obj)]
+
+
+def layer_objects(layers):
+    """Return unique direct members of selected Draft Layers, preserving order."""
+    objects = []
+    seen = set()
+    for layer in list(layers or []):
+        try:
+            members = list(layer.Group or [])
+        except Exception:
+            members = []
+        for obj in members:
+            key = str(getattr(obj, "Name", "") or id(obj))
+            if key in seen:
+                continue
+            seen.add(key)
+            objects.append(obj)
+    return objects
+
+
+def _visible(obj):
+    """Read object visibility without requiring FreeCADGui."""
+    try:
+        return bool(obj.Visibility)
+    except Exception:
+        try:
+            return bool(obj.ViewObject.Visibility)
+        except Exception:
+            return True
+
+
+def _automatic_text_candidate(obj, lines):
+    """Conservative heuristic used only when the user did not select a layer."""
+    if not lines or not is_draft_text(obj):
+        return False
+    first = str(lines[0]).strip()
+    if not first or len(first) > 120:
+        return False
+    # Structured FA labels remain valid even if hidden.
     label = str(getattr(obj, "Label", "") or "").lower()
     if label.startswith("etiqueta_") or area_value(lines) is not None:
         return True
-    type_id = str(getattr(obj, "TypeId", "") or "").lower()
-    return "text" in type_id and len(lines[0]) <= 120
+    # CAD texts such as Upala's H=2.62 are annotations, not room names.
+    if HEIGHT_RE.match(first) or NUMBER_ONLY_RE.match(first) or AREA_RE.match(first):
+        return False
+    # In automatic mode, favor currently visible Draft text. Explicit layer
+    # selection intentionally bypasses this heuristic.
+    return _visible(obj)
+
+
+def looks_like_room_label(obj, lines, explicit_scope=False):
+    """Recognize a room label according to explicit-layer or automatic mode."""
+    if not lines:
+        return False
+    if explicit_scope:
+        # User chose the layer: do not guess semantic content. The only check is
+        # that the member is a real text object with non-empty Text.
+        return is_draft_text(obj)
+    return _automatic_text_candidate(obj, lines)
 
 
 def object_position(obj):
@@ -72,12 +178,18 @@ def object_position(obj):
     return (float(point.x), float(point.y), float(point.z))
 
 
-def collect_room_labels(doc):
-    """Collect room labels, consolidating duplicates by normalized name."""
+def collect_room_labels(doc, objects=None, explicit_scope=False):
+    """Collect room labels, consolidating duplicates by normalized name.
+
+    objects=None means automatic document-wide discovery. When explicit_scope is
+    True, objects are assumed to come from user-selected Draft Layers and no
+    semantic guessing is performed beyond confirming they are Draft Text.
+    """
     records = {}
-    for obj in list(getattr(doc, "Objects", []) or []):
+    source_objects = list(objects) if objects is not None else list(getattr(doc, "Objects", []) or [])
+    for obj in source_objects:
         lines = text_lines(obj)
-        if not looks_like_room_label(obj, lines):
+        if not looks_like_room_label(obj, lines, explicit_scope=explicit_scope):
             continue
         name = normalized_name(lines[0])
         if not name:

@@ -4,12 +4,42 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
+from unittest import mock
 
 from FacilArquitecturaWB.core import cad_reference_import
 
 
 class CadReferenceImportTests(unittest.TestCase):
+    def test_insert_consumes_compatibility_layer_once(self):
+        calls = []
+
+        class FakeImportDXF:
+            @staticmethod
+            def insert(filename, document_name):
+                calls.append(("insert", filename, document_name))
+                return "ok"
+
+        @contextmanager
+        def fake_compat(**kwargs):
+            calls.append(("enter", kwargs["import_dxf_module"]))
+            yield
+            calls.append(("exit",))
+
+        with mock.patch.object(cad_reference_import, "dxf_waitcursor_workaround", fake_compat):
+            result = cad_reference_import._insert_dxf_with_compat(
+                FakeImportDXF,
+                Path("sample.dxf"),
+                "Document",
+            )
+
+        self.assertEqual("ok", result)
+        self.assertEqual("enter", calls[0][0])
+        self.assertIs(FakeImportDXF, calls[0][1])
+        self.assertEqual(("insert", "sample.dxf", "Document"), calls[1])
+        self.assertEqual(("exit",), calls[2])
+
     def test_manual_scale_overrides_incorrect_mm_header_for_metre_drawing(self):
         self.assertEqual(1000.0, cad_reference_import.manual_scaling_for("m", insunits=4))
         self.assertEqual(1000.0, cad_reference_import.resolved_mm_per_unit("m", insunits=4))
@@ -46,6 +76,66 @@ class CadReferenceImportTests(unittest.TestCase):
             "Puriscal_Aire_Acondicionado_003",
             cad_reference_import.unique_document_name("Puriscal Aire Acondicionado", existing),
         )
+
+    def test_fa_profile_is_rich_and_uses_efficient_fused_mode(self):
+        profile = cad_reference_import.IMPORT_PROFILE
+        self.assertEqual(("Boolean", False), profile["dxfUseLegacyImporter"])
+        self.assertEqual(("Boolean", True), profile["dxfImportAsFused"])
+        self.assertEqual(("Integer", 3), profile["DxfImportMode"])
+        self.assertEqual(("Boolean", True), profile["dxftext"])
+        self.assertEqual(("Boolean", True), profile["dxflayout"])
+        self.assertEqual(("Boolean", True), profile["dxfstarblocks"])
+        self.assertEqual(("Boolean", True), profile["dxfUseDraftVisGroups"])
+
+    def test_temporary_profile_restores_values_and_removes_new_keys(self):
+        class FakePrefs:
+            def __init__(self):
+                self.values = {
+                    "dxfImportAsShapes": ("Boolean", True),
+                    "DxfImportMode": ("Integer", 2),
+                    "dxfScaling": ("Float", 1000.0),
+                }
+
+            def GetContents(self):
+                return [(kind, name, value) for name, (kind, value) in self.values.items()]
+
+            def _set(self, kind, name, value):
+                self.values[name] = (kind, value)
+
+            def SetBool(self, name, value):
+                self._set("Boolean", name, bool(value))
+
+            def SetInt(self, name, value):
+                self._set("Integer", name, int(value))
+
+            def SetFloat(self, name, value):
+                self._set("Float", name, float(value))
+
+            def SetString(self, name, value):
+                self._set("String", name, str(value))
+
+            def _remove(self, name):
+                self.values.pop(name, None)
+
+            RemBool = RemInt = RemFloat = RemString = _remove
+
+        prefs = FakePrefs()
+        kinds = {name: kind for name, (kind, _value) in cad_reference_import.IMPORT_PROFILE.items()}
+        kinds.update({"dxfScaling": "Float", "dxfShowDialog": "Boolean"})
+        snapshot = cad_reference_import._snapshot_preferences(prefs, kinds)
+        profile = cad_reference_import._apply_import_profile(prefs, 1.0)
+
+        self.assertEqual(("Boolean", True), prefs.values["dxfImportAsFused"])
+        self.assertEqual(("Integer", 3), prefs.values["DxfImportMode"])
+        self.assertEqual(("Float", 1.0), prefs.values["dxfScaling"])
+
+        cad_reference_import._restore_preferences(prefs, snapshot, kinds)
+        self.assertEqual(("Boolean", True), prefs.values["dxfImportAsShapes"])
+        self.assertEqual(("Integer", 2), prefs.values["DxfImportMode"])
+        self.assertEqual(("Float", 1000.0), prefs.values["dxfScaling"])
+        self.assertNotIn("dxfImportAsFused", prefs.values)
+        self.assertNotIn("dxfShowDialog", prefs.values)
+        self.assertTrue(profile)
 
 
 if __name__ == "__main__":

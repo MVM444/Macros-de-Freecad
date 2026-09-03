@@ -19,6 +19,9 @@ CGE_PROPERTY_GROUP = "GameEngineLight"
 DEFAULT_INTENSITY = 1.0
 DEFAULT_RADIUS_M = 12.0
 DEFAULT_COLOR = (1.0, 1.0, 1.0)
+DEFAULT_LUMENS = 3600.0
+DEFAULT_BEAM_ANGLE_DEG = 120.0
+DEFAULT_CCT_K = 4000.0
 LEGACY_LIGHT_BBOX_OFFSET_MM = 50.0
 CGE_LIGHT_TYPES = ["Point", "Linear", "RectPanel", "Circular", "Custom"]
 CGE_LIGHT_PATTERNS = ["Single", "Line", "Grid", "Ring", "Custom"]
@@ -65,6 +68,10 @@ class PointLightData:
     intensity: float
     color_rgb: tuple[float, float, float]
     radius: float
+    lumens: float = DEFAULT_LUMENS
+    beam_angle_deg: float = DEFAULT_BEAM_ANGLE_DEG
+    cct_kelvin: float = DEFAULT_CCT_K
+    photometric_configured: bool = False
 
 
 @dataclass
@@ -149,6 +156,11 @@ def get_light_properties(obj) -> dict:
         "intensity": float(getattr(obj, "GameExportLightIntensity", DEFAULT_INTENSITY)),
         "radius": float(getattr(obj, "GameExportLightRadius", DEFAULT_RADIUS_M)),
         "color": _normalize_color(getattr(obj, "GameExportLightColor", DEFAULT_COLOR)),
+        "lumens": float(getattr(obj, "GameExportLightLumens", DEFAULT_LUMENS)),
+        "beam_angle_deg": float(
+            getattr(obj, "GameExportLightBeamAngle", DEFAULT_BEAM_ANGLE_DEG)
+        ),
+        "cct_kelvin": float(getattr(obj, "GameExportLightCCT", DEFAULT_CCT_K)),
     }
 
 
@@ -158,6 +170,9 @@ def set_light_properties(
     intensity: Optional[float] = None,
     radius: Optional[float] = None,
     color: Optional[Iterable[float]] = None,
+    lumens: Optional[float] = None,
+    beam_angle_deg: Optional[float] = None,
+    cct_kelvin: Optional[float] = None,
 ) -> List[str]:
     if doc is None or not objects:
         return []
@@ -172,6 +187,12 @@ def set_light_properties(
             setattr(obj, "GameExportLightRadius", float(radius))
         if color is not None:
             _set_light_color(obj, color)
+        if lumens is not None:
+            setattr(obj, "GameExportLightLumens", max(0.0, float(lumens)))
+        if beam_angle_deg is not None:
+            setattr(obj, "GameExportLightBeamAngle", _clamp(float(beam_angle_deg), 1.0, 179.0))
+        if cct_kelvin is not None:
+            setattr(obj, "GameExportLightCCT", _clamp(float(cct_kelvin), 1800.0, 10000.0))
         updated.append(obj.Name)
     return updated
 
@@ -180,6 +201,9 @@ def _ensure_light_defaults(obj) -> None:
     added_intensity = _ensure_property(obj, "App::PropertyFloat", "GameExportLightIntensity", "Light intensity")
     added_radius = _ensure_property(obj, "App::PropertyFloat", "GameExportLightRadius", "Light radius")
     added_color = _ensure_property(obj, "App::PropertyColor", "GameExportLightColor", "Light color")
+    added_lumens = _ensure_property(obj, "App::PropertyFloat", "GameExportLightLumens", "Luminous flux (lm)")
+    added_beam = _ensure_property(obj, "App::PropertyFloat", "GameExportLightBeamAngle", "Full beam angle (degrees)")
+    added_cct = _ensure_property(obj, "App::PropertyFloat", "GameExportLightCCT", "Correlated color temperature (K)")
     if added_intensity:
         _set_default_if_empty(obj, "GameExportLightIntensity", None)
         setattr(obj, "GameExportLightIntensity", DEFAULT_INTENSITY)
@@ -188,10 +212,18 @@ def _ensure_light_defaults(obj) -> None:
         setattr(obj, "GameExportLightRadius", DEFAULT_RADIUS_M)
     if added_color:
         _set_light_color(obj, DEFAULT_COLOR)
-        return
+    if added_lumens:
+        setattr(obj, "GameExportLightLumens", DEFAULT_LUMENS)
+    if added_beam:
+        setattr(obj, "GameExportLightBeamAngle", DEFAULT_BEAM_ANGLE_DEG)
+    if added_cct:
+        setattr(obj, "GameExportLightCCT", DEFAULT_CCT_K)
     _set_default_if_empty(obj, "GameExportLightIntensity", DEFAULT_INTENSITY)
     _set_default_if_empty(obj, "GameExportLightRadius", DEFAULT_RADIUS_M)
     _set_light_color(obj, getattr(obj, "GameExportLightColor", DEFAULT_COLOR))
+    _set_default_if_empty(obj, "GameExportLightLumens", DEFAULT_LUMENS)
+    _set_default_if_empty(obj, "GameExportLightBeamAngle", DEFAULT_BEAM_ANGLE_DEG)
+    _set_default_if_empty(obj, "GameExportLightCCT", DEFAULT_CCT_K)
 
 
 def _ensure_property(obj, property_type: str, name: str, description: str) -> bool:
@@ -307,6 +339,10 @@ def gather_point_light_data(
                 intensity=float(props["intensity"]),
                 color_rgb=tuple(props["color"]),
                 radius=float(props["radius"]),
+                lumens=float(props["lumens"]),
+                beam_angle_deg=float(props["beam_angle_deg"]),
+                cct_kelvin=float(props["cct_kelvin"]),
+                photometric_configured=True,
             )
         )
     return entries
@@ -367,6 +403,9 @@ def ensure_cge_light_properties(obj) -> None:
     _ensure_enum_property(obj, "CGE_LightOriginMode", CGE_LIGHT_ORIGINS, "AutoFaceCenter")
     added_offset = _ensure_property_in_group(obj, "App::PropertyLength", "CGE_LightOffset", "Light offset")
     added_intensity = _ensure_property_in_group(obj, "App::PropertyFloat", "CGE_LightIntensity", "Light intensity")
+    added_lumens = _ensure_property_in_group(obj, "App::PropertyFloat", "CGE_LightLumens", "Luminous flux (lm)")
+    added_beam = _ensure_property_in_group(obj, "App::PropertyFloat", "CGE_LightBeamAngle", "Full beam angle (degrees)")
+    added_cct = _ensure_property_in_group(obj, "App::PropertyFloat", "CGE_LightCCT", "Correlated color temperature (K)")
     added_range = _ensure_property_in_group(obj, "App::PropertyLength", "CGE_LightRange", "Light range")
     added_rows = _ensure_property_in_group(obj, "App::PropertyInteger", "CGE_LightRows", "Light rows")
     added_cols = _ensure_property_in_group(obj, "App::PropertyInteger", "CGE_LightCols", "Light columns")
@@ -384,6 +423,9 @@ def ensure_cge_light_properties(obj) -> None:
     _set_default_if_added_or_empty(obj, "CGE_LightEnabled", True, added_enabled)
     _set_default_if_added_or_empty(obj, "CGE_LightOffset", 50.0, added_offset)
     _set_default_if_added_or_empty(obj, "CGE_LightIntensity", 1.0, added_intensity)
+    _set_default_if_added_or_empty(obj, "CGE_LightLumens", DEFAULT_LUMENS, added_lumens)
+    _set_default_if_added_or_empty(obj, "CGE_LightBeamAngle", DEFAULT_BEAM_ANGLE_DEG, added_beam)
+    _set_default_if_added_or_empty(obj, "CGE_LightCCT", DEFAULT_CCT_K, added_cct)
     _set_default_if_added_or_empty(obj, "CGE_LightRange", 8000.0, added_range)
     _set_default_if_added_or_empty(obj, "CGE_LightRows", 2, added_rows)
     _set_default_if_added_or_empty(obj, "CGE_LightCols", 2, added_cols)
@@ -419,6 +461,9 @@ def read_cge_light_properties(obj, create: bool = False) -> Optional[Dict[str, o
         ),
         "offset_mm": _as_float(getattr(obj, "CGE_LightOffset", 50.0), 50.0),
         "intensity": _as_float(getattr(obj, "CGE_LightIntensity", 1.0), 1.0),
+        "lumens": max(0.0, _as_float(getattr(obj, "CGE_LightLumens", DEFAULT_LUMENS), DEFAULT_LUMENS)),
+        "beam_angle_deg": _clamp(_as_float(getattr(obj, "CGE_LightBeamAngle", DEFAULT_BEAM_ANGLE_DEG), DEFAULT_BEAM_ANGLE_DEG), 1.0, 179.0),
+        "cct_kelvin": _clamp(_as_float(getattr(obj, "CGE_LightCCT", DEFAULT_CCT_K), DEFAULT_CCT_K), 1800.0, 10000.0),
         "range_m": _as_float(getattr(obj, "CGE_LightRange", 8000.0), 8000.0) * 0.001,
         "rows": max(1, int(getattr(obj, "CGE_LightRows", 2) or 2)),
         "cols": max(1, int(getattr(obj, "CGE_LightCols", 2) or 2)),
@@ -434,6 +479,7 @@ def read_cge_light_properties(obj, create: bool = False) -> Optional[Dict[str, o
             _as_float(getattr(obj, "CGE_LightLocalZ", 0.0), 0.0),
         ),
         "preview_enabled": bool(getattr(obj, "CGE_LightPreviewEnabled", True)),
+        "photometric_configured": True,
     }
 
 
@@ -448,6 +494,9 @@ def write_cge_light_properties(obj, values: Dict[str, object]) -> None:
     )
     obj.CGE_LightOffset = float(values.get("offset_mm", 50.0))
     obj.CGE_LightIntensity = float(values.get("intensity", 1.0))
+    obj.CGE_LightLumens = max(0.0, float(values.get("lumens", DEFAULT_LUMENS)))
+    obj.CGE_LightBeamAngle = _clamp(float(values.get("beam_angle_deg", DEFAULT_BEAM_ANGLE_DEG)), 1.0, 179.0)
+    obj.CGE_LightCCT = _clamp(float(values.get("cct_kelvin", DEFAULT_CCT_K)), 1800.0, 10000.0)
     obj.CGE_LightRange = float(values.get("range_m", 8.0)) * 1000.0
     obj.CGE_LightRows = max(1, int(values.get("rows", 2)))
     obj.CGE_LightCols = max(1, int(values.get("cols", 2)))
@@ -654,6 +703,10 @@ def gather_auto_luminaire_data(
                 "origin_mode": "AutoFaceCenter",
                 "offset_mm": AUTO_LUMINAIRE_OFFSET_MM,
                 "intensity": AUTO_LUMINAIRE_INTENSITY,
+                "lumens": DEFAULT_LUMENS,
+                "beam_angle_deg": DEFAULT_BEAM_ANGLE_DEG,
+                "cct_kelvin": DEFAULT_CCT_K,
+                "photometric_configured": False,
                 "range_m": AUTO_LUMINAIRE_RADIUS_M,
                 "color": AUTO_LUMINAIRE_COLOR,
                 "rows": 1,
@@ -691,6 +744,7 @@ def generate_light_points_for_definition(
     source_name = getattr(definition.source_obj, "Name", "Light")
     total_intensity = max(0.0, float(props.get("intensity", 1.0)))
     point_intensity = total_intensity / float(len(local_points))
+    point_lumens = max(0.0, float(props.get("lumens", DEFAULT_LUMENS))) / float(len(local_points))
     for index, local_point in enumerate(local_points):
         world_point = _placement_mult_vec(placement, local_point)
         _log_debug(
@@ -729,6 +783,10 @@ def generate_light_points_for_definition(
                 intensity=point_intensity,
                 color_rgb=tuple(props.get("color", (1.0, 0.95, 0.85))),
                 radius=float(props.get("range_m", 8.0)),
+                lumens=point_lumens,
+                beam_angle_deg=float(props.get("beam_angle_deg", DEFAULT_BEAM_ANGLE_DEG)),
+                cct_kelvin=float(props.get("cct_kelvin", DEFAULT_CCT_K)),
+                photometric_configured=bool(props.get("photometric_configured", True)),
             )
         )
     _log_debug("Light points generated: " + str(len(results)) + " per instance")

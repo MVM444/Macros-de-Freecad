@@ -4,8 +4,8 @@ Descripcion: clasifica Sketches y coordina estructura, muros, columnas, puertas 
 ventanas reutilizando los servicios especializados de FacilArquitecturaWB.
 Objetivo: reconstruccion BIM reproducible sin copiar geometria ni crear FA_Project.
 FreeCAD objetivo: 1.1.3.
-Fecha y hora: 2026-08-09 23:05 UTC-06:00.
-Version: 0.1.0.
+Fecha y hora: 2026-09-01 14:35 America/Costa_Rica.
+Version: 0.2.0.
 Instrucciones de mantenimiento: este modulo solo coordina; no duplicar algoritmos
 de muros, columnas o aberturas. El comando GUI administra la transaccion.
 """
@@ -15,7 +15,7 @@ from __future__ import annotations
 import unicodedata
 
 from .axis_utils import create_bim_axes_and_columns_from_sketch
-from .bim_structure_utils import add_to_container, ensure_bim_structure
+from .bim_structure_utils import adopt_auxiliary_sources, ensure_bim_structure
 from .bim_utils import (
     create_walls_from_centerline_sketches,
     prepare_sketches_as_wall_centerlines,
@@ -220,9 +220,7 @@ def rebuild_bim_model(doc, assignments, options):
     organized_sources = _unique(
         [walls_source, columns_source, doors_source] + window_sources + reference_sources
     )
-    for source in organized_sources:
-        if source is not None:
-            add_to_container(level, source)
+    adopt_auxiliary_sources(doc, level, organized_sources, allow_any_type=True)
     doc.recompute()
     return {
         "building": structure["building"],

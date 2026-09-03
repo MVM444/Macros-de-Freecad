@@ -1,8 +1,8 @@
 """FA_CreateMasterSketches command.
 
 Descripcion: crea sketches maestros editables y vacios en plano XY.
-Fecha: 2026-07-13
-Version: 0.1.0
+Fecha y hora: 2026-08-27 16:28 UTC-06:00
+Version: 0.2.0
 Instrucciones: conservar sketches existentes; no generar geometria de ejemplo en este comando.
 """
 
@@ -15,7 +15,7 @@ import FreeCADGui
 
 from ..core.parameters import ensure_parameter_sheet, read_parameters
 from ..core.command_errors import handle_command_exception
-from ..core.project_structure import ensure_project_structure, msg
+from ..core.project_structure import ensure_project_support_structure, msg
 from ..core.sketch_utils import ensure_master_sketches
 
 ICON_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "resources", "icons", "facilarq.svg")).replace(
@@ -38,7 +38,9 @@ class CommandClass:
 
     def Activated(self):  # noqa: N802
         try:
-            doc, _root, groups = ensure_project_structure()
+            doc, _root, groups = ensure_project_support_structure(
+                keys=("parameters", "master_sketches")
+            )
             sheet = ensure_parameter_sheet(doc, groups["parameters"])
             params = read_parameters(sheet)
             ensure_master_sketches(doc, groups["master_sketches"], params)

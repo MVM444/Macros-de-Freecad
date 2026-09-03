@@ -1,5 +1,508 @@
 # ElectricCR - Resultado de Codex
 
+## Resultado 2026-09-01 - Prototipo luminaria semantica y arbol idempotente
+
+**Estado:** IMPLEMENTADO / PROBADO / VERIFICADO MCP EN FREECAD 1.1.3.
+
+**Revalidacion 2026-09-02:** la fuente DEV seguia cargada desde
+`Macros-de-Freecad`; `ECR_SEMANTIC_DEVICE_CORE_OK`, las 11 pruebas puras de
+RoomResolver y `ECR_SEMANTIC_LUMINAIRE_PROTOTYPE_OK` aprobaron nuevamente. El
+smoke confirmo los mismos resultados de UID, Space, proyeccion idempotente,
+altura, DXF, Equipment, Undo/Redo y guardar/reabrir. No quedaron documentos ni
+temporales abiertos y no se hicieron cambios funcionales adicionales.
+
+Se implemento el prototipo autorizado sobre una sola luminaria temporal creada
+por `objeto_toma_uno.crear_toma_link()` con el registro real
+`Luminaria LED Redonda 1000lm`. La instancia conserva su master compartido,
+`Placement`, representacion 2D/3D, `AlturaRel`, `Tipo`, `KeyRegistro`,
+`ModoVisual` y orientacion. Solo recibe `ElementUID` y `Space`.
+
+### Evidencia funcional real
+
+- `ElementUID` se crea una vez, es unico y persiste tras recompute y
+  guardar/cerrar/reabrir.
+- RoomResolver usa el `Placement` global de la instancia `App::Link`, no la
+  posicion local del master. Un resultado `RESOLVED` enlaza el `Arch Space`;
+  `AMBIGUOUS` y `NOT_FOUND` no escriben valor en `Space`.
+- El Space `Sala de Espera` permanecio bajo `Ground Floor`, con el mismo Base,
+  Shape y Placement, y sin propiedades ElectricCR.
+- El cambio 2700 -> 2850 mm reutilizo el mecanismo actual de relink: cambio el
+  master inmutable, no la identidad del Link; UID, Space y Placement se
+  conservaron. El simbolo 2D siguio en Z local 0 y el modelo 3D quedo a altura.
+- El Link se exporto correctamente a un DXF temporal no vacio.
+- Los masters quedaron en `electrico/_lib/_lib_devices`. Se corrigio el detalle
+  previo por el que `TomaUnoProxy.execute()` podia volverlos visibles despues
+  del recompute; `EsPrototipo` mantiene ahora el ViewProvider oculto.
+
+### Arbol idempotente
+
+Ruta materializada:
+
+```text
+electrico/Iluminacion/Circuitos/IL-TEST/Recintos/Sala de Espera/Apagadores/S1/Luminarias
+```
+
+Las autoridades fueron `Space`, `CircuitoID` y los `PropertyLinkList` del
+Control temporal. Los grupos tienen rol y clave estables, y el helper usa
+`dry_run=True` por defecto. La segunda aplicacion produjo `0` cambios y `0`
+duplicados, sin tocar UID, Space, master o Placement.
+
+FreeCAD asigna una pertenencia visual exclusiva a objetos dentro de
+`App::DocumentObjectGroup`. Para que el arbol sea realmente una vista y no
+reorganice la instancia fisica, `Luminarias` contiene una referencia indice
+`App::Link` marcada `ECR_ProjectionReference`, enlazada a la luminaria real por
+`LinkedObject` y `ECR_SourceElementUID`. Es el mismo patron conceptual del
+organizador vigente; no constituye una segunda familia electromecanica.
+
+### Comparador Arch Equipment
+
+En FreeCAD 1.1.3 `Arch.makeEquipment()` produjo `Part::FeaturePython` con
+`Proxy.Type=Equipment`, `Base`, `GlobalId`, `IfcProperties` e `IfcType`. Se
+configuro exitosamente como `Light Fixture`, porque el valor nativo por defecto
+fue `Furniture`. Guardar/reabrir y Undo/Redo aprobaron.
+
+Equipment aporta clasificacion BIM/IFC nativa, pero para esta prueba necesito un
+Base/copia controlada de la geometria; el `App::Link` comparte master y conserva
+mejor la arquitectura liviana actual. No hay evidencia para sustituir el Link.
+
+### Codigo y pruebas
+
+Archivos funcionales:
+
+- `ElectricCR/electriccr/semantic/device_core.py` (nucleo puro JSON-compatible);
+- `ElectricCR/electriccr/semantic/freecad_adapter.py` (UID, Space y proyeccion);
+- `ElectricCR/electriccr/features/objeto_toma_uno.py` (ocultacion persistente de masters);
+- `ElectricCR/tests/test_semantic_device_core.py`;
+- `ElectricCR/tests/freecad_semantic_luminaire_prototype_smoke.py`.
+
+Pruebas aprobadas:
+
+- `ROOM_RESOLVER_CORE_TESTS_OK 11`;
+- `ECR_LIGHTING_ROOM_TESTS_OK 6`;
+- `ECR_SEMANTIC_DEVICE_CORE_OK`;
+- `ROOM_RESOLVER_FREECAD_SMOKE_OK`;
+- `ECR_ROOMRESOLVER_PHASE2A_OK`;
+- regresion de altura/rotacion semantica;
+- `PASS ColocarLuminarias_Link altura`;
+- `ECR_SEMANTIC_LUMINAIRE_PROTOTYPE_OK`;
+- inspeccion visual isometrica y planta del documento temporal.
+
+Procedimiento de repeticion:
+
+1. ejecutar desde la raiz del repositorio
+   `python ElectricCR/tests/test_semantic_device_core.py`;
+2. en FreeCAD 1.1.3, ejecutar mediante MCP o consola Python
+   `ElectricCR/tests/freecad_semantic_luminaire_prototype_smoke.py` con
+   `runpy.run_path(..., run_name="__main__")`;
+3. comprobar la salida `ECR_SEMANTIC_LUMINAIRE_PROTOTYPE_OK` y que el script
+   cierre el documento `ECR_SemanticLuminairePrototype` y elimine su FCStd/DXF
+   temporal;
+4. repetir la matriz indicada arriba para regresion de RoomResolver, fase 2A y
+   altura de los Link.
+
+### Decision de cierre
+
+1. Si: el `App::Link` actual puede ser la identidad operativa enriquecida sin
+   perder las funciones verificadas.
+2. Si: `ElementUID + Space + CircuitoID + Control/Apagador legacy` bastan para
+   proyectar la primera rama de iluminacion.
+3. Equipment aporta IFC/BIM nativo, pero no justifica sustituir el master/Link;
+   puede reservarse para una futura capa IFC si aparece una necesidad concreta.
+4. Si: la rama se reconstruye idempotentemente sin usar el padre visual como
+   autoridad.
+5. Siguiente cambio minimo recomendado: exponer este adaptador primero como
+   herramienta opt-in y probarlo en una copia controlada. Debe evitarse una
+   migracion masiva o iniciar otra familia dentro de esta fase.
+
+No se incremento version/build, no se hizo commit/push y no se modifico ningun
+modelo original. La tarea se detuvo antes de tomacorrientes y apagadores.
+
+---
+
+## Resultado 2026-09-01 - RoomResolver fase 2A y contrato del arbol
+
+**Estado:** IMPLEMENTADA / COMPILADA / PROBADA / VERIFICADA_MCP.
+
+Se integro `CRBIMCore.RoomResolver` en la enumeracion de recintos de
+`Iluminación/Actualizar_Iluminacion_Completa.FCMacro`. La formula de iluminacion,
+las 12 columnas de `DatosRecintos`, la tabla legacy y los ajustes de layout
+heredados se conservaron.
+
+Resultado real en FreeCAD 1.1.3:
+
+- Space-only: 1 recinto, 12.00 m2, filas/columnas calculadas sin escribir sobre
+  el Space;
+- Area-only: mismo resultado de la ruta legacy y propiedades `Rows/Columns`
+  conservadas;
+- Space + Area: una sola fila, correspondiente al Space;
+- dos Spaces superpuestos: `AMBIGUOUS`, cero filas autoritativas;
+- punto exterior: `NOT_FOUND`;
+- comando completo repetido: dos hojas estables, sin duplicados ni luminarias;
+- guardar/cerrar/reabrir: Space y hoja restaurados, Space sin propiedades de
+  layout ElectricCR;
+- firma fisica de Spaces/Areas y `LinkedObject`/Placement del probe electrico:
+  sin cambios.
+
+Pruebas aprobadas:
+
+- 17 pruebas puras (`CRBIMCore` + selector ElectricCR);
+- `ROOM_RESOLVER_FREECAD_SMOKE_OK` (8 candidatos, 17 objetos, read-only y
+  reapertura estable);
+- smoke heredado de Areas BIM, incluyendo consumidor de iluminacion;
+- `ECR_ROOMRESOLVER_PHASE2A_OK`;
+- `ECR_SEMANTIC_TREE_CONTRACT_OK`.
+
+Auditoria del arbol:
+
+- propiedades explicitas de recinto/circuito/apagador preceden el padre visual;
+- controles ya conservan `PropertyLinkList` a luminarias y apagadores;
+- circuito->tablero sigue como texto;
+- no existe contrato uniforme de enlaces para Space, Level y System;
+- la ruta visual determinista puede proyectarse desde relaciones, pero la
+  reconstruccion completa no se implemento en esta fase.
+
+No se modificaron luminarias, tomacorrientes, apagadores, masters,
+`LinkedObject`, `ColocarLuminarias_Link`, MEPWorkbenchCR ni modelos originales.
+No se incremento version/build porque ElectricCR no mantiene en esta ruta un
+build funcional independiente y la tarea no autorizo una publicacion.
+
+Archivos funcionales nuevos/modificados:
+
+- `ElectricCR/electriccr/lighting/room_calculation.py`;
+- `ElectricCR/electriccr/lighting/__init__.py`;
+- `Iluminación/Actualizar_Iluminacion_Completa.FCMacro`;
+- dos pruebas MCP y una prueba pura bajo `ElectricCR/tests/`;
+- `ElectricCR/docs/CONTRATO_ARBOL_SEMANTICO.md` y documentacion asociada.
+
+Pendiente futuro: diseno/auditoria del objeto electromecanico comun y luego
+reconstruccion idempotente del arbol. No iniciar sin una tarea nueva.
+
+---
+
+## Resultado 2026-08-12 - Integracion de descripciones GPT
+
+**Estado:** IMPLEMENTADA / COMPILADA / PROBADA / VERIFICADA_MCP /
+**VALIDADA_VISUALMENTE**.
+
+Se integraron las 192 entradas de `MACROS_DESCRIPCIONES_GPT.json` por la ruta
+estable `ruta`. El catalogo ahora tiene 192 descripciones funcionales; 133
+reemplazaron campos vacios o genericos y 59 conservaron una descripcion local
+concreta. En 36 casos se conservaron textos locales distintos y se guardo la
+alternativa GPT en `description_alternative`, con discrepancia documentada para
+revision posterior.
+
+Se conservaron sin cambios los comentarios, estados manuales, decisiones y
+estadisticas externas de uso. La procedencia queda en
+`fuente_descripcion`/`confianza_descripcion` y en los aliases internos
+`description_source`/`description_confidence`.
+
+El Panel ahora incluye la descripcion en la busqueda y muestra descripcion,
+fuente y confianza en detalles y `Copiar diagnostico`. La validacion MCP en
+FreeCAD 1.1.3 comprobo 12 grupos principales, una busqueda por la palabra
+`delimitadas` contenida solo en una descripcion, descripcion visible para una
+herramienta de cada grupo, diagnostico con descripcion/comentario y catalogo
+sin perdida de campos protegidos.
+
+Smoke test Fase 2 ampliado y `py_compile`: PASS. No se modifico ningun FCStd,
+no se ejecuto ninguna macro para generar descripciones y no se hizo commit ni
+push.
+
+## Correccion posterior Fase 2 - comentarios y lentitud
+
+Se confirmo un defecto en el cambio de seleccion: el evento de Qt ya habia
+cambiado `currentItem` cuando se guardaba el comentario, por lo que el texto
+podía terminar en la macro nueva. Se corrigio guardando contra el elemento
+anterior recibido por `currentItemChanged` y luego cargando el comentario de la
+nueva seleccion.
+
+Tambien se corrigio la lentitud: la busqueda ya no reconstruye el catalogo ni
+consulta comandos, archivos y estadisticas para cada tecla. Las filas se
+construyen una vez por apertura y se reutilizan para filtros/busqueda; las
+estadisticas y recursos de comandos se indexan en memoria. La medicion MCP paso
+de reconstrucciones repetidas a aproximadamente 0.068 s la primera carga y
+0.000002 s una lectura cacheada.
+
+Los comentarios que permanecen en el catalogo son revisiones reales de Marco:
+`Areas/CrearMurosEntreEspacios.FCMacro` y
+`Areas/PoligonoFromBoundaryLines.FCMacro`. No quedo el texto de prueba usado
+durante la validacion.
+
+La prueba de cambio de seleccion confirmo que el comentario se guarda en la
+macro anterior y que la siguiente macro carga su propio comentario. No se
+modifico ningun FCStd ni se hizo commit/push.
+
+## Resultado 2026-08-12 - Panel Fase 2
+
+**Estado:** IMPLEMENTADA / COMPILADA / PROBADA / VERIFICADA_MCP /
+**VERIFICADA_VISUALMENTE**.
+
+### Catalogo y descripciones
+
+- Se reviso el patron oficial de metadatos de macros de FreeCAD (`__Name__`,
+  `__Comment__`, `__Help__`, `__Status__`, `__Requires__` e `__Icon__`) y se
+  adopto solo como lectura segura, sin ejecutar macros durante el catalogado.
+- Se creo `ElectricCR/data/macros_catalog.json`, esquema 1, con 192 entradas.
+- 122 entradas corresponden a herramientas activas registradas por ElectricCR;
+  70 son macros historicas no activas.
+- 69 macros tienen descripcion obtenida desde metadatos oficiales o encabezados;
+  las restantes indican claramente que no tienen descripcion.
+- No se encontro localmente el Excel `Inventario_Clasificacion_ElectricCR_2026-08-08.xlsx`;
+  no se inventaron datos historicos a partir de esa fuente.
+- Se creo `ElectricCR/MACROS_CATALOGO.md`, generado deterministicamente desde
+  el JSON mediante `ElectricCR/catalog.py`.
+
+### Panel y revision manual
+
+`macro_launcher.py` conserva la Fase 1 y agrega comentario multilinea editable,
+estado manual, decision, guardado atomico, filtros nuevos, entradas historicas,
+`Contraer grupos`, `Expandir grupos` y `Probar`. `Copiar diagnostico` incluye
+descripcion, fuente, comentario, estado/decision y estadisticas separadas.
+
+### Estadisticas
+
+`usage_log.py` conserva `count` y los conteos anteriores como
+`historical_count`. Las nuevas ejecuciones se separan en `real_count` y
+`test_count`, con `last_real_ts` y `last_test_ts`. El boton `Ejecutar` marca uso
+real y `Probar` marca prueba sin reclasificar el historial.
+
+### Pruebas
+
+- `smoke_macro_panel_phase2.py`: catalogo, descripciones, comentarios,
+  escritura atomica, JSON invalido, Markdown determinista y conteos real/test/
+  historico: PASS.
+- Py_compile de los modulos modificados: PASS.
+- FreeCAD 1.1.3 mediante MCP: 12 grupos, 122 filas activas, 70 historicas,
+  filtros, busqueda con expansion, contraer/expandir, comentario/estado/decision
+  persistentes y modo Diagnostico: PASS.
+- Prueba MCP de botones: `Probar` produjo `test_count=1` y `Ejecutar`
+  `real_count=1` en un registro temporal, sin modificar un FCStd.
+- Capturas visuales: `C:\Users\marco\AppData\Local\Temp\ElectricCR_Panel_Fase2_Final.png` y
+  `C:\Users\marco\AppData\Local\Temp\ElectricCR_Panel_Fase2_Validation.png`.
+
+No se hizo commit ni push y no se modifico `HISTORIAL_CAMBIOS.md`.
+
+## Validacion visual 2026-08-12 - Panel real ElectricCR
+
+**Estado:** VERIFICADO_MCP / VERIFICADO_VISUAL en FreeCAD 1.1.3.
+
+La ventana de la captura inicial no era el Panel real con el registro completo.
+La prueba segura habia ejecutado `register_macro_launcher([('Prueba', [...])])`
+y habia reemplazado en memoria `_MACRO_GROUPS` por un unico grupo de prueba.
+El registro de metadatos no se habia perdido: conservaba 122 comandos reales,
+pero la vista construia sus filas desde `_MACRO_GROUPS`. Ademas,
+`ElectricCR_TestPanelSafe` quedo registrado en la sesion como residuo de la
+prueba; no existe como herramienta real de ElectricCR.
+
+Se reconstruyeron los grupos de la sesion a partir de
+`get_registered_macro_metadata()` sin cambiar el codigo funcional. La
+validacion del lanzador real mostro 12 grupos y 122 herramientas, vista normal
+con 4 columnas, filtros, casilla `Diagnostico`, panel de detalles, botones
+`Ajustar columnas`, `Copiar ruta`, `Copiar diagnostico`, `Ejecutar` y `Cerrar`,
+ademas del modo diagnostico con 7 columnas y estados OK/REVISAR/ERROR.
+
+Los modulos cargados provinieron del repositorio local esperado:
+`ElectricCR/commands/macros.py` y `ElectricCR/commands/macro_launcher.py`.
+La captura de la interfaz real queda en
+`C:\Users\marco\AppData\Local\Temp\ElectricCR_Panel_Real_Validation.png`.
+La captura del modo diagnostico queda en
+`C:\Users\marco\AppData\Local\Temp\ElectricCR_Panel_Real_Diagnostic_Validation.png`;
+esta muestra las 7 columnas y los estados `OK`, `REVISAR` y `ERROR` segun
+corresponde.
+
+La prueba segura sigue siendo un comando residual de la sesion porque esta
+version de FreeCAD no expone `Gui.removeCommand`; esto no afecta al Panel real
+ni a su registro. No se revirtio la implementacion, no se modifico ningun
+FCStd y no se hizo commit ni push.
+
+## Resultado 2026-08-12 - panel de macros ElectricCR
+
+**Estado:** PROGRAMADO / COMPILADO / PROBADO TECNICAMENTE;
+**VALIDACION VISUAL MCP COMPLETADA POSTERIORMENTE**. El primer intento habia
+quedado pendiente por timeout de despacho de la sesion GUI.
+
+### Cambios realizados
+
+- `ElectricCR/commands/macros.py` ahora conserva un registro unico de metadatos
+  por comando: macro, ruta relativa, grupo/barra efectiva, icono y su estado,
+  clasificacion de transaccion y existencia del archivo.
+- `ElectricCR/commands/macro_launcher.py` fue ampliado con vista normal,
+  modo `Diagnostico`, filtros, iconos visibles, panel de detalles, estadisticas
+  tomadas de `usage_log.py` y acciones para ejecutar, copiar ruta y copiar
+  diagnostico.
+- Las columnas, el tamano de ventana y el divisor se guardan con `QSettings`
+  usando nombres estables. `Ajustar columnas` recalcula y persiste los anchos.
+- `Rayo.svg` se conserva como estado `REVISAR`, no como error automatico.
+  Los iconos especificos se muestran como `OK`; archivos inexistentes o
+  comandos no registrados se marcan como `ERROR`.
+- La persistencia usa `QSettings` y el panel de detalles usa un `QSplitter`,
+  siguiendo los patrones documentados para PySide6/Qt.
+
+### Pruebas
+
+- Compilacion con FreeCADCmd 1.1.3: aprobada para `macro_launcher.py` y
+  `macros.py`.
+- Registro simulado de macros: 16 grupos y 122 metadatos; se detectaron iconos
+  `ESPECIFICO` y `RAYO`, y los filtros devolvieron resultados coherentes.
+- El primer intento de recargar y abrir el panel mediante MCP no respondio
+  dentro de 90 s. Una segunda validacion identifico la contaminacion de
+  `_MACRO_GROUPS` por la prueba segura y luego abrio el Panel real con el
+  registro completo; el resultado esta documentado arriba.
+- No se abrio, modifico ni guardo ningun archivo FCStd y no se actualizo
+  `HISTORIAL_CAMBIOS.md`.
+
+### Pendiente
+
+La Fase 2 (conteo estructurado de exito/error por ejecucion) permanece fuera de
+esta tarea.
+
+## Resultado 2026-08-12 - reorganizacion de macros legacy e iconos
+
+**Estado:** PROGRAMADO / MOVILIZADO / COMPILADO / PROBADO TECNICAMENTE;
+VALIDACION VISUAL EN LA SESION DE MARCO PENDIENTE.
+
+### Acciones realizadas
+
+- `Objetos/Ordenar_Tomas_XY.FCMacro` y
+  `Objetos/Ordenar_Tomas_XY_Horario.FCMacro` se movieron a
+  `Tomacorrientes/`, preservando nombres y contenido.
+- Se archivaron sin borrar:
+  - `Objetos/HVAC_Etiqueta_Libre.FCMacro` en `Xcluidos/Objetos/`;
+  - `Areas/actualizar_rectangulos_con_spreadsheet().FCMacro` en `Xcluidos/Areas/`;
+  - `Areas/AnalizarAreasRectangularesDesdeMurosBIM.FCMacro` en `Xcluidos/Areas/`;
+  - `Cajas/CajaEMT.FCMacro` en `Xcluidos/Cajas/`.
+- `FacilArquitecturaWB/core/rectangular_area_analysis.py` y
+  `ElectricCR/electriccr/features/caja_emt_octogonal.py` no se movieron ni
+  modificaron por esta tarea.
+- Se crearon iconos SVG para `Ordenar_Tomas_XY`,
+  `Ordenar_Tomas_XY_Horario`, `Habilitar_Transform_en_Links_Dispositivos` y
+  `Asignar_Tableros_y_Circuitos`.
+- `Alinear` conserva deliberadamente `Rayo.svg`: el recurso de
+  MEPWorkbenchCR no se copio ni se introdujo una dependencia cruzada.
+- El smoke test rectangular fue adaptado para probar el motor reusable y
+  verificar que el lanzador archivado permanece como respaldo.
+
+El identificador automatico de comando cambia de prefijo `ElectricCR_Objetos_`
+ a `ElectricCR_Tomacorrientes_` porque el registrador deriva el prefijo de la
+ carpeta. El nombre de archivo, etiqueta y contenido de las macros se
+ conservaron; una sesion limpia de FreeCAD debe registrar solamente el nuevo
+ prefijo.
+
+### Dependencias y registro
+
+`ElectricCR/commands/macros.py` excluye `Xcluidos` del escaneo, por lo que las
+cuatro herramientas archivadas no deben crear comandos. El registro de uso
+historico conserva las rutas anteriores como evidencia; no se reescribieron
+logs ni se interpretaron sus conteos como prueba funcional.
+
+### Limitaciones y siguiente paso
+
+### Pruebas realizadas
+
+- `py_compile` de las dos macros movidas, `Habilitar_Transform...`,
+  `Asignar_Tableros_y_Circuitos` y los smoke tests: aprobado.
+- FreeCADCmd 1.1.3: `smoke_macro_reorganization.py`, aprobado; ambas macros
+  conservaron su ordenamiento y los SVG pasaron XML.
+- FreeCADCmd 1.1.3: `smoke_rectangular_areas_bim.py`, aprobado; el motor
+  reusable funciona sin el lanzador visible archivado.
+- Resolucion de iconos mediante `ElectricCR.commands.macros.icon_for_macro`:
+  aprobada para los cuatro iconos nuevos; `Alinear` cae deliberadamente a
+  `Rayo.svg` durante el registro.
+- Registro simulado de `register_predefined_macros`: las dos macros movidas
+  aparecen como `Tomacorrientes` y las cuatro archivadas no se registran.
+- MCP: FreeCAD 1.1.3 respondio al preflight. La activacion del Workbench en la
+  sesion GUI tardo mas de 90 s y dejo comandos antiguos en cache; no se declara
+  validacion visual ni se reinicio la instancia del usuario.
+
+Los avisos de arranque sobre la ruta ausente de
+`AppData/Roaming/FreeCAD/v1-1/Mod/FacilArquitecturaWB` son externos a esta
+tarea y no impidieron los smoke tests. No se abrio ni guardo ningun FCStd real
+y no se actualizo `HISTORIAL_CAMBIOS.md`.
+
+---
+
+## Resultado 2026-08-11 - analisis rectangular BIM autocontenido
+
+**Estado:** PROGRAMADO / COMPILADO / PROBADO / VERIFICADO_MCP;
+VALIDACION DE MARCO PENDIENTE.
+
+La copia historica `Xcluidos/Areas/AnalizarAreasRectangularesDesdeMurosBIM.FCMacro`
+ya no se registra en la interfaz ni busca `AnalizarAreasDesdeMuroBIM.FCMacro`
+fuera del repositorio. La implementacion
+historica se localizo en `Scripts Varios/FacilArquitectura_BIM`, se leyo junto
+con su motor de 28666 bytes y permanece intacta. Su logica fue incorporada a
+`FacilArquitecturaWB/core/rectangular_area_analysis.py`; la macro visible valida
+uno o varios muros y llama ese motor mediante una ruta relativa.
+
+Se conservaron los cuatro modos de inferencia, `FA_RectangularAreas`,
+`Spreadsheet_Analisis_Areas`, rectangulos Draft, rotulos, colores, propiedades
+ElectricCR y enlaces a muros/ejes. No se creo `ArchSpace` y no se reemplazo el
+flujo poligonal.
+
+La prueba integral aprobo con Python de FreeCAD y mediante MCP en FreeCAD
+1.1.3: seleccion GUI de dos muros, dos recintos, metadatos, hoja,
+reejecucion, Undo/Redo, guardado/reapertura temporal, cielos, tomacorrientes e
+iluminacion. No se modifico ningun FCStd original.
+
+El Panel de macros dejo de usar `Rayo`: ahora usa
+`ElectricCR/icons/Panel_Macros_ElectricCR.svg`. MCP confirmo la accion visible
+en la barra `ElectricCR` con icono Qt no nulo. Clasificacion provisional de la
+macro: OPERATIVA / ACTIVA / COMPROBADA-PARCIAL; decision ElectricCR POR
+VERIFICAR FUNCIONALMENTE.
+
+Commit/push: no.
+
+## Resultado 2026-08-11 - recintos BIM como Draft Wires editables
+
+**Estado:** IMPLEMENTADO Y PROBADO TECNICAMENTE EN FREECAD 1.1.3;
+NO_VERIFICADO_MCP; VALIDACION VISUAL/FUNCIONAL DE MARCO PENDIENTE.
+
+### Causa confirmada
+
+`Areas/PoligonosRecintosDesdeArchWalls.FCMacro` creaba cada salida mediante
+`doc.addObject("Part::Feature", ...)` y asignaba una cara estatica a `Shape`.
+La deteccion geometrica funcionaba, pero no existian `Points`, `Closed` ni
+`MakeFace` editables.
+
+### Cambio realizado
+
+- Se mantuvo intacta la deteccion de huellas y huecos de muros BIM.
+- Los puntos se obtienen de `OuterWire.OrderedVertexes`, sin BoundingBox ni
+  simplificacion del contorno.
+- Cada recinto se crea con
+  `Draft.make_wire(points, closed=True, face=True)`.
+- Los puntos quedan en Z local 0 y la elevacion visual de 20 mm se aplica por
+  `Placement` una sola vez.
+- Se conservaron grupo, Spreadsheet, estilo, propiedades ElectricCR,
+  metadatos FacilArquitectura y `FA_SourceWalls`.
+- Se agregaron `FA_GeometrySource = AUTO_BIM` y
+  `FA_GeometryType = DraftWire`.
+
+### Pruebas
+
+- La prueba previa reprodujo el tipo estatico `Part::Feature`.
+- Smoke integral aprobado en FreeCAD 1.1.3 con tres recintos: rectangular,
+  concavo y ocho vertices con segmento corto.
+- Aprobados: cara, propiedades Draft, edicion de puntos, recompute, Undo/Redo,
+  guardado/reapertura temporal, regeneracion sin duplicados, cielo suspendido
+  y clasificacion espacial de tomacorrientes.
+- `py_compile`: aprobado.
+- `FacilArquitecturaWB.tests.test_ceiling_utils`: 7/7 aprobadas.
+
+### Limitaciones
+
+Una nueva ejecucion reemplaza correcciones manuales de `Points`. Los metadatos
+geometricos propios son una instantanea de generacion y no se actualizan con un
+observer. Preservar/conciliar ediciones manuales queda pendiente.
+
+MCP rechazo dos conexiones con `WinError 10061`; no se declara verificacion
+MCP ni visual. No se modifico ningun `.FCStd` original, ni se hizo commit o
+push.
+
+Clasificacion provisional: OPERATIVA / ACTIVA / COMPROBADA-PARCIAL.
+Decision ElectricCR: POR VERIFICAR hasta la prueba real de Marco.
+
+---
+
 ## Resultado 2026-08-10 - popup oscuro de Registrar acometida
 
 **Estado:** CORREGIDO Y PROBADO TECNICAMENTE; VALIDACION REAL DE MARCO PENDIENTE.

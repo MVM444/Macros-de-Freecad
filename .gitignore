@@ -1,6 +1,7 @@
 *.pyc
 __pycache__/
 .codex_tmp/
+.freecad-test/
 .tmp.drivedownload/
 .tmp.driveupload/
 Configuracion del proyecto/_reportes_arbol/

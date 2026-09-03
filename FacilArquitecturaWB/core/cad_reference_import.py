@@ -10,10 +10,14 @@ Instrucciones: nunca usar la etiqueta visible como nombre interno del documento.
 from __future__ import annotations
 
 import datetime
+import json
 import os
 import re
 import tempfile
+import time
 from pathlib import Path
+
+from .freecad_compat import dxf_waitcursor_workaround
 
 try:
     import FreeCAD as App
@@ -43,6 +47,89 @@ INSUNITS_FACTORS_MM = {
     13: 0.001,  # micras
     14: 100.0,  # decimetros
 }
+
+
+IMPORT_PROFILE = {
+    "dxfUseLegacyImporter": ("Boolean", False),
+    "dxfImportAsDraft": ("Boolean", False),
+    "dxfImportAsPrimitives": ("Boolean", False),
+    "dxfImportAsShapes": ("Boolean", False),
+    "dxfImportAsFused": ("Boolean", True),
+    "DxfImportMode": ("Integer", 3),
+    "dxftext": ("Boolean", True),
+    "dxflayout": ("Boolean", True),
+    "dxfstarblocks": ("Boolean", True),
+    "dxfUseDraftVisGroups": ("Boolean", True),
+}
+
+
+def _import_log(stage, started=None, **details):
+    fields = []
+    if started is not None:
+        fields.append("elapsed=%.6fs" % (time.perf_counter() - started))
+    fields.extend("%s=%s" % (key, details[key]) for key in sorted(details))
+    suffix = " | " + " | ".join(fields) if fields else ""
+    message = "[FACILARQ][IMPORT] %s%s\n" % (stage, suffix)
+    if App is not None:
+        App.Console.PrintMessage(message)
+    return message
+
+
+def _preference_contents(prefs):
+    try:
+        return {str(name): (str(kind), value) for kind, name, value in prefs.GetContents()}
+    except Exception:
+        return {}
+
+
+def _snapshot_preferences(prefs, names):
+    contents = _preference_contents(prefs)
+    return {name: contents.get(name) for name in names}
+
+
+def _set_preference(prefs, name, kind, value):
+    setters = {
+        "Boolean": prefs.SetBool,
+        "Integer": prefs.SetInt,
+        "Float": prefs.SetFloat,
+        "String": prefs.SetString,
+    }
+    setters[kind](name, value)
+
+
+def _remove_preference(prefs, name, kind):
+    removers = {
+        "Boolean": "RemBool",
+        "Integer": "RemInt",
+        "Float": "RemFloat",
+        "String": "RemString",
+    }
+    remover = getattr(prefs, removers[kind], None)
+    if remover is not None:
+        remover(name)
+
+
+def _restore_preferences(prefs, snapshot, kinds):
+    for name, previous in snapshot.items():
+        if previous is None:
+            _remove_preference(prefs, name, kinds[name])
+            continue
+        kind, value = previous
+        _set_preference(prefs, name, kind, value)
+
+
+def _apply_import_profile(prefs, manual_scale):
+    profile = dict(IMPORT_PROFILE)
+    profile["dxfScaling"] = ("Float", float(manual_scale))
+    profile["dxfShowDialog"] = ("Boolean", False)
+    for name, (kind, value) in profile.items():
+        _set_preference(prefs, name, kind, value)
+    return profile
+
+
+def _profile_values(prefs, profile):
+    contents = _preference_contents(prefs)
+    return {name: contents.get(name, (kind, None))[1] for name, (kind, _value) in profile.items()}
 
 
 def _iter_dxf_pairs(path):
@@ -250,6 +337,12 @@ def _add_metadata(doc, source, unit_key, header, manual_scale, imported_count):
     return metadata
 
 
+def _insert_dxf_with_compat(import_dxf_module, converted, document_name):
+    """Run one Draft DXF insertion through the isolated compatibility layer."""
+    with dxf_waitcursor_workaround(import_dxf_module=import_dxf_module):
+        return import_dxf_module.insert(str(converted), document_name)
+
+
 def import_cad_reference(source_path, unit_key="auto", fit_view=True):
     """Import a DWG/DXF into a new unsaved FreeCAD document.
 
@@ -266,20 +359,44 @@ def import_cad_reference(source_path, unit_key="auto", fit_view=True):
     converted = None
     temporary = False
     doc = None
+    result = None
     prefs = App.ParamGet("User parameter:BaseApp/Preferences/Mod/Draft")
-    old_scale = prefs.GetFloat("dxfScaling", 1.0)
-    old_dialog = prefs.GetBool("dxfShowDialog", True)
+    profile_kinds = {name: kind for name, (kind, _value) in IMPORT_PROFILE.items()}
+    profile_kinds.update({"dxfScaling": "Float", "dxfShowDialog": "Boolean"})
+    preference_snapshot = _snapshot_preferences(prefs, profile_kinds)
+    operation_started = time.perf_counter()
+    _import_log("import_cad_reference inicio", source=source.name, fit_view=bool(fit_view))
+    _import_log(
+        "preferencias antes",
+        values=json.dumps(
+            {name: previous[1] if previous else None for name, previous in preference_snapshot.items()},
+            ensure_ascii=True,
+            sort_keys=True,
+        ),
+    )
 
     try:
+        stage_started = time.perf_counter()
+        _import_log("conversion DWG->DXF inicio", source=source.name)
         converted, temporary = _convert_to_dxf(source)
+        _import_log(
+            "conversion DWG->DXF fin",
+            stage_started,
+            converted=str(converted),
+            temporary=bool(temporary),
+        )
         header = read_dxf_header_units(converted)
         manual_scale = manual_scaling_for(
             unit_key,
             header.get("insunits"),
             header.get("measurement"),
         )
-        prefs.SetFloat("dxfScaling", float(manual_scale))
-        prefs.SetBool("dxfShowDialog", False)
+        profile = _apply_import_profile(prefs, manual_scale)
+        _import_log(
+            "preferencias activas",
+            values=json.dumps(_profile_values(prefs, profile), ensure_ascii=True, sort_keys=True),
+        )
+        _import_log("DXF temporal", path=str(converted), retained_for_run=not temporary)
 
         internal_name = unique_document_name(source.stem, App.listDocuments().keys())
         doc = App.newDocument(internal_name)
@@ -288,12 +405,25 @@ def import_cad_reference(source_path, unit_key="auto", fit_view=True):
 
         import importDXF
 
-        importDXF.insert(str(converted), doc.Name)
+        stage_started = time.perf_counter()
+        _import_log("importDXF.insert inicio", document=doc.Name)
+        _insert_dxf_with_compat(importDXF, converted, doc.Name)
+        _import_log("importDXF.insert fin", stage_started, objects=len(doc.Objects))
+
+        stage_started = time.perf_counter()
+        _import_log("primer recompute inicio")
         doc.recompute()
+        _import_log("primer recompute fin", stage_started)
+
+        stage_started = time.perf_counter()
+        _import_log("construccion imported inicio")
         imported = [obj for obj in doc.Objects if obj.Name not in before_names]
+        _import_log("construccion imported fin", stage_started, objects=len(imported))
         if not imported:
             raise RuntimeError("La importacion no creo objetos en FreeCAD.")
 
+        stage_started = time.perf_counter()
+        _import_log("metadata inicio")
         metadata = _add_metadata(
             doc,
             source,
@@ -302,17 +432,33 @@ def import_cad_reference(source_path, unit_key="auto", fit_view=True):
             manual_scale,
             len(imported),
         )
+        _import_log("metadata fin", stage_started)
+
+        stage_started = time.perf_counter()
+        _import_log("segundo recompute inicio")
         doc.recompute()
+        _import_log("segundo recompute fin", stage_started)
 
         if fit_view and bool(getattr(App, "GuiUp", False)):
             try:
                 import FreeCADGui as Gui
 
+                stage_started = time.perf_counter()
+                _import_log("viewTop inicio")
                 Gui.activeDocument().activeView().viewTop()
+                _import_log("viewTop fin", stage_started)
+
+                stage_started = time.perf_counter()
+                _import_log("fitAll inicio")
                 Gui.activeDocument().activeView().fitAll()
+                _import_log("fitAll fin", stage_started)
             except Exception:
                 pass
 
+        stage_started = time.perf_counter()
+        _import_log("placement_bounds inicio")
+        placement_bounds = _placement_bounds(imported)
+        _import_log("placement_bounds fin", stage_started)
         result = {
             "document": doc,
             "metadata": metadata,
@@ -330,14 +476,13 @@ def import_cad_reference(source_path, unit_key="auto", fit_view=True):
                 )
             ),
             "imported_object_count": len(imported),
-            "placement_bounds": _placement_bounds(imported),
+            "placement_bounds": placement_bounds,
             "saved": bool(doc.FileName),
         }
         App.Console.PrintMessage(
             "[FACILARQ] Referencia CAD importada: %s | objetos=%d | 1 unidad=%.6g mm\n"
             % (source.name, len(imported), result["resolved_mm_per_unit"])
         )
-        return result
     except Exception:
         if doc is not None:
             try:
@@ -346,7 +491,19 @@ def import_cad_reference(source_path, unit_key="auto", fit_view=True):
                 pass
         raise
     finally:
-        prefs.SetFloat("dxfScaling", old_scale)
-        prefs.SetBool("dxfShowDialog", old_dialog)
+        finally_started = time.perf_counter()
+        _import_log("finally entrada")
+        _restore_preferences(prefs, preference_snapshot, profile_kinds)
+        _import_log("preferencias restauradas")
         if converted is not None:
+            cleanup_started = time.perf_counter()
             _cleanup_temporary_conversion(source, converted, temporary)
+            _import_log("limpieza conversion temporal fin", cleanup_started)
+        _import_log("finally salida", finally_started)
+
+    _import_log(
+        "import_cad_reference retorno",
+        operation_started,
+        objects=result["imported_object_count"],
+    )
+    return result

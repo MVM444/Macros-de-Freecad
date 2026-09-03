@@ -1,0 +1,87 @@
+{
+  "schema_version": "0.5.0",
+  "project": "Sucursal Esparza - sanitario",
+  "status": "INPUT_TEMPLATE_NOT_A_DESIGN",
+  "septic": {
+    "mode": "evaluate_existing_or_design_new",
+    "design_flow_m3_day": null,
+    "length_m": null,
+    "width_m": null,
+    "liquid_depth_m": null,
+    "freeboard_m": 0.3,
+    "trh_days": 1.0
+  },
+  "fafa": {
+    "design_flow_m3_day": null,
+    "media_height_m": null,
+    "trh_h": 8.0,
+    "void_ratio": 0.7,
+    "influent_bod_mg_l": null
+  },
+  "infiltration": {
+    "flow_l_day": null,
+    "tests_min_cm": [
+      null,
+      null
+    ],
+    "width_m": 0.5,
+    "gravel_depth_m": 0.3,
+    "precipitation_factor": 2.5,
+    "groundwater_clearance_m": null,
+    "center_spacing_m": null,
+    "terrain_slope_percent": null
+  },
+  "site": {
+    "available_area_m2": null,
+    "boundary_source": "spatial_references.drainage_area",
+    "notes": "Pendiente captura geometrica y pruebas reales de Esparza. Las referencias espaciales no contienen valores inventados.",
+    "available_length_m": null,
+    "available_width_m": null,
+    "layout_assumption": "RECTANGULAR_ONLY_WHEN_LENGTH_AND_WIDTH_PROVIDED"
+  },
+  "commercial_selection": {
+    "enabled": true,
+    "status": "REFERENCE_ONLY",
+    "automatic_purchase_selection": false
+  },
+  "sanitary_sources": {
+    "status": "CONFIRMED_BY_USER_2026-08-26",
+    "staff_toilets": 2,
+    "public_toilets": 1,
+    "sink": 1,
+    "janitor_sink": 1,
+    "notes": "Inventario para contraste sanitario; no sustituye el consumo real historico."
+  },
+  "spatial_references": {
+    "property_boundary": {
+      "source_object": null,
+      "source_type": null,
+      "points_xy": null
+    },
+    "building_footprint": {
+      "source_object": null,
+      "source_type": null,
+      "points_xy": null
+    },
+    "tanks_area": {
+      "source_object": null,
+      "source_type": null,
+      "points_xy": null
+    },
+    "drainage_area": {
+      "source_object": null,
+      "source_type": null,
+      "points_xy": null
+    },
+    "accepted_future_sources": [
+      "DRAFT_WIRE",
+      "SKETCH",
+      "PART_WIRE",
+      "PART_FACE",
+      "DRAFT_RECTANGLE",
+      "DRAFT_POLYGON",
+      "SELECTED_LINES"
+    ],
+    "status": "PENDING_FREECAD_CAPTURE"
+  }
+}

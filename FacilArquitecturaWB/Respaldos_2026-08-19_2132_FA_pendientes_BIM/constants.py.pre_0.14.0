@@ -1,0 +1,53 @@
+"""Shared constants for FacilArquitecturaWB.
+
+Descripcion: nombres, version y parametros base.
+Fecha: 2026-08-13
+Version: 0.13.1
+Instrucciones: mantener nombres ASCII seguros para FreeCAD.
+"""
+
+LOG_PREFIX = "[FACILARQ] "
+WORKBENCH_ID = "FacilArquitecturaWorkbench"
+WORKBENCH_NAME = "Facil Arquitectura"
+VERSION = "0.13.1"
+BUILD_ID = "2026.08.13.2"
+CREATED_BY = "FacilArquitecturaWB"
+
+ROOT_GROUP_NAME = "FA_Project"
+PARAM_SHEET_NAME = "Spreadsheet_Parametros"
+
+GROUPS = {
+    "reference": ("FA_Reference", "00_Reference"),
+    "parameters": ("FA_Parameters", "01_Parameters"),
+    "master_sketches": ("FA_MasterSketches", "02_MasterSketches"),
+    "bim": ("FA_BIM", "03_BIM"),
+    "areas": ("FA_Areas", "04_Areas"),
+    "electromechanical": ("FA_Electromechanical", "05_Electromechanical"),
+}
+
+DEFAULT_PARAMETERS = [
+    ("building_width_mm", 12000.0),
+    ("building_depth_mm", 9000.0),
+    ("wall_height_mm", 3000.0),
+    ("ext_wall_thickness_mm", 200.0),
+    ("int_wall_thickness_mm", 100.0),
+    ("light_wall_thickness_mm", 75.0),
+    ("door_height_mm", 2100.0),
+    ("door_width_900_mm", 900.0),
+    ("door_width_1000_mm", 1000.0),
+    ("window_sill_mm", 900.0),
+    ("window_height_mm", 1200.0),
+    ("slab_thickness_mm", 150.0),
+    ("floor_level_mm", 0.0),
+    ("axis_extension_mm", 1000.0),
+    ("axis_cluster_tolerance_mm", 10.0),
+    ("grid_cluster_tolerance_mm", 80.0),
+    ("grid_primary_support_mm", 5000.0),
+    ("grid_max_lines_per_direction", 8.0),
+    ("column_width_mm", 400.0),
+    ("column_depth_mm", 400.0),
+    ("column_height_mm", 3000.0),
+    ("ceiling_module_mm", 600.0),
+    ("ceiling_elevation_mm", 2700.0),
+    ("ceiling_panel_thickness_mm", 15.0),
+]

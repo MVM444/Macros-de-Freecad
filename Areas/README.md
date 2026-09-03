@@ -6,6 +6,18 @@ Este directorio contiene macros para crear, nombrar y usar poligonos/rectangulos
 
 ## Bitacora
 
+- 2026-08-11: `AnalizarAreasRectangularesDesdeMurosBIM.FCMacro` deja de
+  buscar una macro fuera del repositorio. La interfaz carga el motor comun
+  `FacilArquitecturaWB/core/rectangular_area_analysis.py`, exige uno o varios
+  muros BIM seleccionados y conserva `FA_RectangularAreas`,
+  `Spreadsheet_Analisis_Areas`, los rectangulos Draft, rotulos y metadatos
+  ElectricCR. El flujo rectangular complementa, pero no reemplaza, los
+  recintos poligonales editables.
+
+- 2026-08-11: `PoligonosRecintosDesdeArchWalls.FCMacro` crea cada hueco como
+  Draft Wire cerrado, editable mediante `Points`, con `MakeFace = True` y cara
+  valida. La elevacion visual de 20 mm se aplica una sola vez mediante
+  `Placement`; los puntos permanecen en Z local igual a cero.
 - 2026-08-10: `RectFromBoundaryLines.FCMacro` admite tambien caras seleccionadas
   de muros BIM/Arch. Las caras verticales se proyectan como limites en planta;
   en una cara horizontal se usa el borde recto mas cercano al punto del clic.
@@ -108,16 +120,26 @@ Uso:
    `Cuadro de recintos poligonales`.
 
 El algoritmo une las caras superiores de los muros, donde puertas y ventanas ya no
-interrumpen la huella, y convierte cada hueco interior cerrado en una cara exacta.
+interrumpen la huella, y convierte cada hueco interior cerrado en un Draft Wire
+exacto. El Wire conserva los vertices reales del `OuterWire`, tiene `Closed = True`,
+`MakeFace = True`, `Points` editables y una cara valida para los consumidores.
 Admite recintos rectangulares, en L y otros contornos poligonales. Los objetos se
 marcan con `ElectricCRTipo = Area`, `FA_Role = room_polygon`, `AreaM2`, perimetro,
-vertices y enlaces a los muros fuente.
+vertices, `FA_GeometrySource = AUTO_BIM`, `FA_GeometryType = DraftWire` y enlaces a
+los muros fuente.
 
 La macro no modifica rectangulos, areas por click ni muros. Al ejecutarla otra vez
-solo reemplaza sus propias salidas (`FA_PolygonalRoomsFromArchWalls`). Un poligono
-con varios rotulos distintos se reporta como posible pared abierta o faltante.
+solo reemplaza sus propias salidas (`FA_PolygonalRoomsFromArchWalls`). Actualmente
+esa regeneracion tambien reemplaza correcciones manuales realizadas en `Points`;
+preservarlas o conciliarlas queda pendiente. Un poligono con varios rotulos
+distintos se reporta como posible pared abierta o faltante.
 
 ## RectFromBoundaryLines.FCMacro
+
+El antiguo lanzador `AnalizarAreasRectangularesDesdeMurosBIM.FCMacro` fue
+archivado en `Xcluidos/Areas/`. El motor reusable permanece en
+`FacilArquitecturaWB/core/rectangular_area_analysis.py`; no se elimina ni se
+considera obsoleto por este movimiento.
 
 Macro manual para crear rectangulos a partir de 2 a N aristas limite o caras
 seleccionadas de muros BIM.

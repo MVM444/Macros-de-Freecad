@@ -1,0 +1,401 @@
+# FacilArquitecturaWB
+
+Workbench independiente para FreeCAD 1.1.3 orientado a crear una base arquitectonica BIM editable desde planos existentes o desde Sketches ya depurados.
+
+Version actual: `0.13.1` | build `2026.08.13.2`. Al recargar con `FacilArquitecturaLoader.FCMacro`, la consola debe mostrar `VERSION CARGADA: v0.13.1 | build 2026.08.13.2`. Los proyectos heredados con `FA_Project` conservan tambien `FA_WorkbenchVersion` y `FA_WorkbenchBuild`.
+
+## Documentacion
+
+- [Documentacion completa del workbench](DOCUMENTACION_WORKBENCH.md): arquitectura,
+  comandos, flujo DXF-BIM, contratos de objetos, macros complementarias y caso validado
+  de Puriscal.
+- [Importacion controlada DWG/DXF](docs/IMPORTACION_CAD_DWG_DXF.md): unidades,
+  conversion temporal, validacion y limitaciones de bloques.
+- [Notas de investigacion](NOTES_RESEARCH.md): decisiones y referencias que dieron
+  origen al alcance.
+
+## Alcance inicial
+
+El workbench importa DWG/DXF como referencia, pero no convierte DXF/PDF/imagenes automaticamente a BIM. Crea una estructura organizada, parametros, sketches maestros y muros BIM basicos usando herramientas existentes de FreeCAD/Arch/BIM.
+
+Comandos incluidos:
+
+- `FA_ImportCADReference`: importa DWG/DXF en un documento nuevo con unidad real controlada y sin guardarlo.
+- `FA_CreateBIMStructure`: crea o reutiliza un `Building` y un `Building Storey` nativos.
+- `FA_RebuildBIMModel`: analiza los Sketches, permite corregir su asignacion y coordina la reconstruccion BIM completa.
+- `FA_CreateProject`: crea `FA_Project`, grupos base y `Spreadsheet_Parametros`.
+- `FA_CreateMasterSketches`: crea sketches maestros editables y vacios en XY.
+- `FA_CenterlinesFromSelection`: crea un nuevo `Sketch_Centros` generico desde shapes o un layer seleccionado.
+- `FA_WindowCenterlinesFromSelection`: crea un nuevo `Sketch_Centros` con un eje principal por shape de ventana.
+- `FA_DoorCenterlinesFromSelection`: crea un nuevo `Sketch_Centros` con el eje cerrado de cada simbolo de puerta.
+- `FA_CreateDoorsFromSketch`: crea puertas nativas Arch desde los ejes, resuelve el muro anfitrion y valida el corte real.
+- `FA_ChangeDoorType`: cambia el preset BIM nativo de una o varias puertas existentes sin perder identidad, dimensiones, Placement, host ni trazabilidad.
+- `FA_CreateWindowsFromSketch`: crea ventanas nativas Arch desde los ejes, con altura y antepecho configurables, y valida el corte real.
+- `FA_CreateOpeningsFromSketch`: crea solamente vanos BIM nativos desde las lineas de uno o varios Sketches.
+- `FA_InsertDoubleDoorBIM`: inserta una puerta Arch/BIM Europa de dos hojas, libre o alojada en un muro seleccionado.
+- `FA_CloseWallSketch`: acepta un muro BIM, su Sketch Base o un Sketch generico; completa los metadatos faltantes y cierra los buques validados por puertas o ventanas.
+- `FA_CreateSampleGeometry`: agrega geometria simple de muestra a sketches vacios solo para pruebas.
+- `FA_CreateWallsFromSketch`: crea un muro BIM con `Arch.makeWall` y `Base` directa desde cualquier Sketch seleccionado; si faltan espesor, altura o clasificacion solicita esos datos.
+- `FA_CreateColumnsFromSketch`: convierte dos familias de lineas de un Sketch en `Arch Axis`, un `AxisSystem` y columnas `Arch Structure` colocadas en sus cruces reales.
+- `FA_CreateBuildingGrid`: crea una cuadricula nativa `ArchGrid` desde los centros de paredes existentes.
+- `FA_CreateSiteFloorBIM`: crea una losa BIM desde sketches de muros, ventanas y puertas, y un terreno irregular de prueba.
+- `FA_CollectRoomLabels`: recopila rotulos de recintos, consolida duplicados y actualiza `Spreadsheet_Rotulos_Recintos`.
+- `FA_CreateModularCeiling`: genera cielos suspendidos por recintos rectangulares o poligonales, recorta la reticula nominal de 600x600 mm contra el perimetro real y reserva las celdas ocupadas por luminarias ElectricCR.
+- `FA_CreateServicePlatformFront`: crea una plataforma compacta desde una arista recta o un Sketch con exactamente una linea principal.
+- `FA_UpdateServicePlatformFront`: relee la linea fuente y actualiza cuerpo y vidrios en los mismos objetos, sin duplicarlos.
+- `FA_AddCashierServiceWindow`: deja previsto y validado el flujo independiente para una futura ventanilla de caja alojada en un muro BIM.
+
+## Reconstruccion BIM nativa desde Sketches
+
+El flujo nuevo no crea `FA_Project` ni una jerarquia paralela. En un documento que
+contenga Sketches depurados, ejecute `FA Reconstruir modelo BIM`, revise las
+asignaciones propuestas y confirme. La clasificacion usa primero `FA_Role`,
+`FA_ElementType`, `FA_CenterlineKind` y propiedades dimensionales; despues usa
+`Name`/`Label`, y finalmente permite asignacion manual.
+
+Resultado principal:
+
+```text
+Building
+`-- Level / Building Storey
+    |-- Sketch de muros
+    |-- Wall (Base = Sketch de muros)
+    |-- Columns / AxisSystem
+    |-- Doors (Hosts = Wall)
+    `-- Windows (Hosts = Wall)
+```
+
+Los comandos antiguos `FA_CreateWallsBIM`, `FA_CreateAxesColumnsBIM`,
+`FA_CreateDoorsBIM` y `FA_CreateWindowsBIM` permanecen registrados como aliases de
+compatibilidad. La losa y los `Space` nativos se dejaron para una fase posterior,
+porque no se consideran todavia suficientemente estables para el asistente.
+
+La prueba sobre una copia de La Cruz 2.1 confirmo un muro con Base Sketch directa,
+14 columnas, huecos reales de puerta/ventana, guardado/reapertura, idempotencia y
+Undo/Redo. Consulte [el resultado tecnico](RESULTADO_CODEX_RECONSTRUCCION_BIM.md).
+
+## Plataforma de atencion desde una linea
+
+1. Dibuje o seleccione una arista recta, o un `Sketcher::SketchObject` con exactamente una linea no constructiva.
+2. Ejecute `FA Plataforma desde linea`.
+3. Indique puestos, lado del funcionario mirando de P0 hacia P1, alturas y profundidades. `Invertir direccion` intercambia P0/P1 sin cambiar implicitamente el lado escogido.
+4. Para regenerar, edite las propiedades del objeto `Plataforma de atencion`, seleccione el objeto o uno de sus dos hijos y ejecute `FA Actualizar frente de plataforma`.
+
+La linea es la autoridad para longitud, posicion y orientacion. Un frente de 3000 mm con tres puestos produce modulos exactos de 1000 mm, sin descontar margenes. Si existe un muro BIM colineal se enlaza en `HostWall`; no se crea ni duplica ningun muro. El arbol visible queda compacto:
+
+```text
+Plataforma de atencion
+|-- Cuerpo_Plataforma
+`-- Vidrios_Plataforma
+```
+
+Las areas de funcionario/publico estan desactivadas por defecto (`MostrarAreasAtencion = false`). La hoja `Spreadsheet_Platform` permanece oculta como respaldo compatible. Los frentes historicos con seis sketches y zonas conservan su generador y su ruta de actualizacion anterior.
+
+Cada puesto crea una abertura geometrica real dentro de `Vidrios_Plataforma`, sin objetos visibles adicionales. Se controla con `MostrarAberturaVidrio`, `AnchoAberturaVidrio`, `AltoAberturaVidrio` y `AlturaAberturaVidrio`; esta ultima es la cota inferior absoluta desde la base local de la plataforma. Al cambiar estas propiedades, `FA Actualizar frente de plataforma` regenera los mismos dos objetos sin duplicarlos.
+
+La referencia `PL-01`, paginas 33-34 de `Guia Estandarizacion 050626 2`, respalda la altura de mostrador de 740 mm y la cota superior del vidrio de 1800 mm. No muestra de forma inequivoca el ancho y alto del hueco frontal: los 300 x 300 mm iniciales son un valor de modelado provisional y editable, no una dimension normativa. El objeto lo registra como `FA_GlassOpeningDimensionStatus = PROVISIONAL_EDITABLE_NO_NORMATIVO`. La herramienta tampoco genera el recinto completo de caja.
+
+## Puertas y ventanas BIM
+
+Flujo de puertas:
+
+```text
+FA Centros de puertas -> seleccionar Sketch de ejes -> FA Puertas BIM
+```
+
+Flujo de ventanas:
+
+```text
+FA Centros de ventanas -> seleccionar Sketch de ejes -> FA Ventanas BIM
+```
+
+Se pueden seleccionar tambien uno o varios muros BIM junto con los Sketches. Si no se
+seleccionan muros, el comando examina los muros BIM del documento. El anfitrion se
+elige por orientacion, distancia al eje, proyeccion sobre soporte colineal y cota Z;
+si dos muros resultan equivalentes el eje se omite como ambiguo. El ancho siempre
+proviene de la linea fuente. Cada resultado es un `ArchWindow._Window` con
+`IfcType = Door` o `IfcType = Window`, Sketch `Base`, `Hosts = [muro]`,
+`MoveWithHost = True` y trazabilidad `FA_*`.
+
+Desde la version 0.9.0 la seleccion explicita de un Sketch de abertura tiene
+prioridad sobre metadatos historicos incorrectos como `FA_CenterlineKind = walls`,
+siempre que el Sketch no tenga espesor de muro ni sea una Base generada. Tambien se
+aceptan Sketches seleccionados mediante `App::Link`. Si no se
+selecciona un Sketch valido, el comando busca automaticamente en el documento una
+fuente identificada por nombre o metadatos, por ejemplo `Sketch_Centros_Ventanas` o
+`FA_CenterlineKind = windows`. Los Sketches genericos no identificados nunca se usan
+automaticamente.
+
+Reejecutar reemplaza solamente resultados del mismo comando y fuente. Los objetos
+manuales y las 27 aberturas historicas de Puriscal se reconocen y no se duplican.
+
+### Cambiar el tipo de puertas existentes
+
+Seleccione una o varias puertas `ArchWindow` con `IfcType = Door` y ejecute
+`FA Cambiar tipo de puerta` en la barra `FA Aberturas BIM`. El dialogo consulta en
+tiempo real `ArchWindowPresets.WindowPresets`; en FreeCAD 1.1.3 instalado se
+detectaron `Simple door` y `Glass door`. No se muestra `Sliding door` porque esa
+instalacion no lo incluye.
+
+El cambio conserva la misma identidad del objeto y transfiere desde un preset
+nativo temporal solamente `Base`, `WindowParts`, `Preset`, `Frame` y `Offset`.
+Despues restaura y valida ancho, alto, Placement, Hosts, Normal, apertura,
+contenedor, propiedades `FA_*` y el corte real del Wall. Los auxiliares temporales
+se eliminan solo despues de validar. Las puertas dobles especiales de FA se
+rechazan sin modificarlas porque su familia de dos hojas no es compatible con los
+presets simples instalados.
+
+En la version 0.13.1 se corrigio el boton `Aplicar`: Qt clasifica ese boton como
+`ApplyRole` y no emite automaticamente la señal `accepted`, por lo que ahora el
+clic se conecta de forma explicita con la aceptacion del dialogo.
+
+Una puerta procedente de `FA_CreateDoorsFromSketch` recibe
+`FA_TypeOverride = true`. El Sketch fuente guarda por indice el mapa JSON
+`FA_DoorTypeOverrides`, por lo que una regeneracion posterior respeta la excepcion
+individual sin cambiar las otras lineas del Sketch.
+
+### Aberturas BIM sin puerta ni ventana
+
+Seleccione uno o varios Sketches de vanos y ejecute `FA Aberturas BIM desde Sketch`
+en la barra `FA Aberturas BIM`. Cada linea recta genera una instancia independiente:
+su longitud define el ancho y todos los ejes del mismo Sketch comparten la altura y
+la altura desde piso indicadas en el dialogo (2100 y 0 mm inicialmente).
+
+El resultado es un `ArchWindow._Window` nativo con `IfcType = Opening Element`,
+`WindowParts = []`, sin solidos, simbolos, hoja, marco ni vidrio. Su perfil cerrado
+permanece oculto y el Wall se perfora mediante `Hosts` y `getSubVolume()` de
+FreeCAD. La reejecucion reemplaza exclusivamente objetos con
+`FA_GeneratedBy = FA_CreateOpeningsFromSketch` de los Sketches seleccionados.
+
+La puerta doble se inserta desde la barra `FA Aberturas BIM`. Si se selecciona un
+muro, conviene pulsar primero el punto deseado sobre el muro y luego ejecutar
+`FA Insertar puerta doble BIM`; el comando alinea la puerta con el eje, conserva
+`Hosts` y `MoveWithHost`, y valida el hueco real. `Hosts` es la unica relacion BIM
+autoritativa al muro; `FA_HostWallName` conserva su nombre estable sin crear enlaces
+inversos duplicados. Sin muro seleccionado solicita
+X, Y, Z y rotacion para crear una puerta BIM libre.
+
+Desde v0.11.0 las herramientas se presentan en cinco barras tematicas:
+`FA Proyecto BIM`, `FA Estructura BIM`, `FA Aberturas BIM`, `FA Recintos y cielos`
+y `FA Plataforma`. Los comandos no se movieron ni se eliminaron; solamente cambio
+su agrupacion visible.
+
+## Instalacion
+
+Copiar la carpeta `FacilArquitecturaWB` al directorio `Mod` de FreeCAD o mantenerla en una ruta que FreeCAD cargue como Mod.
+
+Durante desarrollo, tambien puede ejecutarse la macro `FacilArquitecturaLoader.FCMacro` desde la raiz del directorio de macros. Esa macro agrega `Macros-de-Freecad` a `sys.path`, recarga `FacilArquitecturaWB` y activa el workbench sin tener que reiniciar FreeCAD.
+
+Estructura esperada:
+
+```text
+Mod/
+  FacilArquitecturaWB/
+    Init.py
+    InitGui.py
+    commands/
+    core/
+    resources/
+```
+
+Luego abrir FreeCAD 1.1.3 y seleccionar el workbench visible como `Facil Arquitectura`.
+
+## Prueba rapida
+
+1. Activar `Facil Arquitectura`.
+2. Abrir un documento con Sketches depurados.
+3. Ejecutar `FA Reconstruir modelo BIM`.
+4. Confirmar o corregir los Sketches de muros, columnas, puertas, ventanas y referencias.
+5. Confirmar. El resultado queda dentro de `Building -> Level` y puede seguirse editando con BIM.
+
+Como alternativa, se pueden ejecutar por separado `FA Crear estructura BIM`,
+`FA Muros BIM desde Sketch`, `FA Columnas BIM desde Sketch`, `FA Puertas BIM` y
+`FA Ventanas BIM`.
+
+Si solo se quiere probar el flujo sin un plano real, ejecutar `FA Crear geometria de muestra` antes de crear los muros BIM.
+
+## Centros desde DXF
+
+Si un DXF importado contiene shapes de muros, ventanas, puertas u otros elementos dentro de un layer o grupo:
+
+1. Seleccionar el layer, grupo o los shapes del mismo tipo.
+2. Ejecutar `FA Centros desde seleccion`.
+3. Revisar el nuevo sketch `Sketch_Centros_<nombre de la seleccion>`.
+4. Copiar o adaptar esas lineas al sketch maestro que corresponda.
+
+Cada ejecucion crea sketches nuevos y conserva los anteriores. Si se procesa dos veces la misma seleccion, agrega una secuencia como `_002`, `_003`, etc. El sketch incluye `FA_ElementType` y `FA_ExtractionMode` para identificar el contenido y el metodo utilizado.
+
+Los layers que contienen instancias `App::Link`, como los objetos `LinkU` de bloques DXF, se procesan usando el `Shape` transformado de cada link. La propiedad `Group` reenviada por el objeto enlazado no se recorre como un grupo normal; asi se conservan todas las posiciones de las instancias y no se agregan los shapes base ocultos.
+
+Cuando puede medir la distancia entre caras o el ancho de un perfil cerrado, el comando general separa los ejes en sketches como `..._Espesor_100mm` y `..._Espesor_200mm`. Espesores con diferencias de hasta 10 mm se consideran el mismo grupo. La propiedad `FA_WallThickness` conserva el valor representativo y el sketch principal usa `FA_RelatedCenterlineSketches` para enlazar los sketches adicionales de la misma ejecucion.
+
+Antes de crear los sketches, los tramos colineales cortados dentro de una misma zona continua de muro se consolidan y sus extremos cercanos se llevan al cruce real de los ejes. Un eje que sobrepasa una esquina se recorta hasta la interseccion. Si existe una linea de cierre transversal, ese extremo representa el borde real del muro y nunca se prolonga dentro de otra pared, aunque sus ejes esten cercanos. Se agregan restricciones `Horizontal`, `Vertical`, `Coincident` y `PointOnObject` cuando son geometricamente seguras; las diagonales se conservan sin forzarlas a ortogonales.
+
+Cuando el DXF importa cada borde como un Shape independiente, el comando reconstruye los remates usando tambien las lineas cortas que no califican como caras longitudinales. Si una cara longitudinal esta fragmentada, recompone sus tramos hasta el remate real; no los une cuando existe una linea perpendicular de cierre. Los perfiles rectangulares compactos, proporcionados y con al menos 82% de area llena se interpretan como columnas y generan dos ejes en cruz dentro de un sketch adicional `..._Columnas`, en vez de mezclarse con los grupos de espesor de paredes.
+
+`FA Centros` nunca acepta un `Sketch_Centros_...` previamente generado como fuente. Reprocesar los ejes como si fueran caras produce espesores falsos y cruces incorrectos; por eso el comando elimina esos objetos de una seleccion mixta y cancela la operacion si no queda geometria original. Para reducir falsos positivos en esquinas, una cruz de columna requiere actualmente un perfil cerrado con lado menor de al menos 250 mm.
+
+La creacion completa de todos los sketches de una ejecucion usa una sola transaccion documental: `Ctrl+Z` elimina el resultado completo. `FA Muros BIM desde centros` usa una segunda transaccion y crea un `Arch Wall` por Sketch, manteniendo ese Sketch como `Base` parametrica. El muro vincula `Width` con `FA_WallThickness` y `Height` con `FA_WallHeight`; editar las lineas o esas propiedades recompone el objeto BIM. Si se selecciona el sketch principal, tambien procesa automaticamente su lista `FA_RelatedCenterlineSketches`.
+
+Un Sketch generico ya no se rechaza. El comando muestra los Sketches sin contrato de muro y solicita espesor, altura y clasificacion. Al aceptar agrega `FA_WallThickness`, `FA_WallHeight`, `FA_Role = centerlines`, `FA_CenterlineKind = walls` y `FA_ElementType`, sin modificar la geometria. Si el Sketch tenia otro rol o tipo, los conserva como `FA_PreviousRole` y `FA_PreviousElementType`. Las dimensiones positivas ya existentes nunca se sustituyen. Cancelar el dialogo no modifica el Sketch.
+
+Los errores corregibles, como no seleccionar un objeto o seleccionar el tipo equivocado, se muestran como una advertencia breve y no producen el bloque `Running the Python command failed`. Los fallos internos tampoco se propagan al ejecutor de comandos; conservan un detalle tecnico identificado con `[FACILARQ]` en `Report view`.
+
+`FA Ejes y columnas BIM` usa el sketch seleccionado como fuente. Agrupa lineas colineales, conserva separaciones no uniformes y admite una reticula rotada siempre que tenga exactamente dos familias no paralelas. Crea las familias con `Arch.makeAxis` y las agrupa con `Arch.makeAxisSystem`. Si una reticula completa esta alineada con X/Y, asigna el sistema a una sola columna `Arch.makeStructure` para que BIM la replique. Si la reticula esta incompleta o girada, crea columnas BIM solo en los cruces presentes en el sketch; asi evita columnas inventadas y conserva su orientacion. El sketch conserva `FA_AxisExtension`, `FA_AxisTolerance`, `FA_ColumnWidth`, `FA_ColumnDepth` y `FA_ColumnHeight`. Cambiar las dimensiones actualiza y mantiene centradas las columnas; cambiar la posicion de los ejes requiere volver a ejecutar el comando. La operacion completa admite `Ctrl+Z`.
+
+`FA Cuadricula ArchGrid para reconstruir paredes` crea un objeto BIM mediante `Arch.makeGrid()`, no familias `Arch Axis`. Prefiere los sketches `Sketch_Cerrado_*` generados por `FA Cerrar huecos de paredes`; esos sketches prolongan los centros de pared sobre los huecos confirmados por los sketches existentes de puertas y ventanas. Si no existe una copia cerrada, usa el sketch de centros con espesor medido. El ArchGrid enlaza por separado las fuentes de paredes y las fuentes de aberturas para conservar trazabilidad. Como `ArchGrid` prolonga siempre sus filas y columnas por todo el rectangulo, el objeto BIM se conserva oculto y el comando crea `FA_GridWallTrace` como `Sketcher::SketchObject` editable. Este sketch naranja combina los segmentos reales del sketch reconstruido con ejes de puertas y ventanas ajustados al centro de la pared mas cercana; solo acepta aberturas colineales conectadas a menos de 3000 mm, por lo que descarta simbolos exteriores aislados. Antes de crear el Sketch, une tramos colineales, ajusta los pequeños desfases de esquina y divide las lineas en cada cruce. El Sketch recibe restricciones `Horizontal`, `Vertical` y `Coincident`, de modo que los encuentros comparten vertices reales y no solo coordenadas visualmente parecidas. Se crea a Z = 0 y hereda `FA_WallThickness`, `FA_WallHeight` y `FA_CenterlineKind = walls`; por ello puede seleccionarse directamente y usarse con `FA Muros BIM desde centros`, incluso despues de corregirlo manualmente. A partir de este trazado el comando tambien genera `FA_ReconstructedWallBase` y un muro BIM `Paredes BIM reconstruidas sin puertas ni ventanas`; el muro original queda oculto, no eliminado. Asi no aparecen prolongaciones artificiales y tanto las guias como los solidos quedan cerrados. `grid_primary_support_mm`, `grid_cluster_tolerance_mm` y `grid_max_lines_per_direction` controlan la simplificacion semantica del ArchGrid. Al volver a ejecutar el comando se reemplazan solamente los objetos generados por este flujo.
+
+Para ventanas con marcos u otros detalles internos, usar `FA Centros de ventanas`. Este comando agrupa primero shapes y bordes separados hasta 250 mm que parecen formar una misma ventana y luego genera un unico eje principal por grupo. El comando general permanece disponible para muros de cualquier material, espesores diferentes y geometria representada por pares de bordes.
+
+Para puertas con hoja y arco de giro, usar `FA Centros de puertas`. El comando agrupa los detalles del simbolo, identifica la radial que coincide con la hoja abierta y genera la radial opuesta como eje del buque cerrado. Si el arco circular no se puede reconocer, usa el eje dominante del grupo como respaldo y lo informa en la consola.
+
+`FA Cerrar huecos de paredes` acepta seleccionar uno o mas muros BIM, sus Sketches Base o Sketches genericos de pared. Al seleccionar un muro sigue `Base` y `FA_SourceSketch` hasta el eje autoritativo. Si el Sketch no tiene espesor, altura o clasificacion, solicita esos datos y lo convierte dentro de la misma transaccion; no convierte bocetos identificados como puertas, ventanas o columnas. Crea una copia `Sketch_Cerrado_*` por cada espesor y busca automaticamente sketches de centros de puertas y ventanas en el documento. Cuando un buque coincide con el espacio entre dos lineas colineales, alarga ambos extremos hasta un punto comun sin desplazar la linea completa ni cambiar su orientacion. El resultado conserva `Placement`, `FA_WallThickness`, `FA_WallHeight` y los metadatos de tipo del sketch fuente, y recibe restricciones `Coincident`, `Horizontal`, `Vertical` o `Angle`. Por defecto no cierra huecos sin un sketch de buque que los justifique. Si cambia una fuente, se debe volver a ejecutar el comando.
+
+Limitaciones actuales:
+
+- Para perfiles cerrados o shapes complejos y alargados obtiene un eje principal, util para muchas representaciones de ventanas y puertas.
+- Si el DXF trae elementos como dos lineas de borde, las empareja por direccion, separacion y solape para crear una linea central.
+- Admite geometria ortogonal y diagonal. Un borde largo puede emparejarse con varios tramos cortos.
+- Los contornos compactos ambiguos que no tienen una direccion dominante se omiten; el conteo queda en `FA_IgnoredCompactCount`.
+- Geometria DXF abierta, muy fragmentada o con separaciones mayores a 800 mm entre caras puede requerir ajuste manual.
+- Las uniones entre sketches de espesores distintos coinciden geometricamente, pero no reciben una restriccion cruzada entre documentos Sketcher independientes.
+
+Resultado esperado:
+
+- Grupo `FA_Project`.
+- Grupos `00_Reference`, `01_Parameters`, `02_MasterSketches`, `03_BIM`, `04_Areas`, `05_Electromechanical`.
+- Hoja `Spreadsheet_Parametros`.
+- Sketches maestros editables y vacios.
+- Muros Arch/BIM basicos dentro de `03_BIM`.
+
+## Decisiones aplicadas desde NOTES_RESEARCH.md
+
+- Usar el importador DXF existente de FreeCAD/Draft en futuras etapas; no crear importador propio.
+- Usar Arch/BIM para muros y objetos arquitectonicos; no reinventar BIM.
+- Tratar DWG, PDF e imagenes como flujos futuros o referencias externas, no como conversion automatica inicial.
+- Crear sketches maestros por sistema/tipo constructivo, no un sketch por objeto.
+- Mantener el workbench como orquestador simple y robusto.
+
+## Pendientes
+
+Actualizado: 2026-08-19. Esta seccion es la fuente de verdad de pendientes funcionales de Facil Arquitectura. No implica autorizacion para modificar codigo sin revisar primero la implementacion vigente, las dependencias nativas de FreeCAD 1.1.3 y el comportamiento real del documento.
+
+### 1. Estructura BIM y arbol de trabajo
+
+- Consolidar la estructura final alrededor de `Site -> Building -> Level` y evitar ramas paralelas que saquen elementos terminados del modelo BIM.
+- Asociar los elementos arquitectonicos generados al nivel correspondiente sin crear grupos o niveles artificiales cuando FreeCAD ya exprese la relacion mediante `Base`, `Host`, `Group` u otras relaciones nativas.
+- Evitar apariciones duplicadas en el arbol causadas por agrupaciones explicitas innecesarias.
+- Mantener como criterio de UX: Facil Arquitectura debe ser facil primero, correcto siempre y tan exacto como sea razonablemente posible.
+
+### 2. `FA_CreateBuildingGrid` como herramienta auxiliar
+
+- `FA_CreateBuildingGrid` / `ArchGrid` debe quedar como referencia y ayuda de reconstruccion.
+- No debe generar automaticamente muros BIM ni sustituir la accion explicita `FA_CreateWallsFromSketch`.
+- La preparacion/correccion de geometria fuente debe permanecer separada de la creacion BIM.
+
+### 3. Puertas BIM
+
+- Diagnosticar y corregir duplicados para garantizar conceptualmente `1 linea de Sketch -> 1 puerta`.
+- Mantener identificacion estable de cada instancia entre regeneraciones.
+- Al actualizar desde `FA_CreateDoorsFromSketch`, conservar bisagra, sentido de apertura y porcentaje/estado visual de apertura.
+- No borrar y recrear ciegamente puertas existentes si puede preservarse su identidad.
+- Diagnosticar el caso en que una puerta cercana a un encuentro perpendicular recorta de mas el muro; revisar tramo anfitrion, `Normal`, `HoleDepth`, `Hosts` y geometria real del buque antes de corregir.
+- La longitud de la linea del Sketch no se considera por si sola un ancho legitimo: representa principalmente ubicacion, orientacion y una estimacion inicial.
+
+### 4. Resolver aberturas de puertas y ventanas con logica comun
+
+- Crear un resolvedor comun de aberturas para puertas y ventanas.
+- Usar el muro anfitrion y el tramo correcto como referencia geometrica principal.
+- Usar muros vecinos/perpendiculares como referencias fuertes cuando un extremo de la linea llegue o quede muy cerca de ellos.
+- No introducir separaciones automaticas si la fuente indica que la abertura llega al encuentro.
+- Separar claramente posicion aproximada, ancho inferido y ancho final del buque.
+- Resolver el buque antes de crear la puerta o ventana BIM.
+
+### 5. Sketches de puertas y ventanas - pendiente conceptual
+
+- Estudiar ayudas graficas para visualizar las caras reales del muro cuando el Sketch de muros contiene solo ejes y el espesor vive como parametro.
+- Estudiar restricciones minimas de posicion/alineacion con el muro sin volver complejo el flujo.
+- Mantener este punto como investigacion conceptual por ahora; no exige automatizacion inmediata.
+
+### 6. Ventanas BIM
+
+- Aplicar el mismo resolvedor geometrico de aberturas usado por puertas.
+- Mantener el principio `1 Sketch = 1 familia/tipo + N instancias`.
+- Integrar una tabla/Spreadsheet de parametros comunes de familia cuando corresponda (altura, antepecho, preset/tipo BIM, marco/material y otros parametros comunes).
+- Evitar duplicar como entrada editable un ancho que pueda derivarse de la geometria resuelta.
+- Asociar correctamente ventanas con Wall, Level y, cuando sea util, Space.
+
+### 7. Areas, recintos, Wires y Spaces BIM
+
+- Integrar en FA las herramientas de areas ya existentes antes de crear soluciones paralelas.
+- Prioridad: recintos desde muros BIM.
+- Mantener `Draft Wire` cerrado como geometria maestra sencilla, editable y compartida.
+- Conservar herramientas de apoyo como recinto por click y poligono desde limites seleccionados para casos incompletos.
+- Compartir los Wires con ElectricCR, HVAC, iluminacion, incendios, cielos y otros consumidores.
+- Evolucionar hacia `Arch Space` / Space BIM nativo como representacion arquitectonica final cuando funcione correctamente, manteniendo compatibilidad con Areas legacy mientras sea necesario.
+- Normalizar nombre, area, perimetro, nivel e identificacion estable del recinto.
+
+### 8. `FA_CollectRoomLabels`
+
+- Usar Upala como caso de regresion para diagnosticar por que no se detectan determinados textos DXF.
+- Revisar tipos reales de objeto de texto, visibilidad de capas/grupos padre, alcance de busqueda fuera de `FA_Project` y posible contenido dentro de bloques.
+- No corregir por suposicion: primero identificar el tipo real de objeto y la ruta por la que llega al documento.
+
+### 9. `FA_CreateSiteFloorBIM` - Piso BIM y Terreno
+
+- Integrar claramente Site, terreno y piso/losa dentro del arbol BIM.
+- Separar responsabilidades actualmente ambiguas entre `Site`, terreno y huella/losa.
+- Asociar piso/losa al Level correcto.
+- Revisar grupos o niveles intermedios innecesarios y visibilidades inconsistentes.
+- Recortar el terreno bajo la losa/edificio para evitar solidos o caras superpuestas.
+- Conservar la geometria original necesaria del terreno sin destruir informacion de referencia.
+- Verificar que el resultado sea estable para secciones, TechDraw, DXF y documentacion 2D.
+
+### 10. `FA_CreateModularCeiling` - Cielos suspendidos
+
+- Conservar el algoritmo actual de modulacion, recorte, alineacion con luminarias, reserva de celdas y cuadro de cantidades.
+- Integrar los cielos al arbol BIM normal del edificio y al Level correspondiente, evitando que `FA_Ceilings` quede como una rama paralela aislada.
+- Relacionar cada cielo con su recinto/Space fuente.
+- Estudiar en FreeCAD 1.1.3 si `Covering` / `IfcCovering` con `PredefinedType = CEILING` es una base nativa adecuada antes de reemplazar la representacion actual.
+- Separar conceptualmente cielo constructivo BIM, reticula auxiliar/documental y Spreadsheet.
+
+### 11. Rendimiento del importador
+
+- Diagnosticar por que, despues de que la importacion parece haber terminado, FreeCAD continua ocupado durante mucho tiempo.
+- Revisar recomputes, clasificacion de capas/bloques, creacion posterior de objetos, agrupamiento y actualizaciones de vista.
+- Reducir recomputes innecesarios y mejorar el progreso visible por etapas para evitar apariencia de bloqueo.
+
+### 12. Salida documental 2D
+
+- Todo elemento calculado o generado por FA debe poder producir una representacion 2D comprensible, identificable y exportable.
+- Revisar progresivamente salida a TechDraw/DXF de Level, Spaces, muros, puertas, ventanas, piso/terreno y cielos.
+- Evitar soluciones 3D que no puedan documentarse de forma razonable.
+
+### 13. Exportacion final de modelo BIM limpio
+
+- Crear una herramienta final `FA Exportar modelo BIM limpio`.
+- Generar un nuevo `.FCStd` con el modelo BIM terminado y solo las dependencias imprescindibles para conservar edicion y parametria.
+- Excluir DXF, capas, bloques, diagnosticos, objetos temporales y geometria de reconstruccion innecesaria.
+- Mantener la estructura `Site -> Building -> Level -> elementos BIM`.
+- No eliminar Sketches Base u otras dependencias si un objeto BIM las necesita para seguir funcionando; ocultarlas/organizarlas cuando corresponda.
+- Considerar una segunda salida IFC de entrega a partir de la misma estructura final.
+- Usar esta exportacion como prueba de calidad: un elemento que no pueda trasladarse limpiamente probablemente sigue demasiado acoplado al proceso de reconstruccion.
+
+### 14. Herramientas generales aun no implementadas
+
+- `FA_CleanReference`
+- `FA_CopySelectedLinesToSketch`
+- `FA_ExportJSON`
+- `FA_ElectromechanicalBase`
+- `FA_CalibrateReferenceImage`
+- `FA_ImportReferenceImage`
+
+### Prioridad de desarrollo actual
+
+1. Estructura BIM `Site -> Building -> Level` y reglas de pertenencia al arbol.
+2. Areas/Wires/Spaces como base espacial comun.
+3. Puertas y ventanas con resolvedor robusto de aberturas y preservacion de estado por instancia.
+4. Integrar piso, terreno y cielos dentro de la estructura BIM.
+5. Diagnosticar rendimiento del importador.
+6. Consolidar salida documental 2D.
+7. Implementar `FA Exportar modelo BIM limpio` como cierre del flujo.

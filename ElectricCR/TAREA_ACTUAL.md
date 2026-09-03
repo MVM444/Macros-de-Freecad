@@ -1,291 +1,254 @@
-# ElectricCR - Tarea actual
+# TAREA VIGENTE - ElectricCR / Prototipo luminaria semantica + arbol idempotente
 
-**Fecha:** 2026-08-10 20:31, America/Costa_Rica.
+Fecha: 2026-09-01 America/Costa_Rica
+Proyecto: `Programacion en FreeCAD`
+Componente principal: `ElectricCR`
+Relacionados: `CRBIMCore 0.1.0`, `FacilArquitecturaWB`
+FreeCAD objetivo: `1.1.3`
+Estado: `CERRADA / IMPLEMENTADA / VERIFICADA MCP`
 
-**Estado:** CORRECCION IMPLEMENTADA Y RENDERIZADA; VALIDACION EN EL FREECAD REAL DE MARCO PENDIENTE.
+## Punto de partida obligatorio
 
-## Objetivo actual - popup oscuro del panel Registrar acometida
+La fase 2A de RoomResolver esta cerrada y verificada. La fase 2B de diseno en Drive tambien esta cerrada.
 
-Corregir la lista emergente oscura de los `QComboBox` de
-`Configuracion del proyecto/Registrar_Acometida_y_Ruta.FCMacro` sin alterar
-calculos, datos ni la estructura del Task Panel.
+Leer antes de modificar:
 
-## Resultado tecnico actual
+- `AGENTS.md`;
+- skill `$freecad-cr-workbench-architecture`;
+- `ElectricCR/docs/DISENO_OBJETO_ELECTROMECANICO_COMUN.md`;
+- `ElectricCR/docs/CONTRATO_ARBOL_SEMANTICO.md`;
+- `ElectricCR/ESTADO_PROYECTO.md`;
+- codigo vigente `ElectricCR/electriccr/features/objeto_toma_uno.py`;
+- `registry_electric.json` vigente.
 
-- Se confirmo que el QSS del formulario era correcto, pero el popup Qt6 puede
-  quedar fuera del arbol visual de `AcometidaRoot` al entrar en Gui.Control.
-- Cada vista nativa `combo.view()` recibe ahora directamente fondo blanco,
-  texto oscuro, seleccion azul y colores deshabilitados.
-- La prueba reproduce el reparentado dentro de un `QDockWidget` llamado
-  `Tareas` y renderiza los tres tabs y el popup con tema oscuro y claro.
-- `py_compile` y el smoke test de FreeCAD 1.1.3 pasaron.
+Regla ya aprobada:
 
-## Validacion pendiente de Marco
+> Las relaciones semanticas son la verdad; el arbol del modelo es una vista reproducible de esas relaciones.
 
-Cerrar el panel abierto, ejecutar de nuevo `Registrar acometida y ruta` y
-desplegar los combos de material/conductor, medidor, tablero, Wire y area.
+Y otra regla de esta tarea:
 
-No actualizar `HISTORIAL_CAMBIOS.md` hasta recibir esa validacion.
+> No crear un segundo objeto electromecanico generico. Evolucionar/reutilizar el nucleo existente y probarlo de forma reversible.
 
----
+## Objetivo
 
-## Contexto anterior: centro de circulo en Ruta critica
+Construir y verificar en FreeCAD 1.1.3 un prototipo minimo con **una sola luminaria temporal** que demuestre que la instancia `App::Link` actual puede conservar su funcionamiento 2D/3D y masters, mientras recibe identidad y relacion espacial persistente suficientes para proyectar una rama electrica idempotente.
 
-**Fecha:** 2026-08-10 20:18, America/Costa_Rica.
+En paralelo, crear solo en el documento temporal un comparador `Arch Equipment` equivalente para medir que aporta BIM/IFC. No sustituir la luminaria Link ni decidir una migracion masiva en esta tarea.
 
-**Estado:** IMPLEMENTACION Y PRUEBA TECNICA COMPLETADAS; VALIDACION VISUAL DE MARCO PENDIENTE.
+## Alcance A - luminaria App::Link piloto
 
-### Objetivo
+Usar el flujo real de `objeto_toma_uno.py` y el registro vigente para crear o reproducir una luminaria `App::Link` con master oculto.
 
-Permitir que `Conectar/RutaCritica_Seleccionados.FCMacro` use el centro
-geometrico de una arista circular como origen o destino de la ruta.
+La instancia piloto debe conservar sin cambios conceptuales:
 
-## Resultado tecnico actual
+- `LinkedObject` / master reutilizable;
+- `Placement`;
+- simbolo 2D;
+- modelo 3D;
+- `AlturaRel` y mecanismo actual de relink cuando aplique;
+- `Tipo`, `Categoria`, `KeyRegistro`, `ModoVisual`, orientacion y metadatos legacy que ya funcionen.
 
-- Una arista circular usa `Curve.Center`, aun cuando FreeCAD entregue tambien
-  el punto donde se hizo clic sobre la circunferencia.
-- El endpoint se identifica como `CIRCLE_CENTER` en el resolver y metadatos.
-- Aristas lineales conservan el punto de clic fiable y su fallback anterior.
-- El smoke test completo paso en FreeCAD 1.1.3, incluida una ruta real hacia
-  el centro de un circulo, Undo/Redo y guardar/reabrir temporal.
+Agregar solamente el contrato minimo necesario para el prototipo, preferentemente de forma reusable y no acoplada a GUI:
 
-## Validacion pendiente de Marco
+- `ElementUID`: identificador persistente y unico de la instancia;
+- `Space`: `App::PropertyLink` al `Arch/BIM Space` canonico.
 
-Seleccionar el borde de un circulo como origen o destino y confirmar en la
-vista que la ruta llega al centro del circulo.
+No agregar por ahora `Level` ni `Panel` a la luminaria:
 
-No actualizar `HISTORIAL_CAMBIOS.md` hasta recibir esa validacion.
+- `Level` se deriva de `Space`;
+- `Panel` se derivara de `Circuit` cuando exista un contrato de Circuit consolidado.
 
----
+Para circuito/control, reutilizar la autoridad vigente y no inventar aun un nuevo tipo productivo:
 
-## Contexto anterior: RectFromBoundaryLines con caras BIM
+- `CircuitoID` / propiedad equivalente existente para identificar el circuito del piloto;
+- `ControlID` / `ApagadorID` y los `PropertyLinkList` existentes del Control cuando corresponda.
 
-**Fecha:** 2026-08-10 20:06, America/Costa_Rica.
+Si para la prueba hace falta un objeto Circuit o Control temporal, crearlo solo como fixture/probe del documento de prueba, claramente marcado como no productivo. No consolidar su clase como arquitectura definitiva.
 
-**Estado:** IMPLEMENTACION Y PRUEBA TECNICA COMPLETADAS; VALIDACION VISUAL DE MARCO PENDIENTE.
+## Alcance B - asignacion espacial
 
-### Objetivo
+Usar `CRBIMCore.RoomResolver` para resolver el Space del punto/Placement de la luminaria piloto.
 
-Ampliar `Areas/RectFromBoundaryLines.FCMacro` para aceptar caras seleccionadas
-de paredes BIM/Arch, conservando su flujo anterior con aristas.
+Comportamiento:
 
-## Resultado tecnico actual
+- `RESOLVED` -> asignar `Space` solo en la luminaria temporal;
+- `AMBIGUOUS` -> no escribir enlace;
+- `NOT_FOUND` -> no escribir enlace;
+- no escribir propiedades ElectricCR sobre el Space;
+- no duplicar ni mover el Space.
 
-- Las caras verticales de muros se convierten en lineas limite proyectadas en XY.
-- En caras horizontales se toma el borde recto mas cercano al punto del clic.
-- Se pueden mezclar aristas y caras BIM.
-- El area guarda `FA_SourceMethod` y enlaces `FA_SourceWalls` hacia los muros.
-- La macro no modifica los muros fuente ni guarda un documento de proyecto.
-- El smoke test con cuatro muros Arch reales paso en FreeCAD 1.1.3, incluyendo
-  geometria, compatibilidad con aristas, Undo/Redo y guardar/reabrir temporal.
+Probar persistencia de `ElementUID` y `Space` despues de guardar/cerrar/reabrir el documento temporal.
 
-## Validacion pendiente de Marco
+## Alcance C - arbol idempotente minimo
 
-Seleccionar con Ctrl las caras interiores de dos o mas muros BIM reales y
-confirmar visualmente que el rectangulo usa los limites esperados. Si se usa
-la cara superior, hacer clic cerca del borde interior que se desea tomar.
+Implementar o prototipar, reutilizando primero organizadores existentes, una proyeccion minima para iluminacion:
 
-No actualizar `HISTORIAL_CAMBIOS.md` hasta recibir esa validacion.
+```text
+electrico
+  Iluminacion
+    Circuitos
+      IL-TEST
+        Recintos
+          <RoomName>
+            Apagadores
+              S1
+                Luminarias
+                  <luminaria piloto>
+```
 
----
+Autoridades para este prototipo:
 
-## Contexto anterior: Ruta critica solo seleccionados
+1. `Space` explicito de la luminaria para el recinto;
+2. `CircuitoID` o contrato legacy estable vigente para el circuito;
+3. relacion existente de Control (`PropertyLinkList`) y/o `ControlID` seguro para el apagador;
+4. el padre visual actual solo como fallback diagnosticable, nunca como verdad.
 
-**Fecha:** 2026-08-10, America/Costa_Rica.
+Reglas:
 
-**Estado:** IMPLEMENTACION COMPLETA -> PRUEBAS TECNICAS REALIZADAS -> VALIDACION FUNCIONAL DE MARCO PENDIENTE.
+- el Space real permanece en Building/Level;
+- `Recintos/<RoomName>` es un contenedor visual, no un segundo Space;
+- masters y `_lib` permanecen fuera de la rama funcional;
+- repetir la reconstruccion debe reutilizar los mismos contenedores y no crear duplicados;
+- una segunda ejecucion sin cambios debe reportar cero cambios materiales;
+- la reconstruccion no debe modificar `ElementUID`, `Space`, `LinkedObject`, master ni `Placement`.
 
-### Objetivo
+La herramienta/prototipo de arbol debe ofrecer `dry_run=True` por defecto si se materializa como helper reusable.
 
-Mejorar `Conectar/RutaCritica_Seleccionados.FCMacro` para que el primer
-objeto o subelemento seleccionado sea el origen geometrico y los siguientes
-sean destinos independientes, conservando el flujo ortogonal existente.
+## Alcance D - comparador Arch Equipment
 
-## Alcance de la correccion
+Solo en documento temporal, crear un `Arch Equipment` equivalente a la luminaria piloto, reutilizando cuando sea razonable la misma geometria/master o una copia controlada de la representacion.
 
-- usar `Face.CenterOfMass`, `Vertex.Point` y el punto fiable seleccionado
-  sobre una arista;
-- conservar el fallback `get_connection_point()` para objetos completos;
-- preservar caras, aristas o vertices distintos del mismo objeto;
-- solicitar altura Z y radio en un solo dialogo;
-- usar 235 mm como referencia editable para EMT de 2 pulgadas;
-- reducir el radio cuando no cabe y usar 0 mm como ruta sin curva;
-- mantener agrupamiento, nombres, multiples destinos, transaccion y logs;
-- guardar metadatos geometricos sin crear enlaces que puedan causar ciclos.
-
-## Resultado tecnico
+Comparar y documentar:
 
-- Se agrego `Conectar/selection_geometry.py` como helper comun pequeno.
-- `Ajustar_Alimentador_o_Ramal_Manual.FCMacro` delega en ese helper la
-  resolucion de subgeometria y el radio maximo uniforme.
-- `ElectricCR/tests/smoke_ruta_critica_seleccionados.py` paso en FreeCAD
-  1.1.3 con geometria real Part/Draft, radio 235/otro/0/reducido,
-  endpoints altos y bajos, mismo objeto, multiples destinos, repeticion,
-  Undo/Redo y guardar/reabrir una copia temporal.
-- `USE_RESULTS_SHEET` permanece en `False`.
-
-## Validacion pendiente de Marco
-
-Desde FreeCAD GUI, seleccionar objetos, caras, vertices y aristas reales en
-el orden deseado y confirmar que el resultado visual, el punto de clic sobre
-aristas, la curva y el dialogo corresponden al flujo de Marco.
-
-No actualizar `HISTORIAL_CAMBIOS.md` en esta etapa.
-
----
+- identidad y propiedades BIM nativas;
+- comportamiento de `Base`/Placement;
+- posibilidad de conservar una representacion 2D y 3D coherente;
+- `IfcType` aplicable a luminaria en FreeCAD 1.1.3;
+- guardar/reabrir;
+- Undo/Redo;
+- impacto en rendimiento/duplicacion geometrica a nivel cualitativo para este prototipo;
+- viabilidad de salida IFC/2D sin asumir que deba sustituir `App::Link`.
 
-## Contexto anterior: legibilidad del panel de acometida
+No migrar la luminaria piloto hacia Equipment. El resultado debe ser comparativo.
 
-La tarea anterior corrigio el contraste de
-`Configuracion del proyecto/Registrar_Acometida_y_Ruta.FCMacro` bajo temas
-claros y oscuros, sin modificar calculos ni rutas. Su validacion visual final
-por Marco permanece pendiente.
+## Salida documental 2D
 
----
+Verificar que la luminaria piloto conserva una representacion 2D identificable y exportable. Para este prototipo basta comprobar una ruta documental basica existente (por ejemplo DXF/TechDraw/Shape 2D segun lo que ya use ElectricCR) sin redisenar el sistema de planos.
 
-## Contexto anterior: altura de luminarias Link
+Si la ruta actual no exporta correctamente un `App::Link`, documentar el limite y no improvisar una solucion grande dentro de esta tarea.
 
-La tarea anterior corrigio `Iluminacion/ColocarLuminarias_Link.FCMacro` para que:
+## Arquitectura de codigo
 
-- conserve el tipo de luminaria asignado a cada area mediante
-  `LightingTypeKey`;
-- use como altura 3D la altura elegida explicitamente en el dialogo;
-- no reemplace esa altura por `LightingMountHeight` ni por el valor
-  predeterminado del registro;
-- mantenga el simbolo 2D en Z=0 y eleve solamente la geometria 3D del
-  maestro enlazado.
+Preferencia:
 
-### Causa confirmada
+`core/helper semantico independiente de GUI -> adaptador FreeCAD -> comando/probe pequeno`
 
-Con la opcion `Usar el tipo asignado en cada area`, la macro reutilizaba
-tambien `LightingMountHeight` y, en su defecto, la altura predeterminada del
-tipo. Para `Luminaria 60x60` ese valor es 3000 mm. Por eso la altura escrita
-en el dialogo se leia correctamente, pero se descartaba antes de crear el
-maestro `App::Link`.
+No introducir Qt/FreeCADGui en logica reusable.
 
-### Validacion requerida
+Antes de crear modulos nuevos, buscar helpers existentes de:
 
-- probar desde la interfaz con dos areas que tengan tipos distintos;
-- escribir una altura diferente de 3000 mm;
-- confirmar en vista axonometrica que ambos modelos 3D usan esa altura;
-- confirmar en planta que los simbolos 2D permanecen en Z=0.
-
-No actualizar `HISTORIAL_CAMBIOS.md` hasta recibir validacion visual de Marco.
-
----
-
-## Contexto anterior: consolidacion de conexiones
-
-Consolidar la familia `Conectar/` en un sistema general para:
-
-- conectar alimentadores desde cajas, equipos, desconectores o tableros hacia
-  cualquier tablero asignado;
-- conectar el backbone de cajas octogonales de cualquier circuito;
-- conservar el ajuste manual como herramienta distinta;
-- reducir variantes visibles especializadas por nombres como TP o TCOM.
-
-Version objetivo de esta tarea: FreeCAD 1.1.3.
-
-## Principios confirmados
-
-- TP, TCOM, TAA, TS, TUPS y nombres futuros son instancias del concepto
-  general `TABLERO`.
-- La identidad del tablero proviene de propiedades y relaciones, no de ramas
-  geometricas codificadas por nombre.
-- Las lineas guia son opcionales: si existen y se seleccionan se usan; si no
-  existen, el motor debe crear una ruta ortogonal directa.
-- La nueva logica comun debe vivir en modulos Python reutilizables; una
-  `.FCMacro` no debe cargarse mediante `exec()` como biblioteca.
-- Las variantes historicas se respaldan y pueden permanecer como wrappers de
-  compatibilidad hasta completar la validacion funcional.
-
-## Capacidades que deben conservarse
-
-- seleccion de caja origen y planificacion por circuito;
-- cara superior real del `Shape` y punto perteneciente a esa cara;
-- distribucion de varias entradas segun conexiones reales;
-- rutas guia opcionales, carriles y separacion;
-- reserva de puertos y preferencia por puertos disponibles;
-- rutas ortogonales, curvas, simplificacion y control de retroceso;
-- actualizacion sin duplicados, limpieza controlada y trazabilidad;
-- propiedades `CircuitoID`, `CajaOrigen`, `TableroDestino`, `PuertoOrigen`,
-  `PuntoOrigen`, `PuntoDestino`, `CaraTablero`, `FaceIndexTablero`, `RutaJSON`,
-  `EstadoConexion` y `GeneradoPor` cuando apliquen;
-- Undo/Redo mediante transacciones de FreeCAD.
-
-## Alcance minimo
-
-Revisar y consolidar:
-
-- `Conectar_Alimentadores_a_Tablero_Auto.FCMacro`;
-- `alimentadores_backend.py`;
-- `Conectar_Cajas_a_Tablero_Auto.FCMacro`;
-- alimentadores TP y TCOM a cara superior;
-- backbones TP y TCOM;
-- `Conectar_Tableros_Cara_Superior.FCMacro`;
-- `Conectar_Desconectores_HVAC_a_TP.FCMacro`;
-- `Preparar_Red_TCOM_Completa.FCMacro`;
-- `Ajustar_Alimentador_o_Ramal_Manual.FCMacro`;
-- `ramales_backend.py`.
-
-## Respaldo obligatorio
-
-Antes de modificar las herramientas se debe crear:
-
-`Conectar/Backups/consolidacion_conexiones_20260808/`
-
-con inventario, estado previo, commit y hashes. No borrar definitivamente las
-macros historicas durante esta tarea.
-
-## Interfaz esperada
-
-La barra normal debe tender a mostrar solamente:
-
-- `Conectar Alimentadores`;
-- `Conectar Circuito / Backbone`;
-- `Ajustar Ruta`.
-
-Las variantes reemplazadas se retiran de la barra solo despues de superar las
-pruebas tecnicas. Quitar de la barra no significa borrar el archivo.
+- identificadores persistentes;
+- propiedades ElectricCR;
+- organizacion del arbol;
+- reconocimiento de dispositivos;
+- controles/circuitos;
+- transacciones/dry-run.
 
 ## Pruebas obligatorias
 
-- alimentador sin guia;
-- alimentador con guia;
-- tableros TP, TCOM y otro codigo, usando el mismo motor;
-- varias llegadas distribuidas;
-- segunda ejecucion sin duplicados;
-- movimiento de tablero o caja y regeneracion;
-- reserva de puertos;
-- backbone para circuitos TP y TCOM con el mismo motor;
-- Undo/Redo;
-- guardar, cerrar, reabrir y recomputar una copia de prueba.
+Como minimo:
 
-La version actual de Puriscal puede usarse como fuente de verificacion, pero no
-debe guardarse ni sobrescribirse:
+1. suite actual de `CRBIMCore.RoomResolver` sigue pasando;
+2. pruebas existentes relevantes de `objeto_toma_uno.py` siguen pasando;
+3. crear luminaria `App::Link` piloto desde registro/master vigente;
+4. `ElementUID` creado una vez y estable en recompute/save/reopen;
+5. `Space` resuelto y persistente;
+6. `AMBIGUOUS` no escribe Space;
+7. `NOT_FOUND` no escribe Space;
+8. `LinkedObject` del piloto no cambia por agregar semantica;
+9. Placement no cambia;
+10. 2D y 3D mantienen comportamiento actual;
+11. cambio de `AlturaRel` mantiene el mecanismo actual sin elevar el simbolo 2D;
+12. reconstruccion de arbol crea la rama minima esperada;
+13. segunda reconstruccion produce cero duplicados y cero cambios materiales;
+14. masters siguen en `_lib` y no se mezclan con la rama funcional;
+15. Space permanece bajo su jerarquia arquitectonica y sin propiedades ElectricCR nuevas;
+16. guardar/cerrar/reabrir conserva UID, Space, LinkedObject y arbol;
+17. Undo/Redo aprobado en operaciones de escritura del prototipo;
+18. comparador `Arch Equipment` creado y evaluado en documento temporal;
+19. verificacion documental 2D basica;
+20. no se abre/guarda/modifica ningun FCStd original del usuario.
 
-`C:/Users/marco/OneDrive - Caja Costarricense de Seguro Social/2026/08-Agosto-2026/Puriscal/Puriscal 03-08-2026.FCStd`
+## Modelos y seguridad
 
-## Documentacion final
+- Usar documento temporal/demo creado por la prueba.
+- Si se inspecciona La Cruz u otro modelo real, hacerlo lectura solamente y no guardar.
+- No ejecutar reorganizacion sobre proyectos reales.
+- No cambiar ni borrar masters productivos.
+- No migrar tomacorrientes ni apagadores.
+- No cambiar `ColocarLuminarias_Link` salvo que el prototipo requiera un adaptador minimo y reversible; preferir no tocarlo.
+- No hacer migracion masiva de propiedades.
 
-Actualizar `RESULTADO_CODEX.md` y `REVISION_MACROS.md`. Actualizar
-`HISTORIAL_CAMBIOS.md` solamente si la solucion queda tecnicamente probada y
-existe evidencia suficiente de cambio aceptado.
+## Criterio de decision al cierre
 
-## Resultado al 2026-08-08 18:06 CST
+El resultado debe responder con evidencia a estas preguntas:
 
-- respaldo con hashes: completado;
-- motor Python general de alimentadores: completado;
-- motor Python general de backbone: completado;
-- wrappers TP/TCOM/HVAC/tablero-tablero: completados;
-- guia opcional y fallback directo: probados;
-- TP, TCOM, TS y TAA con el mismo motor: probados;
-- puertos, cara real, distribucion, idempotencia, movimiento y Undo/Redo:
-  probados;
-- copia temporal de Puriscal: probada y reabierta;
-- orquestador de iluminacion usando el motor comun: probado;
-- barra normal reducida a tres comandos: comprobada por test;
-- documento original de Puriscal: no guardado ni sobrescrito;
-- validacion visual desde FreeCAD GUI por Marco: pendiente.
+1. ¿Puede el `App::Link` actual ser la identidad operativa enriquecida de una luminaria sin perder ninguna funcion actual?
+2. ¿Son suficientes `ElementUID + Space + relaciones legacy/control existentes` para iniciar la reconstruccion del arbol?
+3. ¿Que aporta realmente `Arch Equipment` que justifique integrarlo, envolverlo o reservarlo para BIM/IFC?
+4. ¿La rama electrica puede reconstruirse idempotentemente sin usar el padre visual como autoridad?
+5. ¿Que minimo cambio se recomienda para la siguiente fase y cual debe evitarse?
 
-No actualizar `HISTORIAL_CAMBIOS.md` hasta recibir esa validacion funcional.
+No declarar una arquitectura definitiva si la evidencia no la sostiene.
+
+## Cierre real 2026-09-01
+
+La fase se implemento y verifico exclusivamente en documentos temporales con
+FreeCAD 1.1.3. No se abrio ni modifico ningun FCStd del usuario.
+
+Resultado:
+
+- la luminaria `App::Link` vigente admite `ElementUID` y `Space` sin cambiar
+  `LinkedObject`, `Placement`, tipo, registro, modo visual ni orientacion;
+- RoomResolver asigna unicamente un Space nativo en estado `RESOLVED`;
+  `AMBIGUOUS` y `NOT_FOUND` dejan el enlace vacio;
+- el cambio de `AlturaRel` conserva UID/Space/Placement y reenlaza al master
+  inmutable esperado, manteniendo el simbolo 2D en Z local 0;
+- el arbol se proyecta con claves estables y `dry_run=True` por defecto;
+- como `App::DocumentObjectGroup` tiene pertenencia visual exclusiva, la rama
+  contiene una referencia indice `App::Link` a la luminaria fisica. Este patron
+  reutiliza el organizador existente y evita sacar la instancia de su grupo
+  manual;
+- la segunda proyeccion produjo cero cambios y cero objetos adicionales;
+- los masters permanecen en `_lib/_lib_devices` y ahora conservan visibilidad
+  oculta tambien despues de recompute/reapertura;
+- guardar/cerrar/reabrir, Undo/Redo y exportacion DXF del Link aprobaron;
+- el comparador `Arch Equipment` aprobo como `Light Fixture`, con propiedades
+  BIM/IFC nativas, pero requirio `Base`/copia geometrica y no reemplazo al Link.
+
+Las pruebas y decisiones completas quedaron en `RESULTADO_CODEX.md`. La tarea
+se detiene aqui; no se iniciaron tomacorrientes, apagadores ni migraciones.
+
+### Revalidacion 2026-09-02
+
+Se releyo la tarea desde la fuente DEV sincronizada y se comprobo que seguia
+cerrada. Sin modificar codigo, se repitieron el nucleo semantico, las 11 pruebas
+de RoomResolver y el smoke integral en FreeCAD 1.1.3. Todos aprobaron; el
+documento y los archivos temporales fueron eliminados por la prueba. No se
+abrieron modelos originales ni se inicio una fase posterior.
+
+## Documentacion de cierre
+
+Al terminar:
+
+- actualizar este `TAREA_ACTUAL.md` con resultado real;
+- actualizar `ElectricCR/RESULTADO_CODEX.md`;
+- actualizar `ElectricCR/ESTADO_PROYECTO.md`;
+- actualizar `ElectricCR/docs/DISENO_OBJETO_ELECTROMECANICO_COMUN.md` con la decision basada en pruebas;
+- actualizar `ElectricCR/docs/CONTRATO_ARBOL_SEMANTICO.md` solo si el prototipo confirma cambios de contrato;
+- registrar memoria reusable si se confirma la arquitectura;
+- no hacer commit/push salvo instruccion posterior.
+
+## Instruccion final a Codex
+
+Implementar y probar **solo este prototipo de una luminaria en documento temporal**. Diagnosticar y reutilizar lo existente antes de crear codigo. No migrar dispositivos reales, no reorganizar modelos originales, no iniciar tomacorrientes/apagadores ni una fase posterior. Detenerse al documentar la comparacion y la recomendacion.

@@ -1,20 +1,24 @@
 """Shared constants for FacilArquitecturaWB.
 
+
 Descripcion: nombres, version y parametros base.
-Fecha: 2026-08-09
-Version: 0.9.0
+Fecha: 2026-09-02
+Version: 0.14.11
 Instrucciones: mantener nombres ASCII seguros para FreeCAD.
 """
+
 
 LOG_PREFIX = "[FACILARQ] "
 WORKBENCH_ID = "FacilArquitecturaWorkbench"
 WORKBENCH_NAME = "Facil Arquitectura"
-VERSION = "0.9.0"
-BUILD_ID = "2026.08.09.5"
+VERSION = "0.14.11"
+BUILD_ID = "2026.09.02.8"
 CREATED_BY = "FacilArquitecturaWB"
+
 
 ROOT_GROUP_NAME = "FA_Project"
 PARAM_SHEET_NAME = "Spreadsheet_Parametros"
+
 
 GROUPS = {
     "reference": ("FA_Reference", "00_Reference"),
@@ -23,7 +27,9 @@ GROUPS = {
     "bim": ("FA_BIM", "03_BIM"),
     "areas": ("FA_Areas", "04_Areas"),
     "electromechanical": ("FA_Electromechanical", "05_Electromechanical"),
+    "tables": ("FA_Tables", "06_Tables"),
 }
+
 
 DEFAULT_PARAMETERS = [
     ("building_width_mm", 12000.0),

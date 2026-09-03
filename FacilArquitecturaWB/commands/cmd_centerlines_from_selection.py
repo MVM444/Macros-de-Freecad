@@ -1,9 +1,11 @@
 """FA_CenterlinesFromSelection command.
 
-Descripcion: crea un sketch generico de centros desde shapes seleccionados o un layer seleccionado.
-Fecha: 2026-07-14
-Version: 0.4.0
-Instrucciones: usar como asistente desde DXF; no pretende detectar BIM completo automaticamente.
+Descripcion: crea Sketches de centros desde shapes, layers o Part::Feature Compound seleccionados.
+Funcion principal: delega al nucleo la extraccion no destructiva, incluida la descomposicion virtual de Compound/CompSolid.
+Mantenimiento: no exigir Part Explode como paso previo; conservar intacto el objeto fuente y registrar mensajes FACILARQ utiles.
+FreeCAD objetivo: 1.1.3.
+Fecha y hora: 2026-09-01 14:35 America/Costa_Rica.
+Version: 0.6.0.
 """
 
 from __future__ import annotations
@@ -15,7 +17,8 @@ import FreeCADGui
 
 from ..core.centerline_utils import create_centerline_sketch_from_objects
 from ..core.command_errors import UserFacingError, handle_command_exception
-from ..core.project_structure import ensure_project_structure, msg
+from ..core.bim_structure_utils import adopt_auxiliary_sources, ensure_auxiliary_parent
+from ..core.project_structure import active_or_new_document, msg
 
 ICON_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "resources", "icons", "centerlines_from_selection.svg")
@@ -31,7 +34,7 @@ class CommandClass:
     def GetResources(self):  # noqa: N802
         return {
             "MenuText": "FA Centros desde seleccion",
-            "ToolTip": "Crear Sketches parametricos de centros, separados por espesor detectado.",
+            "ToolTip": "Crear Sketches parametricos de centros desde shapes, grupos o Compound sin explotar la fuente.",
             "Pixmap": ICON_PATH,
         }
 
@@ -55,13 +58,16 @@ class CommandClass:
                 raise UserFacingError(
                     "No use Sketch_Centros como entrada de FA Centros. Seleccione el layer o los Shapes originales."
                 )
-            doc, _root, groups = ensure_project_structure()
+            doc = active_or_new_document()
+            support_parent, target_level = ensure_auxiliary_parent(doc, selection, legacy_key="master_sketches")
             try:
                 doc.openTransaction("FA Centros desde seleccion")
                 transaction_open = True
             except Exception:
                 transaction_open = False
-            sketch, segments = create_centerline_sketch_from_objects(doc, groups["master_sketches"], selection)
+            sketch, segments = create_centerline_sketch_from_objects(doc, support_parent, selection)
+            if target_level is not None:
+                adopt_auxiliary_sources(doc, target_level, [sketch] + selection)
             doc.recompute()
             if transaction_open:
                 doc.commitTransaction()

@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="bgFeed" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#eef4fb"/>
+      <stop offset="100%" stop-color="#d9e6f4"/>
+    </linearGradient>
+    <linearGradient id="wireFeed" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#0f5a92"/>
+      <stop offset="100%" stop-color="#2f90d0"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="12" fill="url(#bgFeed)" stroke="#8aa0b4" stroke-width="2"/>
+  <rect x="38" y="10" width="16" height="44" rx="3" fill="#fbfcfe" stroke="#5e6f7c" stroke-width="2"/>
+  <rect x="41" y="13" width="10" height="5" rx="1.5" fill="#e6eff8"/>
+  <path d="M10 18h12c4 0 6 2 6 6v0c0 4 2 6 6 6h4" fill="none" stroke="url(#wireFeed)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M10 32h16c3 0 5 1 7 3l5 5" fill="none" stroke="url(#wireFeed)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M10 46h14c3 0 5-1 7-3l7-7" fill="none" stroke="url(#wireFeed)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="10" cy="18" r="3" fill="#2f90d0"/>
+  <circle cx="10" cy="32" r="3" fill="#2f90d0"/>
+  <circle cx="10" cy="46" r="3" fill="#2f90d0"/>
+  <circle cx="38" cy="24" r="2.5" fill="#0f5a92"/>
+  <circle cx="38" cy="40" r="2.5" fill="#0f5a92"/>
+  <path d="M46 26v12" stroke="#f18f01" stroke-width="2.8" stroke-linecap="round"/>
+  <path d="M42 32h8" stroke="#f18f01" stroke-width="2.8" stroke-linecap="round"/>
+</svg>

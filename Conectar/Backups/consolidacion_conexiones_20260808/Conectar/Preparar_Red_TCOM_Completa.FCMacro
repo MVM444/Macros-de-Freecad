@@ -1,0 +1,92 @@
+# -*- coding: utf-8 -*-
+# MenuText: Preparar red TCOM completa
+# Icon: Conectar/Preparar_Red_TCOM_Completa.svg
+
+"""Crea alimentadores y ramales TCOM y colorea los tomas de computo."""
+
+from pathlib import Path
+import re
+
+import FreeCAD as App
+
+
+TAG = "[RED_TCOM_COMPLETA]"
+
+
+def _load_macro(path, module_name):
+    source = path.read_text(encoding="utf-8-sig")
+    source = re.sub(
+        r"\nif\s+__name__\s*==\s*[\"']__main__[\"']\s*:\s*\n\s*main\(\)\s*\Z",
+        "\n",
+        source,
+        flags=re.MULTILINE,
+    )
+    namespace = {"__name__": module_name, "__file__": str(path)}
+    exec(compile(source, str(path), "exec"), namespace, namespace)
+    return namespace
+
+
+def main(doc_override=None):
+    doc = doc_override or App.ActiveDocument
+    if doc is None:
+        App.Console.PrintError(TAG + " No hay documento activo.\n")
+        return None
+
+    folder = Path(__file__).resolve().parent
+    root = folder.parent
+    try:
+        feeder = _load_macro(
+            folder / "Conectar_Circuitos_TCOM_a_Cara_Superior_Tablero.FCMacro",
+            "_electriccr_red_tcom_feeder",
+        )
+        branches = _load_macro(
+            folder / "Conectar_Octogonales_Ortogonal_por_Circuito_TCOM.FCMacro",
+            "_electriccr_red_tcom_branches",
+        )
+        painter = _load_macro(
+            root / "Tomacorrientes" / "Pintar_Tomacorrientes_Computo_Rojo.FCMacro",
+            "_electriccr_red_tcom_painter",
+        )
+    except Exception as exc:
+        App.Console.PrintError(TAG + " No se pudieron cargar las macros: " + str(exc) + "\n")
+        return None
+
+    feeder_result = feeder["main"](
+        doc,
+        {
+            "route_z": 3400.0,
+            "lane_spacing": 50.0,
+            "approach_clearance": 300.0,
+            "bend_radius": 100.0,
+            "port_stub": 80.0,
+        },
+    )
+    if feeder_result is None:
+        App.Console.PrintError(TAG + " No se crearon los alimentadores TCOM.\n")
+        return None
+
+    branch_result = branches["main"](
+        doc,
+        {
+            "route_z": 3400.0,
+            "bend_radius": 100.0,
+            "port_stub": 80.0,
+            "diameter": 22.2,
+        },
+    )
+    if branch_result is None:
+        App.Console.PrintError(TAG + " No se crearon los ramales TCOM.\n")
+        return None
+
+    paint_result = painter["main"](doc)
+    result = {
+        "alimentadores": feeder_result,
+        "ramales": branch_result,
+        "color": paint_result,
+    }
+    App.Console.PrintMessage(TAG + " Red TCOM completa terminada.\n")
+    return result
+
+
+if __name__ == "__main__":
+    main()

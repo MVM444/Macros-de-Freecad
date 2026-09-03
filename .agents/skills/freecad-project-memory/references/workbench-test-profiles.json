@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "updated_at": "2026-08-11 16:44 -06:00",
+  "profiles": {
+    "ElectricCR": {
+      "workbench_id": "ElectricCRWorkbench",
+      "module_prefixes": [
+        "ElectricCR"
+      ],
+      "command_prefixes": [
+        "ElectricCR_"
+      ],
+      "smoke_checks": [
+        "workbench_registered",
+        "activate_workbench",
+        "source_path_expected",
+        "commands_registered",
+        "icons_readable",
+        "reload_if_available"
+      ],
+      "notes": "Macro groups are dynamic; avoid requiring a fixed full command list."
+    },
+    "MEPWorkbenchCR": {
+      "workbench_id": "MEPWorkbenchCR",
+      "module_prefixes": [
+        "MEPWorkbenchCR"
+      ],
+      "required_commands": [
+        "MEP_HVAC_CreateProject",
+        "MEP_HVAC_CreateSpace",
+        "MEP_HVAC_Calculate",
+        "MEP_HVAC_AlignObjects",
+        "MEP_HVAC_InsertEvaporator",
+        "MEP_HVAC_PlaceCeilingUnits",
+        "MEP_HVAC_AssignEvaporatorSpace",
+        "MEP_HVAC_ToggleLabels",
+        "MEP_HVAC_SetVisualModeAll",
+        "MEP_HVAC_InsertCondenser",
+        "MEP_HVAC_AssignCondenserUnits",
+        "MEP_HVAC_CreateRoute",
+        "MEP_HVAC_Validate",
+        "MEP_HVAC_RefreshModels",
+        "MEP_HVAC_Export2D",
+        "MEP_HVAC_ReloadWorkbench"
+      ],
+      "smoke_checks": [
+        "workbench_registered",
+        "activate_workbench",
+        "source_path_expected",
+        "required_commands_present",
+        "reload_command_present"
+      ]
+    },
+    "GameEngineExportWB": {
+      "workbench_id": "GameEngineExportWorkbench",
+      "module_prefixes": [
+        "GameEngineExportWB"
+      ],
+      "command_prefixes": [
+        "GameEngineExport_"
+      ],
+      "smoke_checks": [
+        "workbench_registered",
+        "activate_workbench",
+        "source_path_expected",
+        "commands_registered",
+        "reload_if_available"
+      ]
+    },
+    "FacilArquitecturaWB": {
+      "workbench_id": "FacilArquitecturaWorkbench",
+      "module_prefixes": [
+        "FacilArquitecturaWB"
+      ],
+      "smoke_checks": [
+        "workbench_registered",
+        "activate_workbench",
+        "source_path_expected",
+        "commands_registered"
+      ]
+    }
+  }
+}

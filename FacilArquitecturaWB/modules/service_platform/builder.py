@@ -8,6 +8,7 @@ import Part
 from ...core.naming import safe_name
 from ...core.project_structure import msg, set_prop
 from .calculator import calculate_layout, position_origins
+from .compact_builder import COMPACT_MODE, create_compact_platform, update_compact_platform
 from .properties import (
     GENERATED_BY,
     MODULE_TYPE,
@@ -22,6 +23,11 @@ from .validation import PlatformValidationError, normalize_options
 
 
 ROOT_BASE_NAME = "FA_ServicePlatformFront"
+
+
+def create_service_platform_from_axis(doc, axis_reference, values=None):
+    """Create the compact workflow while retaining the legacy API below."""
+    return create_compact_platform(doc, axis_reference, values)
 
 
 def create_service_platform_front(doc, values=None):
@@ -62,6 +68,8 @@ def update_service_platform_front(doc, root):
     root = find_platform_root(root)
     if root is None:
         raise PlatformValidationError("Seleccione un grupo FA_ServicePlatformFront valido.")
+    if str(getattr(root, "FA_GenerationMode", "") or "") == COMPACT_MODE:
+        return update_compact_platform(doc, root)
     sheet = getattr(root, "FA_ParameterSheet", None)
     if sheet is None:
         raise PlatformValidationError("El modulo seleccionado no conserva su Spreadsheet_Platform.")

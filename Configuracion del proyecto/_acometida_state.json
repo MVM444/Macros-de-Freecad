@@ -1,8 +1,8 @@
 {
-  "medidor_name": "Body001",
-  "tablero_name": "Clone001",
-  "wire_manual_name": "Wire103",
-  "area_obj_name": "Wire104",
+  "medidor_name": "MedidorEnergiaEmpotrado",
+  "tablero_name": "Link_TAB_E42_MB_SUP",
+  "wire_manual_name": "Wire",
+  "area_obj_name": "Structure014",
   "sistema": "1F-2H 120/240",
   "normativa": "CR",
   "demand_method": "MANUAL",
@@ -11,11 +11,11 @@
   "demanda_kva": 20.0,
   "pf": 0.95,
   "growth_pct": 0.0,
-  "breaker_sel": 100,
+  "breaker_sel": 150,
   "material": "Cu",
-  "awg_sel": "2",
-  "z_route_mm": 3000.0,
+  "awg_sel": "1/0",
+  "z_route_mm": 3400.0,
   "use_manual_wire": true,
   "use_project_group": true,
-  "area_total_m2": 370.143
+  "area_total_m2": 842.71
 }

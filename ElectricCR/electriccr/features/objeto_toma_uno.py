@@ -68,7 +68,7 @@ class VP_TomaUno:
         except Exception:
             pass
         try:
-            vobj.Visibility = True
+            vobj.Visibility = not bool(getattr(self.Object, "EsPrototipo", False))
             vobj.Transparency = 0
             vobj.LineWidth = 1.0
             vobj.PointSize = 3.0
@@ -384,7 +384,7 @@ class TomaUnoProxy:
                 obj.Shape = comp
                 if GUI_UP and hasattr(obj, "ViewObject"):
                     try:
-                        obj.ViewObject.Visibility = True
+                        obj.ViewObject.Visibility = not bool(getattr(obj, "EsPrototipo", False))
                         obj.ViewObject.Transparency = 0
                         obj.ViewObject.DisplayMode = "Flat Lines"
                     except Exception:
@@ -447,6 +447,22 @@ def _ensure_master_group(doc):
     return g_dev
 
 
+def _mark_as_master(master):
+    if master is None:
+        return
+    try:
+        if "EsPrototipo" not in (master.PropertiesList or []):
+            master.addProperty(
+                "App::PropertyBool",
+                "EsPrototipo",
+                "Link",
+                "Objeto maestro compartido; no es una instancia fisica",
+            )
+        master.EsPrototipo = True
+    except Exception:
+        pass
+
+
 def _ensure_link_metadata(obj, tipo_logico, key_registro, modo_visual, altura_rel, orientacion_pared):
     if not obj:
         return
@@ -499,6 +515,12 @@ def _get_or_create_master_toma(doc, key_registro=None, tipo_logico=None, modo_vi
     master_name = _master_name_for(key_registro, tipo_logico, modo_visual, altura_rel, orientacion_pared)
     master = doc.getObject(master_name)
     if master and master.TypeId == "Part::FeaturePython":
+        _mark_as_master(master)
+        if hide_master and GUI_UP:
+            try:
+                master.ViewObject.Visibility = False
+            except Exception:
+                pass
         return master
 
     master = crear_toma_uno(
@@ -529,6 +551,7 @@ def _get_or_create_master_toma(doc, key_registro=None, tipo_logico=None, modo_vi
         master.Placement = App.Placement()
     except Exception:
         pass
+    _mark_as_master(master)
 
     g_dev = _ensure_master_group(doc)
     try:
@@ -798,6 +821,14 @@ def crear_toma_link(doc=None, name_prefix=None, key_registro=None, tipo_logico=N
     if recompute:
         try:
             doc.recompute()
+        except Exception:
+            pass
+    # TomaUnoProxy.execute() makes its ViewProvider visible while rebuilding
+    # geometry.  Masters are library objects, so enforce their requested hidden
+    # state after the recompute too.
+    if hide_master and GUI_UP:
+        try:
+            master.ViewObject.Visibility = False
         except Exception:
             pass
     log_i(f"created link device '{link.Name}' -> '{master.Name}' (Tipo={tipo_logico}, Key={key_registro})")

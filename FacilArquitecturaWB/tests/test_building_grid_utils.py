@@ -160,6 +160,20 @@ class BuildingGridUtilsTests(unittest.TestCase):
         )
         self.assertEqual(2, joined)
 
+    def test_level_grid_outputs_are_routed_to_auxiliary_group(self):
+        level = types.SimpleNamespace(IfcType="Building Storey")
+        auxiliary = object()
+        previous = grids.ensure_level_auxiliary_group
+        try:
+            grids.ensure_level_auxiliary_group = lambda doc, target: auxiliary
+            self.assertIs(auxiliary, grids._grid_output_container(object(), level))
+        finally:
+            grids.ensure_level_auxiliary_group = previous
+
+    def test_non_level_grid_container_is_preserved_for_legacy_callers(self):
+        container = object()
+        self.assertIs(container, grids._grid_output_container(object(), container))
+
 
 if __name__ == "__main__":
     unittest.main()

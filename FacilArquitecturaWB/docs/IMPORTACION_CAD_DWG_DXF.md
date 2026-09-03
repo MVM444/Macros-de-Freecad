@@ -24,8 +24,12 @@ documento nuevo sin guardar; nunca inserta la referencia dentro del FCStd activo
 - Calcula el factor manual de Draft para que la escala efectiva corresponda a la
   unidad real elegida. Por ejemplo, si la cabecera dice milimetros pero el dibujo
   esta en metros, aplica `dxfScaling = 1000` durante esa importacion.
-- Desactiva temporalmente el dialogo adicional de DXF y restaura tanto ese ajuste
-  como `dxfScaling` al finalizar, incluso si ocurre un error.
+- Aplica temporalmente un perfil determinista de formas fusionadas con textos,
+  layouts, bloques y capas activos. Restaura exactamente cada preferencia tocada,
+  incluso si la clave no existia antes o si ocurre un error.
+- En FreeCAD afectado por issue #31637, neutraliza el par global de WaitCursor
+  solamente durante `importDXF.insert()` y restaura las funciones nativas en
+  `finally`. No modifica `src/Mod/Draft/importDXF.py`.
 - Usa `doc.Name`, el nombre interno seguro de FreeCAD, y no `doc.Label`. Esto evita
   el error `Try to activate unknown document` cuando la etiqueta contiene espacios.
 - Coloca la vista superior, ajusta el contenido y agrega `FA_CADImportMetadata`
@@ -56,6 +60,18 @@ Revise especialmente:
   caja del bloque base puede no representar la extension visible de su instancia.
 - El comando no limpia layers, no convierte automaticamente la referencia a BIM y
   no guarda el documento. Esas decisiones permanecen bajo control del usuario.
+
+## Compatibilidad temporal FreeCAD #31637
+
+FA clasifica el importador instalado como `affected`, `not_affected` o `unknown`.
+La decision prioriza una inspeccion estructural de `_import_dxf_file`; FreeCAD
+1.1.3 tiene un respaldo explicito porque fue confirmado mediante prueba A/B. Un
+estado desconocido importa por la ruta normal sin monkeypatch agresivo.
+
+Para comprobar una version futura, revise los mensajes `[FACILARQ][COMPAT]`. Si
+el patron oficial ya esta corregido, debe informar `not_affected` y
+`workaround disabled`; la importacion debe conservar conteos, escala y
+preferencias sin sustituir funciones de `FreeCADGui`.
 
 ## Macro de acceso directo
 

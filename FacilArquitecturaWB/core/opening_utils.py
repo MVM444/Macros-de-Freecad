@@ -1,11 +1,12 @@
-"""Native BIM door and window creation from opening centerline Sketches.
+"""Native BIM door, window and opening-only creation from centerline Sketches.
 
 Descripcion: resuelve muros anfitriones y crea Arch Window/Doors con cortes reales.
-Objetivo: contener aberturas directamente en un Building Storey y aceptar Sketches
-explicitamente seleccionados aunque conserven metadatos historicos incorrectos.
+Objetivo: crear aberturas alojadas en su muro anfitrion sin duplicarlas como miembros
+directos del Building Storey, aceptando Sketches explicitamente seleccionados aunque
+conserven metadatos historicos incorrectos.
 FreeCAD objetivo: 1.1.3.
-Fecha y hora: 2026-08-09 22:35 UTC-06:00.
-Version: 0.2.0.
+Fecha y hora: 2026-08-30 14:30 UTC-06:00.
+Version: 0.7.0.
 Instrucciones de mantenimiento: la seleccion explicita tiene prioridad si el Sketch
 no es una base generada ni posee espesor de muro; conservar diagnosticos de rechazo.
 """
@@ -13,28 +14,40 @@ no es una base generada ni posee espesor de muro; conservar diagnosticos de rech
 from __future__ import annotations
 
 import math
+import re
 
 import FreeCAD
 
-from .bim_utils import make_arch_window_preset, wall_thickness_from_sketch
-from .bim_structure_utils import add_to_level, is_level
+from .bim_utils import make_arch_window, make_arch_window_preset, wall_thickness_from_sketch
+from .bim_structure_utils import is_level, tag_target_level
 from .command_errors import UserFacingError
+from .door_type_utils import door_preset_override, native_door_presets
+from .door_corner_utils import (
+    DEFAULT_CORNER_SNAP_TOLERANCE_MM,
+    desired_open_leaf_vector,
+    plan_door_corner_snap,
+    resolve_native_opening_mode,
+)
 from .project_structure import ensure_group, msg, set_prop, warn
 
 
 GENERATED_BY_DOORS = "FA_CreateDoorsFromSketch"
 GENERATED_BY_WINDOWS = "FA_CreateWindowsFromSketch"
+GENERATED_BY_OPENINGS = "FA_CreateOpeningsFromSketch"
 LEGACY_GENERATORS = {
     "door": ("FA_CreateDoorsBIM", "FA_InsertDoorsBIM"),
     "window": ("FA_CreateWindowsBIM", "FA_InsertWindowsBIM"),
+    "opening": (),
 }
 REPLACEABLE_GENERATORS = {
     "door": (GENERATED_BY_DOORS, "FA_CreateDoorsBIM"),
     "window": (GENERATED_BY_WINDOWS, "FA_CreateWindowsBIM"),
+    "opening": (GENERATED_BY_OPENINGS,),
 }
 GROUP_SPECS = {
     "door": ("FA_Doors", "FA Doors"),
     "window": ("FA_Windows", "FA Windows"),
+    "opening": ("FA_Openings", "FA Openings"),
 }
 MIN_OPENING_WIDTH_MM = 50.0
 DEFAULT_ANGLE_TOLERANCE_DEG = 15.0
@@ -201,6 +214,116 @@ def select_best_host(
     }
 
 
+def resolve_door_corner_snap(
+    match,
+    wall_records,
+    tolerance_mm=DEFAULT_CORNER_SNAP_TOLERANCE_MM,
+):
+    """Adapt FreeCAD wall records to the pure door-corner snap planner.
+
+    The returned ``match`` is a shallow copy with translated projected endpoints
+    when one unique side wall is close enough. The opening length is preserved.
+    """
+    if match is None or match.get("wall") is None:
+        return {"applied": False, "ambiguous": False, "match": match, "reason": "sin host"}
+    host = match["wall"]
+    host_key = _wall_record_key(host)
+    host_segment_index = int(match.get("reference_segment_index", -1))
+    pure_records = []
+    object_map = {}
+    for record in list(wall_records or []):
+        wall = record.get("wall")
+        if wall is None:
+            continue
+        key = _wall_record_key(wall)
+        label = _object_label(wall)
+        width = _wall_width(wall)
+        segments = list(record.get("segments") or [])
+        if wall is host:
+            # A single Arch Wall can be based on a network Sketch containing the
+            # host run and all perpendicular room walls.  Excluding the complete
+            # object would hide every valid lateral segment.  Give only the actual
+            # host segment its object key (the pure planner excludes that key) and
+            # expose the remaining runs as virtual records that still resolve to
+            # the same BIM Wall object.
+            for segment_index, segment in enumerate(segments):
+                virtual_key = (
+                    key
+                    if segment_index == host_segment_index
+                    else "%s::segment:%d" % (key, segment_index)
+                )
+                object_map[virtual_key] = wall
+                pure_records.append(
+                    {
+                        "wall_key": virtual_key,
+                        "label": label,
+                        "width_mm": width,
+                        "segments": [segment],
+                    }
+                )
+            continue
+        object_map[key] = wall
+        pure_records.append(
+            {
+                "wall_key": key,
+                "label": label,
+                "width_mm": width,
+                "segments": segments,
+            }
+        )
+    first = tuple(match["projected_first"])
+    second = tuple(match["projected_second"])
+    plan = plan_door_corner_snap(
+        first + second,
+        host_key,
+        pure_records,
+        tolerance_mm=float(tolerance_mm),
+    )
+    result = dict(plan)
+    result["match"] = dict(match)
+    if plan.get("applied"):
+        result["match"]["projected_first"] = tuple(plan["projected_first"])
+        result["match"]["projected_second"] = tuple(plan["projected_second"])
+    candidate = plan.get("jamb_face_candidate") or {}
+    side_key = str(plan.get("side_wall_key") or candidate.get("side_wall_key") or "")
+    result["side_wall"] = object_map.get(side_key)
+    return result
+
+
+def apply_door_corner_metadata(obj, corner_plan):
+    """Persist traceability for a previously resolved door corner snap."""
+    plan = dict(corner_plan or {})
+    applied = bool(plan.get("applied"))
+    set_prop(obj, "App::PropertyBool", "FA_CornerSnapped", "FacilArquitectura", "Jamba ajustada a pared lateral", applied)
+    set_prop(obj, "App::PropertyString", "FA_CornerStatus", "FacilArquitectura", "Estado del analisis de esquina", str(plan.get("status") or "NO_CANDIDATE"))
+    set_prop(obj, "App::PropertyBool", "FA_CornerNoFit", "FacilArquitectura", "El ancho no cabe entre caras laterales", bool(plan.get("no_fit")))
+    set_prop(obj, "App::PropertyBool", "FA_CornerSwingResolved", "FacilArquitectura", "La geometria resolvio el cuadrante de giro", bool(plan.get("swing_resolved")))
+    set_prop(obj, "App::PropertyString", "FA_JambEndpoint", "FacilArquitectura", "Jamba alineada respecto al Sketch", str(plan.get("jamb_endpoint") or "AUTO"))
+    set_prop(obj, "App::PropertyString", "FA_CornerSnapReason", "FacilArquitectura", "Motivo del ajuste de esquina", str(plan.get("reason") or ""))
+    if plan.get("no_fit"):
+        set_prop(obj, "App::PropertyLength", "FA_OpeningWidthChecked_mm", "FacilArquitectura", "Ancho autoritativo comprobado", float(plan.get("opening_width_mm") or 0.0))
+        set_prop(obj, "App::PropertyLength", "FA_AvailableWidth_mm", "FacilArquitectura", "Luz util entre caras laterales", float(plan.get("available_width_mm") or 0.0))
+        set_prop(obj, "App::PropertyLength", "FA_CornerPenetration_mm", "FacilArquitectura", "Penetracion que produciria el snap", float(plan.get("penetration_mm") or 0.0))
+    if not applied:
+        return obj
+    side_wall = plan.get("side_wall")
+    if side_wall is not None:
+        # This is traceability, not a second host relation.  In FreeCAD 1.1.3
+        # every PropertyLink back to the host participates in MoveWithHost and
+        # can multiply the displacement of the opening.
+        set_prop(
+            obj,
+            "App::PropertyString",
+            "FA_CornerWall",
+            "FacilArquitectura",
+            "Nombre estable de la pared lateral usada para snap",
+            str(getattr(side_wall, "Name", "") or ""),
+        )
+    set_prop(obj, "App::PropertyLength", "FA_CornerGapBefore_mm", "FacilArquitectura", "Separacion previa entre jamba y cara lateral", float(plan.get("snap_distance_mm") or 0.0))
+    set_prop(obj, "App::PropertyFloat", "FA_CornerShift_mm", "FacilArquitectura", "Desplazamiento longitudinal aplicado", float(plan.get("shift_mm") or 0.0))
+    return obj
+
+
 def collect_opening_sketches_from_selection(selection, opening_kind):
     """Collect source sketches from explicit objects, groups and App links.
 
@@ -274,9 +397,11 @@ def collect_opening_sketches_from_document(doc, opening_kind):
         if len(candidates) == 1:
             return candidates
 
-    canonical_name = (
-        "Sketch_Centros_Puertas" if kind == "door" else "Sketch_Centros_Ventanas"
-    )
+    canonical_name = {
+        "door": "Sketch_Centros_Puertas",
+        "window": "Sketch_Centros_Ventanas",
+        "opening": "Sketch_Centros_Aberturas",
+    }[kind]
     canonical = [
         source
         for source in candidates
@@ -300,11 +425,12 @@ def opening_source_assessment(sketch, opening_kind, explicit=False):
         return False, "posee espesor de muro %.1f mm" % thickness
     role = str(getattr(sketch, "FA_Role", "") or "").strip().lower()
     generated_by = str(getattr(sketch, "FA_GeneratedBy", "") or "")
-    if role in ("door_base", "window_base"):
+    if role in ("door_base", "window_base", "opening_base"):
         return False, "es una base BIM generada, no un Sketch fuente"
     all_generators = {
         GENERATED_BY_DOORS,
         GENERATED_BY_WINDOWS,
+        GENERATED_BY_OPENINGS,
         "FA_CreateDoorsBIM",
         "FA_CreateWindowsBIM",
     }
@@ -317,17 +443,14 @@ def opening_source_assessment(sketch, opening_kind, explicit=False):
         str(getattr(sketch, attr, "") or "")
         for attr in ("Name", "Label", "FA_Role", "FA_CenterlineKind", "FA_ElementType")
     ).lower()
-    own_words = ("door", "doors", "puerta", "puertas") if kind == "door" else (
-        "window",
-        "windows",
-        "ventana",
-        "ventanas",
-    )
-    other_words = ("window", "windows", "ventana", "ventanas") if kind == "door" else (
-        "door",
-        "doors",
-        "puerta",
-        "puertas",
+    words_by_kind = {
+        "door": ("door", "doors", "puerta", "puertas"),
+        "window": ("window", "windows", "ventana", "ventanas"),
+        "opening": ("opening", "openings", "abertura", "aberturas", "vano", "vanos", "buque", "buques"),
+    }
+    own_words = words_by_kind[kind]
+    other_words = tuple(
+        word for peer, words in words_by_kind.items() if peer != kind for word in words
     )
     if any(word in text for word in other_words):
         return False, "sus metadatos o nombre corresponden al otro tipo de abertura"
@@ -349,7 +472,7 @@ def opening_source_assessment(sketch, opening_kind, explicit=False):
     ):
         return False, "sus metadatos lo clasifican como muro o columna"
     return False, "no contiene nombre ni metadatos de %s" % (
-        "puerta" if kind == "door" else "ventana"
+        {"door": "puerta", "window": "ventana", "opening": "abertura"}[kind]
     )
 
 
@@ -458,8 +581,9 @@ def create_openings_from_centerlines(
     sill_mm=0.0,
     host_tolerance_mm=250.0,
     replace_existing=True,
+    door_corner_snap_tolerance_mm=DEFAULT_CORNER_SNAP_TOLERANCE_MM,
 ):
-    """Create hosted native Arch door or window objects from source axes."""
+    """Create hosted native Arch door, window or opening-only objects from axes."""
     kind = _normalize_kind(opening_kind)
     sources = _unique_objects(source_sketches)
     if not sources:
@@ -482,13 +606,18 @@ def create_openings_from_centerlines(
     if tolerance <= 0.0:
         raise UserFacingError("La tolerancia de muro debe ser mayor que cero.")
 
+    if kind == "opening":
+        _kind_log(kind, "Sketches fuente: %d" % len(sources))
+        _kind_log(kind, "Lineas detectadas: %d" % sum(len(sketch_segments(item)) for item in sources))
+        _kind_log(kind, "Muros BIM candidatos: %d" % len(wall_records))
+
     generator = _generator_for_kind(kind)
     removed = 0
     if replace_existing:
         removed = remove_generated_openings(doc, sources, kind)
         if removed:
             doc.recompute()
-            msg("Aberturas FA anteriores reemplazadas: %d" % removed)
+            _kind_log(kind, "Aberturas FA anteriores reemplazadas: %d" % removed)
     existing = existing_opening_keys(doc, sources, kind)
     plans = []
     rejected = []
@@ -504,7 +633,8 @@ def create_openings_from_centerlines(
                 item["segment"], wall_records, max_distance_mm=tolerance
             )
             for candidate in selection["candidates"]:
-                msg(
+                _kind_log(
+                    kind,
                     "%s %02d -> host candidate %s | distance %.1f mm | score %.1f"
                     % (
                         kind.capitalize(),
@@ -516,29 +646,103 @@ def create_openings_from_centerlines(
                 )
             if selection["ambiguous"]:
                 rejected.append((source, item["index"], "host ambiguo"))
-                warn(
+                _kind_log(
+                    kind,
                     "%s %02d omitida: dos muros son geometricamente equivalentes."
-                    % (kind.capitalize(), item["index"] + 1)
+                    % (kind.capitalize(), item["index"] + 1),
+                    warning=True,
                 )
+                if kind == "opening":
+                    _kind_log(kind, "Host ambiguo para geometria %d" % item["index"], warning=True)
                 continue
             match = selection["match"]
             if match is None:
                 rejected.append((source, item["index"], "sin host compatible"))
-                warn(
+                _kind_log(
+                    kind,
                     "%s %02d omitida: no hay muro compatible dentro de %.1f mm."
-                    % (kind.capitalize(), item["index"] + 1, tolerance)
+                    % (kind.capitalize(), item["index"] + 1, tolerance),
+                    warning=True,
                 )
                 continue
-            msg(
+            _kind_log(
+                kind,
                 "%s %02d -> selected host %s"
                 % (kind.capitalize(), item["index"] + 1, _object_label(match["wall"]))
             )
-            plans.append({"source": source, "axis": item, "match": match})
+            door_options = None
+            corner_plan = None
+            if kind == "door":
+                corner_plan = resolve_door_corner_snap(
+                    match, wall_records, tolerance_mm=door_corner_snap_tolerance_mm
+                )
+                door_options = {"corner_snap": corner_plan}
+                if corner_plan.get("ambiguous"):
+                    _kind_log(
+                        kind,
+                        "Puerta %02d: snap de esquina ambiguo; se conserva posicion del Sketch." % (item["index"] + 1),
+                        warning=True,
+                    )
+                elif corner_plan.get("no_fit"):
+                    _kind_log(
+                        kind,
+                        "Puerta %02d: NO_FIT; ancho %.1f mm > luz util %.1f mm. Se conserva posicion y ancho del Sketch."
+                        % (
+                            item["index"] + 1,
+                            float(corner_plan.get("opening_width_mm") or 0.0),
+                            float(corner_plan.get("available_width_mm") or 0.0),
+                        ),
+                        warning=True,
+                    )
+                elif corner_plan.get("applied") or corner_plan.get("swing_resolved"):
+                    if corner_plan.get("applied"):
+                        match = corner_plan["match"]
+                    if corner_plan.get("swing_resolved"):
+                        door_options.update({
+                            "hinge_endpoint": corner_plan["hinge_endpoint"],
+                            "opening_side": corner_plan["opening_side"],
+                            "opens_inward": corner_plan.get("opens_inward"),
+                        })
+                    if corner_plan.get("position_preserved"):
+                        _kind_log(
+                            kind,
+                            "Puerta %02d: dos caras opuestas acotan el vano; se conserva posicion del Sketch | bisagra %s | apertura %s"
+                            % (
+                                item["index"] + 1,
+                                corner_plan["hinge_endpoint"],
+                                corner_plan["opening_side"],
+                            ),
+                            warning=True,
+                        )
+                    elif corner_plan.get("applied"):
+                        if corner_plan.get("swing_resolved"):
+                            _kind_log(
+                                kind,
+                                "Puerta %02d: jamba ajustada %.1f mm a %s | bisagra %s | apertura %s"
+                                % (
+                                    item["index"] + 1,
+                                    float(corner_plan.get("snap_distance_mm") or 0.0),
+                                    str(corner_plan.get("side_wall_label") or "pared lateral"),
+                                    corner_plan["hinge_endpoint"],
+                                    corner_plan["opening_side"],
+                                ),
+                            )
+                        else:
+                            _kind_log(
+                                kind,
+                                "Puerta %02d: jamba alineada %.1f mm; cruce/T inversa sin autoridad para giro, apertura AUTO."
+                                % (
+                                    item["index"] + 1,
+                                    float(corner_plan.get("snap_distance_mm") or 0.0),
+                                ),
+                                warning=True,
+                            )
+            plans.append({"source": source, "axis": item, "match": match, "door_options": door_options, "corner_plan": corner_plan})
 
     if not plans and not skipped:
         raise UserFacingError(
             "Ningun eje de %s encontro un muro BIM anfitrion no ambiguo."
-            % ("puerta" if kind == "door" else "ventana")
+            % ({"door": "puerta", "window": "ventana", "opening": "abertura"}[kind])
         )
     container = ensure_opening_group(doc, target_container, kind)
     host_shapes_before = {}
@@ -562,6 +766,7 @@ def create_openings_from_centerlines(
             height,
             sill,
             generator,
+            options=plan.get("door_options"),
         )
         created.append(obj)
     for wall in host_shapes_before:
@@ -599,15 +804,23 @@ def create_openings_from_centerlines(
             raise UserFacingError(
                 "Las aberturas alojadas en %s no produjeron un corte real." % _object_label(wall)
             )
-    return created, {
+    summary = {
         "created_count": len(created),
         "rejected_count": len(rejected),
         "skipped_existing_count": skipped,
         "removed_count": removed,
         "candidate_wall_count": len(wall_records),
         "cut_volume_mm3": cut_volume,
+        "corner_snapped_count": sum(1 for item in plans if item.get("corner_plan") and item["corner_plan"].get("applied")),
+        "corner_ambiguous_count": sum(1 for item in plans if item.get("corner_plan") and item["corner_plan"].get("ambiguous")),
+        "corner_no_fit_count": sum(1 for item in plans if item.get("corner_plan") and item["corner_plan"].get("no_fit")),
+        "corner_jamb_only_count": sum(1 for item in plans if item.get("corner_plan") and item["corner_plan"].get("status") == "JAMB_ONLY"),
         "rejected": rejected,
     }
+    if kind == "opening":
+        _kind_log(kind, "Aberturas creadas: %d" % summary["created_count"])
+        _kind_log(kind, "Lineas omitidas: %d" % summary["rejected_count"])
+    return created, summary
 
 
 def ensure_opening_group(doc, target_container, opening_kind):
@@ -623,9 +836,19 @@ def ensure_opening_group(doc, target_container, opening_kind):
         "FA_Role",
         "FacilArquitectura",
         "Rol",
-        "doors" if kind == "door" else "windows",
+        {"door": "doors", "window": "windows", "opening": "openings"}[kind],
     )
     return group
+
+
+def place_hosted_opening_in_tree(target_container, obj, base):
+    """Keep one visible tree residence for a hosted opening and its Base."""
+    if is_level(target_container):
+        tag_target_level(target_container, obj)
+        tag_target_level(target_container, base)
+    else:
+        target_container.addObject(obj)
+    return obj
 
 
 def existing_opening_keys(doc, sources, opening_kind):
@@ -683,6 +906,116 @@ def remove_generated_openings(doc, sources, opening_kind):
     return len(opening_names)
 
 
+def native_door_opening_mode(obj):
+    """Return the unique Mode1/Mode2 token used by a native single door."""
+    modes = []
+    for value in list(getattr(obj, "WindowParts", []) or []):
+        if isinstance(value, str):
+            modes.extend(re.findall(r"\bMode[12]\b", value))
+    unique = list(dict.fromkeys(modes))
+    return unique[0] if len(unique) == 1 else ""
+
+
+def set_native_door_opening_mode(obj, mode):
+    """Change only the native swing token of a single-leaf Arch door preset."""
+    requested = str(mode or "").strip()
+    if requested not in ("Mode1", "Mode2"):
+        raise UserFacingError("Modo nativo de puerta invalido: %s" % requested)
+    original = list(getattr(obj, "WindowParts", []) or [])
+    updated = []
+    replacements = 0
+    for value in original:
+        if isinstance(value, str) and re.search(r"\bMode[12]\b", value):
+            new_value, count = re.subn(r"\bMode[12]\b", requested, value)
+            updated.append(new_value)
+            replacements += count
+        else:
+            updated.append(value)
+    if replacements != 1:
+        raise UserFacingError(
+            "El preset BIM no tiene un unico componente abatible Mode1/Mode2; no se modifica."
+        )
+    if updated != original:
+        obj.WindowParts = updated
+    return replacements
+
+
+def resolve_door_native_mode(opening_segment, hinge_point, opening_side):
+    """Resolve native swing using the physical axis, hinge coordinate and leaf vector."""
+    desired = desired_open_leaf_vector(opening_segment, opening_side)
+    if desired is None:
+        return {"resolved": False, "mode": "", "reason": "bisagra o lado de apertura AUTO"}
+    return resolve_native_opening_mode(opening_segment, hinge_point, desired)
+
+
+def bounded_door_base_adjustment(width_mm, frame_start_mm, frame_end_mm, corner_plan):
+    """Plan the Base-only adapter for a BOUNDED native door preset.
+
+    ``FA_ProjectedFirst/Second`` describe the authoritative leaf segment.  The
+    native ``Simple door`` preset, however, builds the visible leaf from its
+    inner ``Wire1`` and interprets the supplied width as the outer ``Wire0``.
+    For a BOUNDED opening there is no longitudinal snap to absorb the two frame
+    margins, so the outer Base must grow around the leaf while the public door
+    width remains the Sketch length.
+    """
+    plan = dict(corner_plan or {})
+    if str(plan.get("status") or "").strip().upper() != "BOUNDED":
+        return None
+    if bool(plan.get("applied")):
+        return None
+    width = float(width_mm)
+    frame_start = float(frame_start_mm)
+    frame_end = float(frame_end_mm)
+    if width <= 0.0 or frame_start < 0.0 or frame_end < 0.0:
+        return None
+    return {
+        "mode": "bounded_leaf_authoritative",
+        "origin_shift_mm": -frame_start,
+        "outer_width_mm": width + frame_start + frame_end,
+        "frame_start_mm": frame_start,
+        "frame_end_mm": frame_end,
+    }
+
+
+def _named_sketch_constraint(sketch, name):
+    for index, constraint in enumerate(list(getattr(sketch, "Constraints", []) or [])):
+        if str(getattr(constraint, "Name", "") or "") == str(name):
+            return index, float(getattr(constraint, "Value", 0.0) or 0.0)
+    return None, None
+
+
+def _align_bounded_door_base(obj, unit, authoritative_width_mm, corner_plan):
+    """Make native Wire1 coincide with the authoritative BOUNDED leaf axis."""
+    base = getattr(obj, "Base", None)
+    if base is None:
+        return None
+    width_index, _current_width = _named_sketch_constraint(base, "Width")
+    frame_start_index, frame_start = _named_sketch_constraint(base, "Frame2")
+    frame_end_index, frame_end = _named_sketch_constraint(base, "Frame3")
+    if None in (width_index, frame_start_index, frame_end_index):
+        return None
+    adjustment = bounded_door_base_adjustment(
+        authoritative_width_mm,
+        frame_start,
+        frame_end,
+        corner_plan,
+    )
+    if adjustment is None:
+        return None
+    placement = base.Placement
+    placement.Base = FreeCAD.Vector(
+        float(placement.Base.x) + float(unit[0]) * adjustment["origin_shift_mm"],
+        float(placement.Base.y) + float(unit[1]) * adjustment["origin_shift_mm"],
+        float(placement.Base.z),
+    )
+    base.Placement = placement
+    base.setDatum(
+        int(width_index),
+        FreeCAD.Units.Quantity(float(adjustment["outer_width_mm"]), FreeCAD.Units.Length),
+    )
+    return adjustment
+
+
 def _create_native_opening(
     doc,
     target_container,
@@ -693,10 +1026,17 @@ def _create_native_opening(
     height,
     sill,
     generator,
+    options=None,
 ):
+    options = dict(options or {})
     wall = match["wall"]
-    first = match["projected_first"]
-    second = match["projected_second"]
+    first = tuple(match["projected_first"])
+    second = tuple(match["projected_second"])
+    raw_first = first
+    raw_second = second
+    hinge_endpoint = str(options.get("hinge_endpoint") or "AUTO").strip().upper()
+    if kind == "door" and hinge_endpoint == "END":
+        first, second = second, first
     dx = second[0] - first[0]
     dy = second[1] - first[1]
     width = math.hypot(dx, dy)
@@ -717,38 +1057,101 @@ def _create_native_opening(
         FreeCAD.Rotation(FreeCAD.Vector(1, 0, 0), 90)
     )
     placement = FreeCAD.Placement(origin, rotation)
-    panel_depth = min(40.0, max(10.0, wall_width * 0.5))
-    preset = "Simple door" if kind == "door" else (
-        "Open 1-pane" if width < 900.0 else "Sliding 2-pane"
-    )
-    obj = make_arch_window_preset(
-        preset,
-        width=width,
-        height=height,
-        h1=50.0 if kind == "door" else 60.0,
-        h2=50.0 if kind == "door" else 60.0,
-        h3=0.0,
-        w1=wall_width,
-        w2=panel_depth,
-        o1=0.0,
-        o2=(wall_width - panel_depth) * 0.5,
-        placement=placement,
-    )
+    default_panel_depth = min(40.0, max(10.0, wall_width * 0.5))
+    panel_depth = float(options.get("frame_mm") or default_panel_depth)
+    panel_depth = min(max(1.0, panel_depth), max(1.0, wall_width))
+    preset = str(options.get("preset") or "").strip() or {
+        "door": "Simple door",
+        "opening": "Opening only",
+    }.get(kind, "Open 1-pane" if width < 900.0 else "Sliding 2-pane")
+    type_override = ""
+    if kind == "door" and not bool(options.get("preset_authoritative", False)):
+        type_override = door_preset_override(
+            source, int(axis["index"]), presets=native_door_presets()
+        )
+        if type_override:
+            preset = type_override
+    if kind == "opening":
+        base = _create_opening_only_profile(doc, width, height, placement)
+        obj = make_arch_window(
+            baseobj=base,
+            width=width,
+            height=height,
+            parts=[],
+            name="Opening",
+        )
+    else:
+        obj = make_arch_window_preset(
+            preset,
+            width=width,
+            height=height,
+            h1=50.0 if kind == "door" else 60.0,
+            h2=50.0 if kind == "door" else 60.0,
+            h3=0.0,
+            w1=wall_width,
+            w2=panel_depth,
+            o1=float(options.get("offset_mm") or 0.0),
+            o2=(wall_width - panel_depth) * 0.5,
+            placement=placement,
+        )
     if obj is None:
         raise UserFacingError("Arch no pudo crear el preset BIM %s." % preset)
+    base_adjustment = None
+    if kind == "door":
+        base_adjustment = _align_bounded_door_base(
+            obj,
+            unit,
+            width,
+            options.get("corner_snap"),
+        )
     index = int(axis["index"])
-    visible_kind = "Puerta" if kind == "door" else "Ventana"
+    visible_kind = {"door": "Puerta", "window": "Ventana", "opening": "Abertura"}[kind]
     obj.Label = "%s BIM - %s - %02d" % (
         visible_kind,
         _object_label(source),
         index + 1,
     )
-    obj.IfcType = "Door" if kind == "door" else "Window"
-    obj.Opening = 100 if kind == "door" else 0
-    obj.SymbolPlan = True
+    obj.IfcType = {"door": "Door", "window": "Window", "opening": "Opening Element"}[kind]
+    default_opening = 100.0 if kind == "door" else 0.0
+    obj.Opening = int(round(float(options.get("opening_percent", default_opening))))
+    obj.SymbolPlan = kind != "opening"
+    if hasattr(obj, "SymbolElevation") and kind == "opening":
+        obj.SymbolElevation = False
     obj.HoleDepth = 0
     obj.MoveWithHost = True
     obj.Hosts = [wall]
+    if kind == "door":
+        raw_dx = raw_second[0] - raw_first[0]
+        raw_dy = raw_second[1] - raw_first[1]
+        raw_len = math.hypot(raw_dx, raw_dy)
+        opening_side = str(options.get("opening_side") or "AUTO").strip().upper() or "AUTO"
+        if raw_len > 1e-9 and hasattr(obj, "Normal"):
+            left_normal = FreeCAD.Vector(-raw_dy / raw_len, raw_dx / raw_len, 0.0)
+            if opening_side == "RIGHT":
+                left_normal = left_normal.negative()
+            if opening_side in ("LEFT", "RIGHT"):
+                obj.Normal = left_normal
+        hinge_point = raw_second if hinge_endpoint == "END" else raw_first
+        mode_plan = resolve_door_native_mode(
+            raw_first + raw_second,
+            hinge_point,
+            opening_side if hinge_endpoint in ("START", "END") else "AUTO",
+        )
+        if mode_plan.get("resolved"):
+            set_native_door_opening_mode(obj, mode_plan["mode"])
+            set_prop(obj, "App::PropertyString", "FA_NativeOpeningMode", "FacilArquitectura", "Modo nativo de giro FreeCAD", mode_plan["mode"])
+            desired_vector = mode_plan.get("desired_leaf_vector") or (0.0, 0.0)
+            set_prop(obj, "App::PropertyVector", "FA_DesiredLeafVector", "FacilArquitectura", "Vector fisico deseado de hoja abierta", FreeCAD.Vector(float(desired_vector[0]), float(desired_vector[1]), 0.0))
+        else:
+            detected_mode = native_door_opening_mode(obj)
+            if detected_mode:
+                set_prop(obj, "App::PropertyString", "FA_NativeOpeningMode", "FacilArquitectura", "Modo nativo de giro FreeCAD", detected_mode)
+        set_prop(obj, "App::PropertyString", "FA_HingeEndpoint", "FacilArquitectura", "Extremo de bisagra transferible", hinge_endpoint or "AUTO")
+        set_prop(obj, "App::PropertyVector", "FA_HingePoint", "FacilArquitectura", "Punto global de bisagra", FreeCAD.Vector(float(hinge_point[0]), float(hinge_point[1]), float(base_z)))
+        set_prop(obj, "App::PropertyString", "FA_OpeningSide", "FacilArquitectura", "Lado de apertura respecto al eje", opening_side)
+        opens_inward = options.get("opens_inward")
+        if opens_inward is not None:
+            set_prop(obj, "App::PropertyBool", "FA_OpensInward", "FacilArquitectura", "Abre hacia el recinto", bool(opens_inward))
     _tag_opening(
         obj,
         source,
@@ -757,20 +1160,60 @@ def _create_native_opening(
         kind,
         width,
         height,
-        sill if kind == "window" else 0.0,
+        sill if kind in ("window", "opening") else 0.0,
         preset,
         match,
         generator,
     )
+    if kind == "door":
+        apply_door_corner_metadata(obj, options.get("corner_snap"))
+        if base_adjustment:
+            set_prop(obj, "App::PropertyString", "FA_BaseAlignmentMode", "FacilArquitectura", "Adaptacion del Base nativo", base_adjustment["mode"])
+            set_prop(obj, "App::PropertyLength", "FA_BaseOuterWidth_mm", "FacilArquitectura", "Ancho exterior del Base ArchWindow", base_adjustment["outer_width_mm"])
+            set_prop(obj, "App::PropertyLength", "FA_BaseFrameStart_mm", "FacilArquitectura", "Marco previo al segmento de hoja", base_adjustment["frame_start_mm"])
+            set_prop(obj, "App::PropertyLength", "FA_BaseFrameEnd_mm", "FacilArquitectura", "Marco posterior al segmento de hoja", base_adjustment["frame_end_mm"])
+    element_id = str(options.get("element_id") or "").strip()
+    if element_id:
+        set_prop(
+            obj,
+            "App::PropertyString",
+            "FA_ElementID",
+            "FacilArquitectura",
+            "Identificador transferible del elemento",
+            element_id,
+        )
+    if kind == "door" and type_override:
+        set_prop(
+            obj,
+            "App::PropertyBool",
+            "FA_TypeOverride",
+            "FacilArquitectura",
+            "Tipo modificado manualmente",
+            True,
+        )
+        set_prop(
+            obj,
+            "App::PropertyString",
+            "FA_DoorPresetName",
+            "FacilArquitectura",
+            "Preset BIM nativo actual",
+            type_override,
+        )
+        set_prop(
+            obj,
+            "App::PropertyString",
+            "FA_TypeOverrideSource",
+            "FacilArquitectura",
+            "Herramienta que fijo el override",
+            "FA_ChangeDoorType",
+        )
     base = obj.Base
     _tag_opening_base(base, source, index, wall, kind, generator)
     try:
-        if is_level(target_container):
-            add_to_level(target_container, base, source_sketch=source)
-            add_to_level(target_container, obj, source_sketch=source)
-        else:
-            target_container.addObject(base)
-            target_container.addObject(obj)
+        # The Hosts relation already places the opening under its wall in the
+        # FreeCAD tree. Keep only level traceability here; adding obj/base to
+        # Level.Group would show the same objects a second time.
+        place_hosted_opening_in_tree(target_container, obj, base)
     except Exception:
         pass
     try:
@@ -784,6 +1227,117 @@ def _create_native_opening(
     except Exception:
         pass
     return obj
+
+
+def create_native_door_from_axis_plan(
+    doc,
+    target_container,
+    source,
+    axis,
+    match,
+    height_mm,
+    preset="",
+    opening_percent=100.0,
+    frame_mm=None,
+    offset_mm=None,
+    element_id="",
+    hinge_endpoint="AUTO",
+    opening_side="AUTO",
+    opens_inward=None,
+):
+    """Create one hosted native Arch door from an already validated axis plan.
+
+    ``HingeEndpoint`` is START/END relative to the authoritative Sketch segment.
+    ``OpeningSide`` is LEFT/RIGHT relative to that same segment direction.  The
+    metadata is persisted so table transfers remain deterministic.
+    """
+    return _create_native_opening(
+        doc,
+        target_container,
+        source,
+        axis,
+        match,
+        "door",
+        float(height_mm),
+        0.0,
+        GENERATED_BY_DOORS,
+        options={
+            "preset": preset,
+            "opening_percent": opening_percent,
+            "frame_mm": frame_mm,
+            "offset_mm": offset_mm,
+            "element_id": element_id,
+            "hinge_endpoint": hinge_endpoint,
+            "opening_side": opening_side,
+            "opens_inward": opens_inward,
+            # The table is the authority for the transferred door type.  The
+            # historical per-Sketch FA_DoorTypeOverrides remain active for the
+            # regular FA Puertas BIM command, but must not silently replace a
+            # type explicitly stored in Spreadsheet_Puertas.
+            "preset_authoritative": True,
+        },
+    )
+
+
+def create_native_window_from_axis_plan(
+    doc,
+    target_container,
+    source,
+    axis,
+    match,
+    height_mm,
+    sill_mm,
+    preset="",
+    opening_percent=0.0,
+    frame_mm=None,
+    offset_mm=None,
+    element_id="",
+):
+    """Create one hosted native Arch window from an already validated axis plan.
+
+    This small public adapter lets table-driven workflows reuse the exact host,
+    Placement, metadata and tree-residence logic of ``FA Ventanas BIM``.
+    """
+    return _create_native_opening(
+        doc,
+        target_container,
+        source,
+        axis,
+        match,
+        "window",
+        float(height_mm),
+        float(sill_mm),
+        GENERATED_BY_WINDOWS,
+        options={
+            "preset": preset,
+            "opening_percent": opening_percent,
+            "frame_mm": frame_mm,
+            "offset_mm": offset_mm,
+            "element_id": element_id,
+        },
+    )
+
+
+def _create_opening_only_profile(doc, width, height, placement):
+    """Create the closed profile used by FreeCAD's native Opening only preset."""
+    import Part
+
+    profile = doc.addObject("Part::Feature", "FA_OpeningProfile")
+    points = [
+        FreeCAD.Vector(0.0, 0.0, 0.0),
+        FreeCAD.Vector(float(width), 0.0, 0.0),
+        FreeCAD.Vector(float(width), float(height), 0.0),
+        FreeCAD.Vector(0.0, float(height), 0.0),
+        FreeCAD.Vector(0.0, 0.0, 0.0),
+    ]
+    profile.Shape = Part.makePolygon(points)
+    profile.Placement = placement
+    profile.Label = "Perfil de abertura BIM"
+    try:
+        profile.ViewObject.Visibility = False
+    except Exception:
+        pass
+    return profile
 
 
 def _tag_opening(
@@ -829,6 +1383,22 @@ def _tag_opening(
     for prop_type, name, description, value in values:
         set_prop(obj, prop_type, name, "FacilArquitectura", description, value)
     if kind == "door":
+        set_prop(
+            obj,
+            "App::PropertyVector",
+            "FA_ProjectedFirst",
+            "FacilArquitectura",
+            "Primera jamba proyectada sobre el host",
+            FreeCAD.Vector(*match["projected_first"]),
+        )
+        set_prop(
+            obj,
+            "App::PropertyVector",
+            "FA_ProjectedSecond",
+            "FacilArquitectura",
+            "Segunda jamba proyectada sobre el host",
+            FreeCAD.Vector(*match["projected_second"]),
+        )
         set_prop(
             obj,
             "App::PropertyString",
@@ -1002,6 +1572,11 @@ def _unique_objects(objects):
     return result
 
 
+def _wall_record_key(obj):
+    name = str(getattr(obj, "Name", "") or "")
+    return name if name else "id:%d" % id(obj)
+
+
 def _object_key(obj):
     name = str(getattr(obj, "Name", "") or "")
     return ("name", name) if name else ("id", id(obj))
@@ -1012,7 +1587,11 @@ def _object_label(obj):
 
 
 def _generator_for_kind(kind):
-    return GENERATED_BY_DOORS if kind == "door" else GENERATED_BY_WINDOWS
+    return {
+        "door": GENERATED_BY_DOORS,
+        "window": GENERATED_BY_WINDOWS,
+        "opening": GENERATED_BY_OPENINGS,
+    }[kind]
 
 
 def _normalize_kind(value):
@@ -1021,7 +1600,21 @@ def _normalize_kind(value):
         return "door"
     if text in ("window", "windows", "ventana", "ventanas"):
         return "window"
-    raise ValueError("opening_kind debe ser door o window")
+    if text in ("opening", "openings", "abertura", "aberturas", "vano", "vanos", "buque", "buques"):
+        return "opening"
+    raise ValueError("opening_kind debe ser door, window u opening")
+
+
+def _kind_log(kind, message, warning=False):
+    """Use the dedicated opening-only console prefix without changing legacy logs."""
+    if kind == "opening":
+        prefix = "[FACILARQ][ABERTURAS] "
+        printer = FreeCAD.Console.PrintWarning if warning else FreeCAD.Console.PrintMessage
+        printer(prefix + str(message) + "\n")
+    elif warning:
+        warn(message)
+    else:
+        msg(message)
 
 
 def _segment_values(segment):

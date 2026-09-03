@@ -8,6 +8,8 @@ import time
 import FreeCAD
 import FreeCADGui
 
+from .. import i18n
+
 
 LOG_PREFIX = "[GAMEEXPORT] "
 COMMAND_VERSION = str(int(time.time()))
@@ -29,17 +31,17 @@ class CommandClass:
 
     def GetResources(self):  # noqa: N802
         return {
-            "MenuText": "Agregar techo / Add Roof",
-            "ToolTip": "Agregar techo simple a dos aguas al ultimo Quick Example generado o importado desde JSON.",
+            "MenuText": i18n.bi("Agregar techo", "Add Roof"),
+            "ToolTip": i18n.bi("Agregar techo simple a dos aguas al ultimo Quick Example generado o importado desde JSON.", "Add a simple gable roof to the last Quick Example generated or imported from JSON."),
             "Pixmap": ICON_PATH,
         }
 
     def Activated(self):  # noqa: N802
         macro = _macro_path()
         if not os.path.exists(macro):
-            FreeCAD.Console.PrintError(LOG_PREFIX + "Macro not found: " + macro + "\n")
+            FreeCAD.Console.PrintError(LOG_PREFIX + "Macro not found: " + os.path.basename(macro) + "\n")
             return
-        FreeCAD.Console.PrintMessage(LOG_PREFIX + "Running roof macro: " + macro + "\n")
+        FreeCAD.Console.PrintMessage(LOG_PREFIX + "Running roof macro: " + os.path.basename(macro) + "\n")
         namespace = {"__name__": "__main__", "__file__": macro}
         with open(macro, "r", encoding="utf-8-sig") as handle:
             code = compile(handle.read(), macro, "exec")

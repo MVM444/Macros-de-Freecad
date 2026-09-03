@@ -125,10 +125,34 @@ class RectangleShape:
         self.Wires = []
 
 
+class CompoundShape:
+    """Synthetic topological Compound that keeps independent wall profiles together."""
+
+    ShapeType = "Compound"
+
+    def __init__(self, children):
+        self._children = list(children)
+        self.Edges = [edge for child in self._children for edge in list(getattr(child, "Edges", []) or [])]
+        self.Wires = []
+        x_values = []
+        y_values = []
+        for child in self._children:
+            bbox = getattr(child, "BoundBox", None)
+            if bbox is None:
+                continue
+            x_values.extend((bbox.XMin, bbox.XMax))
+            y_values.extend((bbox.YMin, bbox.YMax))
+        self.BoundBox = BoundBox(min(x_values), min(y_values), max(x_values), max(y_values))
+
+    def childShapes(self):
+        return list(self._children)
+
+
 class ShapeObject:
     def __init__(self, name, shape):
         self.Name = name
         self.Label = name
+        self.TypeId = "Part::Feature"
         self.Shape = shape
 
 
@@ -144,6 +168,90 @@ def _topology_context(profiles_by_source=None, compact_profiles=None):
 
 
 class CenterlineNetworkTests(unittest.TestCase):
+    def test_part_feature_compound_is_decomposed_without_collapsing_independent_walls(self):
+        first = RectangleShape(0.0, 0.0, 4000.0, 150.0)
+        second = RectangleShape(5000.0, 0.0, 9000.0, 150.0)
+        source = ShapeObject("Pared_Concreto001", CompoundShape([first, second]))
+
+        records, raw_edges, ignored, profile_count = centerlines._segments_from_object(
+            source,
+            prefer_opening_profile=False,
+            source_id="Pared_Concreto001",
+        )
+
+        self.assertEqual(2, len(records))
+        self.assertEqual([], raw_edges)
+        self.assertEqual(0, ignored)
+        self.assertEqual(2, profile_count)
+        spans = sorted((round(record["segment"][0]), round(record["segment"][2])) for record in records)
+        self.assertEqual([(0, 4000), (5000, 9000)], spans)
+        self.assertTrue(all(abs(record["segment"][1] - 75.0) < 1e-6 for record in records))
+
+    def test_nested_compound_is_flattened_only_at_container_levels(self):
+        first = RectangleShape(0.0, 0.0, 3000.0, 200.0)
+        second = RectangleShape(0.0, 1000.0, 3000.0, 1200.0)
+        nested = CompoundShape([CompoundShape([first]), second])
+
+        components = centerlines._shape_extraction_components(nested)
+
+        self.assertEqual(2, len(components))
+        self.assertIs(first, components[0])
+        self.assertIs(second, components[1])
+
+    def test_auto_compound_matches_virtual_split_edges_without_compact_source_leakage(self):
+        wall_a = RectangleShape(0.0, 0.0, 4000.0, 150.0)
+        wall_b = RectangleShape(5000.0, 1000.0, 9000.0, 1150.0)
+        column = RectangleShape(10000.0, 2000.0, 10400.0, 2400.0)
+        compound = CompoundShape([wall_a, wall_b, column])
+        source = ShapeObject("Pared_Concreto001", compound)
+
+        compound_doc = FakeDocument()
+        _primary, compound_segments = centerlines.create_centerline_sketch_from_objects(
+            compound_doc,
+            FakeGroup(),
+            [source],
+            extraction_strategy="auto",
+        )
+
+        split_sources = []
+        for index, edge in enumerate(compound.Edges, start=1):
+            split_sources.append(
+                ShapeObject(
+                    "Pared_Concreto001_Edge_%03d" % index,
+                    centerlines._VirtualEdgeShape(edge),
+                )
+            )
+        split_doc = FakeDocument()
+        _split_primary, split_segments = centerlines.create_centerline_sketch_from_objects(
+            split_doc,
+            FakeGroup(),
+            split_sources,
+            extraction_strategy="auto",
+        )
+
+        def normalized(segments):
+            return sorted(centerlines._segment_key(*segment) for segment in segments)
+
+        self.assertEqual(normalized(split_segments), normalized(compound_segments))
+        self.assertEqual(4, len(compound_segments))
+
+        wall_sketches = [
+            sketch
+            for sketch in compound_doc.Objects
+            if getattr(sketch, "FA_CenterlineKind", "") == "walls"
+        ]
+        column_sketches = [
+            sketch
+            for sketch in compound_doc.Objects
+            if getattr(sketch, "FA_CenterlineKind", "") == "columns"
+        ]
+        self.assertEqual(1, len(wall_sketches))
+        self.assertEqual(150.0, float(wall_sketches[0].FA_WallThickness))
+        self.assertEqual(2, len(wall_sketches[0].geometry))
+        self.assertEqual(1, int(wall_sketches[0].FA_SourceObjectCount))
+        self.assertEqual(1, len(column_sketches))
+        self.assertEqual(2, len(column_sketches[0].geometry))
+
     def test_specialized_opening_strategies_are_not_tagged_as_walls(self):
         self.assertEqual(
             "doors",

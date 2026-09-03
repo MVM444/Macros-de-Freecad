@@ -20,6 +20,7 @@ class _LoaderToolbarHandle:
         self.gui = gui
         self.macro_file = os.path.normpath(os.path.abspath(macro_file))
         self.script_name = os.path.basename(self.macro_file)
+        self.script_reference = self._script_reference()
         self.icon_path = os.path.abspath(icon_path).replace(os.sep, "/") if icon_path else ""
         self.menu_text = str(menu_text)
         self.tooltip = str(tooltip)
@@ -28,6 +29,25 @@ class _LoaderToolbarHandle:
         self._qtcore = None
         self._qtgui = None
         self._qtwidgets = None
+
+    def _script_reference(self):
+        """Return a MacroPath-relative script so FreeCAD can run subfolder macros."""
+        try:
+            raw = self.app.ParamGet(
+                "User parameter:BaseApp/Preferences/Macro"
+            ).GetString("MacroPath", "")
+        except Exception:
+            raw = ""
+        separator = ";" if os.name == "nt" else os.pathsep
+        for base in [part.strip() for part in raw.split(separator) if part.strip()]:
+            base = os.path.normpath(os.path.abspath(base))
+            try:
+                relative = os.path.relpath(self.macro_file, base)
+            except Exception:
+                continue
+            if relative != os.pardir and not relative.startswith(os.pardir + os.sep):
+                return relative.replace(os.sep, "/")
+        return self.script_name
 
     def info(self, message):
         self.app.Console.PrintMessage(self.log_prefix + str(message) + "\n")
@@ -78,7 +98,7 @@ class _LoaderToolbarHandle:
 
         command_name = existing or self._next_macro_name(macros_group)
         command_group = macros_group.GetGroup(command_name)
-        command_group.SetString("Script", self.script_name)
+        command_group.SetString("Script", self.script_reference)
         command_group.SetString("Menu", self.menu_text)
         command_group.SetString("Tooltip", self.tooltip)
         command_group.SetString("WhatsThis", "")

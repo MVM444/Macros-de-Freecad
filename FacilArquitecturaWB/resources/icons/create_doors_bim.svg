@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="bg" x1="7" y1="7" x2="57" y2="57" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff8ed"/><stop offset="1" stop-color="#e5ceb1"/>
+    </linearGradient>
+    <linearGradient id="door" x1="22" y1="20" x2="42" y2="51" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#c9823e"/><stop offset="1" stop-color="#7a421b"/>
+    </linearGradient>
+  </defs>
+  <rect x="6" y="6" width="52" height="52" rx="8" fill="url(#bg)" stroke="#1f2933" stroke-width="3"/>
+  <path d="M15 51V17h34v34" fill="none" stroke="#245b80" stroke-width="5" stroke-linejoin="round"/>
+  <rect x="21" y="21" width="22" height="30" rx="1.5" fill="url(#door)" stroke="#1f2933" stroke-width="2.5"/>
+  <path d="M24 25h16M24 46h16" stroke="#e9b77d" stroke-width="1.5" opacity=".85"/>
+  <circle cx="38" cy="36" r="2.3" fill="#fff8ed" stroke="#1f2933" stroke-width="1.5"/>
+  <path d="M43 21l5 4v26h-5z" fill="#d9b792" stroke="#1f2933" stroke-width="1.5"/>
+  <path d="M18 54h29" stroke="#1f2933" stroke-width="3" stroke-linecap="round"/>
+</svg>
