@@ -3,8 +3,11 @@
 Purpose: Register the ElectricCR workbench, menus, toolbars, and mode panel.
 Important: Keep ElectricCR as one workbench. Manual modes must not switch from
 object selection. Keep all macros reachable through menus and launchers.
-Modified: 2026-07-07 09:18 Costa Rica.
-Target: FreeCAD 1.1.1.
+A1 PLAN selection, lifecycle and live sync remain installed across workbench changes.
+Draft compacto exposes native Move and Snap Special for PLAN insertion-point UX.
+Primary ElectricCR toolbar reuses Draft Move, Snap Special, and the existing visibility manager when registered.
+Modified: 2026-09-08 14:05 America/Costa_Rica; A1 runtime persistence revision.
+Target: FreeCAD 1.1.3.
 """
 
 # Qt compatibility for FreeCAD 1.x (PySide6) and older builds.
@@ -537,6 +540,30 @@ class ElectricCRWorkbench(Gui.Workbench):
     Icon = icon_path("Rayo")
 
     def Initialize(self):
+        # PLAN selection is part of the A1 object contract in every workbench.
+        # Install once; Deactivated only tears down ElectricCR-specific UI.
+        try:
+            from .ui import plan_selection as _plan_selection
+            _plan_selection.install()
+        except Exception as e:
+            App.Console.PrintWarning(f"[ElectricCR][PLAN Select] initialize_warning={e}\n")
+
+        # El ciclo de vida PLAN pertenece al contrato de datos A1 y debe seguir
+        # activo aunque el usuario cambie luego a otro Workbench.
+        try:
+            from .electriccr.features import plan_lifecycle as _plan_lifecycle
+            _plan_lifecycle.install()
+        except Exception as e:
+            App.Console.PrintWarning(f"[ElectricCR][PLAN Lifecycle] initialize_warning={e}\n")
+
+        # Refresco dirigido Owner -> PLAN. Mantiene la expresion como autoridad,
+        # pero recompone solo el PLAN durante cambios interactivos de Placement.
+        try:
+            from .electriccr.features import plan_live_sync as _plan_live_sync
+            _plan_live_sync.install()
+        except Exception as e:
+            App.Console.PrintWarning(f"[ElectricCR][PLAN Live] initialize_warning={e}\n")
+
         # Evitar duplicados si se recarga el módulo
         if getattr(self, "_built", False):
             return
@@ -659,6 +686,7 @@ class ElectricCRWorkbench(Gui.Workbench):
             "Draft_Snap_Endpoint",
             "Draft_Snap_Midpoint",
             "Draft_Snap_Center",
+            "Draft_Snap_Special",
             "Draft_Snap_Intersection",
             "Draft_Snap_Perpendicular",
             "Draft_Snap_Ortho",
@@ -738,6 +766,29 @@ class ElectricCRWorkbench(Gui.Workbench):
                     if name.rsplit("_", 1)[-1].isdigit() else 0
                 )
                 primary_toolbar_cmds.append(detector_cmds[-1])
+
+            # UX A1: expose native movement/snap and reuse the existing
+            # ElectricCR visibility manager; do not create parallel commands.
+            direct_tools = []
+            registered_now = list(Gui.listCommands())
+            for cmd in ("Draft_Move", "Draft_Snap_Special"):
+                if cmd in registered_now and cmd not in primary_toolbar_cmds:
+                    direct_tools.append(cmd)
+
+            visibility_cmds = [
+                name for name in registered_now
+                if "Gestionar_Visibilidad_ElectricCR" in name
+            ]
+            if visibility_cmds:
+                visibility_cmds.sort()
+                vis_cmd = visibility_cmds[-1]
+                if vis_cmd not in primary_toolbar_cmds:
+                    direct_tools.append(vis_cmd)
+
+            if direct_tools:
+                if primary_toolbar_cmds and primary_toolbar_cmds[-1] != "Separator":
+                    primary_toolbar_cmds.append("Separator")
+                primary_toolbar_cmds.extend(direct_tools)
         except Exception as e:
             App.Console.PrintError(f"ElectricCR: error registrando macros: {e}\n")
 
@@ -795,6 +846,11 @@ class ElectricCRWorkbench(Gui.Workbench):
         global _LOG_ENABLED
         _LOG_ENABLED = True
         _connect_toolbar_logger()
+        try:
+            from .ui import plan_selection as _plan_selection
+            _plan_selection.install()
+        except Exception as e:
+            App.Console.PrintWarning(f"[ElectricCR][PLAN Select] activate_warning={e}\n")
         cfg = load_config()
         _install_windows_qt_layered_filter(cfg)
         _disable_windows_qt_ui_effects(cfg)
@@ -874,6 +930,8 @@ class ElectricCRWorkbench(Gui.Workbench):
     def Deactivated(self):
         global _LOG_ENABLED
         _LOG_ENABLED = False
+        # A1 selection/lifecycle/live sync belong to document objects and must
+        # survive switching to BIM, Draft, Part or any other workbench.
         cfg = load_config()
         enable_statusbar = _cfg_bool(cfg, "draft_statusbar", True)
         try:

@@ -44,6 +44,7 @@ DEFAULT_MAX_SPACING_MM = 1800.0
 DEFAULT_MIN_WALL_SPACE_MM = 600.0
 DEFAULT_OPENING_CLEARANCE_MM = 0.0
 GEOM_TOL = 1.0
+A1_CONTRACT = "PhysicalDocumentationA1"
 
 
 def log(text):
@@ -362,6 +363,40 @@ def load_toma_module():
     return importlib.import_module("electriccr.features.objeto_toma_uno")
 
 
+def load_semantic_adapter():
+    for root in _module_roots():
+        if root.is_dir() and str(root) not in sys.path:
+            sys.path.insert(0, str(root))
+    return importlib.import_module("electriccr.semantic.freecad_adapter")
+
+
+def finalize_a1_devices(module, owner_hosts):
+    """Completa identidad/Host/Space y PLAN dentro de la transaccion llamadora."""
+    if not owner_hosts:
+        return []
+    adapter = load_semantic_adapter()
+    results = []
+    for owner, host in owner_hosts:
+        contract = str(getattr(owner, "RepresentationContract", "") or "")
+        if contract != A1_CONTRACT:
+            raise RuntimeError(
+                "La creacion A1 produjo un contrato inesperado: %s" % (contract or "<vacio>")
+            )
+        semantic = adapter.ensure_device_semantics(
+            owner,
+            dry_run=False,
+            host=host,
+            manage_transaction=False,
+        )
+        plan = module.sync_plan_representation(
+            owner,
+            dry_run=False,
+            manage_transaction=False,
+        )
+        results.append({"owner": owner.Name, "semantic": semantic, "plan": plan})
+    return results
+
+
 def _set_prop(obj, prop_type, name, value):
     if not hasattr(obj, name):
         obj.addProperty(prop_type, name, "ElectricCR BIM", "Trazabilidad de colocacion BIM")
@@ -390,13 +425,19 @@ def create_toma(doc, module, group, point, tangent, side, wall, index, settings)
         key_registro=settings["registry"], tipo_logico="Toma",
         placement=placement, modo_visual="Ambos", altura_rel=settings["height"],
         orientacion_pared="Vertical", recompute=False, target_group=group,
+        separate_documentation=bool(settings.get("use_a1", False)),
     )
     if not hasattr(module, "crear_toma_link"):
         raise RuntimeError("La version de objeto_toma_uno no incluye crear_toma_link.")
     try:
         obj = module.crear_toma_link(**kwargs)
-    except TypeError:
+    except TypeError as exc:
+        if settings.get("use_a1", False):
+            raise RuntimeError(
+                "La version cargada de objeto_toma_uno no admite el contrato A1 opt-in."
+            ) from exc
         kwargs.pop("recompute", None); kwargs.pop("target_group", None)
+        kwargs.pop("separate_documentation", None)
         obj = module.crear_toma_link(**kwargs)
         group.addObject(obj)
     _set_prop(obj, "App::PropertyLink", "ECR_SourceWall", wall)
@@ -421,6 +462,10 @@ class SettingsDialog(QtWidgets.QDialog):
         self.clearance = QtWidgets.QDoubleSpinBox(); self.clearance.setRange(0, 1000); self.clearance.setValue(DEFAULT_OPENING_CLEARANCE_MM); self.clearance.setSuffix(" mm")
         self.both_sides = QtWidgets.QCheckBox("Colocar en ambas caras de paredes divisorias")
         self.both_sides.setChecked(True)
+        self.use_a1 = QtWidgets.QCheckBox(
+            "Usar contrato A1 (fisico 3D + PLAN documental independiente)"
+        )
+        self.use_a1.setChecked(False)
         form.addRow("Ambiente:", self.environment)
         form.addRow("Tipo del registro:", self.registry)
         form.addRow("Altura:", self.height)
@@ -428,6 +473,7 @@ class SettingsDialog(QtWidgets.QDialog):
         form.addRow("Mocheta minima:", self.minimum)
         form.addRow("Margen junto a aperturas:", self.clearance)
         form.addRow("", self.both_sides)
+        form.addRow("", self.use_a1)
         note = QtWidgets.QLabel(
             "Muros: %d | caras de recintos: %d\n"
             "Interior se reconoce con los poligonos del grupo Areas. Puertas y ventanas se excluyen en todo su ancho."
@@ -446,6 +492,7 @@ class SettingsDialog(QtWidgets.QDialog):
             "height": self.height.value(), "spacing": self.spacing.value(),
             "minimum": self.minimum.value(), "clearance": self.clearance.value(),
             "both_sides": self.both_sides.isChecked(),
+            "use_a1": self.use_a1.isChecked(),
         }
 
 
@@ -467,6 +514,7 @@ def run():
     module = load_toma_module()
     openings = collect_openings(doc, walls)
     created = skipped_short = ambiguous = segment_count = 0
+    a1_owner_hosts = []
     doc.openTransaction("ElectricCR: tomacorrientes en paredes BIM")
     try:
         group = _ensure_group(doc)
@@ -495,8 +543,15 @@ def run():
                     for side in sides:
                         for distance in positions:
                             point = App.Vector(p0.x+tangent.x*distance, p0.y+tangent.y*distance, 0)
-                            create_toma(doc, module, group, point, tangent, side, wall, created+1, settings)
+                            owner = create_toma(
+                                doc, module, group, point, tangent, side, wall,
+                                created + 1, settings,
+                            )
+                            if settings.get("use_a1", False):
+                                a1_owner_hosts.append((owner, wall))
                             created += 1
+        doc.recompute()
+        finalize_a1_devices(module, a1_owner_hosts)
         doc.recompute()
         doc.commitTransaction()
     except Exception:

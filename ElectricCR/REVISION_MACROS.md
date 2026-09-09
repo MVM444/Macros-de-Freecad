@@ -811,3 +811,7 @@ Hechos de organizacion confirmados:
   copia no justificada por esta tarea.
 - Las referencias de uso en logs se conservaron como evidencia historica y no
   se interpretan como prueba de madurez.
+
+## Accepted A1 insertion scope - 2026-09-09
+
+Outlet and switch insertion wrappers retain their legacy default and expose an ephemeral A1 opt-in. A1 creation uses the common factory and semantic adapter, preserves existing legacy switches, and finalizes PLAN within the caller transaction. Required A1 integration is published; independent door-side algorithm changes are excluded. Core/runtime classification: accepted for the regression scope in RESULTADO_CODEX.md; no mass migration or default change.

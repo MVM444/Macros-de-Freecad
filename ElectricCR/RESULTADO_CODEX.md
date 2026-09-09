@@ -1,3 +1,39 @@
+# ElectricCR A1 - accepted closure
+
+Date: 2026-09-09. Target: FreeCAD 1.1.3 (20260725, commit 145529fe741292ff0b3977a01195bf0247425794).
+
+**A1 = APPROVED TO CONTINUE / APROBADO PARA CONTINUAR.** User accepted the completed regression and authorized this GitHub closure. ElectricCR must be initialized once per FreeCAD GUI session; runtime then remains active in BIM, Draft and Part.
+
+The placed App::Link remains the only electrical identity and authoritative Placement. A physical master supplies 3D geometry; a separate Part::Feature PLAN is reconstructible documentation, schema 2, DocumentationOnly, hidden Owner link, canonical derived Placement, SnapPoints=[Vector(0,0,0)], hidden from the tree and user groups. A1 remains opt-in; legacy defaults are preserved.
+
+## Confirmed defect and accepted correction
+
+Workbench deactivation removed only the selection redirector. Lifecycle and live-sync document observers remained installed. In Part, selecting PLAN followed by Std_Delete could delete PLAN alone and leave an Owner without PLAN (10 Owners / 9 PLAN); Undo restored the pair. This is not evidence of persisted binding corruption.
+
+Initialize now installs selection too; Deactivated retains the A1 services. Repeated selection install reuses its singleton. The live-sync tree normalizer imports the actual ElectricCR.ui package. Explicit uninstall remains maintenance-only. No new overlay or persistent preselection was added.
+
+## Approved real regression
+
+The approved reference model was read only and its SHA256 remained unchanged. Exactly one temporary A1 device was created in a verified copy. Initial/final inventory: 10 Owners / 10 PLAN; with the probe: 11/11. Selection, native Draft movement/rotation, visibility modes, Std_Delete/Undo/Redo and save/close/reopen passed in BIM, Draft and Part. Part included a real mouse click on PLAN and repeated movement/deletion after reopening. PLAN followed before document-wide recompute. No dangling/multiply claimed/duplicate PLAN, duplicate UID, crossed links, broken expressions, Placement errors or access violations were observed after the correction. Rendered PLAN disappeared on Delete and returned on Undo.
+
+Every stored property value/definition of the original Owners was preserved, including Placement, master and host/space/door links. Native status attributes and transient Touched markers were recorded separately. Diagnostic harness exceptions are disclosed in the evidence; they were not product regressions.
+
+Evidence: [public acceptance extract](tests/evidence/2026-09-08_a1_workbench_runtime/acceptance.json) and [notes/images](tests/evidence/2026-09-08_a1_workbench_runtime/README.md). Complete private inventories, model paths and console remain in DEV; this public staging contains anonymized evidence only, as required by AGENTS.md.
+
+## Publication scope
+
+This commit captures the previously tested A1 implementation, its required semantic adapter, opt-in insertion wrappers, generic tests and closure documentation. No new functional development was performed for publication. Unrelated architecture/tree documents, logs, project models, duplicate tests and other Workbenches are excluded. Door-side placement changes mixed into the DEV switch macro are excluded at hunk level; only its A1 integration is included. DEV source files remain untouched.
+
+Non-blocking deferred work: persistent PLAN feedback, semantic tree presentation, host tree duplication, door-orientation work and future IFC investigation. No NativeIFC integration, ports or production-model conversion is included. Existing transaction-guard API limitations are recorded in the evidence and were not changed.
+
+Classification: existing A1 core/runtime, accepted and functionally verified for the stated scope. This is a scoped development-history push, not an Addon Manager release or default-mode change.
+
+Branch: `codex/cierre-a1-20260909`. Commit/push receipt follows after the remote confirms the commit.
+
+---
+
+## Historical entries (superseded where inconsistent with the closure above)
+
 # ElectricCR - Resultado de Codex
 
 ## Resultado 2026-09-01 - Prototipo luminaria semantica y arbol idempotente
@@ -276,8 +312,8 @@ real y `Probar` marca prueba sin reclasificar el historial.
   persistentes y modo Diagnostico: PASS.
 - Prueba MCP de botones: `Probar` produjo `test_count=1` y `Ejecutar`
   `real_count=1` en un registro temporal, sin modificar un FCStd.
-- Capturas visuales: `C:\Users\marco\AppData\Local\Temp\ElectricCR_Panel_Fase2_Final.png` y
-  `C:\Users\marco\AppData\Local\Temp\ElectricCR_Panel_Fase2_Validation.png`.
+- Capturas visuales: `[local development path]` y
+  `[local development path]`.
 
 No se hizo commit ni push y no se modifico `HISTORIAL_CAMBIOS.md`.
 
@@ -303,9 +339,9 @@ ademas del modo diagnostico con 7 columnas y estados OK/REVISAR/ERROR.
 Los modulos cargados provinieron del repositorio local esperado:
 `ElectricCR/commands/macros.py` y `ElectricCR/commands/macro_launcher.py`.
 La captura de la interfaz real queda en
-`C:\Users\marco\AppData\Local\Temp\ElectricCR_Panel_Real_Validation.png`.
+`[local development path]`.
 La captura del modo diagnostico queda en
-`C:\Users\marco\AppData\Local\Temp\ElectricCR_Panel_Real_Diagnostic_Validation.png`;
+`[local development path]`;
 esta muestra las 7 columnas y los estados `OK`, `REVISAR` y `ERROR` segun
 corresponde.
 
@@ -1012,7 +1048,7 @@ Version ejecutada: FreeCAD 1.1.3, revision 20260725.
 | Compatibilidad de desconectores y ranuras historicas | OK. |
 | Interfaz reducida y IDs estables | OK. |
 | Selector de nueve modos del Workbench | OK; se corrigio una expectativa obsoleta del test. |
-| Copia de Puriscal | OK: 3 tableros reales, 23 circuitos, 23 alimentadores y 13 tramos de backbone de muestra. |
+| Copia de reference model | OK: 3 tableros reales, 23 circuitos, 23 alimentadores y 13 tramos de backbone de muestra. |
 | Red completa de iluminacion en salida temporal | OK: 4 circuitos, 93 ramales y 4 alimentadores actualizados. |
 
 Archivos de prueba principales:
@@ -1023,9 +1059,9 @@ Archivos de prueba principales:
 - `ElectricCR/tests/smoke_distributed_disconnect_feeders.py`;
 - `ElectricCR/tests/smoke_red_iluminacion_completa.py`.
 
-### Modelo Puriscal y limitaciones
+### Modelo reference model y limitaciones
 
-El original `Puriscal 03-08-2026.FCStd` no se guardo ni se sobrescribio. Su
+El original `reference model 03-08-2026.FCStd` no se guardo ni se sobrescribio. Su
 SHA256 antes de las pruebas fue
 `C9F64EF66574180CF77CD32A54D71F3812D160B92FF7F57EE7B4CF9B97E72EFE`.
 Las pruebas se guardaron bajo `%LOCALAPPDATA%/Temp`.
@@ -1401,7 +1437,7 @@ Sin decidir aun la arquitectura final, una consolidacion futura no deberia perde
 ## 14. Preguntas que solo Marco puede responder
 
 1. En proyectos reales, ¿el resultado preferido para los alimentadores era el flujo por rutas guia de marzo o la ruta directa por carriles laterales de TP/TCOM creada en agosto?
-2. ¿Las macros TP/TCOM aparecieron porque la generacion anterior producia un resultado visual inaceptable, o solamente para resolver rapidamente el caso concreto de Puriscal?
+2. ¿Las macros TP/TCOM aparecieron porque la generacion anterior producia un resultado visual inaceptable, o solamente para resolver rapidamente el caso concreto de reference model?
 3. Entre backbone perimetral y backbone MST, ¿cual representa mejor la instalacion que se quiere documentar cuando ambas rutas son tecnicamente posibles?
 4. ¿El ajuste manual conserva hoy el resultado visual que Marco aprobo en marzo, especialmente cerca del tablero y en cajas octogonales?
 

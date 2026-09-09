@@ -41,6 +41,7 @@ DEFAULT_SEARCH_STEP_MM = 25.0
 DEFAULT_MAX_ALONG_WALL_MM = 2500.0
 DEFAULT_MODE = "Ambos"
 DEFAULT_SIDE_MODE = "auto"
+A1_CONTRACT = "PhysicalDocumentationA1"
 GROUP_NAME = "Apagadores_BIM"
 GROUP_LABEL = "Apagadores BIM"
 
@@ -221,7 +222,7 @@ def _door_geometry(door):
     kind = _ifc_kind(door)
     has_leaf = kind == "door"
     mode = _mode_from_door(door)
-    # En las ventanas Arch de Puriscal: Mode2 gira hacia +normal y Mode1 hacia -normal.
+    # En las ventanas Arch de referencia: Mode2 gira hacia +normal y Mode1 hacia -normal.
     swing = normal if mode != "Mode1" else -normal
     swing = _unit_xy(swing, fallback=(-axis.y, axis.x, 0.0))
     latch = origin + axis * width
@@ -517,6 +518,66 @@ def _load_device_module():
             except Exception:
                 pass
     return None
+
+
+def _load_semantic_adapter():
+    import importlib
+    for name in (
+        "ElectricCR.electriccr.semantic.freecad_adapter",
+        "electriccr.semantic.freecad_adapter",
+    ):
+        try:
+            return importlib.import_module(name)
+        except Exception:
+            pass
+    for directory in _candidate_electriccr_dirs():
+        for path in (directory.parent, directory):
+            value = str(path)
+            if value and value not in sys.path:
+                sys.path.insert(0, value)
+        importlib.invalidate_caches()
+        for name in (
+            "ElectricCR.electriccr.semantic.freecad_adapter",
+            "electriccr.semantic.freecad_adapter",
+        ):
+            try:
+                return importlib.import_module(name)
+            except Exception:
+                pass
+    return None
+
+
+def _is_a1(obj):
+    return _safe(getattr(obj, "RepresentationContract", "")) == A1_CONTRACT
+
+
+def _finalize_a1_devices(module, owner_hosts):
+    """Completa identidad/Host/Space y PLAN dentro de la transaccion llamadora."""
+    if not owner_hosts:
+        return []
+    adapter = _load_semantic_adapter()
+    if adapter is None:
+        raise RuntimeError("No se pudo cargar el adaptador semantico ElectricCR")
+    results = []
+    for owner, host in owner_hosts:
+        if not _is_a1(owner):
+            raise RuntimeError(
+                "La creacion A1 produjo un contrato inesperado: %s"
+                % (_safe(getattr(owner, "RepresentationContract", "")) or "<vacio>")
+            )
+        semantic = adapter.ensure_device_semantics(
+            owner,
+            dry_run=False,
+            host=host,
+            manage_transaction=False,
+        )
+        plan = module.sync_plan_representation(
+            owner,
+            dry_run=False,
+            manage_transaction=False,
+        )
+        results.append({"owner": owner.Name, "semantic": semantic, "plan": plan})
+    return results
 
 
 def _ensure_property(obj, ptype, name, group, description):
@@ -883,7 +944,7 @@ def _create_switch(module, doc, group, plan, cfg):
         raise RuntimeError("No se pudo cargar crear_toma_link de ElectricCR")
     placement = App.Placement(plan["point"], App.Rotation(App.Vector(0, 0, 1), plan["yaw"]))
     label = _label_for_door(plan["door"], plan["room"])
-    obj = module.crear_toma_link(
+    kwargs = dict(
         doc=doc,
         name_prefix=label,
         key_registro=cfg["registry_key"],
@@ -894,7 +955,20 @@ def _create_switch(module, doc, group, plan, cfg):
         orientacion_pared="Vertical",
         recompute=False,
         target_group=group,
+        separate_documentation=bool(cfg.get("use_a1", False)),
     )
+    try:
+        obj = module.crear_toma_link(**kwargs)
+    except TypeError as exc:
+        if cfg.get("use_a1", False):
+            raise RuntimeError(
+                "La version cargada de objeto_toma_uno no admite el contrato A1 opt-in."
+            ) from exc
+        kwargs.pop("recompute", None)
+        kwargs.pop("target_group", None)
+        kwargs.pop("separate_documentation", None)
+        obj = module.crear_toma_link(**kwargs)
+        group.addObject(obj)
     obj.Label = label
     _write_metadata(obj, plan, cfg)
     return obj
@@ -925,6 +999,8 @@ def _default_cfg():
         "search_step": DEFAULT_SEARCH_STEP_MM,
         "max_along_wall": DEFAULT_MAX_ALONG_WALL_MM,
         "update_existing": bool(param.GetBool("update_existing", True)),
+        # Opt-in deliberadamente efimero: nunca se persiste como default productivo.
+        "use_a1": False,
         # The side override is deliberately execution-only. A correction made
         # for one selected door must never become the default for all doors.
         "side_mode": DEFAULT_SIDE_MODE,
@@ -1004,6 +1080,12 @@ def _dialog(selected_count, all_count):
     update.setChecked(cfg["update_existing"])
     layout.addWidget(update)
 
+    use_a1 = QtWidgets.QCheckBox(
+        "Usar contrato A1 (fisico 3D + PLAN documental independiente)"
+    )
+    use_a1.setChecked(False)
+    layout.addWidget(use_a1)
+
     buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
     buttons.accepted.connect(dialog.accept); buttons.rejected.connect(dialog.reject)
     layout.addWidget(buttons)
@@ -1019,6 +1101,7 @@ def _dialog(selected_count, all_count):
         "wall_search": float(wall_search.value()),
         "side_mode": _safe(side_mode.currentData()) or DEFAULT_SIDE_MODE,
         "update_existing": bool(update.isChecked()),
+        "use_a1": bool(use_a1.isChecked()),
     })
     _save_cfg(cfg)
     return cfg
@@ -1146,21 +1229,32 @@ def main(doc_override=None, cfg_override=None, doors_override=None):
         _error("No se pudo cargar el generador de dispositivos ElectricCR.")
         return None
 
-    created = updated = existing_skipped = 0
+    created = updated = existing_skipped = legacy_preserved = 0
+    a1_owner_hosts = []
     doc.openTransaction("ElectricCR: colocar apagadores junto a puertas BIM")
     try:
         group = _ensure_group(doc)
         for plan in plans:
             existing = _find_existing(doc, plan["door_key"], plan["door"])
             if existing is not None:
+                if cfg.get("use_a1", False) and not _is_a1(existing):
+                    existing_skipped += 1
+                    legacy_preserved += 1
+                    continue
                 if cfg.get("update_existing", True):
                     _update_switch(existing, group, plan, cfg)
+                    if cfg.get("use_a1", False):
+                        a1_owner_hosts.append((existing, plan["wall"]))
                     updated += 1
                 else:
                     existing_skipped += 1
                 continue
-            _create_switch(module, doc, group, plan, cfg)
+            owner = _create_switch(module, doc, group, plan, cfg)
+            if cfg.get("use_a1", False):
+                a1_owner_hosts.append((owner, plan["wall"]))
             created += 1
+        doc.recompute()
+        _finalize_a1_devices(module, a1_owner_hosts)
         doc.recompute()
         doc.commitTransaction()
     except Exception as exc:
@@ -1174,6 +1268,7 @@ def main(doc_override=None, cfg_override=None, doors_override=None):
     result = {
         "puertas": len(doors), "planes": len(plans), "creados": created,
         "actualizados": updated, "existentes_omitidos": existing_skipped,
+        "legacy_preservados": legacy_preserved,
         "omitidos": len(skipped), "grupo": GROUP_LABEL,
     }
     _log("Finalizado: " + json.dumps(result, ensure_ascii=False))
@@ -1182,8 +1277,9 @@ def main(doc_override=None, cfg_override=None, doors_override=None):
         try:
             QtWidgets.QMessageBox.information(
                 Gui.getMainWindow(), "Apagadores BIM",
-                "Creados: {}\nActualizados: {}\nOmitidos: {}\nGrupo: {}".format(
-                    created, updated, len(skipped) + existing_skipped, GROUP_LABEL
+                "Creados: {}\nActualizados: {}\nLegacy preservados: {}\nOmitidos: {}\nGrupo: {}".format(
+                    created, updated, legacy_preserved,
+                    len(skipped) + existing_skipped, GROUP_LABEL
                 ),
             )
         except Exception:

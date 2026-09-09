@@ -259,3 +259,7 @@ Reglas:
 - Debe evitarse crear por separado un "objeto 2D" y un "objeto 3D" que el usuario
   tenga que mantener sincronizados manualmente.
 
+
+## Accepted A1 origin and runtime - 2026-09-09
+
+Owner.Placement is authoritative. PLAN schema 2 derives its canonical Placement expression from Owner, keeps Owner as PropertyLinkHidden and exposes SnapPoints=[Vector(0,0,0)]. Reuse Draft Move and Snap Special. PLAN stays outside user groups and the tree. A1 observers live for the GUI session after ElectricCR initialization, independently of active Workbench. Do not use ghostTracker or persistent preselection.

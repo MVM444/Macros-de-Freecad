@@ -60,3 +60,7 @@ Se adopta formalmente un flujo de trabajo para evitar que macros nuevas, experim
 - `HISTORIAL_CAMBIOS.md`
 
 **Validacion:** Revision documental. Las pruebas funcionales permanecen pendientes.
+
+### 2026-09-09 - A1 accepted closure / cierre A1 aceptado
+
+User accepted A1 after the FreeCAD 1.1.3 real regression of 2026-09-08. Capture the existing physical/documentary factory, semantic adapter, opt-in wrappers and persistent/idempotent selection runtime. 10 Owners / 10 PLAN before/after, one disposable probe, BIM/Draft/Part selection/movement/rotation/Delete/Undo/Redo/save-reopen passed. Runtime requires one ElectricCR initialization per session. No new functionality, production-model changes or NativeIFC integration. See RESULTADO_CODEX.md and anonymized evidence.

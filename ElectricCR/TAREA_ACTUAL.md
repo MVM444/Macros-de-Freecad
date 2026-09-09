@@ -1,3 +1,15 @@
+# Current task / tarea vigente - 2026-09-09
+
+**A1 closure accepted. A1 = APROBADO PARA CONTINUAR.** Publish the approved A1 scope without changing functionality, then study NativeIFC separately in a new disposable document. This commit contains only the A1 closure; it does not implement or claim results for the later experiment.
+
+Future experiment: exactly four new test occurrences (IfcOutlet, IfcSwitchingDevice, IfcLightFixture and the distribution-board class valid in the actual schema). Inspect identity, type, properties, Placement, editing and save/reopen. Investigate shared Type representations without implementing A1 integration or converting existing objects. Do not use production models.
+
+Keep PLAN, lifecycle, selection, masters and production devices unchanged. See RESULTADO_CODEX.md for the accepted A1 evidence and limitations. Branch: codex/cierre-a1-20260909.
+
+---
+
+## Historical entries (superseded where inconsistent with the closure above)
+
 # TAREA VIGENTE - ElectricCR / Prototipo luminaria semantica + arbol idempotente
 
 Fecha: 2026-09-01 America/Costa_Rica

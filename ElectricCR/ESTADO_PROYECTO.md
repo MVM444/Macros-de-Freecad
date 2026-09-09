@@ -1,3 +1,15 @@
+# ElectricCR - current state / estado vigente
+
+2026-09-09: **A1 = APROBADO PARA CONTINUAR / APPROVED TO CONTINUE.** User acceptance confirmed. FreeCAD 1.1.3, ElectricCR initialized once per session; BIM/Draft/Part switching preserves A1 runtime.
+
+Accepted model: one App::Link identity/Placement, physical master and reconstructible PLAN schema 2. A1 remains opt-in. Real regression ended at 10 Owners / 10 PLAN, with zero inconsistencies and original data preserved. Creation, selection, movement, rotation, visibility, Delete/Undo/Redo and save/close/reopen passed outside ElectricCR too.
+
+The public branch `codex/cierre-a1-20260909` contains only approved A1 code, generic tests, neutral documentation and anonymized evidence. Unrelated local work remains outside it. This is not an Addon release. See [RESULTADO_CODEX.md](RESULTADO_CODEX.md) for proof, scope and limitations. Commit/push receipt follows remote confirmation.
+
+---
+
+## Historical entries (superseded where inconsistent with the closure above)
+
 # ElectricCR - Estado actual del proyecto
 
 ## Barra comun Espacios y Recintos v0.1

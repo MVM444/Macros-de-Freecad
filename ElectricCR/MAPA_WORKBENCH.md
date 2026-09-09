@@ -258,3 +258,7 @@ Ejemplos:
 - cambia la estructura de carpetas o la arquitectura del Workbench.
 
 Este archivo debe describir el sistema que existe realmente, no el sistema que se desea construir en el futuro.
+
+## Accepted A1 runtime - 2026-09-09
+
+A1 opt-in insertion wrappers use objeto_toma_uno.crear_toma_link, ensure_device_semantics and sync_plan_representation in the caller transaction. Owner is App::Link linked to a physical master; PLAN is a separate documentary Part::Feature. Initialize installs selection/lifecycle/live-sync observers; they survive workbench changes. Explicit uninstall is for maintenance. See RESULTADO_CODEX.md.
