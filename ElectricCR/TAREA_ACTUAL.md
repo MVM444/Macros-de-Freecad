@@ -1,3 +1,13 @@
+## Recibo de cierre Git - 2026-09-14T12:50:03-06:00
+
+**A1 / Objeto electromecanico comun v1 = ACEPTADO**. FreeCAD 1.1.3; regresion lifecycle/Undo del 2026-09-14: PASS.
+
+Commit de cierre: `38d4d0d140a0ea67785b177964664221b4d4a5b6`. Rama: `codex/cierre-a1-20260909`. Push a origin: **SUCCESS**, verificado mediante referencia remota identica. Incluye 48 archivos de A1/Demo, pruebas, evidencia anonimizada y documentacion; ningun cambio funcional nuevo durante el cierre. Se usa el staging A1 existente para preservar el trabajo ajeno de DEV, cuya rama permanece `agent/respaldo-electriccr-2026-08-10`.
+
+Cierre finalizado. A1 default global pendiente de trabajo funcional separado; no se implementa automaticamente. Sin merge a main, RELEASE ni siguiente fase. Este recibo documental registra el commit de cierre ya publicado.
+
+---
+
 ## Cierre formal vigente - 2026-09-14T12:46:32-06:00
 
 **A1 / Objeto electromecanico comun v1 = ACEPTADO**
@@ -12,7 +22,7 @@ A1 sigue **opt-in**, salvo la Demo que lo solicita explicitamente. No se convier
 
 Clasificacion del contrato A1: NUCLEO / ESTABLE / COMPROBADA, aceptada por Marco. No implica RELEASE ni migracion general. Se preservan los FAIL y las restricciones historicas como antecedentes; las frases antiguas 'pendiente aceptacion' o 'sin autorizacion Git' no describen el estado vigente. No iniciar otra fase.
 
-Git: integridad comprobada (fsck completo, codigo 0). DEV contiene trabajo ajeno, preservado; cierre aislado sobre la rama A1 existente `codex/cierre-a1-20260909`, desde su staging limpio. Commit/push autorizados para este cierre; recibo definitivo se registrara al verificarlos. Sin merge a main ni release.
+Git: integridad comprobada (fsck completo, codigo 0). DEV contiene trabajo ajeno, preservado; cierre aislado sobre la rama A1 existente `codex/cierre-a1-20260909`, desde su staging limpio. Commit/push autorizados para este cierre; recibo definitivo confirmado al inicio de este documento. Sin merge a main ni release.
 
 ---
 
