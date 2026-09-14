@@ -12,6 +12,13 @@
 
 ## Cambios aceptados
 
+### 2026-09-14 - A1 / Objeto electromecanico comun v1 aceptado
+
+**A1 / Objeto electromecanico comun v1 = ACEPTADO**. Aceptacion formal de Marco tras regresion real FreeCAD 1.1.3 PASS (19 etapas, 2/5/7/7). Se acepta la correccion minima de plan_lifecycle.py y plan_live_sync.py: estados Python Transacting / HasPendingTransaction y vaciado seguro de cola antes del recompute. Probados movimiento, Undo/Redo, Delete del par, rollback, replay completo, save/reopen, BIM/Draft/Part y seleccion PLAN -> Owner; cero Access violation, huerfanos y errores Placement finales. Dos avisos hasher mismatch no bloqueantes. [Evidencia de cierre](tests/evidence/2026-09-14_a1_undo_lifecycle/README.md).
+
+Contrato Owner/App::Link con identidad y Placement unicos conservado. A1 default general queda pendiente de adaptar rutas de creacion distintas; no se cambia funcionalidad ni legacy en el cierre. Documentacion: RESULTADO_CODEX, ESTADO_PROYECTO, TAREA_ACTUAL, DECISIONES_TECNICAS, este historial y memoria. Los antecedentes FAIL se conservan. No RELEASE ni siguiente fase.
+
+
 ### 2026-08-08 - Flujo de validacion GPT-Codex y control de herramientas generadas con IA
 
 Se adopta formalmente un flujo de trabajo para evitar que macros nuevas, experimentos o desarrollos generados con IA se incorporen automaticamente como mejoras de ElectricCR.

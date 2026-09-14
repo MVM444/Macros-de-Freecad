@@ -1,0 +1,193 @@
+ La demo puede tardar varios segundos.
+07:41:53  [2026-09-14 07:41:48][TOMA1][INFO] attach properties on Master_Tomacorriente_120V_Toma_Ambos_Vertical_300_A1Physical
+07:41:53  [2026-09-14 07:41:48][TOMA1][INFO] created single-node device 'Master_Tomacorriente_120V_Toma_Ambos_Vertical_300_A1Physical' (Tipo=Toma, Key=Tomacorriente_120V)
+07:41:53  [2026-09-14 07:41:48][TOMA1][INFO] created link device 'ECR_Demo_outlet_office_01' -> 'Master_Tomacorriente_120V_Toma_Ambos_Vertical_300_A1Physical' (Tipo=Toma, Key=Tomacorriente_120V)
+07:41:53  [2026-09-14 07:41:48][TOMA1][INFO] execute() llamado para Master_Tomacorriente_120V_Toma_Ambos_Vertical_300_A1Physical
+07:41:53  [2026-09-14 07:41:48][TOMA1][INFO] KeyRegistro='Tomacorriente_120V' | symbol2D='toma_normal.step' -> <DEV_REPO>\Resources\prototypes\2d\toma_normal.step | model3D='toma_normal.step' -> <DEV_REPO>\Resources\prototypes\3d\toma_normal.step
+07:41:53  [2026-09-14 07:41:49][TOMA1][INFO] Shape regenerada en Master_Tomacorriente_120V_Toma_Ambos_Vertical_300_A1Physical con modo=Ambos contrato=PhysicalDocumentationA1
+07:41:53  [2026-09-14 07:41:49][TOMA1][INFO] created link device 'ECR_Demo_outlet_storage_01' -> 'Master_Tomacorriente_120V_Toma_Ambos_Vertical_300_A1Physical' (Tipo=Toma, Key=Tomacorriente_120V)
+07:41:53  [2026-09-14 07:41:49][TOMA1][INFO] execute() llamado para Master_Tomacorriente_120V_Toma_Ambos_Vertical_300_A1Physical
+07:41:53  [2026-09-14 07:41:49][TOMA1][INFO] KeyRegistro='Tomacorriente_120V' | symbol2D='toma_normal.step' -> <DEV_REPO>\Resources\prototypes\2d\toma_normal.step | model3D='toma_normal.step' -> <DEV_REPO>\Resources\prototypes\3d\toma_normal.step
+07:41:53  [2026-09-14 07:41:50][TOMA1][INFO] Shape regenerada en Master_Tomacorriente_120V_Toma_Ambos_Vertical_300_A1Physical con modo=Ambos contrato=PhysicalDocumentationA1
+07:41:53  [2026-09-14 07:41:50][TOMA1][INFO] attach properties on Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical
+07:41:53  [2026-09-14 07:41:50][TOMA1][INFO] created single-node device 'Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical' (Tipo=Apagador, Key=Apagador_Simple)
+07:41:53  [2026-09-14 07:41:50][TOMA1][INFO] created link device 'ECR_Demo_switch_office_01' -> 'Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical' (Tipo=Apagador, Key=Apagador_Simple)
+07:41:53  [2026-09-14 07:41:50][TOMA1][INFO] execute() llamado para Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical
+07:41:53  [2026-09-14 07:41:50][TOMA1][INFO] KeyRegistro='Apagador_Simple' | symbol2D='switch_simple.step' -> <DEV_REPO>\Resources\prototypes\2d\switch_simple.step | model3D='switch_simple.step' -> <DEV_REPO>\Resources\prototypes\3d\switch_simple.step
+07:41:53  [2026-09-14 07:41:50][TOMA1][INFO] Shape regenerada en Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical con modo=Ambos contrato=PhysicalDocumentationA1
+07:41:53  [2026-09-14 07:41:50][TOMA1][INFO] created link device 'ECR_Demo_switch_storage_01' -> 'Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical' (Tipo=Apagador, Key=Apagador_Simple)
+07:41:53  [2026-09-14 07:41:50][TOMA1][INFO] execute() llamado para Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical
+07:41:53  [2026-09-14 07:41:50][TOMA1][INFO] KeyRegistro='Apagador_Simple' | symbol2D='switch_simple.step' -> <DEV_REPO>\Resources\prototypes\2d\switch_simple.step | model3D='switch_simple.step' -> <DEV_REPO>\Resources\prototypes\3d\switch_simple.step
+07:41:53  [2026-09-14 07:41:50][TOMA1][INFO] Shape regenerada en Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical con modo=Ambos contrato=PhysicalDocumentationA1
+07:41:53  [2026-09-14 07:41:50][TOMA1][INFO] attach properties on Master_Luminaria_LED_Redonda_1000lm_Luminaria_Ambos_Horizontal_2700_A1Physical
+07:41:53  [2026-09-14 07:41:50][TOMA1][INFO] created single-node device 'Master_Luminaria_LED_Redonda_1000lm_Luminaria_Ambos_Horizontal_2700_A1Physical' (Tipo=Luminaria, Key=Luminaria LED Redonda 1000lm)
+07:41:53  [2026-09-14 07:41:50][TOMA1][INFO] created link device 'ECR_Demo_light_office_01' -> 'Master_Luminaria_LED_Redonda_1000lm_Luminaria_Ambos_Horizontal_2700_A1Physical' (Tipo=Luminaria, Key=Luminaria LED Redonda 1000lm)
+07:41:53  [2026-09-14 07:41:50][TOMA1][INFO] execute() llamado para Master_Luminaria_LED_Redonda_1000lm_Luminaria_Ambos_Horizontal_2700_A1Physical
+07:41:53  [2026-09-14 07:41:50][TOMA1][INFO] KeyRegistro='Luminaria LED Redonda 1000lm' | symbol2D='Luminaria_LED_Redonda_1000lm_2D.step' -> <DEV_REPO>\Resources\prototypes\2d\Luminaria_LED_Redonda_1000lm_2D.step | model3D='Luminaria_LED_Redonda_1000lm_3D.step' -> <DEV_REPO>\Resources\prototypes\3d\Luminaria_LED_Redonda_1000lm_3D.step
+07:41:53  [2026-09-14 07:41:50][TOMA1][INFO] Shape regenerada en Master_Luminaria_LED_Redonda_1000lm_Luminaria_Ambos_Horizontal_2700_A1Physical con modo=Ambos contrato=PhysicalDocumentationA1
+07:41:53  [2026-09-14 07:41:50][TOMA1][INFO] created link device 'ECR_Demo_light_storage_01' -> 'Master_Luminaria_LED_Redonda_1000lm_Luminaria_Ambos_Horizontal_2700_A1Physical' (Tipo=Luminaria, Key=Luminaria LED Redonda 1000lm)
+07:41:53  [2026-09-14 07:41:50][TOMA1][INFO] execute() llamado para Master_Luminaria_LED_Redonda_1000lm_Luminaria_Ambos_Horizontal_2700_A1Physical
+07:41:53  [2026-09-14 07:41:50][TOMA1][INFO] KeyRegistro='Luminaria LED Redonda 1000lm' | symbol2D='Luminaria_LED_Redonda_1000lm_2D.step' -> <DEV_REPO>\Resources\prototypes\2d\Luminaria_LED_Redonda_1000lm_2D.step | model3D='Luminaria_LED_Redonda_1000lm_3D.step' -> <DEV_REPO>\Resources\prototypes\3d\Luminaria_LED_Redonda_1000lm_3D.step
+07:41:53  [2026-09-14 07:41:50][TOMA1][INFO] Shape regenerada en Master_Luminaria_LED_Redonda_1000lm_Luminaria_Ambos_Horizontal_2700_A1Physical con modo=Ambos contrato=PhysicalDocumentationA1
+07:41:53  [2026-09-14 07:41:50][TOMA1][INFO] attach properties on Master_Sensor_Humo_Sensor_Ambos_Horizontal_2800_A1Physical
+07:41:53  [2026-09-14 07:41:50][TOMA1][INFO] created single-node device 'Master_Sensor_Humo_Sensor_Ambos_Horizontal_2800_A1Physical' (Tipo=Sensor, Key=Sensor_Humo)
+07:41:53  [2026-09-14 07:41:50][TOMA1][INFO] created link device 'ECR_Demo_smoke_storage_01' -> 'Master_Sensor_Humo_Sensor_Ambos_Horizontal_2800_A1Physical' (Tipo=Sensor, Key=Sensor_Humo)
+07:41:53  [2026-09-14 07:41:50][TOMA1][INFO] execute() llamado para Master_Sensor_Humo_Sensor_Ambos_Horizontal_2800_A1Physical
+07:41:53  [2026-09-14 07:41:50][TOMA1][INFO] KeyRegistro='Sensor_Humo' | symbol2D='Sensor de Humo.step' -> <DEV_REPO>\Resources\prototypes\2d\Sensor de Humo.step | model3D='Sensor de Humo.step' -> <DEV_REPO>\Resources\prototypes\3d\Sensor de Humo.step
+07:41:53  [2026-09-14 07:41:51][TOMA1][INFO] Shape regenerada en Master_Sensor_Humo_Sensor_Ambos_Horizontal_2800_A1Physical con modo=Ambos contrato=PhysicalDocumentationA1
+07:41:53  [2026-09-14 07:41:51][TOMA1][INFO] KeyRegistro='Tomacorriente_120V' | symbol2D='toma_normal.step' -> <DEV_REPO>\Resources\prototypes\2d\toma_normal.step | model3D='toma_normal.step' -> <DEV_REPO>\Resources\prototypes\3d\toma_normal.step
+07:41:53  [2026-09-14 07:41:51][TOMA1][INFO] PLAN synchronized owner=ECR_Demo_outlet_office_01 representation=ECR_DocPlan_1d6b2fd0_eceb_5433_b147_8e0f8c836c22 actions=CREATE_PLAN_REPRESENTATION
+07:41:53  [2026-09-14 07:41:51][TOMA1][INFO] KeyRegistro='Tomacorriente_120V' | symbol2D='toma_normal.step' -> <DEV_REPO>\Resources\prototypes\2d\toma_normal.step | model3D='toma_normal.step' -> <DEV_REPO>\Resources\prototypes\3d\toma_normal.step
+07:41:53  [2026-09-14 07:41:52][TOMA1][INFO] PLAN synchronized owner=ECR_Demo_outlet_storage_01 representation=ECR_DocPlan_691a3ff4_5383_5f81_9d49_e1c8d255670a actions=CREATE_PLAN_REPRESENTATION
+07:41:53  [2026-09-14 07:41:52][TOMA1][INFO] KeyRegistro='Apagador_Simple' | symbol2D='switch_simple.step' -> <DEV_REPO>\Resources\prototypes\2d\switch_simple.step | model3D='switch_simple.step' -> <DEV_REPO>\Resources\prototypes\3d\switch_simple.step
+07:41:53  [2026-09-14 07:41:52][TOMA1][INFO] PLAN synchronized owner=ECR_Demo_switch_office_01 representation=ECR_DocPlan_c75d5345_8cad_5652_a0f7_6184344450eb actions=CREATE_PLAN_REPRESENTATION
+07:41:53  [2026-09-14 07:41:52][TOMA1][INFO] KeyRegistro='Apagador_Simple' | symbol2D='switch_simple.step' -> <DEV_REPO>\Resources\prototypes\2d\switch_simple.step | model3D='switch_simple.step' -> <DEV_REPO>\Resources\prototypes\3d\switch_simple.step
+07:41:53  [2026-09-14 07:41:52][TOMA1][INFO] PLAN synchronized owner=ECR_Demo_switch_storage_01 representation=ECR_DocPlan_f8533089_a2fc_5d5b_8c32_d2a34a203363 actions=CREATE_PLAN_REPRESENTATION
+07:41:53  [2026-09-14 07:41:52][TOMA1][INFO] KeyRegistro='Luminaria LED Redonda 1000lm' | symbol2D='Luminaria_LED_Redonda_1000lm_2D.step' -> <DEV_REPO>\Resources\prototypes\2d\Luminaria_LED_Redonda_1000lm_2D.step | model3D='Luminaria_LED_Redonda_1000lm_3D.step' -> <DEV_REPO>\Resources\prototypes\3d\Luminaria_LED_Redonda_1000lm_3D.step
+07:41:53  [2026-09-14 07:41:52][TOMA1][INFO] PLAN synchronized owner=ECR_Demo_light_office_01 representation=ECR_DocPlan_640c0890_cd38_59b6_8f87_30bfd228f92c actions=CREATE_PLAN_REPRESENTATION
+07:41:53  [2026-09-14 07:41:52][TOMA1][INFO] KeyRegistro='Luminaria LED Redonda 1000lm' | symbol2D='Luminaria_LED_Redonda_1000lm_2D.step' -> <DEV_REPO>\Resources\prototypes\2d\Luminaria_LED_Redonda_1000lm_2D.step | model3D='Luminaria_LED_Redonda_1000lm_3D.step' -> <DEV_REPO>\Resources\prototypes\3d\Luminaria_LED_Redonda_1000lm_3D.step
+07:41:53  [2026-09-14 07:41:52][TOMA1][INFO] PLAN synchronized owner=ECR_Demo_light_storage_01 representation=ECR_DocPlan_b254bc18_b18d_54e7_baac_fb87da7baa14 actions=CREATE_PLAN_REPRESENTATION
+07:41:53  [2026-09-14 07:41:52][TOMA1][INFO] KeyRegistro='Sensor_Humo' | symbol2D='Sensor de Humo.step' -> <DEV_REPO>\Resources\prototypes\2d\Sensor de Humo.step | model3D='Sensor de Humo.step' -> <DEV_REPO>\Resources\prototypes\3d\Sensor de Humo.step
+07:41:53  [2026-09-14 07:41:53][TOMA1][INFO] PLAN synchronized owner=ECR_Demo_smoke_storage_01 representation=ECR_DocPlan_671ea9f6_eb63_5653_9ae1_ecde09041fd3 actions=CREATE_PLAN_REPRESENTATION
+07:41:53  [ElectricCR][Demo] creada ElectricCR Demo A1 - Canonica: 2 espacios, 7 dispositivos A1.
+07:41:53  Python code executed successfully.
+07:42:09  [ElectricCR][PLAN Select] redirected ECR_DocPlan_1d6b2fd0_eceb_5433_b147_8e0f8c836c22 -> ECR_Demo_outlet_office_01; feedback=native-owner-only
+07:42:09  [ElectricCR][PLAN Lifecycle] queued owner=ECR_Demo_outlet_office_01 plans=ECR_DocPlan_1d6b2fd0_eceb_5433_b147_8e0f8c836c22
+07:42:09  [ElectricCR][PLAN Lifecycle] removed orphan PLAN after owner deletion doc=ElectricCR_Demo_A1 plans=ECR_DocPlan_1d6b2fd0_eceb_5433_b147_8e0f8c836c22
+07:42:09  [ElectricCR][PLAN Lifecycle] queued owner=ECR_Demo_outlet_office_01 plans=ECR_DocPlan_1d6b2fd0_eceb_5433_b147_8e0f8c836c22
+07:42:09  <TopoShape> TopoShapeExpansion.cpp(983): hasher mismatch
+07:42:09  <TopoShape> TopoShapeExpansion.cpp(983): hasher mismatch
+07:42:09  Python code executed successfully.
+07:42:22  Python code executed successfully.
+07:42:43  [ElectricCR][PLAN Select] redirected ECR_DocPlan_1d6b2fd0_eceb_5433_b147_8e0f8c836c22 -> ECR_Demo_outlet_office_01; feedback=native-owner-only
+07:42:43  [ElectricCR][PLAN Select] redirected ECR_DocPlan_1d6b2fd0_eceb_5433_b147_8e0f8c836c22 -> ECR_Demo_outlet_office_01; feedback=native-owner-only
+07:42:43  [ElectricCR][PLAN Select] redirected ECR_DocPlan_1d6b2fd0_eceb_5433_b147_8e0f8c836c22 -> ECR_Demo_outlet_office_01; feedback=native-owner-only
+07:42:43  [ElectricCR][PLAN Lifecycle] queued owner=ECR_Demo_outlet_office_01 plans=ECR_DocPlan_1d6b2fd0_eceb_5433_b147_8e0f8c836c22
+07:42:43  [ElectricCR][PLAN Lifecycle] removed orphan PLAN after owner deletion doc=ElectricCR_A1_Regression plans=ECR_DocPlan_1d6b2fd0_eceb_5433_b147_8e0f8c836c22
+07:42:43  Python code executed successfully.
+07:43:19  [ElectricCR][PLAN Lifecycle] queued owner=ECR_Demo_outlet_office_01 plans=ECR_DocPlan_1d6b2fd0_eceb_5433_b147_8e0f8c836c22
+07:43:19  [ElectricCR][PLAN Lifecycle] removed orphan PLAN after owner deletion doc=ElectricCR_A1_Regression plans=ECR_DocPlan_1d6b2fd0_eceb_5433_b147_8e0f8c836c22
+07:43:20  Python code executed successfully.
+07:43:35  [ElectricCR][PLAN Lifecycle] observer removed
+07:43:35  [ElectricCR][PLAN Lifecycle] observer installed
+07:43:35  [A1 TEST] Smoke original sin instrumentacion; puede tardar varios segundos.
+07:43:40  [2026-09-14 07:43:35][TOMA1][INFO] attach properties on Master_Tomacorriente_120V_Toma_Ambos_Vertical_300_A1Physical
+07:43:40  [2026-09-14 07:43:35][TOMA1][INFO] created single-node device 'Master_Tomacorriente_120V_Toma_Ambos_Vertical_300_A1Physical' (Tipo=Toma, Key=Tomacorriente_120V)
+07:43:40  [2026-09-14 07:43:35][TOMA1][INFO] created link device 'ECR_Demo_outlet_office_01' -> 'Master_Tomacorriente_120V_Toma_Ambos_Vertical_300_A1Physical' (Tipo=Toma, Key=Tomacorriente_120V)
+07:43:40  [2026-09-14 07:43:35][TOMA1][INFO] execute() llamado para Master_Tomacorriente_120V_Toma_Ambos_Vertical_300_A1Physical
+07:43:40  [2026-09-14 07:43:35][TOMA1][INFO] KeyRegistro='Tomacorriente_120V' | symbol2D='toma_normal.step' -> <DEV_REPO>\Resources\prototypes\2d\toma_normal.step | model3D='toma_normal.step' -> <DEV_REPO>\Resources\prototypes\3d\toma_normal.step
+07:43:40  [2026-09-14 07:43:36][TOMA1][INFO] Shape regenerada en Master_Tomacorriente_120V_Toma_Ambos_Vertical_300_A1Physical con modo=Ambos contrato=PhysicalDocumentationA1
+07:43:40  [2026-09-14 07:43:36][TOMA1][INFO] created link device 'ECR_Demo_outlet_storage_01' -> 'Master_Tomacorriente_120V_Toma_Ambos_Vertical_300_A1Physical' (Tipo=Toma, Key=Tomacorriente_120V)
+07:43:40  [2026-09-14 07:43:36][TOMA1][INFO] execute() llamado para Master_Tomacorriente_120V_Toma_Ambos_Vertical_300_A1Physical
+07:43:40  [2026-09-14 07:43:36][TOMA1][INFO] KeyRegistro='Tomacorriente_120V' | symbol2D='toma_normal.step' -> <DEV_REPO>\Resources\prototypes\2d\toma_normal.step | model3D='toma_normal.step' -> <DEV_REPO>\Resources\prototypes\3d\toma_normal.step
+07:43:40  [2026-09-14 07:43:37][TOMA1][INFO] Shape regenerada en Master_Tomacorriente_120V_Toma_Ambos_Vertical_300_A1Physical con modo=Ambos contrato=PhysicalDocumentationA1
+07:43:40  [2026-09-14 07:43:37][TOMA1][INFO] attach properties on Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical
+07:43:40  [2026-09-14 07:43:37][TOMA1][INFO] created single-node device 'Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical' (Tipo=Apagador, Key=Apagador_Simple)
+07:43:40  [2026-09-14 07:43:37][TOMA1][INFO] created link device 'ECR_Demo_switch_office_01' -> 'Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical' (Tipo=Apagador, Key=Apagador_Simple)
+07:43:40  [2026-09-14 07:43:37][TOMA1][INFO] execute() llamado para Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical
+07:43:40  [2026-09-14 07:43:37][TOMA1][INFO] KeyRegistro='Apagador_Simple' | symbol2D='switch_simple.step' -> <DEV_REPO>\Resources\prototypes\2d\switch_simple.step | model3D='switch_simple.step' -> <DEV_REPO>\Resources\prototypes\3d\switch_simple.step
+07:43:40  [2026-09-14 07:43:37][TOMA1][INFO] Shape regenerada en Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical con modo=Ambos contrato=PhysicalDocumentationA1
+07:43:40  [2026-09-14 07:43:37][TOMA1][INFO] created link device 'ECR_Demo_switch_storage_01' -> 'Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical' (Tipo=Apagador, Key=Apagador_Simple)
+07:43:40  [2026-09-14 07:43:37][TOMA1][INFO] execute() llamado para Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical
+07:43:40  [2026-09-14 07:43:37][TOMA1][INFO] KeyRegistro='Apagador_Simple' | symbol2D='switch_simple.step' -> <DEV_REPO>\Resources\prototypes\2d\switch_simple.step | model3D='switch_simple.step' -> <DEV_REPO>\Resources\prototypes\3d\switch_simple.step
+07:43:40  [2026-09-14 07:43:37][TOMA1][INFO] Shape regenerada en Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical con modo=Ambos contrato=PhysicalDocumentationA1
+07:43:40  [2026-09-14 07:43:37][TOMA1][INFO] attach properties on Master_Luminaria_LED_Redonda_1000lm_Luminaria_Ambos_Horizontal_2700_A1Physical
+07:43:40  [2026-09-14 07:43:37][TOMA1][INFO] created single-node device 'Master_Luminaria_LED_Redonda_1000lm_Luminaria_Ambos_Horizontal_2700_A1Physical' (Tipo=Luminaria, Key=Luminaria LED Redonda 1000lm)
+07:43:40  [2026-09-14 07:43:37][TOMA1][INFO] created link device 'ECR_Demo_light_office_01' -> 'Master_Luminaria_LED_Redonda_1000lm_Luminaria_Ambos_Horizontal_2700_A1Physical' (Tipo=Luminaria, Key=Luminaria LED Redonda 1000lm)
+07:43:40  [2026-09-14 07:43:37][TOMA1][INFO] execute() llamado para Master_Luminaria_LED_Redonda_1000lm_Luminaria_Ambos_Horizontal_2700_A1Physical
+07:43:40  [2026-09-14 07:43:37][TOMA1][INFO] KeyRegistro='Luminaria LED Redonda 1000lm' | symbol2D='Luminaria_LED_Redonda_1000lm_2D.step' -> <DEV_REPO>\Resources\prototypes\2d\Luminaria_LED_Redonda_1000lm_2D.step | model3D='Luminaria_LED_Redonda_1000lm_3D.step' -> <DEV_REPO>\Resources\prototypes\3d\Luminaria_LED_Redonda_1000lm_3D.step
+07:43:40  [2026-09-14 07:43:37][TOMA1][INFO] Shape regenerada en Master_Luminaria_LED_Redonda_1000lm_Luminaria_Ambos_Horizontal_2700_A1Physical con modo=Ambos contrato=PhysicalDocumentationA1
+07:43:40  [2026-09-14 07:43:37][TOMA1][INFO] created link device 'ECR_Demo_light_storage_01' -> 'Master_Luminaria_LED_Redonda_1000lm_Luminaria_Ambos_Horizontal_2700_A1Physical' (Tipo=Luminaria, Key=Luminaria LED Redonda 1000lm)
+07:43:40  [2026-09-14 07:43:37][TOMA1][INFO] execute() llamado para Master_Luminaria_LED_Redonda_1000lm_Luminaria_Ambos_Horizontal_2700_A1Physical
+07:43:40  [2026-09-14 07:43:37][TOMA1][INFO] KeyRegistro='Luminaria LED Redonda 1000lm' | symbol2D='Luminaria_LED_Redonda_1000lm_2D.step' -> <DEV_REPO>\Resources\prototypes\2d\Luminaria_LED_Redonda_1000lm_2D.step | model3D='Luminaria_LED_Redonda_1000lm_3D.step' -> <DEV_REPO>\Resources\prototypes\3d\Luminaria_LED_Redonda_1000lm_3D.step
+07:43:40  [2026-09-14 07:43:37][TOMA1][INFO] Shape regenerada en Master_Luminaria_LED_Redonda_1000lm_Luminaria_Ambos_Horizontal_2700_A1Physical con modo=Ambos contrato=PhysicalDocumentationA1
+07:43:40  [2026-09-14 07:43:37][TOMA1][INFO] attach properties on Master_Sensor_Humo_Sensor_Ambos_Horizontal_2800_A1Physical
+07:43:40  [2026-09-14 07:43:37][TOMA1][INFO] created single-node device 'Master_Sensor_Humo_Sensor_Ambos_Horizontal_2800_A1Physical' (Tipo=Sensor, Key=Sensor_Humo)
+07:43:40  [2026-09-14 07:43:37][TOMA1][INFO] created link device 'ECR_Demo_smoke_storage_01' -> 'Master_Sensor_Humo_Sensor_Ambos_Horizontal_2800_A1Physical' (Tipo=Sensor, Key=Sensor_Humo)
+07:43:40  [2026-09-14 07:43:37][TOMA1][INFO] execute() llamado para Master_Sensor_Humo_Sensor_Ambos_Horizontal_2800_A1Physical
+07:43:40  [2026-09-14 07:43:37][TOMA1][INFO] KeyRegistro='Sensor_Humo' | symbol2D='Sensor de Humo.step' -> <DEV_REPO>\Resources\prototypes\2d\Sensor de Humo.step | model3D='Sensor de Humo.step' -> <DEV_REPO>\Resources\prototypes\3d\Sensor de Humo.step
+07:43:40  [2026-09-14 07:43:37][TOMA1][INFO] Shape regenerada en Master_Sensor_Humo_Sensor_Ambos_Horizontal_2800_A1Physical con modo=Ambos contrato=PhysicalDocumentationA1
+07:43:40  [2026-09-14 07:43:38][TOMA1][INFO] KeyRegistro='Tomacorriente_120V' | symbol2D='toma_normal.step' -> <DEV_REPO>\Resources\prototypes\2d\toma_normal.step | model3D='toma_normal.step' -> <DEV_REPO>\Resources\prototypes\3d\toma_normal.step
+07:43:40  [2026-09-14 07:43:38][TOMA1][INFO] PLAN synchronized owner=ECR_Demo_outlet_office_01 representation=ECR_DocPlan_1d6b2fd0_eceb_5433_b147_8e0f8c836c22 actions=CREATE_PLAN_REPRESENTATION
+07:43:40  [2026-09-14 07:43:38][TOMA1][INFO] KeyRegistro='Tomacorriente_120V' | symbol2D='toma_normal.step' -> <DEV_REPO>\Resources\prototypes\2d\toma_normal.step | model3D='toma_normal.step' -> <DEV_REPO>\Resources\prototypes\3d\toma_normal.step
+07:43:40  [2026-09-14 07:43:39][TOMA1][INFO] PLAN synchronized owner=ECR_Demo_outlet_storage_01 representation=ECR_DocPlan_691a3ff4_5383_5f81_9d49_e1c8d255670a actions=CREATE_PLAN_REPRESENTATION
+07:43:40  [2026-09-14 07:43:39][TOMA1][INFO] KeyRegistro='Apagador_Simple' | symbol2D='switch_simple.step' -> <DEV_REPO>\Resources\prototypes\2d\switch_simple.step | model3D='switch_simple.step' -> <DEV_REPO>\Resources\prototypes\3d\switch_simple.step
+07:43:40  [2026-09-14 07:43:39][TOMA1][INFO] PLAN synchronized owner=ECR_Demo_switch_office_01 representation=ECR_DocPlan_c75d5345_8cad_5652_a0f7_6184344450eb actions=CREATE_PLAN_REPRESENTATION
+07:43:40  [2026-09-14 07:43:39][TOMA1][INFO] KeyRegistro='Apagador_Simple' | symbol2D='switch_simple.step' -> <DEV_REPO>\Resources\prototypes\2d\switch_simple.step | model3D='switch_simple.step' -> <DEV_REPO>\Resources\prototypes\3d\switch_simple.step
+07:43:40  [2026-09-14 07:43:39][TOMA1][INFO] PLAN synchronized owner=ECR_Demo_switch_storage_01 representation=ECR_DocPlan_f8533089_a2fc_5d5b_8c32_d2a34a203363 actions=CREATE_PLAN_REPRESENTATION
+07:43:40  [2026-09-14 07:43:39][TOMA1][INFO] KeyRegistro='Luminaria LED Redonda 1000lm' | symbol2D='Luminaria_LED_Redonda_1000lm_2D.step' -> <DEV_REPO>\Resources\prototypes\2d\Luminaria_LED_Redonda_1000lm_2D.step | model3D='Luminaria_LED_Redonda_1000lm_3D.step' -> <DEV_REPO>\Resources\prototypes\3d\Luminaria_LED_Redonda_1000lm_3D.step
+07:43:40  [2026-09-14 07:43:39][TOMA1][INFO] PLAN synchronized owner=ECR_Demo_light_office_01 representation=ECR_DocPlan_640c0890_cd38_59b6_8f87_30bfd228f92c actions=CREATE_PLAN_REPRESENTATION
+07:43:40  [2026-09-14 07:43:39][TOMA1][INFO] KeyRegistro='Luminaria LED Redonda 1000lm' | symbol2D='Luminaria_LED_Redonda_1000lm_2D.step' -> <DEV_REPO>\Resources\prototypes\2d\Luminaria_LED_Redonda_1000lm_2D.step | model3D='Luminaria_LED_Redonda_1000lm_3D.step' -> <DEV_REPO>\Resources\prototypes\3d\Luminaria_LED_Redonda_1000lm_3D.step
+07:43:40  [2026-09-14 07:43:39][TOMA1][INFO] PLAN synchronized owner=ECR_Demo_light_storage_01 representation=ECR_DocPlan_b254bc18_b18d_54e7_baac_fb87da7baa14 actions=CREATE_PLAN_REPRESENTATION
+07:43:40  [2026-09-14 07:43:40][TOMA1][INFO] KeyRegistro='Sensor_Humo' | symbol2D='Sensor de Humo.step' -> <DEV_REPO>\Resources\prototypes\2d\Sensor de Humo.step | model3D='Sensor de Humo.step' -> <DEV_REPO>\Resources\prototypes\3d\Sensor de Humo.step
+07:43:40  [2026-09-14 07:43:40][TOMA1][INFO] PLAN synchronized owner=ECR_Demo_smoke_storage_01 representation=ECR_DocPlan_671ea9f6_eb63_5653_9ae1_ecde09041fd3 actions=CREATE_PLAN_REPRESENTATION
+07:43:40  [ElectricCR][Demo] creada ElectricCR Demo A1 - Canonica: 2 espacios, 7 dispositivos A1.
+07:43:40  [ElectricCR][PLAN Lifecycle] queued owner=ECR_Demo_outlet_office_01 plans=ECR_DocPlan_1d6b2fd0_eceb_5433_b147_8e0f8c836c22
+07:43:40  [ElectricCR][PLAN Lifecycle] removed orphan PLAN after owner deletion doc=ElectricCR_Demo_A1 plans=ECR_DocPlan_1d6b2fd0_eceb_5433_b147_8e0f8c836c22
+07:43:41  [ElectricCR][Demo Smoke] PASS
+07:43:41  Python code executed successfully.
+07:44:33  [A1 TEST] Verificacion visual de Undo completo sin instrumentacion; puede tardar varios segundos.
+07:44:38  [2026-09-14 07:44:34][TOMA1][INFO] attach properties on Master_Tomacorriente_120V_Toma_Ambos_Vertical_300_A1Physical
+07:44:38  [2026-09-14 07:44:34][TOMA1][INFO] created single-node device 'Master_Tomacorriente_120V_Toma_Ambos_Vertical_300_A1Physical' (Tipo=Toma, Key=Tomacorriente_120V)
+07:44:38  [2026-09-14 07:44:34][TOMA1][INFO] created link device 'ECR_Demo_outlet_office_01' -> 'Master_Tomacorriente_120V_Toma_Ambos_Vertical_300_A1Physical' (Tipo=Toma, Key=Tomacorriente_120V)
+07:44:38  [2026-09-14 07:44:34][TOMA1][INFO] execute() llamado para Master_Tomacorriente_120V_Toma_Ambos_Vertical_300_A1Physical
+07:44:38  [2026-09-14 07:44:34][TOMA1][INFO] KeyRegistro='Tomacorriente_120V' | symbol2D='toma_normal.step' -> <DEV_REPO>\Resources\prototypes\2d\toma_normal.step | model3D='toma_normal.step' -> <DEV_REPO>\Resources\prototypes\3d\toma_normal.step
+07:44:38  [2026-09-14 07:44:34][TOMA1][INFO] Shape regenerada en Master_Tomacorriente_120V_Toma_Ambos_Vertical_300_A1Physical con modo=Ambos contrato=PhysicalDocumentationA1
+07:44:38  [2026-09-14 07:44:34][TOMA1][INFO] created link device 'ECR_Demo_outlet_storage_01' -> 'Master_Tomacorriente_120V_Toma_Ambos_Vertical_300_A1Physical' (Tipo=Toma, Key=Tomacorriente_120V)
+07:44:38  [2026-09-14 07:44:34][TOMA1][INFO] execute() llamado para Master_Tomacorriente_120V_Toma_Ambos_Vertical_300_A1Physical
+07:44:38  [2026-09-14 07:44:34][TOMA1][INFO] KeyRegistro='Tomacorriente_120V' | symbol2D='toma_normal.step' -> <DEV_REPO>\Resources\prototypes\2d\toma_normal.step | model3D='toma_normal.step' -> <DEV_REPO>\Resources\prototypes\3d\toma_normal.step
+07:44:38  [2026-09-14 07:44:35][TOMA1][INFO] Shape regenerada en Master_Tomacorriente_120V_Toma_Ambos_Vertical_300_A1Physical con modo=Ambos contrato=PhysicalDocumentationA1
+07:44:38  [2026-09-14 07:44:35][TOMA1][INFO] attach properties on Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical
+07:44:38  [2026-09-14 07:44:35][TOMA1][INFO] created single-node device 'Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical' (Tipo=Apagador, Key=Apagador_Simple)
+07:44:38  [2026-09-14 07:44:35][TOMA1][INFO] created link device 'ECR_Demo_switch_office_01' -> 'Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical' (Tipo=Apagador, Key=Apagador_Simple)
+07:44:38  [2026-09-14 07:44:35][TOMA1][INFO] execute() llamado para Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical
+07:44:38  [2026-09-14 07:44:35][TOMA1][INFO] KeyRegistro='Apagador_Simple' | symbol2D='switch_simple.step' -> <DEV_REPO>\Resources\prototypes\2d\switch_simple.step | model3D='switch_simple.step' -> <DEV_REPO>\Resources\prototypes\3d\switch_simple.step
+07:44:38  [2026-09-14 07:44:35][TOMA1][INFO] Shape regenerada en Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical con modo=Ambos contrato=PhysicalDocumentationA1
+07:44:38  [2026-09-14 07:44:35][TOMA1][INFO] created link device 'ECR_Demo_switch_storage_01' -> 'Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical' (Tipo=Apagador, Key=Apagador_Simple)
+07:44:38  [2026-09-14 07:44:35][TOMA1][INFO] execute() llamado para Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical
+07:44:38  [2026-09-14 07:44:35][TOMA1][INFO] KeyRegistro='Apagador_Simple' | symbol2D='switch_simple.step' -> <DEV_REPO>\Resources\prototypes\2d\switch_simple.step | model3D='switch_simple.step' -> <DEV_REPO>\Resources\prototypes\3d\switch_simple.step
+07:44:38  [2026-09-14 07:44:36][TOMA1][INFO] Shape regenerada en Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical con modo=Ambos contrato=PhysicalDocumentationA1
+07:44:38  [2026-09-14 07:44:36][TOMA1][INFO] attach properties on Master_Luminaria_LED_Redonda_1000lm_Luminaria_Ambos_Horizontal_2700_A1Physical
+07:44:38  [2026-09-14 07:44:36][TOMA1][INFO] created single-node device 'Master_Luminaria_LED_Redonda_1000lm_Luminaria_Ambos_Horizontal_2700_A1Physical' (Tipo=Luminaria, Key=Luminaria LED Redonda 1000lm)
+07:44:38  [2026-09-14 07:44:36][TOMA1][INFO] created link device 'ECR_Demo_light_office_01' -> 'Master_Luminaria_LED_Redonda_1000lm_Luminaria_Ambos_Horizontal_2700_A1Physical' (Tipo=Luminaria, Key=Luminaria LED Redonda 1000lm)
+07:44:38  [2026-09-14 07:44:36][TOMA1][INFO] execute() llamado para Master_Luminaria_LED_Redonda_1000lm_Luminaria_Ambos_Horizontal_2700_A1Physical
+07:44:38  [2026-09-14 07:44:36][TOMA1][INFO] KeyRegistro='Luminaria LED Redonda 1000lm' | symbol2D='Luminaria_LED_Redonda_1000lm_2D.step' -> <DEV_REPO>\Resources\prototypes\2d\Luminaria_LED_Redonda_1000lm_2D.step | model3D='Luminaria_LED_Redonda_1000lm_3D.step' -> <DEV_REPO>\Resources\prototypes\3d\Luminaria_LED_Redonda_1000lm_3D.step
+07:44:38  [2026-09-14 07:44:36][TOMA1][INFO] Shape regenerada en Master_Luminaria_LED_Redonda_1000lm_Luminaria_Ambos_Horizontal_2700_A1Physical con modo=Ambos contrato=PhysicalDocumentationA1
+07:44:38  [2026-09-14 07:44:36][TOMA1][INFO] created link device 'ECR_Demo_light_storage_01' -> 'Master_Luminaria_LED_Redonda_1000lm_Luminaria_Ambos_Horizontal_2700_A1Physical' (Tipo=Luminaria, Key=Luminaria LED Redonda 1000lm)
+07:44:38  [2026-09-14 07:44:36][TOMA1][INFO] execute() llamado para Master_Luminaria_LED_Redonda_1000lm_Luminaria_Ambos_Horizontal_2700_A1Physical
+07:44:38  [2026-09-14 07:44:36][TOMA1][INFO] KeyRegistro='Luminaria LED Redonda 1000lm' | symbol2D='Luminaria_LED_Redonda_1000lm_2D.step' -> <DEV_REPO>\Resources\prototypes\2d\Luminaria_LED_Redonda_1000lm_2D.step | model3D='Luminaria_LED_Redonda_1000lm_3D.step' -> <DEV_REPO>\Resources\prototypes\3d\Luminaria_LED_Redonda_1000lm_3D.step
+07:44:38  [2026-09-14 07:44:36][TOMA1][INFO] Shape regenerada en Master_Luminaria_LED_Redonda_1000lm_Luminaria_Ambos_Horizontal_2700_A1Physical con modo=Ambos contrato=PhysicalDocumentationA1
+07:44:38  [2026-09-14 07:44:36][TOMA1][INFO] attach properties on Master_Sensor_Humo_Sensor_Ambos_Horizontal_2800_A1Physical
+07:44:38  [2026-09-14 07:44:36][TOMA1][INFO] created single-node device 'Master_Sensor_Humo_Sensor_Ambos_Horizontal_2800_A1Physical' (Tipo=Sensor, Key=Sensor_Humo)
+07:44:38  [2026-09-14 07:44:36][TOMA1][INFO] created link device 'ECR_Demo_smoke_storage_01' -> 'Master_Sensor_Humo_Sensor_Ambos_Horizontal_2800_A1Physical' (Tipo=Sensor, Key=Sensor_Humo)
+07:44:38  [2026-09-14 07:44:36][TOMA1][INFO] execute() llamado para Master_Sensor_Humo_Sensor_Ambos_Horizontal_2800_A1Physical
+07:44:38  [2026-09-14 07:44:36][TOMA1][INFO] KeyRegistro='Sensor_Humo' | symbol2D='Sensor de Humo.step' -> <DEV_REPO>\Resources\prototypes\2d\Sensor de Humo.step | model3D='Sensor de Humo.step' -> <DEV_REPO>\Resources\prototypes\3d\Sensor de Humo.step
+07:44:38  [2026-09-14 07:44:36][TOMA1][INFO] Shape regenerada en Master_Sensor_Humo_Sensor_Ambos_Horizontal_2800_A1Physical con modo=Ambos contrato=PhysicalDocumentationA1
+07:44:38  [2026-09-14 07:44:36][TOMA1][INFO] KeyRegistro='Tomacorriente_120V' | symbol2D='toma_normal.step' -> <DEV_REPO>\Resources\prototypes\2d\toma_normal.step | model3D='toma_normal.step' -> <DEV_REPO>\Resources\prototypes\3d\toma_normal.step
+07:44:38  [2026-09-14 07:44:37][TOMA1][INFO] PLAN synchronized owner=ECR_Demo_outlet_office_01 representation=ECR_DocPlan_1d6b2fd0_eceb_5433_b147_8e0f8c836c22 actions=CREATE_PLAN_REPRESENTATION
+07:44:38  [2026-09-14 07:44:37][TOMA1][INFO] KeyRegistro='Tomacorriente_120V' | symbol2D='toma_normal.step' -> <DEV_REPO>\Resources\prototypes\2d\toma_normal.step | model3D='toma_normal.step' -> <DEV_REPO>\Resources\prototypes\3d\toma_normal.step
+07:44:38  [2026-09-14 07:44:37][TOMA1][INFO] PLAN synchronized owner=ECR_Demo_outlet_storage_01 representation=ECR_DocPlan_691a3ff4_5383_5f81_9d49_e1c8d255670a actions=CREATE_PLAN_REPRESENTATION
+07:44:38  [2026-09-14 07:44:38][TOMA1][INFO] KeyRegistro='Apagador_Simple' | symbol2D='switch_simple.step' -> <DEV_REPO>\Resources\prototypes\2d\switch_simple.step | model3D='switch_simple.step' -> <DEV_REPO>\Resources\prototypes\3d\switch_simple.step
+07:44:38  [2026-09-14 07:44:38][TOMA1][INFO] PLAN synchronized owner=ECR_Demo_switch_office_01 representation=ECR_DocPlan_c75d5345_8cad_5652_a0f7_6184344450eb actions=CREATE_PLAN_REPRESENTATION
+07:44:38  [2026-09-14 07:44:38][TOMA1][INFO] KeyRegistro='Apagador_Simple' | symbol2D='switch_simple.step' -> <DEV_REPO>\Resources\prototypes\2d\switch_simple.step | model3D='switch_simple.step' -> <DEV_REPO>\Resources\prototypes\3d\switch_simple.step
+07:44:38  [2026-09-14 07:44:38][TOMA1][INFO] PLAN synchronized owner=ECR_Demo_switch_storage_01 representation=ECR_DocPlan_f8533089_a2fc_5d5b_8c32_d2a34a203363 actions=CREATE_PLAN_REPRESENTATION
+07:44:38  [2026-09-14 07:44:38][TOMA1][INFO] KeyRegistro='Luminaria LED Redonda 1000lm' | symbol2D='Luminaria_LED_Redonda_1000lm_2D.step' -> <DEV_REPO>\Resources\prototypes\2d\Luminaria_LED_Redonda_1000lm_2D.step | model3D='Luminaria_LED_Redonda_1000lm_3D.step' -> <DEV_REPO>\Resources\prototypes\3d\Luminaria_LED_Redonda_1000lm_3D.step
+07:44:38  [2026-09-14 07:44:38][TOMA1][INFO] PLAN synchronized owner=ECR_Demo_light_office_01 representation=ECR_DocPlan_640c0890_cd38_59b6_8f87_30bfd228f92c actions=CREATE_PLAN_REPRESENTATION
+07:44:38  [2026-09-14 07:44:38][TOMA1][INFO] KeyRegistro='Luminaria LED Redonda 1000lm' | symbol2D='Luminaria_LED_Redonda_1000lm_2D.step' -> <DEV_REPO>\Resources\prototypes\2d\Luminaria_LED_Redonda_1000lm_2D.step | model3D='Luminaria_LED_Redonda_1000lm_3D.step' -> <DEV_REPO>\Resources\prototypes\3d\Luminaria_LED_Redonda_1000lm_3D.step
+07:44:38  [2026-09-14 07:44:38][TOMA1][INFO] PLAN synchronized owner=ECR_Demo_light_storage_01 representation=ECR_DocPlan_b254bc18_b18d_54e7_baac_fb87da7baa14 actions=CREATE_PLAN_REPRESENTATION
+07:44:38  [2026-09-14 07:44:38][TOMA1][INFO] KeyRegistro='Sensor_Humo' | symbol2D='Sensor de Humo.step' -> <DEV_REPO>\Resources\prototypes\2d\Sensor de Humo.step | model3D='Sensor de Humo.step' -> <DEV_REPO>\Resources\prototypes\3d\Sensor de Humo.step
+07:44:38  [2026-09-14 07:44:38][TOMA1][INFO] PLAN synchronized owner=ECR_Demo_smoke_storage_01 representation=ECR_DocPlan_671ea9f6_eb63_5653_9ae1_ecde09041fd3 actions=CREATE_PLAN_REPRESENTATION
+07:44:38  [ElectricCR][Demo] creada ElectricCR Demo A1 - Canonica: 2 espacios, 7 dispositivos A1.
+07:44:39  Python code executed successfully.
+07:45:13  <TopoShape> TopoShapeExpansion.cpp(983): hasher mismatch
+07:45:13  <TopoShape> TopoShapeExpansion.cpp(983): hasher mismatch
+07:45:13  [ElectricCR][Mode] mode_combo_reused=False
+07:45:13  [ElectricCR][Mode] panel_reused=True
+07:45:13  [ElectricCR][Mode] selected=Organización del proyecto
+07:45:13  [ElectricCR][Mode] visible=ElectricCR,Objetos,Draft compacto,Configuracion del proyecto
+07:45:13  [ElectricCR][Mode] hidden=Areas,Iluminacion,Deteccion,Tomacorrientes,Conectar,Cajas,Tableros,Importar y Exportar
+07:45:13  [ElectricCR][Mode] missing=Areas
+07:45:13  ElectricCR: autoactivacion de Draft toolbar desactivada (config 'draft_toolbar_autoload': true para reactivarla).
+07:45:13  ElectricCR: overlay de Snapper desactivado en Windows (config 'draft_snapper_overlay': true para reactivarlo).
+07:45:13  Python code executed successfully.
+07:45:59  Python code executed successfully.

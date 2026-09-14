@@ -1,0 +1,51 @@
+{
+  "time": "2026-09-14T12:46:32-06:00",
+  "files": [
+    {
+      "path": "electriccr/features/plan_lifecycle.py",
+      "expected": "dde3c80910d194b5e0dfda1e442b7d5f8c829bfb0512ca8d012675ddf9c5fde3",
+      "actual": "dde3c80910d194b5e0dfda1e442b7d5f8c829bfb0512ca8d012675ddf9c5fde3"
+    },
+    {
+      "path": "electriccr/features/plan_live_sync.py",
+      "expected": "9edacf4268c18d7af54e3ec845fce892c5514b1e0a55367382f2b91dc277c1fb",
+      "actual": "9edacf4268c18d7af54e3ec845fce892c5514b1e0a55367382f2b91dc277c1fb"
+    },
+    {
+      "path": "ui/plan_selection.py",
+      "expected": "448b8818431b270f963c23b2bf023a40af2738d9407958fd19ede479c2c56ea4",
+      "actual": "448b8818431b270f963c23b2bf023a40af2738d9407958fd19ede479c2c56ea4"
+    },
+    {
+      "path": "electriccr/features/objeto_toma_uno.py",
+      "expected": "bc6d82c2abba84bb98ec6a4e68afc8db37d2cd4f42e72612d6d6ebcf3c36c173",
+      "actual": "bc6d82c2abba84bb98ec6a4e68afc8db37d2cd4f42e72612d6d6ebcf3c36c173"
+    },
+    {
+      "path": "electriccr/demo/electric_demo_freecad.py",
+      "expected": "3f199c02a666417e05312f3845e7f31420bdc0d34d0aa3fe0dc75297d106681d",
+      "actual": "3f199c02a666417e05312f3845e7f31420bdc0d34d0aa3fe0dc75297d106681d"
+    },
+    {
+      "path": "electriccr/demo/electric_demo_audit.py",
+      "expected": "f8ce2c073b34381dd8f74fd9a324dc461e99e3ed772aadec0f4f5fba238cdf88",
+      "actual": "f8ce2c073b34381dd8f74fd9a324dc461e99e3ed772aadec0f4f5fba238cdf88"
+    },
+    {
+      "path": "tests/freecad_electric_demo_smoke.py",
+      "expected": "4368b8a687f95ccb04da7f6475b3e3e4438f29ac4814351363dd5ebf384caae5",
+      "actual": "4368b8a687f95ccb04da7f6475b3e3e4438f29ac4814351363dd5ebf384caae5"
+    },
+    {
+      "path": "InitGui.py",
+      "expected": "7b703cd874d5c0aed697c04649c8cd8d35db63096a69804d57a255288bcd9825",
+      "actual": "7b703cd874d5c0aed697c04649c8cd8d35db63096a69804d57a255288bcd9825"
+    }
+  ],
+  "approved_readme_sha256": "f8654c6cfd284d66bf4703422e236910fed46d97c310196ea7e87be9f9b727d1",
+  "regression_reused": "2026-09-14_a1_undo_lifecycle/regression.json",
+  "all_19_stages_pass": true,
+  "git_fsck_exit": 0,
+  "new_functional_changes": false,
+  "tests_repeated_after_resume": false
+}

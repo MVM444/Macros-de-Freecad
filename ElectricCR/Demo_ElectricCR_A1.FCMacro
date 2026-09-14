@@ -1,0 +1,19 @@
+# -*- coding: utf-8 -*-
+"""Demo_ElectricCR_A1.FCMacro
+
+Purpose: tiny manual launcher for the canonical ElectricCR A1 demo.
+Main behavior: creates a NEW demo document and runs the read-only audit.
+Future modifications: keep this file small; logic belongs in ElectricCR.electriccr.demo.
+Version: 0.1.0
+Date/time: 2026-09-09 22:09 America/Costa_Rica
+Target: FreeCAD 1.1.3.
+"""
+
+import FreeCAD as App
+
+from ElectricCR.electriccr.demo.electric_demo_freecad import create_fixed_demo
+from ElectricCR.electriccr.demo.electric_demo_audit import audit_demo, format_console_summary
+
+_result = create_fixed_demo()
+_report = audit_demo(_result["document"], _result["spec"])
+App.Console.PrintMessage(format_console_summary(_report) + "\n")

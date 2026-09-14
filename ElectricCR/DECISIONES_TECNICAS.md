@@ -1,3 +1,11 @@
+## Decision estable - 2026-09-14 - A1 v1
+
+**A1 / Objeto electromecanico comun v1 = ACEPTADO** por Marco. La regresion FreeCAD 1.1.3 del 2026-09-14 (19 etapas PASS) constituye la prueba de cierre. Owner/App::Link mantiene identidad y Placement unicos; PLAN es documental reconstruible y no un dispositivo. Los observers estructurales sobreviven a cambios de Workbench y respetan Transacting / HasPendingTransaction; la cola lifecycle se vacia antes de recompute, sin intervenir en replay nativo. No redisenar este contrato al continuar.
+
+A1 sigue opt-in para herramientas existentes: el default global requiere adaptar mas de una ruta de creacion, incluyendo luminarias y sensores. Ese cambio funcional queda separado del cierre v1, sin migracion masiva ni retiro de legacy. Los dos avisos nativos hasher mismatch observados se aceptan como no bloqueantes. [Prueba de cierre](tests/evidence/2026-09-14_a1_undo_lifecycle/README.md).
+
+---
+
 # ElectricCR - Decisiones tecnicas
 
 **Proposito:** Registrar decisiones de arquitectura y proceso que deben mantenerse entre tareas y agentes.

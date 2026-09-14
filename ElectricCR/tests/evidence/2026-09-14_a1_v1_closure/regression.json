@@ -1,0 +1,90 @@
+{
+  "evidence": "<DEV_REPO>\\ElectricCR\\tests\\evidence\\2026-09-14_a1_v1_closure",
+  "stages": [
+    {
+      "stage": "create",
+      "status": "PASS",
+      "result": {
+        "counts": {
+          "spaces": 2,
+          "walls": 5,
+          "owners": 7,
+          "plans": 7,
+          "physical_masters": 4
+        },
+        "undos": [
+          "ElectricCR: crear demo A1"
+        ]
+      }
+    },
+    {
+      "stage": "move_ElectricCR",
+      "status": "PASS",
+      "result": {
+        "workbench": "ElectricCRWorkbench",
+        "counts": {
+          "spaces": 2,
+          "walls": 5,
+          "owners": 7,
+          "plans": 7,
+          "physical_masters": 4
+        },
+        "independent_undo": true
+      }
+    },
+    {
+      "stage": "delete_undo_redo",
+      "status": "PASS",
+      "result": {
+        "counts": {
+          "spaces": 2,
+          "walls": 5,
+          "owners": 7,
+          "plans": 7,
+          "physical_masters": 4
+        },
+        "delete_undo_names": [
+          "Delete",
+          "ElectricCR: crear demo A1"
+        ]
+      }
+    },
+    {
+      "stage": "rollback",
+      "status": "PASS",
+      "result": {
+        "queued_before_abort": {
+          "ElectricCR_Demo_A1": [
+            "ECR_DocPlan_1d6b2fd0_eceb_5433_b147_8e0f8c836c22"
+          ]
+        },
+        "counts": {
+          "spaces": 2,
+          "walls": 5,
+          "owners": 7,
+          "plans": 7,
+          "physical_masters": 4
+        }
+      }
+    },
+    {
+      "stage": "undo_redo_complete_creation",
+      "status": "PASS",
+      "result": {
+        "empty_after_undo": true,
+        "restored": {
+          "spaces": 2,
+          "walls": 5,
+          "owners": 7,
+          "plans": 7,
+          "physical_masters": 4
+        }
+      }
+    }
+  ],
+  "temp": "<LOCAL_PATH>",
+  "document": "ElectricCR_Demo_A1",
+  "owner": "ECR_Demo_outlet_office_01",
+  "plan": "ECR_DocPlan_1d6b2fd0_eceb_5433_b147_8e0f8c836c22",
+  "object_count": 44
+}

@@ -15,12 +15,11 @@ Important:
 - This module does not assign PLAN.Placement directly and does not create a second authority.
 - It is intentionally narrow: only A1 Owner changes can trigger PLAN recompute.
 - It never recomputes while FreeCAD is performing Undo/Redo/rollback.
-- Use the native Python boolean Document.Transacting, not the C++ method name.
 - It must remain cheap enough for interactive Transform/Draft Move; do not add geometry regeneration here.
 - Validate behavior in real FreeCAD 1.1.3 before declaring stable.
 
-Version: 0.4.2
-Date: 2026-09-14 07:39 America/Costa_Rica
+Version: 0.4.1
+Date: 2026-09-08 14:05 America/Costa_Rica
 Target: FreeCAD 1.1.3
 """
 
@@ -129,7 +128,7 @@ class PlanLiveSyncObserver:
 
         # Never intervene while FreeCAD replays transaction state.
         try:
-            if bool(doc.Transacting):
+            if bool(doc.isPerformingTransaction()):
                 return
         except Exception:
             pass

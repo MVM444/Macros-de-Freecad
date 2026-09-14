@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- ElectricCR demo icon | canonical A1 demo | v1.0 | 2026-09-10 10:19 -0600 -->
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <rect x="8" y="18" width="38" height="34" rx="2" fill="#f2f2f2" stroke="#333333" stroke-width="3"/>
+  <path d="M8 18 L27 7 L46 18" fill="none" stroke="#333333" stroke-width="3" stroke-linejoin="round"/>
+  <rect x="14" y="26" width="10" height="10" fill="#ffffff" stroke="#666666" stroke-width="2"/>
+  <rect x="30" y="26" width="10" height="10" fill="#ffffff" stroke="#666666" stroke-width="2"/>
+  <path d="M35 12 L26 31 H34 L29 50 L48 25 H39 L44 12 Z" fill="#f5c400" stroke="#8a6b00" stroke-width="2" stroke-linejoin="round"/>
+  <circle cx="49" cy="47" r="10" fill="#ffffff" stroke="#2d7d32" stroke-width="3"/>
+  <path d="M46 42 L54 47 L46 52 Z" fill="#2d7d32"/>
+</svg>

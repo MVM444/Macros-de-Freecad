@@ -1,0 +1,58 @@
+[
+  {
+    "path": "electriccr/features/plan_lifecycle.py",
+    "size": 11254,
+    "mtime": "2026-09-05T16:10:01.7380000-06:00",
+    "sha256": "2A6DAA243FDCA5576929A183B2C830F9F93AB7BCDB05AB214C380854370D2A01",
+    "matches_recorded_12sep": true
+  },
+  {
+    "path": "electriccr/features/plan_live_sync.py",
+    "size": 7810,
+    "mtime": "2026-09-08T14:04:23.9077218-06:00",
+    "sha256": "BC7F38D987ABB76E36F97CB3E24732D43F6FC4A1070E5DA40EC85FD73B9FF9C4",
+    "matches_recorded_12sep": true
+  },
+  {
+    "path": "ui/plan_selection.py",
+    "size": 7593,
+    "mtime": "2026-09-08T14:04:23.9067218-06:00",
+    "sha256": "448B8818431B270F963C23B2BF023A40AF2738D9407958FD19EDE479C2C56EA4",
+    "matches_recorded_12sep": true
+  },
+  {
+    "path": "electriccr/features/objeto_toma_uno.py",
+    "size": 60852,
+    "mtime": "2026-09-05T21:42:34.7340000-06:00",
+    "sha256": "BC6D82C2ABBA84BB98EC6A4E68AFC8DB37D2CD4F42E72612D6D6EBCF3C36C173",
+    "matches_recorded_12sep": null
+  },
+  {
+    "path": "electriccr/demo/electric_demo_freecad.py",
+    "size": 14864,
+    "mtime": "2026-09-09T23:15:36.2110000-06:00",
+    "sha256": "3F199C02A666417E05312F3845E7F31420BDC0D34D0AA3FE0DC75297D106681D",
+    "matches_recorded_12sep": true
+  },
+  {
+    "path": "electriccr/demo/electric_demo_audit.py",
+    "size": 12207,
+    "mtime": "2026-09-09T22:32:00.4060000-06:00",
+    "sha256": "F8CE2C073B34381DD8F74FD9A324DC461E99E3ED772AADEC0F4F5FBA238CDF88",
+    "matches_recorded_12sep": null
+  },
+  {
+    "path": "tests/freecad_electric_demo_smoke.py",
+    "size": 5583,
+    "mtime": "2026-09-09T22:27:07.0390000-06:00",
+    "sha256": "4368B8A687F95CCB04DA7F6475B3E3E4438F29AC4814351363DD5EBF384CAAE5",
+    "matches_recorded_12sep": null
+  },
+  {
+    "path": "InitGui.py",
+    "size": 35304,
+    "mtime": "2026-09-09T22:27:23.1070000-06:00",
+    "sha256": "7B703CD874D5C0AED697C04649C8CD8D35DB63096A69804D57A255288BCD9825",
+    "matches_recorded_12sep": true
+  }
+]

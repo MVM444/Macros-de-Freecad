@@ -1,3 +1,21 @@
+## Cierre formal vigente - 2026-09-14T12:46:32-06:00
+
+**A1 / Objeto electromecanico comun v1 = ACEPTADO**
+
+Marco acepta formalmente el contrato y la regresion real FreeCAD 1.1.3 del 2026-09-14 como prueba de cierre. Las 19 etapas finales PASS documentadas en [la evidencia aprobada](tests/evidence/2026-09-14_a1_undo_lifecycle/README.md) cubren Demo 2 Spaces / 5 walls / 7 Owners / 7 PLAN, movimiento con transaccion propia y Undo/Redo, Delete/Undo/Redo Owner+PLAN, rollback, Undo/Redo de creacion completa, guardar/cerrar/reabrir, BIM/Draft/Part y seleccion PLAN -> Owner. Cero Access violation, PLAN huerfanos y errores Placement finales. Los dos avisos nativos `TopoShapeExpansion.cpp(983): hasher mismatch` se aceptan como observacion no bloqueante por no afectar integridad, persistencia ni comportamiento.
+
+Verificacion documental del cierre: las ocho huellas SHA-256 de summary.json coinciden con los archivos actuales. No se modifica funcionalidad ni se repiten pruebas al retomar. La comprobacion parcial de cierre iniciada antes de la interrupcion queda conservada por separado; no sustituye la regresion completa aprobada. [Verificacion de huellas y alcance](tests/evidence/2026-09-14_a1_v1_closure/README.md).
+
+Contrato estable: Device/Owner = App::Link, identidad electrica unica y Placement autoritativo; fisico 3D y PLAN documental Part::Feature reconstruible, schema 2, DocumentationOnly, Owner PropertyLinkHidden, Placement derivado, SnapPoints=[Vector(0,0,0)], fuera de grupos de usuario y oculto en el arbol. Runtime A1 permanece activo al cambiar de Workbench tras inicializar ElectricCR.
+
+A1 sigue **opt-in**, salvo la Demo que lo solicita explicitamente. No se convierte en default en este cierre: la fabrica conserva separate_documentation=False; tomas y apagadores ofrecen use_a1=False; ColocarLuminarias_Link crea enlaces mediante una ruta propia y ColocarDetectores_NFPA usa crear_toma_uno (FeaturePython directo). No existe un unico interruptor cuya activacion cubra de forma segura las cuatro familias. Adaptar esas rutas y validar su creacion/edicion seria trabajo funcional adicional. Pendiente separado, no bloqueante para aceptar v1; legacy y documentos existentes se conservan.
+
+Clasificacion del contrato A1: NUCLEO / ESTABLE / COMPROBADA, aceptada por Marco. No implica RELEASE ni migracion general. Se preservan los FAIL y las restricciones historicas como antecedentes; las frases antiguas 'pendiente aceptacion' o 'sin autorizacion Git' no describen el estado vigente. No iniciar otra fase.
+
+Git: integridad comprobada (fsck completo, codigo 0). DEV contiene trabajo ajeno, preservado; cierre aislado sobre la rama A1 existente `codex/cierre-a1-20260909`, desde su staging limpio. Commit/push autorizados para este cierre; recibo definitivo se registrara al verificarlos. Sin merge a main ni release.
+
+---
+
 # Current task / tarea vigente - 2026-09-09
 
 **A1 closure accepted. A1 = APROBADO PARA CONTINUAR.** Publish the approved A1 scope without changing functionality, then study NativeIFC separately in a new disposable document. This commit contains only the A1 closure; it does not implement or claim results for the later experiment.

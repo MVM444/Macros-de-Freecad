@@ -14,16 +14,14 @@ Important:
 - This observer is part of the A1 data lifecycle, not a GUI synchronization mechanism.
 - It remains installed after leaving the ElectricCR Workbench once ElectricCR is initialized.
 - Direct re-entrant removal inside slotDeletedObject is avoided while a transaction is open;
-  PLAN removal is queued and flushed before recompute or transaction close.
+  PLAN removal is queued and flushed before the application transaction closes when possible.
 - If FreeCAD does not emit the application-wide before-close callback for a transaction,
   slotCommitTransaction performs a safe fallback cleanup in a second transaction.
 - Never mutate the document while FreeCAD is performing Undo/Redo/rollback.
-- Python exposes Transacting and HasPendingTransaction as boolean attributes;
-  the similarly named C++ methods are not available on DocumentPy in 1.1.3.
 - Validate real FreeCAD 1.1.3 Undo/Redo and multi-document behavior before declaring stable.
 
-Version: 0.1.2
-Date: 2026-09-14 07:39 America/Costa_Rica
+Version: 0.1.1
+Date: 2026-09-05 16:10 America/Costa_Rica
 Target: FreeCAD 1.1.3
 """
 
@@ -153,7 +151,7 @@ class PlanLifecycleObserver:
         # lifetime. Removing related objects from inside that replay can corrupt
         # the transaction stack and has produced an Access violation in 1.1.3.
         try:
-            if bool(doc.Transacting):
+            if bool(doc.isPerformingTransaction()):
                 return []
         except Exception:
             pass
@@ -169,7 +167,7 @@ class PlanLifecycleObserver:
         opened = False
         self._processing = True
         try:
-            if open_fallback_transaction and not bool(doc.HasPendingTransaction):
+            if open_fallback_transaction and not bool(doc.hasPendingTransaction()):
                 doc.openTransaction("ElectricCR remove PLAN with deleted device")
                 opened = True
 
@@ -211,12 +209,12 @@ class PlanLifecycleObserver:
                 self._pending.pop(doc_name, None)
                 continue
             try:
-                if bool(doc.Transacting):
+                if bool(doc.isPerformingTransaction()):
                     continue
             except Exception:
                 pass
             try:
-                pending = bool(doc.HasPendingTransaction)
+                pending = bool(doc.hasPendingTransaction())
             except Exception:
                 pending = False
             if pending:
@@ -237,7 +235,7 @@ class PlanLifecycleObserver:
         # when it was created/deleted in the original transaction, so do not
         # queue or remove anything here.
         try:
-            if bool(doc.Transacting):
+            if bool(doc.isPerformingTransaction()):
                 return
         except Exception:
             pass
@@ -254,7 +252,7 @@ class PlanLifecycleObserver:
         # Direct scripting may delete without an undo transaction. In that case
         # there is nothing to preserve as one Undo step, so clean immediately.
         try:
-            has_transaction = bool(doc.HasPendingTransaction)
+            has_transaction = bool(doc.hasPendingTransaction())
         except Exception:
             has_transaction = False
         if not has_transaction:
@@ -267,20 +265,12 @@ class PlanLifecycleObserver:
             return
         self._flush_all_pending_in_current_transactions()
 
-    def slotBeforeRecomputeDocument(self, doc):
-        """Std_Delete recomputes before closing its transaction.
-
-        Drain the existing queue before expressions can read a deleted Owner.
-        The shared flush guard prevents any removal during transaction replay.
-        """
-        self._flush_document(doc, open_fallback_transaction=False)
-
     def slotCommitTransaction(self, doc):
         """Fallback for transactions that did not trigger slotBeforeCloseTransaction."""
         if self._processing or doc is None:
             return
         try:
-            if bool(doc.Transacting):
+            if bool(doc.isPerformingTransaction()):
                 return
         except Exception:
             pass
