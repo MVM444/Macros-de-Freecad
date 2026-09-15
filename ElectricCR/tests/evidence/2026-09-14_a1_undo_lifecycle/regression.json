@@ -1,0 +1,297 @@
+{
+  "evidence": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\tests\\evidence\\2026-09-14_a1_undo_lifecycle",
+  "stages": [
+    {
+      "stage": "create",
+      "status": "PASS",
+      "result": {
+        "counts": {
+          "spaces": 2,
+          "walls": 5,
+          "owners": 7,
+          "plans": 7,
+          "physical_masters": 4
+        },
+        "undos": [
+          "ElectricCR: crear demo A1"
+        ]
+      }
+    },
+    {
+      "stage": "move_ElectricCR",
+      "status": "PASS",
+      "result": {
+        "workbench": "ElectricCRWorkbench",
+        "counts": {
+          "spaces": 2,
+          "walls": 5,
+          "owners": 7,
+          "plans": 7,
+          "physical_masters": 4
+        },
+        "independent_undo": true
+      }
+    },
+    {
+      "stage": "delete_undo_redo",
+      "status": "PASS",
+      "result": {
+        "counts": {
+          "spaces": 2,
+          "walls": 5,
+          "owners": 7,
+          "plans": 7,
+          "physical_masters": 4
+        },
+        "delete_undo_names": [
+          "Delete",
+          "ElectricCR: crear demo A1"
+        ]
+      }
+    },
+    {
+      "stage": "rollback",
+      "status": "PASS",
+      "result": {
+        "queued_before_abort": {
+          "ElectricCR_Demo_A1": [
+            "ECR_DocPlan_1d6b2fd0_eceb_5433_b147_8e0f8c836c22"
+          ]
+        },
+        "counts": {
+          "spaces": 2,
+          "walls": 5,
+          "owners": 7,
+          "plans": 7,
+          "physical_masters": 4
+        }
+      }
+    },
+    {
+      "stage": "undo_redo_complete_creation",
+      "status": "PASS",
+      "result": {
+        "empty_after_undo": true,
+        "restored": {
+          "spaces": 2,
+          "walls": 5,
+          "owners": 7,
+          "plans": 7,
+          "physical_masters": 4
+        }
+      }
+    },
+    {
+      "stage": "console_after_replay",
+      "status": "PASS",
+      "result": {
+        "native_errors": []
+      }
+    },
+    {
+      "stage": "save_close_reopen",
+      "status": "PASS",
+      "result": {
+        "file": "C:\\Users\\marco\\AppData\\Local\\Temp\\electriccr_a1_undo_ts_dozgk\\ElectricCR_A1_Regression.FCStd",
+        "counts": {
+          "spaces": 2,
+          "walls": 5,
+          "owners": 7,
+          "plans": 7,
+          "physical_masters": 4
+        }
+      }
+    },
+    {
+      "stage": "reopened_move_BIMWorkbench",
+      "status": "PASS",
+      "result": {
+        "workbench": "BIMWorkbench",
+        "counts": {
+          "spaces": 2,
+          "walls": 5,
+          "owners": 7,
+          "plans": 7,
+          "physical_masters": 4
+        },
+        "independent_undo": true
+      }
+    },
+    {
+      "stage": "reopened_move_DraftWorkbench",
+      "status": "PASS",
+      "result": {
+        "workbench": "DraftWorkbench",
+        "counts": {
+          "spaces": 2,
+          "walls": 5,
+          "owners": 7,
+          "plans": 7,
+          "physical_masters": 4
+        },
+        "independent_undo": true
+      }
+    },
+    {
+      "stage": "reopened_move_PartWorkbench",
+      "status": "PASS",
+      "result": {
+        "workbench": "PartWorkbench",
+        "counts": {
+          "spaces": 2,
+          "walls": 5,
+          "owners": 7,
+          "plans": 7,
+          "physical_masters": 4
+        },
+        "independent_undo": true
+      }
+    },
+    {
+      "stage": "reopened_delete_undo_redo_Part",
+      "status": "PASS",
+      "result": {
+        "counts": {
+          "spaces": 2,
+          "walls": 5,
+          "owners": 7,
+          "plans": 7,
+          "physical_masters": 4
+        },
+        "delete_undo_names": [
+          "Delete"
+        ]
+      }
+    },
+    {
+      "stage": "final_console",
+      "status": "PASS",
+      "result": {
+        "native_errors": []
+      }
+    },
+    {
+      "stage": "rollback_after_flush_integrity",
+      "status": "PASS",
+      "result": {
+        "spaces": 2,
+        "walls": 5,
+        "owners": 7,
+        "plans": 7,
+        "physical_masters": 4
+      }
+    },
+    {
+      "stage": "console_after_rollback_flush",
+      "status": "PASS",
+      "result": {
+        "native_errors": []
+      }
+    },
+    {
+      "stage": "original_demo_smoke_uninstrumented",
+      "status": "PASS",
+      "result": {
+        "status": "PASS",
+        "freecad_version": [
+          "1",
+          "1",
+          "3",
+          "20260725 (Git shallow)",
+          "Unknown",
+          "2026/07/25 04:52:02",
+          "grafted,grafted",
+          "145529fe741292ff0b3977a01195bf0247425794"
+        ],
+        "demo_id": "electriccr-a1-canonical-v1",
+        "stages": [
+          {
+            "stage": "initial",
+            "status": "PASS",
+            "counts": {
+              "spaces": 2,
+              "walls": 5,
+              "owners": 7,
+              "plans": 7,
+              "physical_masters": 4
+            }
+          },
+          {
+            "stage": "moved",
+            "owner_x": 1150.0,
+            "plan_x": 1150.0
+          },
+          {
+            "stage": "move_undo",
+            "status": "PASS"
+          },
+          {
+            "stage": "move_redo",
+            "ok": true
+          },
+          {
+            "stage": "delete",
+            "owner_exists": false,
+            "plan_exists": false
+          },
+          {
+            "stage": "delete_undo",
+            "status": "PASS"
+          },
+          {
+            "stage": "reopen",
+            "status": "PASS",
+            "counts": {
+              "spaces": 2,
+              "walls": 5,
+              "owners": 7,
+              "plans": 7,
+              "physical_masters": 4
+            }
+          }
+        ]
+      }
+    },
+    {
+      "stage": "console_after_original_smoke",
+      "status": "PASS",
+      "result": {
+        "native_errors": []
+      }
+    },
+    {
+      "stage": "final_uninstrumented_creation",
+      "status": "PASS",
+      "result": {
+        "spaces": 2,
+        "walls": 5,
+        "owners": 7,
+        "plans": 7,
+        "physical_masters": 4
+      }
+    },
+    {
+      "stage": "final_uninstrumented_redo",
+      "status": "PASS",
+      "result": {
+        "spaces": 2,
+        "walls": 5,
+        "owners": 7,
+        "plans": 7,
+        "physical_masters": 4
+      }
+    },
+    {
+      "stage": "final_uninstrumented_console",
+      "status": "PASS",
+      "result": {
+        "native_errors": []
+      }
+    }
+  ],
+  "temp": "C:\\Users\\marco\\AppData\\Local\\Temp\\electriccr_a1_undo_ts_dozgk",
+  "document": "ElectricCR_Demo_A1",
+  "owner": "ECR_Demo_outlet_office_01",
+  "plan": "ECR_DocPlan_1d6b2fd0_eceb_5433_b147_8e0f8c836c22",
+  "object_count": 44
+}

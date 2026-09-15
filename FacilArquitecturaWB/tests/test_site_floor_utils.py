@@ -65,6 +65,13 @@ class SiteFloorUtilsTests(unittest.TestCase):
 
         self.assertEqual((-200.0, 0.0, 10200.0, 8000.0), bounds)
 
+    def test_explicit_slab_footprint_needs_no_wall_semantics(self):
+        slab = Sketch("Sketch_Losa_Piso", (0, 0, 6000, 8000), role="slab_footprint_source", kind="")
+        untagged = Sketch("Sketch_Losa_Piso001", (0, 0, 6000, 8000), role="", kind="")
+        doc = types.SimpleNamespace(Objects=[slab, untagged])
+        self.assertEqual([slab], site_floor.collect_plan_sketches(doc))
+        self.assertEqual([slab], site_floor._unique_plan_sketches([slab]))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,7 +1,7 @@
 # Barra comun de Espacios y Recintos
 
-Fecha: 2026-09-02 America/Costa_Rica
-Estado: DISENO AVANZADO / MATRIZ V0.1 DEFINIDA / SIN CODIGO
+Fecha: 2026-09-03 America/Costa_Rica
+Estado: V0.1 IMPLEMENTADA Y VERIFICADA MCP / CONTRATO DE CONSUMO A1 DEFINIDO
 FreeCAD objetivo: 1.1.3
 
 ## 1. Principio
@@ -507,7 +507,7 @@ No colocar Qt ni `FreeCADGui` en `room_operations_core.py`.
 
 La guia puede ser un recurso Markdown comun abierto por un wrapper GUI pequeno.
 
-## 17. Estado antes de Codex
+## 17. Estado previo a implementacion v0.1 (historico)
 
 El diseño funcional v0.1 queda cerrado.
 
@@ -555,3 +555,85 @@ Estado al 2026-09-02: implementada y validada mediante MCP en FreeCAD 1.1.3.
 La limitacion conocida del productor poligonal se conserva deliberadamente:
 regenerar puede sustituir correcciones manuales hechas en `Points`. Resolverla
 no pertenece a la v0.1.
+
+
+## 20. Contrato de consumo por dispositivos electromecanicos A1
+
+Estado al 2026-09-03: contrato transversal definido a partir de la barra v0.1,
+`CRBIMCore.RoomResolver` y del prototipo `PhysicalDocumentationA1` verificado en
+ElectricCR sobre FreeCAD 1.1.3.
+
+La barra comun no crea una segunda identidad espacial para ElectricCR. El flujo
+autoritativo queda:
+
+```text
+Facil Arquitectura / BIM
+  Wall / Door / Window / Space
+              |
+              v
+CRBIMCore.RoomResolver
+              |
+              v
+ElectricCR dispositivo A1
+  Space        -> Arch/BIM Space canonico
+  Host         -> soporte BIM real
+  Level        -> derivado de Space cuando sea posible
+  PuertaOrigen -> Door BIM real cuando la familia lo requiera
+```
+
+### 20.1 Reglas de autoridad
+
+- `Space` del dispositivo es un `App::PropertyLink` a la identidad espacial
+  canonica cuando RoomResolver devuelve `RESOLVED`.
+- `AMBIGUOUS` y `NOT_FOUND` no producen asignacion silenciosa.
+- `Host` enlaza el soporte BIM real: muro, cielo, piso u otro host valido. Un
+  Sketch auxiliar no sustituye al Host.
+- `Level` se deriva del Space siempre que exista una relacion arquitectonica
+  suficiente; no se duplica por defecto en la instancia.
+- `PuertaOrigen` es una extension de familia para apagadores u otros dispositivos
+  cuya regla de colocacion dependa de una puerta. Debe apuntar a la puerta BIM,
+  no al Sketch auxiliar usado para calcular posicion.
+- `Area`, `AreaRecinto`, `Recinto` y nombres de Sketch permanecen unicamente como
+  compatibilidad legacy o evidencia diagnostica durante la transicion.
+
+### 20.2 Productores y consumidores
+
+Facil Arquitectura conserva la autoria de:
+
+- deteccion geometrica arquitectonica;
+- creacion/actualizacion de Arch/BIM Spaces;
+- Wall, Door y Window BIM.
+
+ElectricCR consume esas identidades. No debe importar ni copiar los algoritmos
+de autoria de FA para crear un recinto paralelo.
+
+El productor transversal `Recintos desde muros BIM` sigue siendo util para
+geometria 2D y para fallback legacy, pero no desplaza al Space canonico cuando
+este existe.
+
+### 20.3 Relacion con el arbol
+
+El Space real permanece bajo `Site/Building/Level`. Las ramas disciplinares
+pueden mostrar el recinto mediante nodos o `App::Link` de proyeccion, pero nunca
+mover, duplicar o convertir el Space para satisfacer una jerarquia visual.
+
+La posicion en el arbol no asigna `Space`, `Host` ni `Level`. Las relaciones son
+la autoridad y el arbol se reconstruye desde ellas.
+
+### 20.4 Estado respecto a objetos existentes
+
+La prueba A1 de ElectricCR ya verifico `ElementUID`, `Space` y `Host` en un
+Tomacorriente y un Apagador temporales con contrato
+`PhysicalDocumentationA1`.
+
+Los tomacorrientes y apagadores legacy existentes en proyectos reales no se
+migran por esta decision. Su adaptacion debe ser opt-in, con diagnostico previo,
+`dry_run` cuando corresponda y sin sustituir objetos funcionales hasta contar
+con una prueba real controlada.
+
+### 20.5 Consecuencia para una futura barra v0.2
+
+`Asignar seleccion al Space` solo puede incorporarse cuando exista un adaptador
+por tipo de objeto que conozca su propiedad autoritativa (`Space`, `BaseSpace`,
+etc.). No se agregaran propiedades genericas por nombre ni se inventaran enlaces
+sobre objetos desconocidos.

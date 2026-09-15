@@ -5,8 +5,8 @@ Objetivo: crear aberturas alojadas en su muro anfitrion sin duplicarlas como mie
 directos del Building Storey, aceptando Sketches explicitamente seleccionados aunque
 conserven metadatos historicos incorrectos.
 FreeCAD objetivo: 1.1.3.
-Fecha y hora: 2026-08-30 14:30 UTC-06:00.
-Version: 0.7.0.
+Fecha y hora: 2026-09-08 13:20 UTC-06:00.
+Version: 0.7.1.
 Instrucciones de mantenimiento: la seleccion explicita tiene prioridad si el Sketch
 no es una base generada ni posee espesor de muro; conservar diagnosticos de rechazo.
 """
@@ -76,6 +76,148 @@ def project_point_to_line(point, segment):
         values[2] + parameter * (values[5] - values[2]),
     )
     return math.hypot(px - projected[0], py - projected[1]), projected, parameter
+
+
+
+def analyze_collinear_host_gap(
+    opening_segment,
+    wall_segments,
+    angle_tolerance_deg=DEFAULT_ANGLE_TOLERANCE_DEG,
+    collinear_tolerance_mm=DEFAULT_COLLINEAR_TOLERANCE_MM,
+    merge_tolerance_mm=5.0,
+    minimum_gap_overlap_mm=50.0,
+):
+    """Detect a pre-existing discontinuity of the host axis under an opening.
+
+    This is diagnostic only.  A wall base may contain two collinear centerline
+    segments separated by a door/window ``buque``.  Host selection intentionally
+    accepts that geometry, but corner analysis must not silently present faces
+    around that discontinuity as if they proved a genuine ``NO_FIT`` condition.
+
+    The function returns a JSON-compatible dictionary and never changes geometry.
+    ``detected`` is true only when a real gap exists *between* collinear support
+    intervals and that gap overlaps a meaningful part of the opening segment.
+    A wall that simply ends beside the opening is therefore not classified as a
+    pre-existing opening.
+    """
+    opening = _segment_values(opening_segment)
+    length = segment_length(opening)
+    if length <= 1e-9:
+        return {"detected": False, "reason": "segmento de puerta invalido"}
+
+    ux = (opening[3] - opening[0]) / length
+    uy = (opening[4] - opening[1]) / length
+    minimum_dot = math.cos(math.radians(float(angle_tolerance_deg)))
+    collinear_tolerance = max(0.0, float(collinear_tolerance_mm))
+    merge_tolerance = max(0.0, float(merge_tolerance_mm))
+    minimum_overlap = max(0.0, float(minimum_gap_overlap_mm))
+    origin = opening[:3]
+    intervals = []
+
+    for raw_segment in wall_segments or []:
+        segment = _segment_values(raw_segment)
+        seg_length = segment_length(segment)
+        if seg_length <= 1e-9:
+            continue
+        vx = (segment[3] - segment[0]) / seg_length
+        vy = (segment[4] - segment[1]) / seg_length
+        if abs(ux * vx + uy * vy) < minimum_dot:
+            continue
+        distance_a, _, _ = project_point_to_line(segment[:3], opening)
+        distance_b, _, _ = project_point_to_line(segment[3:], opening)
+        if max(distance_a, distance_b) > collinear_tolerance:
+            continue
+        first = _scalar_on_axis(segment[:3], origin, (ux, uy))
+        second = _scalar_on_axis(segment[3:], origin, (ux, uy))
+        intervals.append((min(first, second), max(first, second)))
+
+    if len(intervals) < 2:
+        return {
+            "detected": False,
+            "reason": "sin soporte colineal a ambos lados",
+            "opening_width_mm": float(length),
+        }
+
+    intervals.sort(key=lambda item: (item[0], item[1]))
+    merged = [list(intervals[0])]
+    for start, end in intervals[1:]:
+        current = merged[-1]
+        if start <= current[1] + merge_tolerance:
+            current[1] = max(current[1], end)
+        else:
+            merged.append([start, end])
+
+    candidates = []
+    for left, right in zip(merged, merged[1:]):
+        gap_start = float(left[1])
+        gap_end = float(right[0])
+        gap_width = gap_end - gap_start
+        if gap_width <= merge_tolerance:
+            continue
+        overlap_start = max(0.0, gap_start)
+        overlap_end = min(length, gap_end)
+        overlap = max(0.0, overlap_end - overlap_start)
+        if overlap < minimum_overlap:
+            continue
+        midpoint = length * 0.5
+        midpoint_inside = gap_start - merge_tolerance <= midpoint <= gap_end + merge_tolerance
+        candidates.append(
+            {
+                "gap_start_mm": gap_start,
+                "gap_end_mm": gap_end,
+                "gap_width_mm": gap_width,
+                "overlap_mm": overlap,
+                "overlap_ratio": overlap / length,
+                "midpoint_inside_gap": midpoint_inside,
+            }
+        )
+
+    if not candidates:
+        return {
+            "detected": False,
+            "reason": "sin discontinuidad colineal bajo la puerta",
+            "opening_width_mm": float(length),
+        }
+
+    best = max(
+        candidates,
+        key=lambda item: (
+            bool(item["midpoint_inside_gap"]),
+            float(item["overlap_mm"]),
+            -abs((item["gap_start_mm"] + item["gap_end_mm"]) * 0.5 - length * 0.5),
+        ),
+    )
+    result = dict(best)
+    result.update(
+        {
+            "detected": True,
+            "diagnostic_status": "POSSIBLE_EXISTING_OPENING",
+            "opening_width_mm": float(length),
+            "reason": (
+                "el Sketch Base del muro presenta una discontinuidad colineal "
+                "bajo la puerta; posible buque preexistente"
+            ),
+        }
+    )
+    return result
+
+
+def detect_existing_host_opening(match, wall_records):
+    """Adapt a selected FreeCAD host match to :func:`analyze_collinear_host_gap`."""
+    if not match or match.get("wall") is None:
+        return {"detected": False, "reason": "sin host"}
+    host = match["wall"]
+    record = next(
+        (item for item in list(wall_records or []) if item.get("wall") is host),
+        None,
+    )
+    if not record:
+        return {"detected": False, "reason": "host sin segmentos base"}
+    projected = tuple(match["projected_first"]) + tuple(match["projected_second"])
+    result = analyze_collinear_host_gap(projected, record.get("segments") or [])
+    result["host_label"] = _object_label(host)
+    result["host_key"] = _wall_record_key(host)
+    return result
 
 
 def evaluate_wall_candidate(
@@ -300,6 +442,13 @@ def apply_door_corner_metadata(obj, corner_plan):
     set_prop(obj, "App::PropertyBool", "FA_CornerSwingResolved", "FacilArquitectura", "La geometria resolvio el cuadrante de giro", bool(plan.get("swing_resolved")))
     set_prop(obj, "App::PropertyString", "FA_JambEndpoint", "FacilArquitectura", "Jamba alineada respecto al Sketch", str(plan.get("jamb_endpoint") or "AUTO"))
     set_prop(obj, "App::PropertyString", "FA_CornerSnapReason", "FacilArquitectura", "Motivo del ajuste de esquina", str(plan.get("reason") or ""))
+    possible_existing = bool(plan.get("possible_existing_opening"))
+    set_prop(obj, "App::PropertyBool", "FA_PossibleExistingOpening", "FacilArquitectura", "Posible buque previo en el Sketch Base del muro", possible_existing)
+    set_prop(obj, "App::PropertyString", "FA_DiagnosticStatus", "FacilArquitectura", "Estado diagnostico adicional", "POSSIBLE_EXISTING_OPENING" if possible_existing else "")
+    set_prop(obj, "App::PropertyString", "FA_ExistingOpeningReason", "FacilArquitectura", "Motivo de advertencia por buque previo", str(plan.get("existing_opening_reason") or ""))
+    if possible_existing:
+        set_prop(obj, "App::PropertyLength", "FA_HostGapWidth_mm", "FacilArquitectura", "Ancho de discontinuidad detectada en el eje del muro", float(plan.get("host_gap_width_mm") or 0.0))
+        set_prop(obj, "App::PropertyLength", "FA_HostGapOverlap_mm", "FacilArquitectura", "Solape de la discontinuidad con el eje de puerta", float(plan.get("host_gap_overlap_mm") or 0.0))
     if plan.get("no_fit"):
         set_prop(obj, "App::PropertyLength", "FA_OpeningWidthChecked_mm", "FacilArquitectura", "Ancho autoritativo comprobado", float(plan.get("opening_width_mm") or 0.0))
         set_prop(obj, "App::PropertyLength", "FA_AvailableWidth_mm", "FacilArquitectura", "Luz util entre caras laterales", float(plan.get("available_width_mm") or 0.0))
@@ -673,9 +822,28 @@ def create_openings_from_centerlines(
             door_options = None
             corner_plan = None
             if kind == "door":
+                existing_opening = detect_existing_host_opening(match, wall_records)
                 corner_plan = resolve_door_corner_snap(
                     match, wall_records, tolerance_mm=door_corner_snap_tolerance_mm
                 )
+                if existing_opening.get("detected"):
+                    corner_plan["possible_existing_opening"] = True
+                    corner_plan["diagnostic_status"] = "POSSIBLE_EXISTING_OPENING"
+                    corner_plan["existing_opening_reason"] = str(existing_opening.get("reason") or "")
+                    corner_plan["host_gap_width_mm"] = float(existing_opening.get("gap_width_mm") or 0.0)
+                    corner_plan["host_gap_overlap_mm"] = float(existing_opening.get("overlap_mm") or 0.0)
+                    corner_plan["host_gap_overlap_ratio"] = float(existing_opening.get("overlap_ratio") or 0.0)
+                    _kind_log(
+                        kind,
+                        "Puerta %02d: POSSIBLE_EXISTING_OPENING; el Sketch Base de %s presenta una discontinuidad/buque de %.1f mm que coincide %.1f mm con la puerta. Revise o cierre el buque previo antes de interpretar ajustes de jamba o NO_FIT."
+                        % (
+                            item["index"] + 1,
+                            str(existing_opening.get("host_label") or _object_label(match["wall"])),
+                            float(existing_opening.get("gap_width_mm") or 0.0),
+                            float(existing_opening.get("overlap_mm") or 0.0),
+                        ),
+                        warning=True,
+                    )
                 door_options = {"corner_snap": corner_plan}
                 if corner_plan.get("ambiguous"):
                     _kind_log(
@@ -684,16 +852,27 @@ def create_openings_from_centerlines(
                         warning=True,
                     )
                 elif corner_plan.get("no_fit"):
-                    _kind_log(
-                        kind,
-                        "Puerta %02d: NO_FIT; ancho %.1f mm > luz util %.1f mm. Se conserva posicion y ancho del Sketch."
-                        % (
-                            item["index"] + 1,
-                            float(corner_plan.get("opening_width_mm") or 0.0),
-                            float(corner_plan.get("available_width_mm") or 0.0),
-                        ),
-                        warning=True,
-                    )
+                    if corner_plan.get("possible_existing_opening"):
+                        no_fit_message = (
+                            "Puerta %02d: NO_FIT aparente; ancho %.1f mm > luz util %.1f mm. "
+                            "La medicion puede estar interferida por un buque preexistente en el Sketch Base del muro. "
+                            "Se conserva posicion y ancho del Sketch."
+                            % (
+                                item["index"] + 1,
+                                float(corner_plan.get("opening_width_mm") or 0.0),
+                                float(corner_plan.get("available_width_mm") or 0.0),
+                            )
+                        )
+                    else:
+                        no_fit_message = (
+                            "Puerta %02d: NO_FIT; ancho %.1f mm > luz util %.1f mm. Se conserva posicion y ancho del Sketch."
+                            % (
+                                item["index"] + 1,
+                                float(corner_plan.get("opening_width_mm") or 0.0),
+                                float(corner_plan.get("available_width_mm") or 0.0),
+                            )
+                        )
+                    _kind_log(kind, no_fit_message, warning=True)
                 elif corner_plan.get("applied") or corner_plan.get("swing_resolved"):
                     if corner_plan.get("applied"):
                         match = corner_plan["match"]
@@ -815,6 +994,12 @@ def create_openings_from_centerlines(
         "corner_ambiguous_count": sum(1 for item in plans if item.get("corner_plan") and item["corner_plan"].get("ambiguous")),
         "corner_no_fit_count": sum(1 for item in plans if item.get("corner_plan") and item["corner_plan"].get("no_fit")),
         "corner_jamb_only_count": sum(1 for item in plans if item.get("corner_plan") and item["corner_plan"].get("status") == "JAMB_ONLY"),
+        "possible_existing_opening_count": sum(1 for item in plans if item.get("corner_plan") and item["corner_plan"].get("possible_existing_opening")),
+        "possible_existing_opening_indices": [
+            int(item["axis"]["index"]) + 1
+            for item in plans
+            if item.get("corner_plan") and item["corner_plan"].get("possible_existing_opening")
+        ],
         "rejected": rejected,
     }
     if kind == "opening":

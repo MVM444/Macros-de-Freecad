@@ -258,3 +258,29 @@ Ejemplos:
 - cambia la estructura de carpetas o la arquitectura del Workbench.
 
 Este archivo debe describir el sistema que existe realmente, no el sistema que se desea construir en el futuro.
+
+## Flujo vigente - colocacion BIM A1 opt-in
+
+```text
+commands/macros.py
+  |-- ElectricCR_Tomacorrientes_InstalarTomacorrientesEnParedesBIM
+  |     -> algoritmo muro/aperturas/cara
+  |     -> create_toma
+  |
+  `-- ElectricCR_Iluminaci_n_ColocarApagadoresEnPuertas
+        -> algoritmo puerta/muro/jamba/cara
+        -> _create_switch
+
+ambos
+  -> objeto_toma_uno.crear_toma_link
+       |-- default: LegacyCompound
+       `-- opt-in: PhysicalDocumentationA1
+              -> master fisico App::Link
+              -> ensure_device_semantics (UID/Space/Host)
+              -> PLAN DocumentationOnly/Owner
+```
+
+El selector A1 pertenece a la ejecucion, queda desmarcado y no se guarda como
+preferencia. La macro de apagadores preserva cualquier coincidencia legacy en
+modo A1 en lugar de actualizarla. Este flujo fue probado sobre una copia
+temporal de Upala por MCP en FreeCAD 1.1.3; no autoriza migracion masiva.

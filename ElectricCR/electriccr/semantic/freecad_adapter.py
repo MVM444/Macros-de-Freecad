@@ -1,4 +1,4 @@
-"""FreeCAD adapter for one semantic ElectricCR luminaire prototype.
+"""FreeCAD adapter for semantic ElectricCR electromechanical devices.
 
 The adapter enriches the existing ``App::Link`` identity; it does not create a
 parallel device class.  Tree projection is dry-run by default and treats
@@ -101,6 +101,23 @@ def is_semantic_luminaire_candidate(obj):
     )
 
 
+def is_semantic_device_candidate(obj):
+    """Return whether *obj* is a real ElectricCR instance identity."""
+    return bool(
+        obj is not None
+        and _text(getattr(obj, "TypeId", "")) == "App::Link"
+        and not (
+            "ECR_ProjectionReference" in _properties(obj)
+            and bool(getattr(obj, "ECR_ProjectionReference", False))
+        )
+        and not (
+            "DocumentationOnly" in _properties(obj)
+            and bool(getattr(obj, "DocumentationOnly", False))
+        )
+        and objeto_toma_uno.is_electriccr_device(obj)
+    )
+
+
 def _uid_conflicts(doc, obj, uid):
     if not uid:
         return []
@@ -113,20 +130,28 @@ def _uid_conflicts(doc, obj, uid):
     ]
 
 
-def ensure_luminaire_semantics(luminaire, dry_run=True, uid_factory=None):
-    """Plan or apply ``ElementUID`` and canonical ``Space`` to one App::Link.
+def ensure_device_semantics(
+    device,
+    dry_run=True,
+    uid_factory=None,
+    host=None,
+    manage_transaction=True,
+):
+    """Plan or apply ``ElementUID``, canonical ``Space`` and optional ``Host``.
 
     ``AMBIGUOUS`` and ``NOT_FOUND`` never write ``Space``.  A resolved legacy
     area is diagnostic only because the property contract requires a native
     Arch/BIM Space.
     """
-    if not is_semantic_luminaire_candidate(luminaire):
-        raise ValueError("Se requiere una luminaria ElectricCR App::Link")
-    doc = luminaire.Document
-    before = _identity_snapshot(luminaire)
-    props = _properties(luminaire)
-    current_uid = _text(getattr(luminaire, "ElementUID", "")) if "ElementUID" in props else ""
-    conflicts = _uid_conflicts(doc, luminaire, current_uid)
+    if not is_semantic_device_candidate(device):
+        raise ValueError("Se requiere un dispositivo ElectricCR App::Link")
+    doc = device.Document
+    if host is not None and getattr(host, "Document", None) is not doc:
+        raise ValueError("Host debe pertenecer al mismo documento")
+    before = _identity_snapshot(device)
+    props = _properties(device)
+    current_uid = _text(getattr(device, "ElementUID", "")) if "ElementUID" in props else ""
+    conflicts = _uid_conflicts(doc, device, current_uid)
     if conflicts:
         return {
             "status": "UID_CONFLICT",
@@ -138,14 +163,15 @@ def ensure_luminaire_semantics(luminaire, dry_run=True, uid_factory=None):
             "room_result": {},
         }
 
-    current_space = getattr(luminaire, "Space", None) if "Space" in props else None
+    current_space = getattr(device, "Space", None) if "Space" in props else None
+    current_host = getattr(device, "Host", None) if "Host" in props else None
     if current_space is not None:
         room_result = resolve_room_reference(doc, current_space)
     else:
         try:
-            point = luminaire.getGlobalPlacement().Base
+            point = device.getGlobalPlacement().Base
         except Exception:
-            point = luminaire.Placement.Base
+            point = device.Placement.Base
         room_result = resolve_room_for_point(
             doc,
             [float(point.x), float(point.y), float(point.z)],
@@ -165,9 +191,13 @@ def ensure_luminaire_semantics(luminaire, dry_run=True, uid_factory=None):
         actions.append("ADD_SPACE_PROPERTY")
     if resolved_space is not None and current_space is None:
         actions.append("ASSIGN_SPACE")
+    if "Host" not in props:
+        actions.append("ADD_HOST_PROPERTY")
+    if host is not None and current_host is not host:
+        actions.append("ASSIGN_HOST")
 
     if dry_run:
-        _assert_identity_unchanged(luminaire, before)
+        _assert_identity_unchanged(device, before)
         return {
             "status": _text(room_result.get("status")) or room_core.STATUS_NOT_FOUND,
             "dry_run": True,
@@ -175,41 +205,56 @@ def ensure_luminaire_semantics(luminaire, dry_run=True, uid_factory=None):
             "actions": actions,
             "uid": current_uid,
             "space_name": _text(getattr(resolved_space, "Name", "")),
+            "host_name": _text(getattr(host or current_host, "Name", "")),
             "room_result": room_result,
         }
 
-    doc.openTransaction("ElectricCR semantic luminaire")
+    if manage_transaction:
+        doc.openTransaction("ElectricCR semantic device")
     material_changes = 0
     try:
-        if "ElementUID" not in _properties(luminaire):
-            luminaire.addProperty(
+        if "ElementUID" not in _properties(device):
+            device.addProperty(
                 "App::PropertyString",
                 "ElementUID",
                 PROPERTY_GROUP,
                 "Identificador persistente y unico de la instancia",
             )
             material_changes += 1
-        if not _text(getattr(luminaire, "ElementUID", "")):
+        if not _text(getattr(device, "ElementUID", "")):
             factory = uid_factory or uuid.uuid4
-            luminaire.ElementUID = _text(factory())
+            device.ElementUID = _text(factory())
             material_changes += 1
-        if "Space" not in _properties(luminaire):
-            luminaire.addProperty(
+        if "Space" not in _properties(device):
+            device.addProperty(
                 "App::PropertyLink",
                 "Space",
                 PROPERTY_GROUP,
                 "Arch/BIM Space canonico resuelto por RoomResolver",
             )
             material_changes += 1
-        if resolved_space is not None and getattr(luminaire, "Space", None) is None:
-            luminaire.Space = resolved_space
+        if resolved_space is not None and getattr(device, "Space", None) is None:
+            device.Space = resolved_space
             material_changes += 1
-        if _uid_conflicts(doc, luminaire, _text(luminaire.ElementUID)):
+        if "Host" not in _properties(device):
+            device.addProperty(
+                "App::PropertyLink",
+                "Host",
+                PROPERTY_GROUP,
+                "Elemento BIM anfitrion explicito de la instancia",
+            )
+            material_changes += 1
+        if host is not None and getattr(device, "Host", None) is not host:
+            device.Host = host
+            material_changes += 1
+        if _uid_conflicts(doc, device, _text(device.ElementUID)):
             raise RuntimeError("ElementUID duplicado dentro del documento")
-        _assert_identity_unchanged(luminaire, before)
-        doc.commitTransaction()
+        _assert_identity_unchanged(device, before)
+        if manage_transaction:
+            doc.commitTransaction()
     except Exception:
-        doc.abortTransaction()
+        if manage_transaction:
+            doc.abortTransaction()
         raise
     if material_changes:
         doc.recompute()
@@ -218,10 +263,28 @@ def ensure_luminaire_semantics(luminaire, dry_run=True, uid_factory=None):
         "dry_run": False,
         "material_changes": material_changes,
         "actions": actions,
-        "uid": _text(luminaire.ElementUID),
-        "space_name": _text(getattr(getattr(luminaire, "Space", None), "Name", "")),
+        "uid": _text(device.ElementUID),
+        "space_name": _text(getattr(getattr(device, "Space", None), "Name", "")),
+        "host_name": _text(getattr(getattr(device, "Host", None), "Name", "")),
         "room_result": room_result,
     }
+
+
+def ensure_luminaire_semantics(
+    luminaire,
+    dry_run=True,
+    uid_factory=None,
+    manage_transaction=True,
+):
+    """Backward-compatible luminaire entry point for the common contract."""
+    if not is_semantic_luminaire_candidate(luminaire):
+        raise ValueError("Se requiere una luminaria ElectricCR App::Link")
+    return ensure_device_semantics(
+        luminaire,
+        dry_run=dry_run,
+        uid_factory=uid_factory,
+        manage_transaction=manage_transaction,
+    )
 
 
 def _control_identity(doc, luminaire):
@@ -546,7 +609,9 @@ def project_lighting_tree(doc, luminaires=None, dry_run=True):
 
 
 __all__ = [
+    "ensure_device_semantics",
     "ensure_luminaire_semantics",
+    "is_semantic_device_candidate",
     "is_semantic_luminaire_candidate",
     "project_lighting_tree",
 ]

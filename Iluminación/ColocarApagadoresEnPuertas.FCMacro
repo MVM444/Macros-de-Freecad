@@ -1,4 +1,12 @@
 # -*- coding: utf-8 -*-
+# Macro: ColocarApagadoresEnPuertas.FCMacro
+# Proposito: Colocar y actualizar apagadores ElectricCR junto a puertas BIM y vanos.
+# Funcionamiento: detecta puerta, jamba libre y muro; para puertas con hoja coloca
+#   siempre el apagador en la misma cara del muro hacia la que abre la puerta.
+# Modificaciones futuras: conservar jamba, idempotencia, metadatos, A1/legacy y
+#   la regla obligatoria de cara segun el sentido real de apertura de la puerta.
+# Version: 2026.09.03.1
+# Fecha: 2026-09-03 21:50 America/Costa_Rica
 # MenuText: Colocar apagadores junto a puertas BIM
 # Icon: ColocarApagadoresEnPuertas.svg
 
@@ -8,8 +16,9 @@ Reglas principales:
 - Sin seleccion procesa todas las puertas BIM; con seleccion permite limitar el alcance.
 - En ventanas Arch/BIM basadas en Sketch, el origen local es la bisagra y X+ llega
   hasta el picaporte. El apagador se busca despues de esa jamba.
-- FA_TargetRoom y el Analisis de Areas definen la cara interior del recinto.
-- Mode1/Mode2 se usa solo como respaldo cuando la puerta no tiene recinto asociado.
+- En puertas con hoja, la cara del apagador sigue siempre el sentido de apertura
+  de la puerta; FA_TargetRoom y el Analisis de Areas se usan para identificar el recinto.
+- En vanos sin hoja se conserva la seleccion de cara disponible de la herramienta.
 - Las lineas colineales de muros BIM se fusionan para encontrar pared disponible.
 - Se evitan otros vanos y las dos hojas de una puerta doble generan un solo apagador.
 - Las aberturas IFC Opening Element usan sus dos extremos como jambas equivalentes.
@@ -41,6 +50,7 @@ DEFAULT_SEARCH_STEP_MM = 25.0
 DEFAULT_MAX_ALONG_WALL_MM = 2500.0
 DEFAULT_MODE = "Ambos"
 DEFAULT_SIDE_MODE = "auto"
+A1_CONTRACT = "PhysicalDocumentationA1"
 GROUP_NAME = "Apagadores_BIM"
 GROUP_LABEL = "Apagadores BIM"
 
@@ -519,6 +529,66 @@ def _load_device_module():
     return None
 
 
+def _load_semantic_adapter():
+    import importlib
+    for name in (
+        "ElectricCR.electriccr.semantic.freecad_adapter",
+        "electriccr.semantic.freecad_adapter",
+    ):
+        try:
+            return importlib.import_module(name)
+        except Exception:
+            pass
+    for directory in _candidate_electriccr_dirs():
+        for path in (directory.parent, directory):
+            value = str(path)
+            if value and value not in sys.path:
+                sys.path.insert(0, value)
+        importlib.invalidate_caches()
+        for name in (
+            "ElectricCR.electriccr.semantic.freecad_adapter",
+            "electriccr.semantic.freecad_adapter",
+        ):
+            try:
+                return importlib.import_module(name)
+            except Exception:
+                pass
+    return None
+
+
+def _is_a1(obj):
+    return _safe(getattr(obj, "RepresentationContract", "")) == A1_CONTRACT
+
+
+def _finalize_a1_devices(module, owner_hosts):
+    """Completa identidad/Host/Space y PLAN dentro de la transaccion llamadora."""
+    if not owner_hosts:
+        return []
+    adapter = _load_semantic_adapter()
+    if adapter is None:
+        raise RuntimeError("No se pudo cargar el adaptador semantico ElectricCR")
+    results = []
+    for owner, host in owner_hosts:
+        if not _is_a1(owner):
+            raise RuntimeError(
+                "La creacion A1 produjo un contrato inesperado: %s"
+                % (_safe(getattr(owner, "RepresentationContract", "")) or "<vacio>")
+            )
+        semantic = adapter.ensure_device_semantics(
+            owner,
+            dry_run=False,
+            host=host,
+            manage_transaction=False,
+        )
+        plan = module.sync_plan_representation(
+            owner,
+            dry_run=False,
+            manage_transaction=False,
+        )
+        results.append({"owner": owner.Name, "semantic": semantic, "plan": plan})
+    return results
+
+
 def _ensure_property(obj, ptype, name, group, description):
     if name not in getattr(obj, "PropertiesList", []):
         obj.addProperty(ptype, name, group, description)
@@ -766,28 +836,17 @@ def _choose_side_mode(doc, door, data, run, centerline_point, areas, side_mode):
             room_name = _suggest_room(door)
         return inward, room_name, area_obj, rule
 
-    automatic = _choose_interior_side(doc, door, data, run, centerline_point, areas)
-    if side_mode == "auto":
-        return automatic
-
+    # Regla obligatoria para puertas con hoja: el apagador debe quedar en la
+    # misma cara del muro hacia la que gira la puerta. Las antiguas opciones
+    # manuales de cara no pueden invertir esta relacion.
     normal = _run_normal(run)
-    opening_side = normal if data["swing"].dot(normal) >= 0.0 else -normal
-    target_record, _target_rule = _target_room_record(doc, door, areas)
-    target_obj = target_record[1] if target_record is not None else None
+    inward = normal if data["swing"].dot(normal) >= 0.0 else -normal
+    rule = "misma_cara_sentido_apertura"
 
-    if side_mode == "opening":
-        inward = opening_side
-        rule = "apertura_actual_seleccionada"
-    elif side_mode == "opposite_opening":
-        inward = -opening_side
-        rule = "opuesto_apertura_actual_seleccionado"
-    elif side_mode == "opposite_room":
-        inward = -automatic[0]
-        rule = "opuesto_recinto_BIM_seleccionado"
-    else:
-        return automatic
-
-    room_record = _room_on_side(doc, centerline_point, inward, run["wall"], areas, excluded=target_obj)
+    # El recinto se identifica despues de fijar la cara por el giro. De este
+    # modo FA_TargetRoom/Areas aportan metadatos, pero no pueden mover el
+    # apagador a la cara contraria de la puerta.
+    room_record = _room_on_side(doc, centerline_point, inward, run["wall"], areas)
     if room_record is not None:
         room_obj = room_record[1]
         room_name = _area_room_name(room_obj)
@@ -883,7 +942,7 @@ def _create_switch(module, doc, group, plan, cfg):
         raise RuntimeError("No se pudo cargar crear_toma_link de ElectricCR")
     placement = App.Placement(plan["point"], App.Rotation(App.Vector(0, 0, 1), plan["yaw"]))
     label = _label_for_door(plan["door"], plan["room"])
-    obj = module.crear_toma_link(
+    kwargs = dict(
         doc=doc,
         name_prefix=label,
         key_registro=cfg["registry_key"],
@@ -894,7 +953,20 @@ def _create_switch(module, doc, group, plan, cfg):
         orientacion_pared="Vertical",
         recompute=False,
         target_group=group,
+        separate_documentation=bool(cfg.get("use_a1", False)),
     )
+    try:
+        obj = module.crear_toma_link(**kwargs)
+    except TypeError as exc:
+        if cfg.get("use_a1", False):
+            raise RuntimeError(
+                "La version cargada de objeto_toma_uno no admite el contrato A1 opt-in."
+            ) from exc
+        kwargs.pop("recompute", None)
+        kwargs.pop("target_group", None)
+        kwargs.pop("separate_documentation", None)
+        obj = module.crear_toma_link(**kwargs)
+        group.addObject(obj)
     obj.Label = label
     _write_metadata(obj, plan, cfg)
     return obj
@@ -925,6 +997,8 @@ def _default_cfg():
         "search_step": DEFAULT_SEARCH_STEP_MM,
         "max_along_wall": DEFAULT_MAX_ALONG_WALL_MM,
         "update_existing": bool(param.GetBool("update_existing", True)),
+        # Opt-in deliberadamente efimero: nunca se persiste como default productivo.
+        "use_a1": False,
         # The side override is deliberately execution-only. A correction made
         # for one selected door must never become the default for all doors.
         "side_mode": DEFAULT_SIDE_MODE,
@@ -991,18 +1065,27 @@ def _dialog(selected_count, all_count):
     form.addRow("Tolerancia para encontrar muro:", wall_search)
 
     side_mode = QtWidgets.QComboBox()
-    side_mode.addItem("Automatica (conservar correcciones anteriores)", "auto")
-    side_mode.addItem("Restablecer: dentro del recinto BIM", "reset_auto")
-    side_mode.addItem("Misma cara que el giro / cara A del vano", "opening")
-    side_mode.addItem("Cara contraria al giro / cara B del vano", "opposite_opening")
+    side_mode.addItem("Automatica", "auto")
+    side_mode.addItem("Restablecer automatica", "reset_auto")
+    side_mode.addItem("Cara A del vano", "opening")
+    side_mode.addItem("Cara B del vano", "opposite_opening")
     side_mode.addItem("Lado opuesto al recinto BIM asociado", "opposite_room")
     side_index = side_mode.findData(cfg.get("side_mode", DEFAULT_SIDE_MODE))
     side_mode.setCurrentIndex(max(0, side_index))
-    form.addRow("Cara del muro:", side_mode)
+    form.addRow("Cara (solo vanos sin hoja):", side_mode)
+    layout.addWidget(QtWidgets.QLabel(
+        "Puertas con hoja: el apagador siempre queda en la misma cara hacia la que abre la puerta."
+    ))
 
     update = QtWidgets.QCheckBox("Actualizar apagadores existentes sin duplicarlos")
     update.setChecked(cfg["update_existing"])
     layout.addWidget(update)
+
+    use_a1 = QtWidgets.QCheckBox(
+        "Usar contrato A1 (fisico 3D + PLAN documental independiente)"
+    )
+    use_a1.setChecked(False)
+    layout.addWidget(use_a1)
 
     buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
     buttons.accepted.connect(dialog.accept); buttons.rejected.connect(dialog.reject)
@@ -1019,6 +1102,7 @@ def _dialog(selected_count, all_count):
         "wall_search": float(wall_search.value()),
         "side_mode": _safe(side_mode.currentData()) or DEFAULT_SIDE_MODE,
         "update_existing": bool(update.isChecked()),
+        "use_a1": bool(use_a1.isChecked()),
     })
     _save_cfg(cfg)
     return cfg
@@ -1054,7 +1138,12 @@ def _build_plans(doc, doors, cfg):
             requested_side_mode = cfg.get("side_mode", DEFAULT_SIDE_MODE)
             existing = _find_existing(doc, door_key, door)
             saved_override = _safe(getattr(existing, "ECR_SideOverride", "")).strip() if existing else ""
-            if requested_side_mode == "auto" and saved_override:
+            if data.get("has_leaf", True):
+                # Las puertas con hoja obedecen siempre el giro real. Limpia
+                # cualquier override historico que pudiera dejarlas en la cara opuesta.
+                effective_side_mode = "opening"
+                side_override = ""
+            elif requested_side_mode == "auto" and saved_override:
                 effective_side_mode = saved_override
                 side_override = saved_override
             elif requested_side_mode == "reset_auto":
@@ -1146,21 +1235,32 @@ def main(doc_override=None, cfg_override=None, doors_override=None):
         _error("No se pudo cargar el generador de dispositivos ElectricCR.")
         return None
 
-    created = updated = existing_skipped = 0
+    created = updated = existing_skipped = legacy_preserved = 0
+    a1_owner_hosts = []
     doc.openTransaction("ElectricCR: colocar apagadores junto a puertas BIM")
     try:
         group = _ensure_group(doc)
         for plan in plans:
             existing = _find_existing(doc, plan["door_key"], plan["door"])
             if existing is not None:
+                if cfg.get("use_a1", False) and not _is_a1(existing):
+                    existing_skipped += 1
+                    legacy_preserved += 1
+                    continue
                 if cfg.get("update_existing", True):
                     _update_switch(existing, group, plan, cfg)
+                    if cfg.get("use_a1", False):
+                        a1_owner_hosts.append((existing, plan["wall"]))
                     updated += 1
                 else:
                     existing_skipped += 1
                 continue
-            _create_switch(module, doc, group, plan, cfg)
+            owner = _create_switch(module, doc, group, plan, cfg)
+            if cfg.get("use_a1", False):
+                a1_owner_hosts.append((owner, plan["wall"]))
             created += 1
+        doc.recompute()
+        _finalize_a1_devices(module, a1_owner_hosts)
         doc.recompute()
         doc.commitTransaction()
     except Exception as exc:
@@ -1174,6 +1274,7 @@ def main(doc_override=None, cfg_override=None, doors_override=None):
     result = {
         "puertas": len(doors), "planes": len(plans), "creados": created,
         "actualizados": updated, "existentes_omitidos": existing_skipped,
+        "legacy_preservados": legacy_preserved,
         "omitidos": len(skipped), "grupo": GROUP_LABEL,
     }
     _log("Finalizado: " + json.dumps(result, ensure_ascii=False))
@@ -1182,8 +1283,9 @@ def main(doc_override=None, cfg_override=None, doors_override=None):
         try:
             QtWidgets.QMessageBox.information(
                 Gui.getMainWindow(), "Apagadores BIM",
-                "Creados: {}\nActualizados: {}\nOmitidos: {}\nGrupo: {}".format(
-                    created, updated, len(skipped) + existing_skipped, GROUP_LABEL
+                "Creados: {}\nActualizados: {}\nLegacy preservados: {}\nOmitidos: {}\nGrupo: {}".format(
+                    created, updated, legacy_preserved,
+                    len(skipped) + existing_skipped, GROUP_LABEL
                 ),
             )
         except Exception:

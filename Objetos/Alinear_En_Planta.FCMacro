@@ -1,0 +1,444 @@
+# -*- coding: utf-8 -*-
+# Name: Alinear_En_Planta.FCMacro
+# Purpose: Alinear rapidamente un objeto en planta contra una arista recta o una cara plana.
+# Main behavior: Proyecta Placement.Base en XY sobre la referencia seleccionada y
+#                aplica el menor giro global alrededor de Z para dejar paralelo
+#                el eje local X o Y que requiera menor correccion.
+# Future modifications: Mantener la operacion limitada a XY + giro Z. No borrar
+#                       inclinaciones tecnicas existentes ni convertirla en una
+#                       herramienta general 3D. Ampliar referencias solo con
+#                       casos comprobados en FreeCAD real.
+# Selection: Primero objeto objetivo; despues una arista recta o cara plana de referencia.
+# Version: 0.2.0
+# Date: 2026-09-14 21:26 America/Costa_Rica
+# FreeCAD: 1.1.3
+# MenuText: Alinear en planta
+# Toolbar: Objetos
+# Icon: Alinear_En_Planta.svg
+# Transaction: self
+
+import math
+
+import FreeCAD as App
+import FreeCADGui as Gui
+
+
+PREFIX = "[OBJ-ALIGN]"
+EPS_XY = 1.0e-7
+EPS_MOVE_MM = 1.0e-6
+EPS_ANGLE_DEG = 1.0e-7
+
+
+def _msg(text):
+    App.Console.PrintMessage(f"{PREFIX} {text}\n")
+
+
+def _warn(text):
+    App.Console.PrintWarning(f"{PREFIX} {text}\n")
+
+
+def _error(text):
+    App.Console.PrintError(f"{PREFIX} {text}\n")
+
+
+def _fmt_vec(v):
+    return f"({v.x:.3f}, {v.y:.3f}, {v.z:.3f})"
+
+
+def _normalize_signed_degrees(angle_deg):
+    """Normalize angle to (-180, 180]."""
+    value = (float(angle_deg) + 180.0) % 360.0 - 180.0
+    if value <= -180.0:
+        value += 360.0
+    return value
+
+
+def _delta_to_parallel(current_heading_deg, reference_heading_deg):
+    """Smallest Z delta that makes one directed axis parallel to an undirected line."""
+    delta = _normalize_signed_degrees(reference_heading_deg - current_heading_deg)
+    if delta > 90.0:
+        delta -= 180.0
+    elif delta <= -90.0:
+        delta += 180.0
+    return delta
+
+
+def _heading_xy(vector):
+    length_xy = math.hypot(float(vector.x), float(vector.y))
+    if length_xy <= EPS_XY:
+        return None
+    return math.degrees(math.atan2(float(vector.y), float(vector.x)))
+
+
+def _reference_from_selection(selection_ex):
+    """Return one unambiguous Edge or Face from the second selection entry."""
+    subobjects = list(getattr(selection_ex, "SubObjects", []) or [])
+    edge_candidates = []
+    face_candidates = []
+
+    for sub in subobjects:
+        shape_type = str(getattr(sub, "ShapeType", "") or "").lower()
+        if shape_type == "edge":
+            edge_candidates.append(sub)
+        elif shape_type == "face":
+            face_candidates.append(sub)
+
+    total = len(edge_candidates) + len(face_candidates)
+    if total == 1:
+        if edge_candidates:
+            return "edge", edge_candidates[0], "subelement"
+        return "face", face_candidates[0], "subelement"
+    if total > 1:
+        raise ValueError(
+            "La referencia contiene varios subelementos seleccionados; seleccione solo una arista o una cara."
+        )
+
+    # Convenience fallback when the whole reference object is selected.
+    # A single-face object is interpreted as a face; otherwise a one-edge shape
+    # is accepted as a linear reference. Multi-face/multi-edge objects remain
+    # intentionally ambiguous and require an explicit subelement selection.
+    ref_obj = getattr(selection_ex, "Object", None)
+    shape = getattr(ref_obj, "Shape", None) if ref_obj is not None else None
+    faces = list(getattr(shape, "Faces", []) or []) if shape is not None else []
+    edges = list(getattr(shape, "Edges", []) or []) if shape is not None else []
+
+    if len(faces) == 1:
+        return "face", faces[0], "single_shape_face"
+    if len(edges) == 1:
+        return "edge", edges[0], "single_shape_edge"
+
+    raise ValueError(
+        "Seleccione una arista recta o una cara plana como segunda seleccion. "
+        "Si selecciona el objeto completo, debe tener una sola cara o una sola arista."
+    )
+
+
+def _edge_points_xy(edge):
+    """Validate a straight edge and return its two end points."""
+    vertices = list(getattr(edge, "Vertexes", []) or [])
+    if len(vertices) != 2:
+        raise ValueError("La referencia debe ser una arista recta con dos vertices.")
+
+    p1 = App.Vector(vertices[0].Point)
+    p2 = App.Vector(vertices[1].Point)
+    chord = (p2 - p1).Length
+    if chord <= EPS_XY:
+        raise ValueError("La arista de referencia tiene longitud nula.")
+
+    try:
+        edge_length = float(edge.Length)
+    except Exception:
+        edge_length = chord
+
+    straight_tol = max(1.0e-5, chord * 1.0e-6)
+    if abs(edge_length - chord) > straight_tol:
+        raise ValueError("La referencia parece curva. Seleccione una arista recta.")
+
+    if math.hypot(p2.x - p1.x, p2.y - p1.y) <= EPS_XY:
+        raise ValueError("La referencia es vertical en planta y no define una direccion XY.")
+
+    return p1, p2
+
+
+def _face_parameter_samples(face):
+    """Return a small deterministic UV sample set for normal consistency checks."""
+    try:
+        u1, u2, v1, v2 = [float(value) for value in face.ParameterRange]
+    except Exception as exc:
+        raise ValueError(f"No se pudo leer el dominio parametrico de la cara: {exc}")
+
+    um = 0.5 * (u1 + u2)
+    vm = 0.5 * (v1 + v2)
+    du = 0.25 * (u2 - u1)
+    dv = 0.25 * (v2 - v1)
+    return [
+        (um, vm),
+        (um - du, vm - dv),
+        (um + du, vm - dv),
+        (um - du, vm + dv),
+        (um + du, vm + dv),
+    ]
+
+
+def _face_plane_data(face):
+    """Validate a planar face and return (point_on_plane, unit_normal, heading_xy)."""
+    samples = _face_parameter_samples(face)
+    normals = []
+    for u, v in samples:
+        try:
+            normal = App.Vector(face.normalAt(u, v))
+        except Exception as exc:
+            raise ValueError(f"No se pudo obtener la normal de la cara: {exc}")
+        if normal.Length <= EPS_XY:
+            raise ValueError("La cara seleccionada no tiene una normal util.")
+        normal.normalize()
+        normals.append(normal)
+
+    reference_normal = normals[0]
+    # A plane has a constant normal. Curved faces are rejected by comparing a
+    # handful of normals across their UV domain. abs(dot) tolerates orientation
+    # sign changes while still rejecting cylinders, cones and other curved faces.
+    for normal in normals[1:]:
+        dot = abs(float(reference_normal.dot(normal)))
+        if dot < 1.0 - 1.0e-7:
+            raise ValueError("La cara de referencia es curva. Seleccione una cara plana.")
+
+    nxy = math.hypot(float(reference_normal.x), float(reference_normal.y))
+    if nxy <= EPS_XY:
+        raise ValueError(
+            "La cara seleccionada es horizontal en planta y no define una direccion XY util."
+        )
+
+    try:
+        point_on_plane = App.Vector(face.CenterOfMass)
+    except Exception:
+        try:
+            point_on_plane = App.Vector(face.valueAt(samples[0][0], samples[0][1]))
+        except Exception as exc:
+            raise ValueError(f"No se pudo obtener un punto de la cara plana: {exc}")
+
+    # Direction of the intersection of the face plane with XY. For a vertical
+    # wall face this is exactly the wall direction in plan.
+    direction_xy = App.Vector(-reference_normal.y, reference_normal.x, 0.0)
+    heading_xy = _heading_xy(direction_xy)
+    if heading_xy is None:
+        raise ValueError("La cara no define una direccion valida en planta.")
+
+    return point_on_plane, reference_normal, heading_xy
+
+
+def _project_base_to_line_xy(base, p1, p2):
+    """Orthogonally project base XY to the infinite XY line through p1-p2."""
+    dx = float(p2.x - p1.x)
+    dy = float(p2.y - p1.y)
+    denom = dx * dx + dy * dy
+    if denom <= EPS_XY * EPS_XY:
+        raise ValueError("La referencia no define una recta util en XY.")
+
+    t = ((float(base.x - p1.x) * dx) + (float(base.y - p1.y) * dy)) / denom
+    return App.Vector(p1.x + t * dx, p1.y + t * dy, base.z), t
+
+
+def _project_base_to_face_xy(base, point_on_plane, normal):
+    """Project base in XY onto a planar face while preserving the original Z."""
+    nx = float(normal.x)
+    ny = float(normal.y)
+    nz = float(normal.z)
+    denom = nx * nx + ny * ny
+    if denom <= EPS_XY * EPS_XY:
+        raise ValueError("La cara no permite una proyeccion XY estable.")
+
+    signed = (
+        nx * float(base.x - point_on_plane.x)
+        + ny * float(base.y - point_on_plane.y)
+        + nz * float(base.z - point_on_plane.z)
+    )
+    projected = App.Vector(
+        base.x - signed * nx / denom,
+        base.y - signed * ny / denom,
+        base.z,
+    )
+    return projected, signed
+
+
+def _choose_local_axis_and_delta(rotation, reference_heading_deg):
+    """Choose local X or Y, whichever needs the smaller Z correction."""
+    candidates = []
+    for axis_name, local_axis in (
+        ("X", App.Vector(1.0, 0.0, 0.0)),
+        ("Y", App.Vector(0.0, 1.0, 0.0)),
+    ):
+        world_axis = rotation.multVec(local_axis)
+        heading = _heading_xy(world_axis)
+        if heading is None:
+            continue
+        delta = _delta_to_parallel(heading, reference_heading_deg)
+        candidates.append((abs(delta), axis_name, heading, delta))
+
+    if not candidates:
+        raise ValueError("Los ejes locales X/Y del objeto no tienen una proyeccion util en planta.")
+
+    candidates.sort(key=lambda item: (item[0], item[1]))
+    _abs_delta, axis_name, heading, delta = candidates[0]
+    return axis_name, heading, delta
+
+
+def _has_incompatible_xy_parent_transform(obj):
+    """Reject parent transforms that change the target XY frame; pure Z offsets are safe."""
+    try:
+        parent = obj.getParentGeoFeatureGroup()
+    except Exception:
+        parent = None
+    if parent is None:
+        return False, None
+
+    try:
+        pl = parent.getGlobalPlacement()
+    except Exception:
+        try:
+            pl = parent.Placement
+        except Exception:
+            return False, parent
+
+    try:
+        base = pl.Base
+        rot = pl.Rotation
+        base_changed = math.hypot(float(base.x), float(base.y)) > 1.0e-7
+        x_axis = rot.multVec(App.Vector(1.0, 0.0, 0.0))
+        y_axis = rot.multVec(App.Vector(0.0, 1.0, 0.0))
+        rot_changed = (
+            (x_axis - App.Vector(1.0, 0.0, 0.0)).Length > 1.0e-7
+            or (y_axis - App.Vector(0.0, 1.0, 0.0)).Length > 1.0e-7
+        )
+        return bool(base_changed or rot_changed), parent
+    except Exception:
+        return False, parent
+
+
+def _get_selection_ex():
+    try:
+        return list(Gui.Selection.getSelectionEx("", 0) or [])
+    except TypeError:
+        return list(Gui.Selection.getSelectionEx() or [])
+
+
+def _validate_selection():
+    selection = _get_selection_ex()
+    if len(selection) != 2:
+        raise ValueError(
+            "Seleccione exactamente dos entradas: primero el objeto a corregir y despues una arista recta o cara plana."
+        )
+
+    target = getattr(selection[0], "Object", None)
+    ref_obj = getattr(selection[1], "Object", None)
+    if target is None or ref_obj is None:
+        raise ValueError("No se pudo resolver la seleccion de FreeCAD.")
+    if target is ref_obj:
+        raise ValueError("El objeto objetivo y la referencia deben ser objetos diferentes.")
+    if not hasattr(target, "Placement"):
+        raise ValueError(f"El objeto '{target.Label}' no dispone de Placement editable.")
+    if getattr(target, "Document", None) is None:
+        raise ValueError("El objeto objetivo no pertenece a un documento activo.")
+    if getattr(ref_obj, "Document", None) is not getattr(target, "Document", None):
+        raise ValueError("El objeto y la referencia deben pertenecer al mismo documento.")
+
+    transformed, parent = _has_incompatible_xy_parent_transform(target)
+    if transformed:
+        parent_label = getattr(parent, "Label", getattr(parent, "Name", "?"))
+        raise ValueError(
+            "El objeto esta dentro de un contenedor que transforma el plano XY "
+            f"('{parent_label}'). Esta version no mezcla sistemas de coordenadas; mueva/alinee el contenedor o use Transformar."
+        )
+
+    ref_kind, ref_shape, ref_source = _reference_from_selection(selection[1])
+    return target, ref_obj, ref_kind, ref_shape, ref_source
+
+
+def align_selected_in_plan():
+    """Execute one safe planar alignment operation from the current selection."""
+    try:
+        target, ref_obj, ref_kind, ref_shape, ref_source = _validate_selection()
+    except Exception as exc:
+        _error(str(exc))
+        return False
+
+    doc = target.Document
+    old_placement = App.Placement(target.Placement)
+    old_base = App.Vector(old_placement.Base)
+    old_rotation = App.Rotation(old_placement.Rotation)
+
+    try:
+        if ref_kind == "edge":
+            p1, p2 = _edge_points_xy(ref_shape)
+            ref_heading = math.degrees(math.atan2(p2.y - p1.y, p2.x - p1.x))
+            projected_base, projection_param = _project_base_to_line_xy(old_base, p1, p2)
+            reference_detail = f"edge={_fmt_vec(p1)} -> {_fmt_vec(p2)}"
+            projection_detail = f"t={projection_param:.6f}"
+        elif ref_kind == "face":
+            plane_point, plane_normal, ref_heading = _face_plane_data(ref_shape)
+            projected_base, signed_plane = _project_base_to_face_xy(old_base, plane_point, plane_normal)
+            reference_detail = (
+                f"face_point={_fmt_vec(plane_point)} normal={_fmt_vec(plane_normal)}"
+            )
+            projection_detail = f"plane_signed={signed_plane:.6f}"
+        else:
+            raise ValueError(f"Tipo de referencia no soportado: {ref_kind}")
+
+        axis_name, old_heading, delta_deg = _choose_local_axis_and_delta(old_rotation, ref_heading)
+    except Exception as exc:
+        _error(str(exc))
+        return False
+
+    move_dx = projected_base.x - old_base.x
+    move_dy = projected_base.y - old_base.y
+    move_xy = math.hypot(move_dx, move_dy)
+
+    _msg(
+        "PRE "
+        f"target={target.Label} [{target.Name}] type={getattr(target, 'TypeId', '?')} | "
+        f"reference={ref_obj.Label} [{ref_obj.Name}] kind={ref_kind} source={ref_source} | "
+        f"{reference_detail}"
+    )
+    _msg(
+        "PLAN "
+        f"base={_fmt_vec(old_base)} -> {_fmt_vec(projected_base)} | "
+        f"axis={axis_name} heading={old_heading:.3f} deg | "
+        f"ref_heading={ref_heading:.3f} deg | delta_Z={delta_deg:.3f} deg | {projection_detail}"
+    )
+
+    if move_xy <= EPS_MOVE_MM and abs(delta_deg) <= EPS_ANGLE_DEG:
+        _msg("RESULT sin cambios: el objeto ya esta alineado en planta con la referencia.")
+        return True
+
+    delta_rotation = App.Rotation(App.Vector(0.0, 0.0, 1.0), delta_deg)
+    new_rotation = delta_rotation.multiply(old_rotation)
+    new_placement = App.Placement(projected_base, new_rotation)
+
+    transaction_open = False
+    try:
+        doc.openTransaction("Alinear en planta")
+        transaction_open = True
+        target.Placement = new_placement
+        try:
+            target.touch()
+        except Exception:
+            pass
+        doc.recompute()
+        doc.commitTransaction()
+        transaction_open = False
+    except Exception as exc:
+        if transaction_open:
+            try:
+                doc.abortTransaction()
+            except Exception:
+                pass
+        try:
+            target.Placement = old_placement
+            doc.recompute()
+        except Exception:
+            pass
+        _error(f"No se pudo aplicar la alineacion; se intento restaurar el Placement original. Motivo: {exc}")
+        return False
+
+    actual = App.Placement(target.Placement)
+    z_ok = abs(actual.Base.z - old_base.z) <= 1.0e-7
+    _msg(
+        "APPLY "
+        f"X {old_base.x:.3f} -> {actual.Base.x:.3f} mm | "
+        f"Y {old_base.y:.3f} -> {actual.Base.y:.3f} mm | "
+        f"Z {old_base.z:.3f} -> {actual.Base.z:.3f} mm | "
+        f"giro_Z_delta={delta_deg:.3f} deg"
+    )
+    if not z_ok:
+        _warn("RESULT advertencia: la cota Z no quedo identica; use Undo y reporte el caso.")
+        return False
+
+    _msg(
+        f"RESULT OK | desplazamiento_XY={move_xy:.3f} mm | "
+        "Z conservado | Undo/Redo disponible por transaccion FreeCAD."
+    )
+    return True
+
+
+if __name__ == "__main__":
+    align_selected_in_plan()

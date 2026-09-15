@@ -1,10 +1,45 @@
+# FA Reparar puertas - reparacion guiada por jamba (build 2026.09.03.6)
+
+La reparacion visible deja de pedir AUTO/BUQUE_COMPLETE/LEGACY_LEAF. El flujo recomendado es seleccionar una puerta FA, ejecutar **FA Reparar puertas** y seleccionar una jamba vertical de la pared; tambien se admite puerta+jamba preseleccionadas. La jamba elegida es la referencia fisica autoritativa para esta reparacion. El nucleo `door_repair_core.py` v0.6.0 elige deterministicamente el extremo exterior del marco mas cercano, conserva `Width` y calcula solo la traslacion XY necesaria. Despues del `recompute` se verifica el mismo extremo contra la misma jamba; si no coincide dentro de tolerancia, la transaccion se aborta. Se mantienen Undo/Redo, trazabilidad y los modos historicos solo como diagnostico interno. `FA Puertas BIM` no se modifica.
+
+---
+
 # FacilArquitecturaWB
 
+## FA Reparar puertas - criterio asistido para documentos heredados (build 2026.09.03.5)
+
+La build `.5` mantiene la regla vigente de reparacion: **si el marco exterior cabe, mover solamente; si realmente no cabe, redimensionar y despues colocar; si ya esta contenido, no modificar**. El generador original `FA Puertas BIM` no se modifica en esta fase.
+
+El diagnostico de la build `.4` sobre Upala confirmo un conflicto de contratos historicos: la puerta tenia `Width=763.851 mm`, el segmento `FA_ProjectedFirst/Second` media `663.851 mm` y `Frame2+Frame3=100 mm`. Esa firma coincide exactamente con puertas BOUNDED generadas por la logica antigua, donde el segmento almacenado representaba la hoja y el marco exterior crecia alrededor.
+
+`FA Reparar puertas` incorpora ahora tres interpretaciones controladas antes de escribir: `AUTO`, `BUQUE_COMPLETE` y `LEGACY_LEAF`. En `LEGACY_LEAF`, el reparador reconstruye temporalmente el buque efectivo extendiendo el segmento historico por `Frame2` y `Frame3`; no altera el Sketch ni `FA Puertas BIM`. En el caso historico de Upala, esto convierte `663.851 mm` en un buque efectivo de `763.851 mm` y el plan esperado pasa a `move_only`, conservando el ancho. El usuario confirma el criterio antes de aplicar y la eleccion se registra en propiedades `FA_DoorRepair*` y en la consola.
+
+El nucleo puro `door_repair_core.py` pasa a `0.5.0`. Pruebas puras focales: **15/15** aprobadas, incluyendo contrato actual, contrato heredado, deteccion `AUTO`, movimiento de 75 mm e idempotencia planificada. Smoke real en FreeCAD 1.1.3 pendiente.
+
+## FA Reparar puertas - mover antes de redimensionar (build 2026.09.03.4)
+
+La prueba manual del build `.3` mostro que una puerta que **ya cabe por tamano dentro del buque** estaba siendo reducida innecesariamente. Se corrige el criterio: el buque se toma de la longitud real de `FA_ProjectedFirst/Second`. Si el marco exterior actual (`Wire0` / `Width`) es menor o igual que el buque, FA **conserva el Width** y solo traslada el Base lo minimo necesario para que el marco completo quede contenido. Solo cuando el marco exterior es realmente mayor que el buque se reduce `Width` a la longitud del buque y luego se posiciona dentro. Si la puerta ya esta completamente dentro, no se modifica. La verificacion posterior usa ahora criterio de **contencion**, no coincidencia obligatoria de ambos extremos.
+
+## FA Reparar puertas - criterio de buque corregido (build 2026.09.03.3)
+
+La validacion manual en `1416 Levantamiento 250424 Compu D` mostro que al alinear la hoja todavia podia quedar parte del marco fuera del buque. Se fija el contrato geometrico correcto para FA: el segmento autoritativo del Sketch representa el **buque completo**. Por tanto, `FA Reparar puertas` compara y alinea los extremos del marco exterior nativo (`Wire0` / `Width`) con `FA_ProjectedFirst/Second`; `Frame2` y `Frame3` quedan como retranqueos internos de la hoja dentro del marco. La reparacion `BOUNDED` establece el ancho exterior del Base igual a `FA_Width_mm` y desplaza el Base segun el desfase real medido del marco. Se mantiene diagnostico previo, transaccion, verificacion posterior, rollback e idempotencia.
+
+
+
+
+## Ajuste 2026-09-03 - reparacion por desfase medido
+
+La primera prueba real de `FA Reparar puertas` en `1416 Levantamiento 250424 Compu D` detecto correctamente una puerta `BOUNDED` fuera del buque con error de `75.00 mm`, pero la reparacion inicial asumio que el desplazamiento era exactamente `Frame2` y la comprobacion posterior cancelo la transaccion. La build `2026.09.03.3` corrige este supuesto: la traslacion del Base se calcula con el desfase XY realmente medido entre la hoja visible y `FA_ProjectedFirst/Second`; `Frame2/Frame3` se usan solamente para normalizar el ancho exterior del Base. Se conserva verificacion posterior, rollback, Undo/Redo e idempotencia.
 
 Workbench independiente para FreeCAD 1.1.3 orientado a crear una base arquitectonica BIM editable desde planos existentes o desde Sketches ya depurados.
 
 
-Version vigente: `0.14.11` | build `2026.09.02.8`. Conserva sin cambios la baseline tecnica de FA Puertas BIM validada en la build `.3` (63/63 pruebas focales y smoke real de host/corte en FreeCAD 1.1.3) y agrega la integracion liviana para excluir los Espacios BIM de la geometria de GameEngineExport mediante `GameExportExclude=True`. Se conserva el tratamiento `BOUNDED`, pero GeometryIndex 1 del levantamiento 1416 sigue siendo una limitacion visual conocida y no se declara corregido; requiere revision manual hasta disponer de overrides persistentes por elemento. No se agregaran mas heuristicas geometricas para esa excepcion. `FA Techo desde rectangulo` mantiene la correccion de apoyo validada previamente. Al recargar con `FacilArquitecturaLoader.FCMacro`, la consola debe mostrar `VERSION CARGADA: v0.14.11 | build 2026.09.02.8`. Los proyectos heredados con `FA_Project` conservan tambien `FA_WorkbenchVersion` y `FA_WorkbenchBuild`.
+Version vigente: `0.14.11` | build `2026.09.03.4`. Conserva sin cambios la baseline tecnica de FA Puertas BIM validada en la build `.3` (63/63 pruebas focales y smoke real de host/corte en FreeCAD 1.1.3) y agrega la integracion liviana para excluir los Espacios BIM de la geometria de GameEngineExport mediante `GameExportExclude=True`. Se conserva el tratamiento `BOUNDED`, pero GeometryIndex 1 del levantamiento 1416 sigue siendo una limitacion visual conocida y no se declara corregido; requiere revision manual hasta disponer de overrides persistentes por elemento. No se agregaran mas heuristicas geometricas para esa excepcion. `FA Techo desde rectangulo` mantiene la correccion de apoyo validada previamente. Al recargar con `FacilArquitecturaLoader.FCMacro`, la consola debe mostrar `VERSION CARGADA: v0.14.11 | build 2026.09.03.4`. Los proyectos heredados con `FA_Project` conservan tambien `FA_WorkbenchVersion` y `FA_WorkbenchBuild`.
+
+
+## FA Reparar puertas
+
+La build `2026.09.03.3` incorpora la primera fase de `FA Reparar puertas`. La herramienta diagnostica primero las puertas BIM generadas por FA y compara la hoja visible del Base nativo con el buque autoritativo guardado en `FA_ProjectedFirst/Second`. En esta primera fase solo corrige automaticamente casos `BOUNDED` deterministas del preset nativo con restricciones `Width`, `Frame2` y `Frame3`; otros estados quedan informados sin modificacion. El diagnostico es de lectura, la aplicacion requiere confirmacion, usa una transaccion FreeCAD y verifica el resultado antes de confirmar. La reejecucion sobre una puerta ya corregida no debe volver a desplazarla.
 
 
 ## Instalacion independiente

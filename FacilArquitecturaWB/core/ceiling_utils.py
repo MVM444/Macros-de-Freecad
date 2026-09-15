@@ -3,9 +3,10 @@
 Descripcion: genera cielos de 600x600 rectangulares o poligonales y reserva luminarias ElectricCR.
 Funcion principal: conservar la logica modular existente e integrar la salida dentro del Level BIM.
 Mantenimiento: la reticula es auxiliar; el cielo conserva semantica IFC Covering/CEILING hasta validar Covering nativo.
+Las zonas de exclusion entran como poligonos XY del mundo. Por defecto recortan paneles al generarlos; de forma opt-in pueden materializarse como un Part::Cut paramétrico ligado al Placement de su propietario.
 FreeCAD objetivo: 1.1.3.
-Fecha y hora: 2026-09-01 14:35 America/Costa_Rica.
-Version: 0.5.0.
+Fecha y hora: 2026-09-15 15:20 America/Costa_Rica.
+Version: 0.7.3.
 """
 
 from __future__ import annotations
@@ -252,13 +253,21 @@ def create_modular_ceilings(
     gap = max(0.0, float(options.get("joint_gap_mm", 5.0)))
     tolerance = max(0.0, float(options.get("alignment_tolerance_mm", 50.0)))
     create_documentary_grid = bool(options.get("create_documentary_grid", False))
+    exclusion_zones = _normalize_exclusion_zones(options.get("exclusion_zones_world_mm", []))
+    exclusion_owner = options.get("exclusion_owner")
+    exclusion_reason = str(options.get("exclusion_reason") or "")
+    dynamic_exclusion_source = options.get("dynamic_exclusion_source")
+    dynamic_exclusion_mode = str(options.get("dynamic_exclusion_mode") or "").strip().lower()
+    group_name = str(options.get("group_name") or CEILING_GROUP_NAME)
+    sheet_name = str(options.get("sheet_name") or CEILING_SHEET_NAME)
+    group_label = str(options.get("group_label") or "Cielos suspendidos")
     if module <= 0.0 or thickness <= 0.0:
         raise UserFacingError("El modulo y el espesor del panel deben ser mayores que cero.")
     if bool(options.get("replace_previous", True)):
         remove_previous_ceilings(doc)
 
     target_parent = level if level is not None else bim_group
-    ceiling_group = ensure_group(doc, CEILING_GROUP_NAME, "Cielos suspendidos", target_parent)
+    ceiling_group = ensure_group(doc, group_name, group_label, target_parent)
     _move_generated_group_to_parent(ceiling_group, target_parent)
     if level is not None:
         set_prop(
@@ -297,8 +306,28 @@ def create_modular_ceilings(
         plan["room"] = room
         plan["room_label"] = _room_name(room)
         plan["geometry"] = spec["geometry"]
-        panels = _create_room_panels(doc, ceiling_group, spec, plan, elevation, thickness, gap)
+        panels = _create_room_panels(
+            doc,
+            ceiling_group,
+            spec,
+            plan,
+            elevation,
+            thickness,
+            gap,
+            exclusion_zones_world_mm=exclusion_zones,
+            dynamic_exclusion_source=(
+                dynamic_exclusion_source if dynamic_exclusion_mode == "follow_placement" else None
+            ),
+        )
         _set_common_ceiling_properties(panels, room, source_lights, plan, elevation, thickness)
+        if int(plan.get("exclusion_zone_count", 0)) > 0:
+            set_prop(panels, "App::PropertyInteger", "FA_ExclusionZoneCount", "FacilArquitectura", "Cantidad de zonas de exclusion", int(plan.get("exclusion_zone_count", 0)))
+            set_prop(panels, "App::PropertyString", "FA_ExclusionZonesJSON", "FacilArquitectura", "Zonas de exclusion XY", json.dumps(exclusion_zones, sort_keys=True, separators=(",", ":")))
+            set_prop(panels, "App::PropertyString", "FA_ExclusionReason", "FacilArquitectura", "Motivo de exclusion", exclusion_reason)
+            if exclusion_owner is not None:
+                # The stair master links back to these panels. Store only the
+                # owner name here to keep the dependency graph acyclic.
+                set_prop(panels, "App::PropertyString", "FA_ExclusionOwnerName", "FacilArquitectura", "Elemento que solicita la exclusion", str(getattr(exclusion_owner, "Name", "") or ""))
         set_prop(panels, "App::PropertyString", "IfcType", "IFC", "Clase IFC", "Covering")
         set_prop(panels, "App::PropertyString", "PredefinedType", "IFC", "Tipo IFC", "CEILING")
         _set_view(panels, color=(0.92, 0.92, 0.88), transparency=0)
@@ -318,15 +347,22 @@ def create_modular_ceilings(
             created_objects.append(grid)
         plans.append(plan)
 
-    sheet = _write_ceiling_schedule(doc, plans, schedule_group or ceiling_group, options)
+    sheet = _write_ceiling_schedule(doc, plans, schedule_group or ceiling_group, options, sheet_name=sheet_name)
     created_objects.append(sheet)
     doc.recompute()
+    exclusion_objects = [
+        obj
+        for obj in created_objects
+        if int(getattr(obj, "FA_ExclusionZoneCount", 0) or 0) > 0
+    ]
     return {
         "group": ceiling_group,
         "plans": plans,
         "objects": created_objects,
         "sheet": sheet,
         "documentary_grid": create_documentary_grid,
+        "exclusion_objects": exclusion_objects,
+        "exclusion_zone_count": sum(int(plan.get("exclusion_zone_count", 0)) for plan in plans),
     }
 
 
@@ -670,27 +706,281 @@ def _clip_plan_to_polygon(spec, plan):
     )
 
 
-def _create_room_panels(doc, group, spec, plan, elevation, thickness, gap):
+def _normalize_exclusion_zones(zones):
+    """Return JSON-safe world-XY exclusion zones, ignoring malformed entries."""
+    result = []
+    for index, raw in enumerate(list(zones or [])):
+        data = dict(raw) if isinstance(raw, dict) else {"polygon_mm": raw}
+        polygon = []
+        for point in list(data.get("polygon_mm", []) or []):
+            try:
+                polygon.append([float(point[0]), float(point[1])])
+            except Exception:
+                polygon = []
+                break
+        if len(polygon) < 3:
+            continue
+        result.append(
+            {
+                "id": str(data.get("id") or data.get("role") or "zone_%d" % index),
+                "role": str(data.get("role") or "exclusion"),
+                "polygon_mm": polygon,
+            }
+        )
+    return result
+
+
+def _world_exclusion_faces(spec, zones):
+    """Convert world-XY exclusion polygons to room-local faces that overlap the room."""
+    if not zones:
+        return []
+    if spec.get("geometry") == "polygon":
+        room_face = spec["face"]
+    else:
+        room_face = _local_rectangle_face(0.0, 0.0, spec["length"], spec["depth"])
+    result = []
+    for zone in _normalize_exclusion_zones(zones):
+        local_points = []
+        for x, y in zone["polygon_mm"]:
+            delta = FreeCAD.Vector(float(x) - spec["base"].x, float(y) - spec["base"].y, 0.0)
+            try:
+                local = spec["rotation"].inverted().multVec(delta)
+            except Exception:
+                local = delta
+            local_points.append(FreeCAD.Vector(float(local.x), float(local.y), 0.0))
+        try:
+            wire = Part.makePolygon(local_points + [FreeCAD.Vector(local_points[0])])
+            face = Part.Face(wire)
+            overlap = room_face.common(face)
+            area = sum(float(item.Area) for item in list(getattr(overlap, "Faces", []) or []))
+            if area > MIN_CLIPPED_FACE_AREA_MM2:
+                result.append(overlap)
+        except Exception as exc:
+            warn("No se pudo preparar una zona de exclusion de cielorraso: %s" % exc)
+    return result
+
+
+
+def _shape_bbox_xy(shape):
+    if shape is None:
+        return None
+    try:
+        if shape.isNull():
+            return None
+        bb = shape.BoundBox
+        return (float(bb.XMin), float(bb.YMin), float(bb.XMax), float(bb.YMax))
+    except Exception:
+        return None
+
+
+def _bbox_overlaps(a, b, tolerance=0.0):
+    if a is None or b is None:
+        return False
+    tol = max(0.0, float(tolerance))
+    return not (
+        float(a[2]) < float(b[0]) - tol
+        or float(a[0]) > float(b[2]) + tol
+        or float(a[3]) < float(b[1]) - tol
+        or float(a[1]) > float(b[3]) + tol
+    )
+
+
+def _fuse_exclusion_faces(faces):
+    valid = []
+    for face in list(faces or []):
+        try:
+            if face is None or face.isNull():
+                continue
+        except Exception:
+            continue
+        valid.append(face)
+    if not valid:
+        return Part.Shape()
+    result = valid[0]
+    for face in valid[1:]:
+        result = result.fuse(face)
+    try:
+        result = result.removeSplitter()
+    except Exception:
+        pass
+    return result
+
+def _cut_face_by_exclusions(face, exclusions):
+    result = face
+    for exclusion in list(exclusions or []):
+        try:
+            if result is None or result.isNull():
+                break
+            if exclusion is None or exclusion.isNull():
+                continue
+            result = result.cut(exclusion)
+            # A previous exclusion may remove the complete panel. In that case
+            # there is nothing left to cut; continuing would ask OCCT to operate
+            # on a Null shape and emit a misleading warning.
+            if result is None or result.isNull():
+                break
+        except Exception as exc:
+            warn("No se pudo recortar un panel por zona de exclusion: %s" % exc)
+    return result
+
+
+def _global_placement(obj):
+    """Return the current global Placement for a GeoFeature-like object."""
+    if obj is None:
+        return FreeCAD.Placement()
+    try:
+        return obj.getGlobalPlacement()
+    except Exception:
+        try:
+            return FreeCAD.Placement(obj.Placement)
+        except Exception:
+            return FreeCAD.Placement()
+
+
+def _dynamic_exclusion_solid(zones, placement_source, z_min, z_max):
+    """Build one exclusion solid in ``placement_source`` local coordinates.
+
+    The returned Shape stays geometrically local; a caller can therefore drive a
+    normal Part::Feature Placement from the stair master without regenerating the
+    ceiling grid. This path is deliberately opt-in for the minimal stair demo.
+    """
+    normalized = _normalize_exclusion_zones(zones)
+    if not normalized or placement_source is None:
+        return Part.Shape(), []
+    inv = _global_placement(placement_source).inverse()
+    solids = []
+    local_zones = []
+    for zone in normalized:
+        polygon = list(zone.get("polygon_mm", []) or [])
+        if len(polygon) < 3:
+            continue
+        local_points = [
+            inv.multVec(FreeCAD.Vector(float(x), float(y), float(z_min)))
+            for x, y in polygon
+        ]
+        if len(local_points) < 3:
+            continue
+        try:
+            wire = Part.makePolygon(local_points + [FreeCAD.Vector(local_points[0])])
+            face = Part.Face(wire)
+            probe = inv.multVec(FreeCAD.Vector(float(polygon[0][0]), float(polygon[0][1]), float(z_max)))
+            direction = probe.sub(local_points[0])
+            solid = face.extrude(direction)
+            if solid is not None and not solid.isNull():
+                solids.append(solid)
+                local_zone = dict(zone)
+                local_zone["polygon_mm"] = [[float(point.x), float(point.y)] for point in local_points]
+                local_zones.append(local_zone)
+        except Exception as exc:
+            warn("No se pudo preparar una zona dinamica de cielorraso: %s" % exc)
+    if not solids:
+        return Part.Shape(), local_zones
+    result = solids[0]
+    for solid in solids[1:]:
+        try:
+            result = result.fuse(solid)
+        except Exception:
+            result = Part.makeCompound([result, solid])
+    try:
+        result = result.removeSplitter()
+    except Exception:
+        pass
+    return result, local_zones
+
+
+def _make_dynamic_ceiling_cut(doc, group, base_shape, zones, elevation, thickness, placement_source, room_label):
+    """Return a native Part::Cut whose opening follows ``placement_source``.
+
+    The full modular ceiling remains fixed in building coordinates. Only the
+    hidden cutter is expressed against the stair Placement, so translating or
+    rotating the stair moves the opening while the ceiling itself stays put.
+    """
+    margin = max(5.0, float(thickness))
+    z_min = float(elevation) - float(thickness) - margin
+    z_max = float(elevation) + margin
+    cutter_shape, local_zones = _dynamic_exclusion_solid(
+        zones, placement_source, z_min, z_max
+    )
+    if cutter_shape is None or cutter_shape.isNull():
+        raise RuntimeError("No se pudo construir el buque dinamico del cielorraso.")
+
+    base = doc.addObject("Part::Feature", "FA_CeilingPanelsBase")
+    base.Label = "Base cielo 600x600 - %s" % room_label
+    base.Shape = base_shape
+    _tag_generated(base, "ceiling_panels_base")
+    set_prop(base, "App::PropertyBool", "FA_ConstructionOnly", "FacilArquitectura", "Geometria auxiliar", True)
+    set_prop(base, "App::PropertyBool", "GameExportExclude", "FacilArquitectura", "Excluir de exportacion de juego", True)
+
+    cutter = doc.addObject("Part::Feature", "FA_CeilingDynamicOpening")
+    cutter.Label = "Buque cielorraso escalera - dinamico"
+    cutter.Shape = cutter_shape
+    _tag_generated(cutter, "ceiling_dynamic_opening")
+    set_prop(cutter, "App::PropertyLink", "FA_PlacementSource", "FacilArquitectura", "Fuente de Placement", placement_source)
+    set_prop(cutter, "App::PropertyString", "FA_LocalExclusionZonesJSON", "FacilArquitectura", "Zonas locales JSON", json.dumps(local_zones, sort_keys=True, separators=(",", ":")))
+    set_prop(cutter, "App::PropertyBool", "FA_ConstructionOnly", "FacilArquitectura", "Volumen auxiliar de construccion", True)
+    set_prop(cutter, "App::PropertyBool", "GameExportExclude", "FacilArquitectura", "Excluir de exportacion de juego", True)
+    try:
+        cutter.setExpression("Placement", "%s.Placement" % placement_source.Name)
+    except Exception as exc:
+        raise RuntimeError("No se pudo enlazar el buque del cielorraso al Placement de la escalera: %s" % exc)
+
+    cut = doc.addObject("Part::Cut", "FA_CeilingPanels")
+    cut.Label = "Cielo 600x600 - %s" % room_label
+    cut.Base = base
+    cut.Tool = cutter
+    try:
+        cut.Refine = True
+    except Exception:
+        pass
+    group.addObject(cut)
+    _tag_generated(cut, "ceiling_panels")
+    set_prop(cut, "App::PropertyBool", "FA_DynamicExclusion", "FacilArquitectura", "Abertura ligada a Placement", True)
+    set_prop(cut, "App::PropertyString", "FA_ExclusionPlacementSourceName", "FacilArquitectura", "Elemento que mueve la abertura", str(getattr(placement_source, "Name", "") or ""))
+    try:
+        base.ViewObject.Visibility = False
+        cutter.ViewObject.Visibility = False
+    except Exception:
+        pass
+    return cut
+
+
+def _create_room_panels(
+    doc,
+    group,
+    spec,
+    plan,
+    elevation,
+    thickness,
+    gap,
+    exclusion_zones_world_mm=None,
+    dynamic_exclusion_source=None,
+):
+    normalized_zones = _normalize_exclusion_zones(exclusion_zones_world_mm or [])
+    dynamic = bool(dynamic_exclusion_source is not None and normalized_zones)
+    # A dynamic opening must keep a complete, fixed ceiling as the Boolean Base.
+    # The historical/static path continues clipping panel faces during generation.
+    exclusion_faces = [] if dynamic else _world_exclusion_faces(spec, normalized_zones)
+    exclusion_union = _fuse_exclusion_faces(exclusion_faces) if exclusion_faces else Part.Shape()
+    exclusion_bbox = _shape_bbox_xy(exclusion_union)
+    plan["exclusion_zone_count"] = len(normalized_zones) if dynamic else len(exclusion_faces)
+    plan["exclusion_boolean_candidate_count"] = 0
     shapes = []
     for cell in plan["panel_cells"]:
         inset_x = min(gap / 2.0, cell["width"] / 4.0)
         inset_y = min(gap / 2.0, cell["depth"] / 4.0)
         width = max(0.1, cell["width"] - 2.0 * inset_x)
         depth = max(0.1, cell["depth"] - 2.0 * inset_y)
-        if spec["geometry"] == "polygon":
-            inset_face = _local_rectangle_face(
-                cell["x0"] + inset_x,
-                cell["y0"] + inset_y,
-                cell["x1"] - inset_x,
-                cell["y1"] - inset_y,
-            )
-            clipped = spec["face"].common(inset_face)
-            for face in list(getattr(clipped, "Faces", []) or []):
-                if float(face.Area) <= MIN_CLIPPED_FACE_AREA_MM2:
-                    continue
-                placed = _place_local_shape(face, spec, elevation - thickness)
-                shapes.append(placed.extrude(FreeCAD.Vector(0.0, 0.0, thickness)))
-        else:
+        cell_bbox = (
+            float(cell["x0"] + inset_x),
+            float(cell["y0"] + inset_y),
+            float(cell["x1"] - inset_x),
+            float(cell["y1"] - inset_y),
+        )
+        touches_exclusion = (not dynamic) and _bbox_overlaps(cell_bbox, exclusion_bbox, tolerance=EPSILON)
+
+        # Fast path: untouched rectangular panel (also used for every panel when
+        # the opening is a downstream parametric Part::Cut).
+        if spec["geometry"] != "polygon" and not touches_exclusion:
             shape = Part.makeBox(
                 width,
                 depth,
@@ -704,13 +994,43 @@ def _create_room_panels(doc, group, spec, plan, elevation, thickness, gap):
             except Exception:
                 pass
             shapes.append(shape)
-    obj = doc.addObject("Part::Feature", "FA_CeilingPanels")
-    obj.Label = "Cielo 600x600 - %s" % _room_name(spec["room"])
-    obj.Shape = Part.makeCompound(shapes) if shapes else Part.Shape()
-    group.addObject(obj)
-    _tag_generated(obj, "ceiling_panels")
-    return obj
+            continue
 
+        inset_face = _local_rectangle_face(
+            cell["x0"] + inset_x,
+            cell["y0"] + inset_y,
+            cell["x1"] - inset_x,
+            cell["y1"] - inset_y,
+        )
+        working = spec["face"].common(inset_face) if spec["geometry"] == "polygon" else inset_face
+        if touches_exclusion and exclusion_bbox is not None:
+            plan["exclusion_boolean_candidate_count"] += 1
+            working = _cut_face_by_exclusions(working, [exclusion_union])
+        for face in list(getattr(working, "Faces", []) or []):
+            if float(face.Area) <= MIN_CLIPPED_FACE_AREA_MM2:
+                continue
+            placed = _place_local_shape(face, spec, elevation - thickness)
+            shapes.append(placed.extrude(FreeCAD.Vector(0.0, 0.0, thickness)))
+
+    compound = Part.makeCompound(shapes) if shapes else Part.Shape()
+    if dynamic:
+        obj = _make_dynamic_ceiling_cut(
+            doc,
+            group,
+            compound,
+            normalized_zones,
+            elevation,
+            thickness,
+            dynamic_exclusion_source,
+            _room_name(spec["room"]),
+        )
+    else:
+        obj = doc.addObject("Part::Feature", "FA_CeilingPanels")
+        obj.Label = "Cielo 600x600 - %s" % _room_name(spec["room"])
+        obj.Shape = compound
+        group.addObject(obj)
+        _tag_generated(obj, "ceiling_panels")
+    return obj
 
 def _create_room_grid(doc, group, spec, plan, elevation):
     edges = []
@@ -750,11 +1070,12 @@ def _set_common_ceiling_properties(obj, room, luminaires, plan, elevation, thick
     set_prop(obj, "App::PropertyInteger", "FA_ClippedCellCount", "FacilArquitectura", "Celdas recortadas por perimetro", plan.get("clipped_cell_count", plan["partial_panels"]))
 
 
-def _write_ceiling_schedule(doc, plans, parent_group, options):
-    old = doc.getObject(CEILING_SHEET_NAME)
+def _write_ceiling_schedule(doc, plans, parent_group, options, sheet_name=CEILING_SHEET_NAME):
+    sheet_name = str(sheet_name or CEILING_SHEET_NAME)
+    old = doc.getObject(sheet_name)
     if old is not None:
         doc.removeObject(old.Name)
-    sheet = doc.addObject("Spreadsheet::Sheet", CEILING_SHEET_NAME)
+    sheet = doc.addObject("Spreadsheet::Sheet", sheet_name)
     sheet.Label = "Cuadro de cielos suspendidos"
     headers = [
         "Recinto", "Geometria", "Area_recinto_m2", "Modulo_mm", "Cota_mm", "Filas", "Columnas",

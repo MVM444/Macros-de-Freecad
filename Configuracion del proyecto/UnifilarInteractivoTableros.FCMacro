@@ -1,0 +1,1000 @@
+# -*- coding: utf-8 -*-
+# =============================================================================
+# Name: UnifilarInteractivoTableros.FCMacro
+# Purpose:
+#   Prototype of an interactive single-line electrical diagram viewer/editor
+#   for ElectricCR inside FreeCAD.
+#
+# Main behavior:
+#   - Opens a Visio-like 2D window inside the FreeCAD MDI area when possible.
+#   - Provides a symbol palette for service entry, grounding, panelboards,
+#     breakers, surge protection (SPD), and UPS.
+#   - Symbols can be moved, selected, renamed, connected, and deleted.
+#   - The scene is driven by a JSON-compatible logical model.
+#   - The current scene can be exported to SVG for future TechDraw use.
+#
+# Modification rules:
+#   - Keep the logical model independent from FreeCADGui and Qt whenever
+#     practical. Future model readers should return the same JSON-compatible
+#     structure consumed by UnifilarWidget.load_model().
+#   - Do not scan every FreeCAD object from the renderer. Electrical discovery
+#     belongs in a separate adapter/core layer.
+#   - Preserve existing working behavior when extending this file.
+#   - Internal identifiers and property names should remain ASCII-safe.
+#
+# Version: 0.1.0
+# Date: 2026-09-10 20:32 -0600 (Costa Rica)
+# Target: FreeCAD 1.1.3
+# =============================================================================
+
+from __future__ import annotations
+
+import math
+
+import FreeCAD as App
+import FreeCADGui as Gui
+
+try:
+    from PySide import QtCore, QtGui, QtWidgets
+    try:
+        from PySide import QtSvg
+    except Exception:
+        QtSvg = None
+except Exception:
+    try:
+        from PySide6 import QtCore, QtGui, QtWidgets, QtSvg
+    except Exception:
+        from PySide2 import QtCore, QtGui, QtWidgets, QtSvg
+
+
+APP_TITLE = "ElectricCR - Unifilar interactivo"
+LOG_PREFIX = "[ElectricCR.Unifilar]"
+
+
+# -----------------------------------------------------------------------------
+# Compatibility helpers
+# -----------------------------------------------------------------------------
+
+def _enum(owner, direct_name, scoped_name, member_name):
+    """Return a Qt enum member compatible with PySide2/PySide6 style APIs."""
+    direct = getattr(owner, direct_name, None)
+    if direct is not None:
+        return direct
+    scoped = getattr(owner, scoped_name)
+    return getattr(scoped, member_name)
+
+
+def _qt_flag(direct_name, scoped_name, member_name):
+    return _enum(QtCore.Qt, direct_name, scoped_name, member_name)
+
+
+def _gitem_flag(direct_name, member_name):
+    direct = getattr(QtWidgets.QGraphicsItem, direct_name, None)
+    if direct is not None:
+        return direct
+    return getattr(QtWidgets.QGraphicsItem.GraphicsItemFlag, member_name)
+
+
+def _gitem_change(direct_name, member_name):
+    direct = getattr(QtWidgets.QGraphicsItem, direct_name, None)
+    if direct is not None:
+        return direct
+    return getattr(QtWidgets.QGraphicsItem.GraphicsItemChange, member_name)
+
+
+def _view_drag_mode(direct_name, member_name):
+    direct = getattr(QtWidgets.QGraphicsView, direct_name, None)
+    if direct is not None:
+        return direct
+    return getattr(QtWidgets.QGraphicsView.DragMode, member_name)
+
+
+def _painter_hint(direct_name, member_name):
+    direct = getattr(QtGui.QPainter, direct_name, None)
+    if direct is not None:
+        return direct
+    return getattr(QtGui.QPainter.RenderHint, member_name)
+
+
+def _frame_shape(direct_name, member_name):
+    direct = getattr(QtWidgets.QFrame, direct_name, None)
+    if direct is not None:
+        return direct
+    return getattr(QtWidgets.QFrame.Shape, member_name)
+
+
+def _message_icon(direct_name, member_name):
+    direct = getattr(QtWidgets.QMessageBox, direct_name, None)
+    if direct is not None:
+        return direct
+    return getattr(QtWidgets.QMessageBox.Icon, member_name)
+
+
+def _standard_button(direct_name, member_name):
+    direct = getattr(QtWidgets.QMessageBox, direct_name, None)
+    if direct is not None:
+        return direct
+    return getattr(QtWidgets.QMessageBox.StandardButton, member_name)
+
+
+ALIGN_CENTER = _qt_flag("AlignCenter", "AlignmentFlag", "AlignCenter")
+ALIGN_LEFT = _qt_flag("AlignLeft", "AlignmentFlag", "AlignLeft")
+ALIGN_VCENTER = _qt_flag("AlignVCenter", "AlignmentFlag", "AlignVCenter")
+KEEP_ASPECT = _qt_flag("KeepAspectRatio", "AspectRatioMode", "KeepAspectRatio")
+CTRL_MOD = _qt_flag("ControlModifier", "KeyboardModifier", "ControlModifier")
+WA_DELETE_ON_CLOSE = _qt_flag(
+    "WA_DeleteOnClose", "WidgetAttribute", "WA_DeleteOnClose"
+)
+
+ITEM_MOVABLE = _gitem_flag("ItemIsMovable", "ItemIsMovable")
+ITEM_SELECTABLE = _gitem_flag("ItemIsSelectable", "ItemIsSelectable")
+ITEM_SENDS_GEOMETRY = _gitem_flag(
+    "ItemSendsGeometryChanges", "ItemSendsGeometryChanges"
+)
+ITEM_POSITION_CHANGED = _gitem_change(
+    "ItemPositionHasChanged", "ItemPositionHasChanged"
+)
+RUBBER_BAND_DRAG = _view_drag_mode("RubberBandDrag", "RubberBandDrag")
+ANTIALIASING = _painter_hint("Antialiasing", "Antialiasing")
+NO_FRAME = _frame_shape("NoFrame", "NoFrame")
+
+
+# -----------------------------------------------------------------------------
+# Logging
+# -----------------------------------------------------------------------------
+
+def log(message):
+    text = "%s %s" % (LOG_PREFIX, message)
+    try:
+        App.Console.PrintMessage(text + "\n")
+    except Exception:
+        print(text)
+
+
+def warn(message):
+    text = "%s WARNING: %s" % (LOG_PREFIX, message)
+    try:
+        App.Console.PrintWarning(text + "\n")
+    except Exception:
+        print(text)
+
+
+# -----------------------------------------------------------------------------
+# Pure logical model
+# -----------------------------------------------------------------------------
+
+def build_demo_model():
+    """Return a small JSON-compatible demo model with the initial symbol set."""
+    return {
+        "schema": "ElectricCR.Unifilar/1",
+        "nodes": [
+            {
+                "id": "service_main",
+                "type": "service",
+                "title": "Acometida",
+                "subtitle": "Red de distribucion",
+                "x": 0.0,
+                "y": -330.0,
+            },
+            {
+                "id": "breaker_main",
+                "type": "breaker",
+                "title": "Breaker principal",
+                "subtitle": "Principal",
+                "x": 0.0,
+                "y": -190.0,
+            },
+            {
+                "id": "panel_tp",
+                "type": "panel",
+                "title": "TP",
+                "subtitle": "Tablero principal",
+                "x": 0.0,
+                "y": -40.0,
+            },
+            {
+                "id": "ground_tp",
+                "type": "ground",
+                "title": "Puesta a tierra",
+                "subtitle": "TP",
+                "x": -240.0,
+                "y": 10.0,
+            },
+            {
+                "id": "spd_tp",
+                "type": "spd",
+                "title": "SPD",
+                "subtitle": "Picos y transientes",
+                "x": 240.0,
+                "y": -20.0,
+            },
+            {
+                "id": "ups_01",
+                "type": "ups",
+                "title": "UPS-01",
+                "subtitle": "Cargas criticas",
+                "x": 240.0,
+                "y": 130.0,
+            },
+            {
+                "id": "breaker_tp01",
+                "type": "breaker",
+                "title": "TP-01",
+                "subtitle": "Circuito 01",
+                "x": -150.0,
+                "y": 210.0,
+            },
+            {
+                "id": "breaker_tp02",
+                "type": "breaker",
+                "title": "TP-02",
+                "subtitle": "Circuito 02",
+                "x": 0.0,
+                "y": 210.0,
+            },
+            {
+                "id": "breaker_tp03",
+                "type": "breaker",
+                "title": "TP-03",
+                "subtitle": "Circuito 03",
+                "x": 150.0,
+                "y": 210.0,
+            },
+        ],
+        "connections": [
+            {"source": "service_main", "target": "breaker_main"},
+            {"source": "breaker_main", "target": "panel_tp"},
+            {"source": "panel_tp", "target": "ground_tp"},
+            {"source": "panel_tp", "target": "spd_tp"},
+            {"source": "panel_tp", "target": "ups_01"},
+            {"source": "panel_tp", "target": "breaker_tp01"},
+            {"source": "panel_tp", "target": "breaker_tp02"},
+            {"source": "panel_tp", "target": "breaker_tp03"},
+        ],
+    }
+
+
+def validate_model(model):
+    """Validate the minimum logical contract without depending on Qt/FreeCAD."""
+    if not isinstance(model, dict):
+        raise ValueError("model must be a dictionary")
+
+    nodes = model.get("nodes", [])
+    connections = model.get("connections", [])
+    if not isinstance(nodes, list) or not isinstance(connections, list):
+        raise ValueError("nodes and connections must be lists")
+
+    ids = set()
+    allowed_types = {"service", "ground", "panel", "breaker", "spd", "ups"}
+
+    for node in nodes:
+        if not isinstance(node, dict):
+            raise ValueError("every node must be a dictionary")
+        node_id = str(node.get("id", "")).strip()
+        node_type = str(node.get("type", "")).strip().lower()
+        if not node_id:
+            raise ValueError("every node needs an id")
+        if node_id in ids:
+            raise ValueError("duplicate node id: %s" % node_id)
+        if node_type not in allowed_types:
+            raise ValueError("unsupported node type: %s" % node_type)
+        ids.add(node_id)
+
+    for connection in connections:
+        source = str(connection.get("source", ""))
+        target = str(connection.get("target", ""))
+        if source not in ids or target not in ids:
+            raise ValueError("connection references an unknown node")
+
+    return True
+
+
+# -----------------------------------------------------------------------------
+# Graphics items
+# -----------------------------------------------------------------------------
+
+class ConnectionItem(QtWidgets.QGraphicsPathItem):
+    """Orthogonal connection between two SymbolNode items."""
+
+    def __init__(self, source_node, target_node):
+        super().__init__()
+        self.source_node = source_node
+        self.target_node = target_node
+        self.setZValue(-20.0)
+
+        pen = QtGui.QPen(QtGui.QColor(35, 35, 35))
+        pen.setWidthF(1.8)
+        self.setPen(pen)
+
+        source_node.connections.append(self)
+        target_node.connections.append(self)
+        self.update_path()
+
+    def detach(self):
+        for node in (self.source_node, self.target_node):
+            if self in node.connections:
+                node.connections.remove(self)
+
+    def update_path(self):
+        if self.source_node.scene() is None or self.target_node.scene() is None:
+            return
+
+        a, b, orientation = self._anchors()
+        path = QtGui.QPainterPath(a)
+
+        if orientation == "vertical":
+            mid_y = (a.y() + b.y()) * 0.5
+            path.lineTo(a.x(), mid_y)
+            path.lineTo(b.x(), mid_y)
+            path.lineTo(b)
+        else:
+            mid_x = (a.x() + b.x()) * 0.5
+            path.lineTo(mid_x, a.y())
+            path.lineTo(mid_x, b.y())
+            path.lineTo(b)
+
+        self.setPath(path)
+
+    def _anchors(self):
+        s = self.source_node.sceneBoundingRect()
+        t = self.target_node.sceneBoundingRect()
+        sc = s.center()
+        tc = t.center()
+        dx = tc.x() - sc.x()
+        dy = tc.y() - sc.y()
+
+        if abs(dy) >= abs(dx):
+            if dy >= 0:
+                a = QtCore.QPointF(sc.x(), s.bottom())
+                b = QtCore.QPointF(tc.x(), t.top())
+            else:
+                a = QtCore.QPointF(sc.x(), s.top())
+                b = QtCore.QPointF(tc.x(), t.bottom())
+            return a, b, "vertical"
+
+        if dx >= 0:
+            a = QtCore.QPointF(s.right(), sc.y())
+            b = QtCore.QPointF(t.left(), tc.y())
+        else:
+            a = QtCore.QPointF(s.left(), sc.y())
+            b = QtCore.QPointF(t.right(), tc.y())
+        return a, b, "horizontal"
+
+
+class SymbolNode(QtWidgets.QGraphicsObject):
+    """Movable electrical symbol with a stable logical id and type."""
+
+    WIDTH = 128.0
+    HEIGHT = 104.0
+
+    def __init__(self, node_id, symbol_type, title, subtitle=""):
+        super().__init__()
+        self.node_id = str(node_id)
+        self.symbol_type = str(symbol_type).lower()
+        self.title = str(title)
+        self.subtitle = str(subtitle)
+        self.connections = []
+
+        self.setFlags(ITEM_MOVABLE | ITEM_SELECTABLE | ITEM_SENDS_GEOMETRY)
+        self.setCursor(QtGui.QCursor(_qt_flag("OpenHandCursor", "CursorShape", "OpenHandCursor")))
+        self.setToolTip(self._tooltip())
+
+    def _tooltip(self):
+        text = "%s\n%s" % (self.title, self.symbol_type)
+        if self.subtitle:
+            text += "\n" + self.subtitle
+        text += "\nDoble clic: editar texto"
+        return text
+
+    def boundingRect(self):
+        return QtCore.QRectF(
+            -self.WIDTH * 0.5,
+            -self.HEIGHT * 0.5,
+            self.WIDTH,
+            self.HEIGHT,
+        )
+
+    def paint(self, painter, option, widget=None):
+        painter.setRenderHint(ANTIALIASING, True)
+
+        pen = QtGui.QPen(QtGui.QColor(20, 20, 20))
+        pen.setWidthF(1.8)
+        painter.setPen(pen)
+        painter.setBrush(QtGui.QBrush(QtGui.QColor(255, 255, 255)))
+
+        self._draw_symbol(painter)
+        self._draw_labels(painter)
+
+        if self.isSelected():
+            selected_pen = QtGui.QPen(QtGui.QColor(60, 120, 220))
+            selected_pen.setWidthF(1.2)
+            selected_pen.setStyle(_qt_flag("DashLine", "PenStyle", "DashLine"))
+            painter.setPen(selected_pen)
+            painter.setBrush(_qt_flag("NoBrush", "BrushStyle", "NoBrush"))
+            painter.drawRoundedRect(self.boundingRect().adjusted(2, 2, -2, -2), 5, 5)
+
+    def _draw_symbol(self, painter):
+        st = self.symbol_type
+        if st == "service":
+            self._draw_service(painter)
+        elif st == "ground":
+            self._draw_ground(painter)
+        elif st == "panel":
+            self._draw_panel(painter)
+        elif st == "breaker":
+            self._draw_breaker(painter)
+        elif st == "spd":
+            self._draw_spd(painter)
+        elif st == "ups":
+            self._draw_ups(painter)
+        else:
+            painter.drawRect(QtCore.QRectF(-24, -24, 48, 48))
+
+    def _draw_service(self, painter):
+        painter.drawLine(QtCore.QPointF(-34, -22), QtCore.QPointF(34, -22))
+        painter.drawLine(QtCore.QPointF(0, -22), QtCore.QPointF(0, 18))
+        painter.drawLine(QtCore.QPointF(-12, -12), QtCore.QPointF(0, -22))
+        painter.drawLine(QtCore.QPointF(12, -12), QtCore.QPointF(0, -22))
+
+    def _draw_ground(self, painter):
+        painter.drawLine(QtCore.QPointF(0, -28), QtCore.QPointF(0, 2))
+        painter.drawLine(QtCore.QPointF(-24, 2), QtCore.QPointF(24, 2))
+        painter.drawLine(QtCore.QPointF(-17, 10), QtCore.QPointF(17, 10))
+        painter.drawLine(QtCore.QPointF(-10, 18), QtCore.QPointF(10, 18))
+
+    def _draw_panel(self, painter):
+        rect = QtCore.QRectF(-36, -30, 72, 55)
+        painter.drawRect(rect)
+        painter.drawLine(QtCore.QPointF(-27, -18), QtCore.QPointF(27, -18))
+        painter.drawLine(QtCore.QPointF(-27, -8), QtCore.QPointF(27, -8))
+        painter.drawLine(QtCore.QPointF(-27, 2), QtCore.QPointF(27, 2))
+        painter.drawLine(QtCore.QPointF(-27, 12), QtCore.QPointF(27, 12))
+
+    def _draw_breaker(self, painter):
+        painter.drawLine(QtCore.QPointF(0, -34), QtCore.QPointF(0, -20))
+        rect = QtCore.QRectF(-18, -20, 36, 36)
+        painter.drawRect(rect)
+        painter.drawLine(QtCore.QPointF(-11, 9), QtCore.QPointF(11, -13))
+        painter.drawLine(QtCore.QPointF(0, 16), QtCore.QPointF(0, 28))
+
+    def _draw_spd(self, painter):
+        rect = QtCore.QRectF(-28, -28, 56, 48)
+        painter.drawRect(rect)
+        points = [
+            QtCore.QPointF(-8, -17),
+            QtCore.QPointF(3, -17),
+            QtCore.QPointF(-2, -4),
+            QtCore.QPointF(10, -4),
+            QtCore.QPointF(-8, 12),
+            QtCore.QPointF(-2, 2),
+            QtCore.QPointF(-13, 2),
+        ]
+        poly = QtGui.QPolygonF(points)
+        painter.drawPolyline(poly)
+
+    def _draw_ups(self, painter):
+        rect = QtCore.QRectF(-34, -28, 68, 48)
+        painter.drawRoundedRect(rect, 4, 4)
+        font = painter.font()
+        font.setBold(True)
+        font.setPointSizeF(9.0)
+        painter.setFont(font)
+        painter.drawText(rect, ALIGN_CENTER, "UPS")
+
+    def _draw_labels(self, painter):
+        font = painter.font()
+        font.setPointSizeF(8.5)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.setPen(QtGui.QPen(QtGui.QColor(20, 20, 20)))
+
+        title_rect = QtCore.QRectF(-60, 27, 120, 20)
+        painter.drawText(title_rect, ALIGN_CENTER, self.title)
+
+        if self.subtitle:
+            font.setPointSizeF(7.2)
+            font.setBold(False)
+            painter.setFont(font)
+            sub_rect = QtCore.QRectF(-62, 44, 124, 18)
+            painter.drawText(sub_rect, ALIGN_CENTER, self.subtitle)
+
+    def itemChange(self, change, value):
+        if change == ITEM_POSITION_CHANGED:
+            for connection in list(self.connections):
+                connection.update_path()
+        return super().itemChange(change, value)
+
+    def mouseDoubleClickEvent(self, event):
+        title, ok = QtWidgets.QInputDialog.getText(
+            None,
+            "Editar simbolo",
+            "Titulo:",
+            text=self.title,
+        )
+        if ok:
+            subtitle, ok2 = QtWidgets.QInputDialog.getText(
+                None,
+                "Editar simbolo",
+                "Subtitulo:",
+                text=self.subtitle,
+            )
+            self.title = str(title).strip() or self.title
+            if ok2:
+                self.subtitle = str(subtitle).strip()
+            self.setToolTip(self._tooltip())
+            self.update()
+        super().mouseDoubleClickEvent(event)
+
+
+class UnifilarScene(QtWidgets.QGraphicsScene):
+    """Scene with a light drafting grid for a Visio-like workspace."""
+
+    GRID = 20.0
+
+    def drawBackground(self, painter, rect):
+        super().drawBackground(painter, rect)
+        painter.save()
+        painter.setPen(QtGui.QPen(QtGui.QColor(232, 232, 232), 0.0))
+
+        left = math.floor(rect.left() / self.GRID) * self.GRID
+        top = math.floor(rect.top() / self.GRID) * self.GRID
+
+        x = left
+        while x <= rect.right():
+            painter.drawLine(QtCore.QPointF(x, rect.top()), QtCore.QPointF(x, rect.bottom()))
+            x += self.GRID
+
+        y = top
+        while y <= rect.bottom():
+            painter.drawLine(QtCore.QPointF(rect.left(), y), QtCore.QPointF(rect.right(), y))
+            y += self.GRID
+
+        painter.restore()
+
+
+class UnifilarGraphicsView(QtWidgets.QGraphicsView):
+    """Graphics view with wheel zoom and rubber-band selection."""
+
+    def __init__(self, scene, parent=None):
+        super().__init__(scene, parent)
+        self.setRenderHint(ANTIALIASING, True)
+        self.setDragMode(RUBBER_BAND_DRAG)
+        self.setFrameShape(NO_FRAME)
+        self.setBackgroundBrush(QtGui.QBrush(QtGui.QColor(255, 255, 255)))
+
+    def wheelEvent(self, event):
+        modifiers = event.modifiers()
+        if modifiers & CTRL_MOD:
+            delta = event.angleDelta().y()
+            factor = 1.15 if delta > 0 else 1.0 / 1.15
+            current = self.transform().m11()
+            new_scale = current * factor
+            if 0.15 <= new_scale <= 8.0:
+                self.scale(factor, factor)
+            event.accept()
+            return
+        super().wheelEvent(event)
+
+
+# -----------------------------------------------------------------------------
+# Main interactive widget
+# -----------------------------------------------------------------------------
+
+class UnifilarWidget(QtWidgets.QWidget):
+    SYMBOLS = [
+        ("service", "Acometida"),
+        ("ground", "Puesta a tierra"),
+        ("panel", "Tablero"),
+        ("breaker", "Breaker"),
+        ("spd", "Protector SPD"),
+        ("ups", "UPS"),
+    ]
+
+    DEFAULT_TEXT = {
+        "service": ("Acometida", "Red de distribucion"),
+        "ground": ("Puesta a tierra", "Sistema de tierra"),
+        "panel": ("TP", "Tablero"),
+        "breaker": ("Breaker", "Proteccion"),
+        "spd": ("SPD", "Picos y transientes"),
+        "ups": ("UPS", "Respaldo"),
+    }
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("ElectricCR_UnifilarWidget")
+        self.node_counter = 0
+        self.nodes = {}
+        self.connections = []
+
+        self.scene = UnifilarScene(self)
+        self.scene.setSceneRect(-1500, -1000, 3000, 2200)
+        self.view = UnifilarGraphicsView(self.scene, self)
+
+        self._build_ui()
+        self.scene.selectionChanged.connect(self._update_status)
+        self.load_model(build_demo_model())
+
+    def _build_ui(self):
+        root = QtWidgets.QHBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        palette = QtWidgets.QWidget(self)
+        palette.setMinimumWidth(180)
+        palette.setMaximumWidth(230)
+        palette_layout = QtWidgets.QVBoxLayout(palette)
+        palette_layout.setContentsMargins(10, 10, 10, 10)
+        palette_layout.setSpacing(7)
+
+        title = QtWidgets.QLabel("Simbolos electricos", palette)
+        title_font = title.font()
+        title_font.setBold(True)
+        title.setFont(title_font)
+        palette_layout.addWidget(title)
+
+        info = QtWidgets.QLabel(
+            "Agregar, mover y conectar.\nDoble clic para editar texto.", palette
+        )
+        info.setWordWrap(True)
+        palette_layout.addWidget(info)
+
+        for symbol_type, label in self.SYMBOLS:
+            button = QtWidgets.QPushButton(label, palette)
+            button.setMinimumHeight(34)
+            button.clicked.connect(
+                lambda checked=False, st=symbol_type: self.add_symbol_center(st)
+            )
+            palette_layout.addWidget(button)
+
+        palette_layout.addSpacing(8)
+
+        connect_button = QtWidgets.QPushButton("Conectar seleccionados", palette)
+        connect_button.clicked.connect(self.connect_selected)
+        palette_layout.addWidget(connect_button)
+
+        delete_button = QtWidgets.QPushButton("Eliminar seleccion", palette)
+        delete_button.clicked.connect(self.delete_selected)
+        palette_layout.addWidget(delete_button)
+
+        palette_layout.addSpacing(8)
+
+        demo_button = QtWidgets.QPushButton("Restaurar demo", palette)
+        demo_button.clicked.connect(lambda: self.load_model(build_demo_model()))
+        palette_layout.addWidget(demo_button)
+
+        fit_button = QtWidgets.QPushButton("Ajustar vista", palette)
+        fit_button.clicked.connect(self.fit_all)
+        palette_layout.addWidget(fit_button)
+
+        svg_button = QtWidgets.QPushButton("Exportar SVG", palette)
+        svg_button.clicked.connect(self.export_svg_dialog)
+        palette_layout.addWidget(svg_button)
+
+        palette_layout.addStretch(1)
+
+        self.status_label = QtWidgets.QLabel("", palette)
+        self.status_label.setWordWrap(True)
+        palette_layout.addWidget(self.status_label)
+
+        separator = QtWidgets.QFrame(self)
+        separator.setFrameShape(_frame_shape("VLine", "VLine"))
+        separator.setFrameShadow(
+            _enum(QtWidgets.QFrame, "Sunken", "Shadow", "Sunken")
+        )
+
+        root.addWidget(palette)
+        root.addWidget(separator)
+        root.addWidget(self.view, 1)
+
+    def clear_all(self):
+        for connection in list(self.connections):
+            connection.detach()
+        self.connections = []
+        self.nodes = {}
+        self.scene.clear()
+        self.node_counter = 0
+        self._update_status()
+
+    def load_model(self, model):
+        validate_model(model)
+        self.clear_all()
+
+        for node_data in model.get("nodes", []):
+            node = self.add_symbol(
+                symbol_type=node_data["type"],
+                node_id=node_data["id"],
+                title=node_data.get("title", node_data["type"]),
+                subtitle=node_data.get("subtitle", ""),
+                pos=QtCore.QPointF(
+                    float(node_data.get("x", 0.0)),
+                    float(node_data.get("y", 0.0)),
+                ),
+            )
+
+        for connection_data in model.get("connections", []):
+            self.add_connection(
+                self.nodes[connection_data["source"]],
+                self.nodes[connection_data["target"]],
+            )
+
+        log(
+            "Loaded model: %d nodes, %d connections"
+            % (len(self.nodes), len(self.connections))
+        )
+        QtCore.QTimer.singleShot(0, self.fit_all)
+
+    def to_model(self):
+        nodes = []
+        for node_id, node in self.nodes.items():
+            pos = node.pos()
+            nodes.append(
+                {
+                    "id": node_id,
+                    "type": node.symbol_type,
+                    "title": node.title,
+                    "subtitle": node.subtitle,
+                    "x": float(pos.x()),
+                    "y": float(pos.y()),
+                }
+            )
+
+        connections = []
+        for connection in self.connections:
+            connections.append(
+                {
+                    "source": connection.source_node.node_id,
+                    "target": connection.target_node.node_id,
+                }
+            )
+
+        return {
+            "schema": "ElectricCR.Unifilar/1",
+            "nodes": nodes,
+            "connections": connections,
+        }
+
+    def add_symbol_center(self, symbol_type):
+        center = self.view.mapToScene(self.view.viewport().rect().center())
+        offset = (self.node_counter % 6) * 18.0
+        pos = QtCore.QPointF(center.x() + offset, center.y() + offset)
+        self.add_symbol(symbol_type=symbol_type, pos=pos)
+
+    def add_symbol(
+        self,
+        symbol_type,
+        node_id=None,
+        title=None,
+        subtitle=None,
+        pos=None,
+    ):
+        symbol_type = str(symbol_type).lower()
+        if symbol_type not in self.DEFAULT_TEXT:
+            raise ValueError("Unsupported symbol type: %s" % symbol_type)
+
+        self.node_counter += 1
+        if not node_id:
+            node_id = "%s_%03d" % (symbol_type, self.node_counter)
+        node_id = str(node_id)
+
+        if node_id in self.nodes:
+            raise ValueError("Duplicate node id: %s" % node_id)
+
+        default_title, default_subtitle = self.DEFAULT_TEXT[symbol_type]
+        node = SymbolNode(
+            node_id=node_id,
+            symbol_type=symbol_type,
+            title=default_title if title is None else title,
+            subtitle=default_subtitle if subtitle is None else subtitle,
+        )
+        self.scene.addItem(node)
+        node.setPos(pos or QtCore.QPointF(0.0, 0.0))
+        self.nodes[node_id] = node
+        log("Added symbol %s (%s)" % (node_id, symbol_type))
+        return node
+
+    def add_connection(self, source_node, target_node):
+        if source_node is target_node:
+            warn("A node cannot connect to itself")
+            return None
+
+        for existing in self.connections:
+            pair = {existing.source_node.node_id, existing.target_node.node_id}
+            if pair == {source_node.node_id, target_node.node_id}:
+                warn("Connection already exists")
+                return existing
+
+        connection = ConnectionItem(source_node, target_node)
+        self.scene.addItem(connection)
+        self.connections.append(connection)
+        log("Connected %s -> %s" % (source_node.node_id, target_node.node_id))
+        return connection
+
+    def connect_selected(self):
+        selected_nodes = [
+            item for item in self.scene.selectedItems() if isinstance(item, SymbolNode)
+        ]
+        if len(selected_nodes) != 2:
+            QtWidgets.QMessageBox.information(
+                self,
+                APP_TITLE,
+                "Seleccione exactamente dos simbolos para conectarlos.",
+            )
+            return
+
+        selected_nodes.sort(key=lambda n: (n.scenePos().y(), n.scenePos().x()))
+        self.add_connection(selected_nodes[0], selected_nodes[1])
+
+    def delete_selected(self):
+        selected = list(self.scene.selectedItems())
+        selected_nodes = [item for item in selected if isinstance(item, SymbolNode)]
+        selected_connections = [
+            item for item in selected if isinstance(item, ConnectionItem)
+        ]
+
+        connections_to_remove = set(selected_connections)
+        for node in selected_nodes:
+            connections_to_remove.update(node.connections)
+
+        for connection in list(connections_to_remove):
+            if connection in self.connections:
+                self.connections.remove(connection)
+            connection.detach()
+            if connection.scene() is self.scene:
+                self.scene.removeItem(connection)
+
+        for node in selected_nodes:
+            self.nodes.pop(node.node_id, None)
+            if node.scene() is self.scene:
+                self.scene.removeItem(node)
+
+        log(
+            "Deleted %d nodes and %d connections"
+            % (len(selected_nodes), len(connections_to_remove))
+        )
+        self._update_status()
+
+    def fit_all(self):
+        bounds = self.scene.itemsBoundingRect()
+        if bounds.isNull() or bounds.width() <= 0 or bounds.height() <= 0:
+            return
+        bounds = bounds.adjusted(-70, -70, 70, 70)
+        self.view.fitInView(bounds, KEEP_ASPECT)
+
+    def _update_status(self):
+        selected_count = len(
+            [item for item in self.scene.selectedItems() if isinstance(item, SymbolNode)]
+        )
+        self.status_label.setText(
+            "%d simbolos\n%d conexiones\n%d seleccionados"
+            % (len(self.nodes), len(self.connections), selected_count)
+        )
+
+    def export_svg_dialog(self):
+        if QtSvg is None:
+            QtWidgets.QMessageBox.warning(
+                self,
+                APP_TITLE,
+                "QtSvg no esta disponible en este entorno de FreeCAD.",
+            )
+            return
+
+        filename, _selected_filter = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            "Exportar unifilar a SVG",
+            "ElectricCR_Unifilar.svg",
+            "SVG (*.svg)",
+        )
+        if not filename:
+            return
+        if not filename.lower().endswith(".svg"):
+            filename += ".svg"
+
+        self.export_svg(filename)
+
+    def export_svg(self, filename):
+        if QtSvg is None:
+            raise RuntimeError("QtSvg is not available")
+
+        bounds = self.scene.itemsBoundingRect().adjusted(-30, -30, 30, 30)
+        if bounds.width() <= 0 or bounds.height() <= 0:
+            raise RuntimeError("The scene is empty")
+
+        generator = QtSvg.QSvgGenerator()
+        generator.setFileName(filename)
+        pixel_width = max(400, min(5000, int(math.ceil(bounds.width() * 2.0))))
+        pixel_height = max(300, min(5000, int(math.ceil(bounds.height() * 2.0))))
+        generator.setSize(QtCore.QSize(pixel_width, pixel_height))
+        generator.setViewBox(bounds)
+        generator.setTitle("ElectricCR - Unifilar")
+        generator.setDescription(
+            "SVG generated from ElectricCR interactive single-line diagram"
+        )
+
+        painter = QtGui.QPainter(generator)
+        try:
+            painter.setRenderHint(ANTIALIASING, True)
+            self.scene.render(painter, bounds, bounds, KEEP_ASPECT)
+        finally:
+            painter.end()
+
+        log("SVG exported: %s" % filename)
+        QtWidgets.QMessageBox.information(
+            self,
+            APP_TITLE,
+            "SVG exportado correctamente:\n%s" % filename,
+        )
+
+
+# -----------------------------------------------------------------------------
+# FreeCAD window integration
+# -----------------------------------------------------------------------------
+
+_ECR_UNIFILAR_WIDGET = None
+_ECR_UNIFILAR_SUBWINDOW = None
+
+
+def _find_mdi_area(main_window):
+    central = main_window.centralWidget()
+    if isinstance(central, QtWidgets.QMdiArea):
+        return central
+
+    areas = main_window.findChildren(QtWidgets.QMdiArea)
+    if not areas:
+        return None
+
+    visible = [area for area in areas if area.isVisible()]
+    if visible:
+        visible.sort(
+            key=lambda area: area.width() * area.height(),
+            reverse=True,
+        )
+        return visible[0]
+
+    areas.sort(key=lambda area: area.width() * area.height(), reverse=True)
+    return areas[0]
+
+
+def show_unifilar_window():
+    """Open or raise the ElectricCR interactive unifilar window."""
+    global _ECR_UNIFILAR_WIDGET, _ECR_UNIFILAR_SUBWINDOW
+
+    try:
+        if _ECR_UNIFILAR_SUBWINDOW is not None:
+            _ECR_UNIFILAR_SUBWINDOW.showNormal()
+            _ECR_UNIFILAR_SUBWINDOW.raise_()
+            _ECR_UNIFILAR_SUBWINDOW.activateWindow()
+            log("Existing unifilar window activated")
+            return _ECR_UNIFILAR_WIDGET
+    except RuntimeError:
+        _ECR_UNIFILAR_WIDGET = None
+        _ECR_UNIFILAR_SUBWINDOW = None
+
+    main_window = Gui.getMainWindow()
+    widget = UnifilarWidget()
+    mdi = _find_mdi_area(main_window)
+
+    if mdi is not None:
+        subwindow = QtWidgets.QMdiSubWindow()
+        subwindow.setAttribute(WA_DELETE_ON_CLOSE, True)
+        subwindow.setWindowTitle(APP_TITLE)
+        subwindow.setWidget(widget)
+        mdi.addSubWindow(subwindow)
+        subwindow.resize(1150, 760)
+        subwindow.show()
+        _ECR_UNIFILAR_SUBWINDOW = subwindow
+        log("Unifilar opened inside FreeCAD MDI area")
+    else:
+        widget.setWindowTitle(APP_TITLE)
+        widget.resize(1150, 760)
+        widget.show()
+        widget.raise_()
+        widget.activateWindow()
+        _ECR_UNIFILAR_SUBWINDOW = widget
+        warn("No QMdiArea found; opened as a standalone Qt window")
+
+    _ECR_UNIFILAR_WIDGET = widget
+    return widget
+
+
+# Run when the macro is executed directly from FreeCAD.
+show_unifilar_window()

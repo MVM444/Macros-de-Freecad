@@ -1,0 +1,2271 @@
+{
+  "timestamp_utc": "2026-09-08T23:42:27.527341+00:00",
+  "freecad": "1.1.3",
+  "document": "A1_workbench_regression",
+  "file": "C:/Users/marco/AppData/Local/Temp/ecr_a1_acceptance_20260908_5_mtcyyd/A1_workbench_regression.FCStd",
+  "object_count": 225,
+  "owner_count": 11,
+  "plan_count": 11,
+  "owners": [
+    {
+      "name": "Link_Apagador_Rectangle006",
+      "label": "Apagador - Rectangle006",
+      "TypeId": "App::Link",
+      "RepresentationContract": "PhysicalDocumentationA1",
+      "PropertiesList": [
+        "AlturaMontaje",
+        "AlturaRel",
+        "AreaRecinto",
+        "ColoredElements",
+        "DistanciaJamba",
+        "DocumentationPlaneZ",
+        "DocumentationRepresentationName",
+        "ECR_DoorKey",
+        "ECR_GeneradoPor",
+        "ECR_SideOverride",
+        "ElementCount",
+        "ElementList",
+        "ElementUID",
+        "ElementoOrigen",
+        "ExpressionEngine",
+        "Host",
+        "KeyRegistro",
+        "Label",
+        "Label2",
+        "LinkClaimChild",
+        "LinkCopyOnChange",
+        "LinkCopyOnChangeGroup",
+        "LinkCopyOnChangeSource",
+        "LinkCopyOnChangeTouched",
+        "LinkExecute",
+        "LinkPlacement",
+        "LinkTransform",
+        "LinkedObject",
+        "ModoVisual",
+        "MostrarModelo3D",
+        "MostrarSimboloPlano",
+        "MuroReferencia",
+        "OrientacionPared",
+        "Placement",
+        "PlacementList",
+        "PlanSymbolScale",
+        "PuertaOrigen",
+        "Recinto",
+        "ReglaCaraInterior",
+        "ReglaUbicacion",
+        "RepresentationContract",
+        "Scale",
+        "ScaleList",
+        "ScaleVector",
+        "SentidoApertura",
+        "ShowElement",
+        "Space",
+        "Tipo",
+        "TipoAbertura",
+        "Visibility",
+        "VisibilityList",
+        "_ChildCache",
+        "_LinkOwner",
+        "_LinkTouched"
+      ],
+      "InList": [
+        {
+          "name": "Apagadores_BIM",
+          "document": "A1_workbench_regression",
+          "TypeId": "App::DocumentObjectGroup"
+        }
+      ],
+      "OutList": [
+        {
+          "name": "Rectangle",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::Part2DObjectPython"
+        },
+        {
+          "name": "Window",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Wall",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Wall",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Window",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        }
+      ],
+      "groups": [
+        "Apagadores_BIM"
+      ],
+      "State": [
+        "Touched"
+      ],
+      "status": "Touched",
+      "ElementUID": "6e9ca8b1-5361-4e59-aac7-0fe1f1adfc6f",
+      "DocumentationRepresentationName": "ECR_DocPlan_6e9ca8b1_5361_4e59_aac7_0fe1f1adfc6f",
+      "Placement": {
+        "base": [
+          2995.344423732503,
+          8632.545498540147,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.7071067811865476,
+          0.7071067811865476
+        ]
+      },
+      "DocumentationPlaneZ": 0.0,
+      "master": {
+        "name": "Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical",
+        "document": "A1_workbench_regression",
+        "TypeId": "Part::FeaturePython"
+      }
+    },
+    {
+      "name": "Link_Apagador_Rectangle007",
+      "label": "Apagador - Rectangle007",
+      "TypeId": "App::Link",
+      "RepresentationContract": "PhysicalDocumentationA1",
+      "PropertiesList": [
+        "AlturaMontaje",
+        "AlturaRel",
+        "AreaRecinto",
+        "ColoredElements",
+        "DistanciaJamba",
+        "DocumentationPlaneZ",
+        "DocumentationRepresentationName",
+        "ECR_DoorKey",
+        "ECR_GeneradoPor",
+        "ECR_SideOverride",
+        "ElementCount",
+        "ElementList",
+        "ElementUID",
+        "ElementoOrigen",
+        "ExpressionEngine",
+        "Host",
+        "KeyRegistro",
+        "Label",
+        "Label2",
+        "LinkClaimChild",
+        "LinkCopyOnChange",
+        "LinkCopyOnChangeGroup",
+        "LinkCopyOnChangeSource",
+        "LinkCopyOnChangeTouched",
+        "LinkExecute",
+        "LinkPlacement",
+        "LinkTransform",
+        "LinkedObject",
+        "ModoVisual",
+        "MostrarModelo3D",
+        "MostrarSimboloPlano",
+        "MuroReferencia",
+        "OrientacionPared",
+        "Placement",
+        "PlacementList",
+        "PlanSymbolScale",
+        "PuertaOrigen",
+        "Recinto",
+        "ReglaCaraInterior",
+        "ReglaUbicacion",
+        "RepresentationContract",
+        "Scale",
+        "ScaleList",
+        "ScaleVector",
+        "SentidoApertura",
+        "ShowElement",
+        "Space",
+        "Tipo",
+        "TipoAbertura",
+        "Visibility",
+        "VisibilityList",
+        "_ChildCache",
+        "_LinkOwner",
+        "_LinkTouched"
+      ],
+      "InList": [
+        {
+          "name": "Apagadores_BIM",
+          "document": "A1_workbench_regression",
+          "TypeId": "App::DocumentObjectGroup"
+        }
+      ],
+      "OutList": [
+        {
+          "name": "Rectangle",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::Part2DObjectPython"
+        },
+        {
+          "name": "Window024",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Wall",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Wall",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Window024",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        }
+      ],
+      "groups": [
+        "Apagadores_BIM"
+      ],
+      "State": [
+        "Touched"
+      ],
+      "status": "Touched",
+      "ElementUID": "bbe195cb-999e-4557-9e07-b18e29ccb8d0",
+      "DocumentationRepresentationName": "ECR_DocPlan_bbe195cb_999e_4557_9e07_b18e29ccb8d0",
+      "Placement": {
+        "base": [
+          3155.1521616105833,
+          9250.000000000311,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "DocumentationPlaneZ": 0.0,
+      "master": {
+        "name": "Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical",
+        "document": "A1_workbench_regression",
+        "TypeId": "Part::FeaturePython"
+      }
+    },
+    {
+      "name": "Link_Apagador_Rectangle008",
+      "label": "Apagador - Rectangle008",
+      "TypeId": "App::Link",
+      "RepresentationContract": "PhysicalDocumentationA1",
+      "PropertiesList": [
+        "AlturaMontaje",
+        "AlturaRel",
+        "AreaRecinto",
+        "ColoredElements",
+        "DistanciaJamba",
+        "DocumentationPlaneZ",
+        "DocumentationRepresentationName",
+        "ECR_DoorKey",
+        "ECR_GeneradoPor",
+        "ECR_SideOverride",
+        "ElementCount",
+        "ElementList",
+        "ElementUID",
+        "ElementoOrigen",
+        "ExpressionEngine",
+        "Host",
+        "KeyRegistro",
+        "Label",
+        "Label2",
+        "LinkClaimChild",
+        "LinkCopyOnChange",
+        "LinkCopyOnChangeGroup",
+        "LinkCopyOnChangeSource",
+        "LinkCopyOnChangeTouched",
+        "LinkExecute",
+        "LinkPlacement",
+        "LinkTransform",
+        "LinkedObject",
+        "ModoVisual",
+        "MostrarModelo3D",
+        "MostrarSimboloPlano",
+        "MuroReferencia",
+        "OrientacionPared",
+        "Placement",
+        "PlacementList",
+        "PlanSymbolScale",
+        "PuertaOrigen",
+        "Recinto",
+        "ReglaCaraInterior",
+        "ReglaUbicacion",
+        "RepresentationContract",
+        "Scale",
+        "ScaleList",
+        "ScaleVector",
+        "SentidoApertura",
+        "ShowElement",
+        "Space",
+        "Tipo",
+        "TipoAbertura",
+        "Visibility",
+        "VisibilityList",
+        "_ChildCache",
+        "_LinkOwner",
+        "_LinkTouched"
+      ],
+      "InList": [
+        {
+          "name": "Apagadores_BIM",
+          "document": "A1_workbench_regression",
+          "TypeId": "App::DocumentObjectGroup"
+        }
+      ],
+      "OutList": [
+        {
+          "name": "Rectangle",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::Part2DObjectPython"
+        },
+        {
+          "name": "Window025",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Wall",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Wall",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Window025",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        }
+      ],
+      "groups": [
+        "Apagadores_BIM"
+      ],
+      "State": [
+        "Touched"
+      ],
+      "status": "Touched",
+      "ElementUID": "3a4555d3-b61c-4660-903e-71adb0051ed2",
+      "DocumentationRepresentationName": "ECR_DocPlan_3a4555d3_b61c_4660_903e_71adb0051ed2",
+      "Placement": {
+        "base": [
+          1475.3770350516056,
+          12070.000000000487,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "DocumentationPlaneZ": 0.0,
+      "master": {
+        "name": "Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical",
+        "document": "A1_workbench_regression",
+        "TypeId": "Part::FeaturePython"
+      }
+    },
+    {
+      "name": "Link_Apagador_Rectangle009",
+      "label": "Apagador - Rectangle009",
+      "TypeId": "App::Link",
+      "RepresentationContract": "PhysicalDocumentationA1",
+      "PropertiesList": [
+        "AlturaMontaje",
+        "AlturaRel",
+        "AreaRecinto",
+        "ColoredElements",
+        "DistanciaJamba",
+        "DocumentationPlaneZ",
+        "DocumentationRepresentationName",
+        "ECR_DoorKey",
+        "ECR_GeneradoPor",
+        "ECR_SideOverride",
+        "ElementCount",
+        "ElementList",
+        "ElementUID",
+        "ElementoOrigen",
+        "ExpressionEngine",
+        "Host",
+        "KeyRegistro",
+        "Label",
+        "Label2",
+        "LinkClaimChild",
+        "LinkCopyOnChange",
+        "LinkCopyOnChangeGroup",
+        "LinkCopyOnChangeSource",
+        "LinkCopyOnChangeTouched",
+        "LinkExecute",
+        "LinkPlacement",
+        "LinkTransform",
+        "LinkedObject",
+        "ModoVisual",
+        "MostrarModelo3D",
+        "MostrarSimboloPlano",
+        "MuroReferencia",
+        "OrientacionPared",
+        "Placement",
+        "PlacementList",
+        "PlanSymbolScale",
+        "PuertaOrigen",
+        "Recinto",
+        "ReglaCaraInterior",
+        "ReglaUbicacion",
+        "RepresentationContract",
+        "Scale",
+        "ScaleList",
+        "ScaleVector",
+        "SentidoApertura",
+        "ShowElement",
+        "Space",
+        "Tipo",
+        "TipoAbertura",
+        "Visibility",
+        "VisibilityList",
+        "_ChildCache",
+        "_LinkOwner",
+        "_LinkTouched"
+      ],
+      "InList": [
+        {
+          "name": "Apagadores_BIM",
+          "document": "A1_workbench_regression",
+          "TypeId": "App::DocumentObjectGroup"
+        }
+      ],
+      "OutList": [
+        {
+          "name": "Rectangle",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::Part2DObjectPython"
+        },
+        {
+          "name": "Window026",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Wall",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Wall",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Window026",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        }
+      ],
+      "groups": [
+        "Apagadores_BIM"
+      ],
+      "State": [
+        "Touched"
+      ],
+      "status": "Touched",
+      "ElementUID": "f9b2c5b2-354a-4ecb-899a-c07d9f519302",
+      "DocumentationRepresentationName": "ECR_DocPlan_f9b2c5b2_354a_4ecb_899a_c07d9f519302",
+      "Placement": {
+        "base": [
+          7541.264464278291,
+          12070.000000000487,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "DocumentationPlaneZ": 0.0,
+      "master": {
+        "name": "Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical",
+        "document": "A1_workbench_regression",
+        "TypeId": "Part::FeaturePython"
+      }
+    },
+    {
+      "name": "Link_Apagador_Rectangle011",
+      "label": "Apagador - Rectangle011",
+      "TypeId": "App::Link",
+      "RepresentationContract": "PhysicalDocumentationA1",
+      "PropertiesList": [
+        "AlturaMontaje",
+        "AlturaRel",
+        "AreaRecinto",
+        "ColoredElements",
+        "DistanciaJamba",
+        "DocumentationPlaneZ",
+        "DocumentationRepresentationName",
+        "ECR_DoorKey",
+        "ECR_GeneradoPor",
+        "ECR_SideOverride",
+        "ElementCount",
+        "ElementList",
+        "ElementUID",
+        "ElementoOrigen",
+        "ExpressionEngine",
+        "Host",
+        "KeyRegistro",
+        "Label",
+        "Label2",
+        "LinkClaimChild",
+        "LinkCopyOnChange",
+        "LinkCopyOnChangeGroup",
+        "LinkCopyOnChangeSource",
+        "LinkCopyOnChangeTouched",
+        "LinkExecute",
+        "LinkPlacement",
+        "LinkTransform",
+        "LinkedObject",
+        "ModoVisual",
+        "MostrarModelo3D",
+        "MostrarSimboloPlano",
+        "MuroReferencia",
+        "OrientacionPared",
+        "Placement",
+        "PlacementList",
+        "PlanSymbolScale",
+        "PuertaOrigen",
+        "Recinto",
+        "ReglaCaraInterior",
+        "ReglaUbicacion",
+        "RepresentationContract",
+        "Scale",
+        "ScaleList",
+        "ScaleVector",
+        "SentidoApertura",
+        "ShowElement",
+        "Space",
+        "Tipo",
+        "TipoAbertura",
+        "Visibility",
+        "VisibilityList",
+        "_ChildCache",
+        "_LinkOwner",
+        "_LinkTouched"
+      ],
+      "InList": [
+        {
+          "name": "Apagadores_BIM",
+          "document": "A1_workbench_regression",
+          "TypeId": "App::DocumentObjectGroup"
+        }
+      ],
+      "OutList": [
+        {
+          "name": "Rectangle",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::Part2DObjectPython"
+        },
+        {
+          "name": "Window028",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Wall",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Wall",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Window028",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        }
+      ],
+      "groups": [
+        "Apagadores_BIM"
+      ],
+      "State": [
+        "Touched"
+      ],
+      "status": "Touched",
+      "ElementUID": "aee7a987-8ecc-4ce9-9061-e9467c478734",
+      "DocumentationRepresentationName": "ECR_DocPlan_aee7a987_8ecc_4ce9_9061_e9467c478734",
+      "Placement": {
+        "base": [
+          6687.648204623836,
+          14780.000000000397,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          1.0,
+          6.123233995736766e-17
+        ]
+      },
+      "DocumentationPlaneZ": 0.0,
+      "master": {
+        "name": "Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical",
+        "document": "A1_workbench_regression",
+        "TypeId": "Part::FeaturePython"
+      }
+    },
+    {
+      "name": "Link_Apagador_Rectangle012",
+      "label": "Apagador - Rectangle012",
+      "TypeId": "App::Link",
+      "RepresentationContract": "PhysicalDocumentationA1",
+      "PropertiesList": [
+        "AlturaMontaje",
+        "AlturaRel",
+        "AreaRecinto",
+        "ColoredElements",
+        "DistanciaJamba",
+        "DocumentationPlaneZ",
+        "DocumentationRepresentationName",
+        "ECR_DoorKey",
+        "ECR_GeneradoPor",
+        "ECR_SideOverride",
+        "ElementCount",
+        "ElementList",
+        "ElementUID",
+        "ElementoOrigen",
+        "ExpressionEngine",
+        "Host",
+        "KeyRegistro",
+        "Label",
+        "Label2",
+        "LinkClaimChild",
+        "LinkCopyOnChange",
+        "LinkCopyOnChangeGroup",
+        "LinkCopyOnChangeSource",
+        "LinkCopyOnChangeTouched",
+        "LinkExecute",
+        "LinkPlacement",
+        "LinkTransform",
+        "LinkedObject",
+        "ModoVisual",
+        "MostrarModelo3D",
+        "MostrarSimboloPlano",
+        "MuroReferencia",
+        "OrientacionPared",
+        "Placement",
+        "PlacementList",
+        "PlanSymbolScale",
+        "PuertaOrigen",
+        "Recinto",
+        "ReglaCaraInterior",
+        "ReglaUbicacion",
+        "RepresentationContract",
+        "Scale",
+        "ScaleList",
+        "ScaleVector",
+        "SentidoApertura",
+        "ShowElement",
+        "Space",
+        "Tipo",
+        "TipoAbertura",
+        "Visibility",
+        "VisibilityList",
+        "_ChildCache",
+        "_LinkOwner",
+        "_LinkTouched"
+      ],
+      "InList": [
+        {
+          "name": "Apagadores_BIM",
+          "document": "A1_workbench_regression",
+          "TypeId": "App::DocumentObjectGroup"
+        }
+      ],
+      "OutList": [
+        {
+          "name": "Rectangle",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::Part2DObjectPython"
+        },
+        {
+          "name": "Window029",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Wall",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Wall",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Window029",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        }
+      ],
+      "groups": [
+        "Apagadores_BIM"
+      ],
+      "State": [
+        "Touched"
+      ],
+      "status": "Touched",
+      "ElementUID": "0e08896f-8bb5-4435-bbc0-c161cba6c618",
+      "DocumentationRepresentationName": "ECR_DocPlan_0e08896f_8bb5_4435_bbc0_c161cba6c618",
+      "Placement": {
+        "base": [
+          3356.344423731569,
+          14309.668592686134,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.7071067811865476,
+          0.7071067811865476
+        ]
+      },
+      "DocumentationPlaneZ": 0.0,
+      "master": {
+        "name": "Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical",
+        "document": "A1_workbench_regression",
+        "TypeId": "Part::FeaturePython"
+      }
+    },
+    {
+      "name": "Link_Apagador_Recinto_poligonal_01",
+      "label": "Apagador - Recinto poligonal 01",
+      "TypeId": "App::Link",
+      "RepresentationContract": "PhysicalDocumentationA1",
+      "PropertiesList": [
+        "AlturaMontaje",
+        "AlturaRel",
+        "AreaRecinto",
+        "ColoredElements",
+        "DistanciaJamba",
+        "DocumentationPlaneZ",
+        "DocumentationRepresentationName",
+        "ECR_DoorKey",
+        "ECR_GeneradoPor",
+        "ECR_SideOverride",
+        "ElementCount",
+        "ElementList",
+        "ElementUID",
+        "ElementoOrigen",
+        "ExpressionEngine",
+        "Host",
+        "KeyRegistro",
+        "Label",
+        "Label2",
+        "LinkClaimChild",
+        "LinkCopyOnChange",
+        "LinkCopyOnChangeGroup",
+        "LinkCopyOnChangeSource",
+        "LinkCopyOnChangeTouched",
+        "LinkExecute",
+        "LinkPlacement",
+        "LinkTransform",
+        "LinkedObject",
+        "ModoVisual",
+        "MostrarModelo3D",
+        "MostrarSimboloPlano",
+        "MuroReferencia",
+        "OrientacionPared",
+        "Placement",
+        "PlacementList",
+        "PlanSymbolScale",
+        "PuertaOrigen",
+        "Recinto",
+        "ReglaCaraInterior",
+        "ReglaUbicacion",
+        "RepresentationContract",
+        "Scale",
+        "ScaleList",
+        "ScaleVector",
+        "SentidoApertura",
+        "ShowElement",
+        "Space",
+        "Tipo",
+        "TipoAbertura",
+        "Visibility",
+        "VisibilityList",
+        "_ChildCache",
+        "_LinkOwner",
+        "_LinkTouched"
+      ],
+      "InList": [
+        {
+          "name": "Apagadores_BIM",
+          "document": "A1_workbench_regression",
+          "TypeId": "App::DocumentObjectGroup"
+        }
+      ],
+      "OutList": [
+        {
+          "name": "Wire",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Window030",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Wall",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Wall",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Window030",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        }
+      ],
+      "groups": [
+        "Apagadores_BIM"
+      ],
+      "State": [
+        "Touched"
+      ],
+      "status": "Touched",
+      "ElementUID": "dce48ebf-82c1-42aa-a0ae-90f834d192d1",
+      "DocumentationRepresentationName": "ECR_DocPlan_dce48ebf_82c1_42aa_a0ae_90f834d192d1",
+      "Placement": {
+        "base": [
+          5046.350145820496,
+          17955.334860958435,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "DocumentationPlaneZ": 0.0,
+      "master": {
+        "name": "Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical",
+        "document": "A1_workbench_regression",
+        "TypeId": "Part::FeaturePython"
+      }
+    },
+    {
+      "name": "Link_Apagador_Rectangle013",
+      "label": "Apagador - Rectangle013",
+      "TypeId": "App::Link",
+      "RepresentationContract": "PhysicalDocumentationA1",
+      "PropertiesList": [
+        "AlturaMontaje",
+        "AlturaRel",
+        "AreaRecinto",
+        "ColoredElements",
+        "DistanciaJamba",
+        "DocumentationPlaneZ",
+        "DocumentationRepresentationName",
+        "ECR_DoorKey",
+        "ECR_GeneradoPor",
+        "ECR_SideOverride",
+        "ElementCount",
+        "ElementList",
+        "ElementUID",
+        "ElementoOrigen",
+        "ExpressionEngine",
+        "Host",
+        "KeyRegistro",
+        "Label",
+        "Label2",
+        "LinkClaimChild",
+        "LinkCopyOnChange",
+        "LinkCopyOnChangeGroup",
+        "LinkCopyOnChangeSource",
+        "LinkCopyOnChangeTouched",
+        "LinkExecute",
+        "LinkPlacement",
+        "LinkTransform",
+        "LinkedObject",
+        "ModoVisual",
+        "MostrarModelo3D",
+        "MostrarSimboloPlano",
+        "MuroReferencia",
+        "OrientacionPared",
+        "Placement",
+        "PlacementList",
+        "PlanSymbolScale",
+        "PuertaOrigen",
+        "Recinto",
+        "ReglaCaraInterior",
+        "ReglaUbicacion",
+        "RepresentationContract",
+        "Scale",
+        "ScaleList",
+        "ScaleVector",
+        "SentidoApertura",
+        "ShowElement",
+        "Space",
+        "Tipo",
+        "TipoAbertura",
+        "Visibility",
+        "VisibilityList",
+        "_ChildCache",
+        "_LinkOwner",
+        "_LinkTouched"
+      ],
+      "InList": [
+        {
+          "name": "Apagadores_BIM",
+          "document": "A1_workbench_regression",
+          "TypeId": "App::DocumentObjectGroup"
+        }
+      ],
+      "OutList": [
+        {
+          "name": "Rectangle",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::Part2DObjectPython"
+        },
+        {
+          "name": "Window031",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Wall",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Wall",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Window031",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        }
+      ],
+      "groups": [
+        "Apagadores_BIM"
+      ],
+      "State": [
+        "Touched"
+      ],
+      "status": "Touched",
+      "ElementUID": "3f9bfe49-e56b-4ea7-b86a-85bd05e1c354",
+      "DocumentationRepresentationName": "ECR_DocPlan_3f9bfe49_e56b_4ea7_b86a_85bd05e1c354",
+      "Placement": {
+        "base": [
+          4199.879395,
+          7619.000000000248,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "DocumentationPlaneZ": 0.0,
+      "master": {
+        "name": "Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical",
+        "document": "A1_workbench_regression",
+        "TypeId": "Part::FeaturePython"
+      }
+    },
+    {
+      "name": "Link_Apagador_Rectangle014",
+      "label": "Apagador - Rectangle014",
+      "TypeId": "App::Link",
+      "RepresentationContract": "PhysicalDocumentationA1",
+      "PropertiesList": [
+        "AlturaMontaje",
+        "AlturaRel",
+        "AreaRecinto",
+        "ColoredElements",
+        "DistanciaJamba",
+        "DocumentationPlaneZ",
+        "DocumentationRepresentationName",
+        "ECR_DoorKey",
+        "ECR_GeneradoPor",
+        "ECR_SideOverride",
+        "ElementCount",
+        "ElementList",
+        "ElementUID",
+        "ElementoOrigen",
+        "ExpressionEngine",
+        "Host",
+        "KeyRegistro",
+        "Label",
+        "Label2",
+        "LinkClaimChild",
+        "LinkCopyOnChange",
+        "LinkCopyOnChangeGroup",
+        "LinkCopyOnChangeSource",
+        "LinkCopyOnChangeTouched",
+        "LinkExecute",
+        "LinkPlacement",
+        "LinkTransform",
+        "LinkedObject",
+        "ModoVisual",
+        "MostrarModelo3D",
+        "MostrarSimboloPlano",
+        "MuroReferencia",
+        "OrientacionPared",
+        "Placement",
+        "PlacementList",
+        "PlanSymbolScale",
+        "PuertaOrigen",
+        "Recinto",
+        "ReglaCaraInterior",
+        "ReglaUbicacion",
+        "RepresentationContract",
+        "Scale",
+        "ScaleList",
+        "ScaleVector",
+        "SentidoApertura",
+        "ShowElement",
+        "Space",
+        "Tipo",
+        "TipoAbertura",
+        "Visibility",
+        "VisibilityList",
+        "_ChildCache",
+        "_LinkOwner",
+        "_LinkTouched"
+      ],
+      "InList": [
+        {
+          "name": "Apagadores_BIM",
+          "document": "A1_workbench_regression",
+          "TypeId": "App::DocumentObjectGroup"
+        }
+      ],
+      "OutList": [
+        {
+          "name": "Rectangle",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::Part2DObjectPython"
+        },
+        {
+          "name": "Window032",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Wall",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Wall",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Window032",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        }
+      ],
+      "groups": [
+        "Apagadores_BIM"
+      ],
+      "State": [
+        "Touched"
+      ],
+      "status": "Touched",
+      "ElementUID": "e0535e2a-af46-4b61-9c87-af2023043663",
+      "DocumentationRepresentationName": "ECR_DocPlan_e0535e2a_af46_4b61_9c87_af2023043663",
+      "Placement": {
+        "base": [
+          6515.344423731464,
+          12134.386719,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.7071067811865476,
+          0.7071067811865476
+        ]
+      },
+      "DocumentationPlaneZ": 0.0,
+      "master": {
+        "name": "Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical",
+        "document": "A1_workbench_regression",
+        "TypeId": "Part::FeaturePython"
+      }
+    },
+    {
+      "name": "Link_Apagador_Rectangle010",
+      "label": "Apagador - Rectangle010",
+      "TypeId": "App::Link",
+      "RepresentationContract": "PhysicalDocumentationA1",
+      "PropertiesList": [
+        "AlturaMontaje",
+        "AlturaRel",
+        "AreaRecinto",
+        "ColoredElements",
+        "DistanciaJamba",
+        "DocumentationPlaneZ",
+        "DocumentationRepresentationName",
+        "ECR_DoorKey",
+        "ECR_GeneradoPor",
+        "ECR_SideOverride",
+        "ElementCount",
+        "ElementList",
+        "ElementUID",
+        "ElementoOrigen",
+        "ExpressionEngine",
+        "Host",
+        "KeyRegistro",
+        "Label",
+        "Label2",
+        "LinkClaimChild",
+        "LinkCopyOnChange",
+        "LinkCopyOnChangeGroup",
+        "LinkCopyOnChangeSource",
+        "LinkCopyOnChangeTouched",
+        "LinkExecute",
+        "LinkPlacement",
+        "LinkTransform",
+        "LinkedObject",
+        "ModoVisual",
+        "MostrarModelo3D",
+        "MostrarSimboloPlano",
+        "MuroReferencia",
+        "OrientacionPared",
+        "Placement",
+        "PlacementList",
+        "PlanSymbolScale",
+        "PuertaOrigen",
+        "Recinto",
+        "ReglaCaraInterior",
+        "ReglaUbicacion",
+        "RepresentationContract",
+        "Scale",
+        "ScaleList",
+        "ScaleVector",
+        "SentidoApertura",
+        "ShowElement",
+        "Space",
+        "Tipo",
+        "TipoAbertura",
+        "Visibility",
+        "VisibilityList",
+        "_ChildCache",
+        "_LinkOwner",
+        "_LinkTouched"
+      ],
+      "InList": [
+        {
+          "name": "Apagadores_BIM",
+          "document": "A1_workbench_regression",
+          "TypeId": "App::DocumentObjectGroup"
+        }
+      ],
+      "OutList": [
+        {
+          "name": "Rectangle",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::Part2DObjectPython"
+        },
+        {
+          "name": "Window027",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Wall",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Wall",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Window027",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        },
+        {
+          "name": "Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        }
+      ],
+      "groups": [
+        "Apagadores_BIM"
+      ],
+      "State": [
+        "Touched"
+      ],
+      "status": "Touched",
+      "ElementUID": "da924136-d34d-4008-9583-9252db3ca4f3",
+      "DocumentationRepresentationName": "ECR_DocPlan_da924136_d34d_4008_9583_9252db3ca4f3",
+      "Placement": {
+        "base": [
+          6515.344423731464,
+          13865.402423168667,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.7071067811865476,
+          0.7071067811865476
+        ]
+      },
+      "DocumentationPlaneZ": 0.0,
+      "master": {
+        "name": "Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical",
+        "document": "A1_workbench_regression",
+        "TypeId": "Part::FeaturePython"
+      }
+    },
+    {
+      "name": "ECR_A1_RuntimeProbe",
+      "label": "A1 runtime regression",
+      "TypeId": "App::Link",
+      "RepresentationContract": "PhysicalDocumentationA1",
+      "PropertiesList": [
+        "AlturaRel",
+        "ColoredElements",
+        "DocumentationPlaneZ",
+        "DocumentationRepresentationName",
+        "ElementCount",
+        "ElementList",
+        "ElementUID",
+        "ExpressionEngine",
+        "Host",
+        "KeyRegistro",
+        "Label",
+        "Label2",
+        "LinkClaimChild",
+        "LinkCopyOnChange",
+        "LinkCopyOnChangeGroup",
+        "LinkCopyOnChangeSource",
+        "LinkCopyOnChangeTouched",
+        "LinkExecute",
+        "LinkPlacement",
+        "LinkTransform",
+        "LinkedObject",
+        "ModoVisual",
+        "MostrarModelo3D",
+        "MostrarSimboloPlano",
+        "OrientacionPared",
+        "Placement",
+        "PlacementList",
+        "PlanSymbolScale",
+        "RepresentationContract",
+        "Scale",
+        "ScaleList",
+        "ScaleVector",
+        "ShowElement",
+        "Space",
+        "Tipo",
+        "Visibility",
+        "VisibilityList",
+        "_ChildCache",
+        "_LinkOwner",
+        "_LinkTouched"
+      ],
+      "InList": [],
+      "OutList": [
+        {
+          "name": "Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical",
+          "document": "A1_workbench_regression",
+          "TypeId": "Part::FeaturePython"
+        }
+      ],
+      "groups": [],
+      "State": [
+        "Touched"
+      ],
+      "status": "Touched",
+      "ElementUID": "26c8de44-d862-469d-9179-a715bc1a9e1a",
+      "DocumentationRepresentationName": "ECR_DocPlan_26c8de44_d862_469d_9179_a715bc1a9e1a",
+      "Placement": {
+        "base": [
+          22560.0,
+          12270.0,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.8433914458128856,
+          0.5372996083468241
+        ]
+      },
+      "DocumentationPlaneZ": 0.0,
+      "master": {
+        "name": "Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical",
+        "document": "A1_workbench_regression",
+        "TypeId": "Part::FeaturePython"
+      }
+    }
+  ],
+  "plans": [
+    {
+      "name": "ECR_DocPlan_6e9ca8b1_5361_4e59_aac7_0fe1f1adfc6f",
+      "label": "Apagador - Rectangle006 [PLAN]",
+      "TypeId": "Part::Feature",
+      "PropertiesList": [
+        "DocumentationOnly",
+        "ExpressionEngine",
+        "Label",
+        "Label2",
+        "Owner",
+        "Placement",
+        "RepresentationRole",
+        "RepresentationSchemaVersion",
+        "RepresentationSignature",
+        "Shape",
+        "ShapeMaterial",
+        "SnapPoints",
+        "Visibility",
+        "_ElementMapVersion"
+      ],
+      "InList": [],
+      "OutList": [],
+      "groups": [],
+      "State": [
+        "Touched"
+      ],
+      "status": "Touched",
+      "RepresentationRole": "PLAN",
+      "RepresentationSchemaVersion": 2,
+      "DocumentationOnly": true,
+      "Placement": {
+        "base": [
+          2995.344423732503,
+          8632.545498540147,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.7071067811865476,
+          0.7071067811865476
+        ]
+      },
+      "ExpressionEngine": [
+        [
+          "Placement",
+          "placement(vector(.Owner.Placement.Base.x; .Owner.Placement.Base.y; .Owner.DocumentationPlaneZ); .Owner.Placement.Rotation)"
+        ]
+      ],
+      "ShowInTree": false,
+      "Owner": "Link_Apagador_Rectangle006",
+      "OwnerReference": {
+        "name": "Link_Apagador_Rectangle006",
+        "document": "A1_workbench_regression",
+        "TypeId": "App::Link"
+      },
+      "OwnerPropertyType": "App::PropertyLinkHidden",
+      "SnapPoints": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "evaluatedPlacement": {
+        "base": [
+          2995.344423732503,
+          8632.545498540147,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.7071067811865476,
+          0.7071067811865476
+        ]
+      }
+    },
+    {
+      "name": "ECR_DocPlan_bbe195cb_999e_4557_9e07_b18e29ccb8d0",
+      "label": "Apagador - Rectangle007 [PLAN]",
+      "TypeId": "Part::Feature",
+      "PropertiesList": [
+        "DocumentationOnly",
+        "ExpressionEngine",
+        "Label",
+        "Label2",
+        "Owner",
+        "Placement",
+        "RepresentationRole",
+        "RepresentationSchemaVersion",
+        "RepresentationSignature",
+        "Shape",
+        "ShapeMaterial",
+        "SnapPoints",
+        "Visibility",
+        "_ElementMapVersion"
+      ],
+      "InList": [],
+      "OutList": [],
+      "groups": [],
+      "State": [
+        "Touched"
+      ],
+      "status": "Touched",
+      "RepresentationRole": "PLAN",
+      "RepresentationSchemaVersion": 2,
+      "DocumentationOnly": true,
+      "Placement": {
+        "base": [
+          3155.1521616105833,
+          9250.000000000311,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "ExpressionEngine": [
+        [
+          "Placement",
+          "placement(vector(.Owner.Placement.Base.x; .Owner.Placement.Base.y; .Owner.DocumentationPlaneZ); .Owner.Placement.Rotation)"
+        ]
+      ],
+      "ShowInTree": false,
+      "Owner": "Link_Apagador_Rectangle007",
+      "OwnerReference": {
+        "name": "Link_Apagador_Rectangle007",
+        "document": "A1_workbench_regression",
+        "TypeId": "App::Link"
+      },
+      "OwnerPropertyType": "App::PropertyLinkHidden",
+      "SnapPoints": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "evaluatedPlacement": {
+        "base": [
+          3155.1521616105833,
+          9250.000000000311,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "name": "ECR_DocPlan_3a4555d3_b61c_4660_903e_71adb0051ed2",
+      "label": "Apagador - Rectangle008 [PLAN]",
+      "TypeId": "Part::Feature",
+      "PropertiesList": [
+        "DocumentationOnly",
+        "ExpressionEngine",
+        "Label",
+        "Label2",
+        "Owner",
+        "Placement",
+        "RepresentationRole",
+        "RepresentationSchemaVersion",
+        "RepresentationSignature",
+        "Shape",
+        "ShapeMaterial",
+        "SnapPoints",
+        "Visibility",
+        "_ElementMapVersion"
+      ],
+      "InList": [],
+      "OutList": [],
+      "groups": [],
+      "State": [
+        "Touched"
+      ],
+      "status": "Touched",
+      "RepresentationRole": "PLAN",
+      "RepresentationSchemaVersion": 2,
+      "DocumentationOnly": true,
+      "Placement": {
+        "base": [
+          1475.3770350516056,
+          12070.000000000487,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "ExpressionEngine": [
+        [
+          "Placement",
+          "placement(vector(.Owner.Placement.Base.x; .Owner.Placement.Base.y; .Owner.DocumentationPlaneZ); .Owner.Placement.Rotation)"
+        ]
+      ],
+      "ShowInTree": false,
+      "Owner": "Link_Apagador_Rectangle008",
+      "OwnerReference": {
+        "name": "Link_Apagador_Rectangle008",
+        "document": "A1_workbench_regression",
+        "TypeId": "App::Link"
+      },
+      "OwnerPropertyType": "App::PropertyLinkHidden",
+      "SnapPoints": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "evaluatedPlacement": {
+        "base": [
+          1475.3770350516056,
+          12070.000000000487,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "name": "ECR_DocPlan_f9b2c5b2_354a_4ecb_899a_c07d9f519302",
+      "label": "Apagador - Rectangle009 [PLAN]",
+      "TypeId": "Part::Feature",
+      "PropertiesList": [
+        "DocumentationOnly",
+        "ExpressionEngine",
+        "Label",
+        "Label2",
+        "Owner",
+        "Placement",
+        "RepresentationRole",
+        "RepresentationSchemaVersion",
+        "RepresentationSignature",
+        "Shape",
+        "ShapeMaterial",
+        "SnapPoints",
+        "Visibility",
+        "_ElementMapVersion"
+      ],
+      "InList": [],
+      "OutList": [],
+      "groups": [],
+      "State": [
+        "Touched"
+      ],
+      "status": "Touched",
+      "RepresentationRole": "PLAN",
+      "RepresentationSchemaVersion": 2,
+      "DocumentationOnly": true,
+      "Placement": {
+        "base": [
+          7541.264464278291,
+          12070.000000000487,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "ExpressionEngine": [
+        [
+          "Placement",
+          "placement(vector(.Owner.Placement.Base.x; .Owner.Placement.Base.y; .Owner.DocumentationPlaneZ); .Owner.Placement.Rotation)"
+        ]
+      ],
+      "ShowInTree": false,
+      "Owner": "Link_Apagador_Rectangle009",
+      "OwnerReference": {
+        "name": "Link_Apagador_Rectangle009",
+        "document": "A1_workbench_regression",
+        "TypeId": "App::Link"
+      },
+      "OwnerPropertyType": "App::PropertyLinkHidden",
+      "SnapPoints": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "evaluatedPlacement": {
+        "base": [
+          7541.264464278291,
+          12070.000000000487,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "name": "ECR_DocPlan_aee7a987_8ecc_4ce9_9061_e9467c478734",
+      "label": "Apagador - Rectangle011 [PLAN]",
+      "TypeId": "Part::Feature",
+      "PropertiesList": [
+        "DocumentationOnly",
+        "ExpressionEngine",
+        "Label",
+        "Label2",
+        "Owner",
+        "Placement",
+        "RepresentationRole",
+        "RepresentationSchemaVersion",
+        "RepresentationSignature",
+        "Shape",
+        "ShapeMaterial",
+        "SnapPoints",
+        "Visibility",
+        "_ElementMapVersion"
+      ],
+      "InList": [],
+      "OutList": [],
+      "groups": [],
+      "State": [
+        "Touched"
+      ],
+      "status": "Touched",
+      "RepresentationRole": "PLAN",
+      "RepresentationSchemaVersion": 2,
+      "DocumentationOnly": true,
+      "Placement": {
+        "base": [
+          6687.648204623836,
+          14780.000000000397,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          1.0,
+          6.123233995736766e-17
+        ]
+      },
+      "ExpressionEngine": [
+        [
+          "Placement",
+          "placement(vector(.Owner.Placement.Base.x; .Owner.Placement.Base.y; .Owner.DocumentationPlaneZ); .Owner.Placement.Rotation)"
+        ]
+      ],
+      "ShowInTree": false,
+      "Owner": "Link_Apagador_Rectangle011",
+      "OwnerReference": {
+        "name": "Link_Apagador_Rectangle011",
+        "document": "A1_workbench_regression",
+        "TypeId": "App::Link"
+      },
+      "OwnerPropertyType": "App::PropertyLinkHidden",
+      "SnapPoints": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "evaluatedPlacement": {
+        "base": [
+          6687.648204623836,
+          14780.000000000397,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          1.0,
+          6.123233995736766e-17
+        ]
+      }
+    },
+    {
+      "name": "ECR_DocPlan_0e08896f_8bb5_4435_bbc0_c161cba6c618",
+      "label": "Apagador - Rectangle012 [PLAN]",
+      "TypeId": "Part::Feature",
+      "PropertiesList": [
+        "DocumentationOnly",
+        "ExpressionEngine",
+        "Label",
+        "Label2",
+        "Owner",
+        "Placement",
+        "RepresentationRole",
+        "RepresentationSchemaVersion",
+        "RepresentationSignature",
+        "Shape",
+        "ShapeMaterial",
+        "SnapPoints",
+        "Visibility",
+        "_ElementMapVersion"
+      ],
+      "InList": [],
+      "OutList": [],
+      "groups": [],
+      "State": [
+        "Touched"
+      ],
+      "status": "Touched",
+      "RepresentationRole": "PLAN",
+      "RepresentationSchemaVersion": 2,
+      "DocumentationOnly": true,
+      "Placement": {
+        "base": [
+          3356.344423731569,
+          14309.668592686134,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.7071067811865476,
+          0.7071067811865476
+        ]
+      },
+      "ExpressionEngine": [
+        [
+          "Placement",
+          "placement(vector(.Owner.Placement.Base.x; .Owner.Placement.Base.y; .Owner.DocumentationPlaneZ); .Owner.Placement.Rotation)"
+        ]
+      ],
+      "ShowInTree": false,
+      "Owner": "Link_Apagador_Rectangle012",
+      "OwnerReference": {
+        "name": "Link_Apagador_Rectangle012",
+        "document": "A1_workbench_regression",
+        "TypeId": "App::Link"
+      },
+      "OwnerPropertyType": "App::PropertyLinkHidden",
+      "SnapPoints": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "evaluatedPlacement": {
+        "base": [
+          3356.344423731569,
+          14309.668592686134,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.7071067811865476,
+          0.7071067811865476
+        ]
+      }
+    },
+    {
+      "name": "ECR_DocPlan_dce48ebf_82c1_42aa_a0ae_90f834d192d1",
+      "label": "Apagador - Recinto poligonal 01 [PLAN]",
+      "TypeId": "Part::Feature",
+      "PropertiesList": [
+        "DocumentationOnly",
+        "ExpressionEngine",
+        "Label",
+        "Label2",
+        "Owner",
+        "Placement",
+        "RepresentationRole",
+        "RepresentationSchemaVersion",
+        "RepresentationSignature",
+        "Shape",
+        "ShapeMaterial",
+        "SnapPoints",
+        "Visibility",
+        "_ElementMapVersion"
+      ],
+      "InList": [],
+      "OutList": [],
+      "groups": [],
+      "State": [
+        "Touched"
+      ],
+      "status": "Touched",
+      "RepresentationRole": "PLAN",
+      "RepresentationSchemaVersion": 2,
+      "DocumentationOnly": true,
+      "Placement": {
+        "base": [
+          5046.350145820496,
+          17955.334860958435,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "ExpressionEngine": [
+        [
+          "Placement",
+          "placement(vector(.Owner.Placement.Base.x; .Owner.Placement.Base.y; .Owner.DocumentationPlaneZ); .Owner.Placement.Rotation)"
+        ]
+      ],
+      "ShowInTree": false,
+      "Owner": "Link_Apagador_Recinto_poligonal_01",
+      "OwnerReference": {
+        "name": "Link_Apagador_Recinto_poligonal_01",
+        "document": "A1_workbench_regression",
+        "TypeId": "App::Link"
+      },
+      "OwnerPropertyType": "App::PropertyLinkHidden",
+      "SnapPoints": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "evaluatedPlacement": {
+        "base": [
+          5046.350145820496,
+          17955.334860958435,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "name": "ECR_DocPlan_3f9bfe49_e56b_4ea7_b86a_85bd05e1c354",
+      "label": "Apagador - Rectangle013 [PLAN]",
+      "TypeId": "Part::Feature",
+      "PropertiesList": [
+        "DocumentationOnly",
+        "ExpressionEngine",
+        "Label",
+        "Label2",
+        "Owner",
+        "Placement",
+        "RepresentationRole",
+        "RepresentationSchemaVersion",
+        "RepresentationSignature",
+        "Shape",
+        "ShapeMaterial",
+        "SnapPoints",
+        "Visibility",
+        "_ElementMapVersion"
+      ],
+      "InList": [],
+      "OutList": [],
+      "groups": [],
+      "State": [
+        "Touched"
+      ],
+      "status": "Touched",
+      "RepresentationRole": "PLAN",
+      "RepresentationSchemaVersion": 2,
+      "DocumentationOnly": true,
+      "Placement": {
+        "base": [
+          4199.879395,
+          7619.000000000248,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "ExpressionEngine": [
+        [
+          "Placement",
+          "placement(vector(.Owner.Placement.Base.x; .Owner.Placement.Base.y; .Owner.DocumentationPlaneZ); .Owner.Placement.Rotation)"
+        ]
+      ],
+      "ShowInTree": false,
+      "Owner": "Link_Apagador_Rectangle013",
+      "OwnerReference": {
+        "name": "Link_Apagador_Rectangle013",
+        "document": "A1_workbench_regression",
+        "TypeId": "App::Link"
+      },
+      "OwnerPropertyType": "App::PropertyLinkHidden",
+      "SnapPoints": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "evaluatedPlacement": {
+        "base": [
+          4199.879395,
+          7619.000000000248,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "name": "ECR_DocPlan_e0535e2a_af46_4b61_9c87_af2023043663",
+      "label": "Apagador - Rectangle014 [PLAN]",
+      "TypeId": "Part::Feature",
+      "PropertiesList": [
+        "DocumentationOnly",
+        "ExpressionEngine",
+        "Label",
+        "Label2",
+        "Owner",
+        "Placement",
+        "RepresentationRole",
+        "RepresentationSchemaVersion",
+        "RepresentationSignature",
+        "Shape",
+        "ShapeMaterial",
+        "SnapPoints",
+        "Visibility",
+        "_ElementMapVersion"
+      ],
+      "InList": [],
+      "OutList": [],
+      "groups": [],
+      "State": [
+        "Touched"
+      ],
+      "status": "Touched",
+      "RepresentationRole": "PLAN",
+      "RepresentationSchemaVersion": 2,
+      "DocumentationOnly": true,
+      "Placement": {
+        "base": [
+          6515.344423731464,
+          12134.386719,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.7071067811865476,
+          0.7071067811865476
+        ]
+      },
+      "ExpressionEngine": [
+        [
+          "Placement",
+          "placement(vector(.Owner.Placement.Base.x; .Owner.Placement.Base.y; .Owner.DocumentationPlaneZ); .Owner.Placement.Rotation)"
+        ]
+      ],
+      "ShowInTree": false,
+      "Owner": "Link_Apagador_Rectangle014",
+      "OwnerReference": {
+        "name": "Link_Apagador_Rectangle014",
+        "document": "A1_workbench_regression",
+        "TypeId": "App::Link"
+      },
+      "OwnerPropertyType": "App::PropertyLinkHidden",
+      "SnapPoints": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "evaluatedPlacement": {
+        "base": [
+          6515.344423731464,
+          12134.386719,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.7071067811865476,
+          0.7071067811865476
+        ]
+      }
+    },
+    {
+      "name": "ECR_DocPlan_da924136_d34d_4008_9583_9252db3ca4f3",
+      "label": "Apagador - Rectangle010 [PLAN]",
+      "TypeId": "Part::Feature",
+      "PropertiesList": [
+        "DocumentationOnly",
+        "ExpressionEngine",
+        "Label",
+        "Label2",
+        "Owner",
+        "Placement",
+        "RepresentationRole",
+        "RepresentationSchemaVersion",
+        "RepresentationSignature",
+        "Shape",
+        "ShapeMaterial",
+        "SnapPoints",
+        "Visibility",
+        "_ElementMapVersion"
+      ],
+      "InList": [],
+      "OutList": [],
+      "groups": [],
+      "State": [
+        "Touched"
+      ],
+      "status": "Touched",
+      "RepresentationRole": "PLAN",
+      "RepresentationSchemaVersion": 2,
+      "DocumentationOnly": true,
+      "Placement": {
+        "base": [
+          6515.344423731464,
+          13865.402423168667,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.7071067811865476,
+          0.7071067811865476
+        ]
+      },
+      "ExpressionEngine": [
+        [
+          "Placement",
+          "placement(vector(.Owner.Placement.Base.x; .Owner.Placement.Base.y; .Owner.DocumentationPlaneZ); .Owner.Placement.Rotation)"
+        ]
+      ],
+      "ShowInTree": false,
+      "Owner": "Link_Apagador_Rectangle010",
+      "OwnerReference": {
+        "name": "Link_Apagador_Rectangle010",
+        "document": "A1_workbench_regression",
+        "TypeId": "App::Link"
+      },
+      "OwnerPropertyType": "App::PropertyLinkHidden",
+      "SnapPoints": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "evaluatedPlacement": {
+        "base": [
+          6515.344423731464,
+          13865.402423168667,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.7071067811865476,
+          0.7071067811865476
+        ]
+      }
+    },
+    {
+      "name": "ECR_DocPlan_26c8de44_d862_469d_9179_a715bc1a9e1a",
+      "label": "A1 runtime regression [PLAN]",
+      "TypeId": "Part::Feature",
+      "PropertiesList": [
+        "DocumentationOnly",
+        "ExpressionEngine",
+        "Label",
+        "Label2",
+        "Owner",
+        "Placement",
+        "RepresentationRole",
+        "RepresentationSchemaVersion",
+        "RepresentationSignature",
+        "Shape",
+        "ShapeMaterial",
+        "SnapPoints",
+        "Visibility",
+        "_ElementMapVersion"
+      ],
+      "InList": [],
+      "OutList": [],
+      "groups": [],
+      "State": [
+        "Touched"
+      ],
+      "status": "Touched",
+      "RepresentationRole": "PLAN",
+      "RepresentationSchemaVersion": 2,
+      "DocumentationOnly": true,
+      "Placement": {
+        "base": [
+          22560.0,
+          12270.0,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.8433914458128856,
+          0.5372996083468241
+        ]
+      },
+      "ExpressionEngine": [
+        [
+          "Placement",
+          "placement(vector(.Owner.Placement.Base.x; .Owner.Placement.Base.y; .Owner.DocumentationPlaneZ); .Owner.Placement.Rotation)"
+        ]
+      ],
+      "ShowInTree": false,
+      "Owner": "ECR_A1_RuntimeProbe",
+      "OwnerReference": {
+        "name": "ECR_A1_RuntimeProbe",
+        "document": "A1_workbench_regression",
+        "TypeId": "App::Link"
+      },
+      "OwnerPropertyType": "App::PropertyLinkHidden",
+      "SnapPoints": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "evaluatedPlacement": {
+        "base": [
+          22560.0,
+          12270.0,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.8433914458128856,
+          0.5372996083468241
+        ]
+      }
+    }
+  ],
+  "recompute_performed": false,
+  "touched_objects": [
+    "Link_Apagador_Rectangle006",
+    "Link_Apagador_Rectangle007",
+    "Link_Apagador_Rectangle008",
+    "Link_Apagador_Rectangle009",
+    "Link_Apagador_Rectangle011",
+    "Link_Apagador_Rectangle012",
+    "Link_Apagador_Recinto_poligonal_01",
+    "Link_Apagador_Rectangle013",
+    "Link_Apagador_Rectangle014",
+    "ECR_DocPlan_6e9ca8b1_5361_4e59_aac7_0fe1f1adfc6f",
+    "ECR_DocPlan_bbe195cb_999e_4557_9e07_b18e29ccb8d0",
+    "ECR_DocPlan_3a4555d3_b61c_4660_903e_71adb0051ed2",
+    "ECR_DocPlan_f9b2c5b2_354a_4ecb_899a_c07d9f519302",
+    "ECR_DocPlan_aee7a987_8ecc_4ce9_9061_e9467c478734",
+    "ECR_DocPlan_0e08896f_8bb5_4435_bbc0_c161cba6c618",
+    "ECR_DocPlan_dce48ebf_82c1_42aa_a0ae_90f834d192d1",
+    "ECR_DocPlan_3f9bfe49_e56b_4ea7_b86a_85bd05e1c354",
+    "ECR_DocPlan_e0535e2a_af46_4b61_9c87_af2023043663",
+    "ECR_DocPlan_da924136_d34d_4008_9583_9252db3ca4f3",
+    "Link_Apagador_Rectangle010",
+    "ECR_DocPlan_26c8de44_d862_469d_9179_a715bc1a9e1a",
+    "ECR_A1_RuntimeProbe"
+  ],
+  "document_error_objects": [],
+  "errors": [],
+  "ok": true
+}

@@ -2,8 +2,8 @@
 
 
 Descripcion: nombres, version y parametros base.
-Fecha: 2026-09-02
-Version: 0.14.11
+Fecha: 2026-09-15 16:17 America/Costa_Rica
+Version: 0.14.12
 Instrucciones: mantener nombres ASCII seguros para FreeCAD.
 """
 
@@ -11,8 +11,8 @@ Instrucciones: mantener nombres ASCII seguros para FreeCAD.
 LOG_PREFIX = "[FACILARQ] "
 WORKBENCH_ID = "FacilArquitecturaWorkbench"
 WORKBENCH_NAME = "Facil Arquitectura"
-VERSION = "0.14.11"
-BUILD_ID = "2026.09.02.8"
+VERSION = "0.14.12"
+BUILD_ID = "2026.09.15.7"
 CREATED_BY = "FacilArquitecturaWB"
 
 

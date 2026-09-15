@@ -1,4 +1,977 @@
+## Validacion de Marco - 2026-09-14 21:26 -0600 - ElectricCR / Objetos / Alinear en planta v0.2
+
+Marco probo la version v0.2.0 en FreeCAD 1.1.3 y confirma: **FUNCIONA**. La validacion corresponde al uso real posterior a la ampliacion para aceptar cara plana como referencia. Por tanto, queda demostrada funcionalmente la correccion planar del objeto usando una cara lateral plana: ajuste X/Y y giro alrededor de Z sin redisenar la herramienta ni sustituir `Objetos/Alinear.FCMacro`.
+
+Esta confirmacion no documenta una prueba explicita de Undo/Redo, guardado/reapertura ni una matriz completa de referencias; esos puntos permanecen sin afirmar. Clasificacion actual: OPERATIVA / CANDIDATA / COMPROBADA-PARCIAL, con validacion funcional real del caso probado.
+
+---
+
+## Trabajo GPT - 2026-09-14 21:26 -0600 - ElectricCR / Objetos / Alinear en planta v0.2
+
+> Trabajo directo de GPT en Google Drive; no atribuir a Codex.
+
+**ACTUALIZADA EN DRIVE / SINTAXIS Y MATEMATICA DE PROYECCION APROBADAS / PRUEBA REAL FREECAD 1.1.3 PENDIENTE.**
+
+Se amplio `Objetos/Alinear_En_Planta.FCMacro` en su mismo archivo de Drive, de v0.1.0 a v0.2.0, para aceptar como segunda referencia una **arista recta** o una **cara plana**. El icono y la integracion de barra permanecen sin cambios; `Objetos/Alinear.FCMacro`, `InitGui.py`, `config.json`, A1 y Tableros no se modificaron.
+
+Con arista se conserva el algoritmo anterior: proyeccion ortogonal de `Placement.Base` sobre la recta XY y menor giro global Z usando el eje local X/Y mas cercano. Con cara, la macro toma normales en varios puntos del dominio parametrico para rechazar superficies curvas, obtiene la direccion en planta como interseccion del plano de la cara con XY y proyecta el punto de insercion al plano modificando solo X/Y. La componente Z original se conserva incluso para una cara plana inclinada. Una cara horizontal se rechaza porque su normal no define direccion XY util.
+
+La seleccion de referencia ahora distingue explicitamente subelementos `Edge` y `Face`. Como conveniencia, un objeto completo con una sola cara se acepta como cara y uno con una sola arista se acepta como arista; geometria con multiples subelementos requiere seleccionar explicitamente la cara/arista deseada. Se mantienen las guardas de contenedores con transformacion XY, transaccion propia, rollback y trazas `[OBJ-ALIGN]`.
+
+Verificacion fuera de FreeCAD: compilacion Python PASS. Pruebas matematicas aisladas PASS para plano vertical X constante, plano vertical Y constante y plano inclinado `x+z=const`, verificando que Z permanece inalterado; el caso horizontal se rechaza por no admitir proyeccion XY. El archivo re-leido de Drive mide 16.169 bytes y su SHA-256 es `41064649bdedc88e54d86c5ae3102727da1beae229b3c601ac6e9e3e1c439184`, identico al generado.
+
+Pendiente obligatorio: prueba real en FreeCAD 1.1.3 con al menos (a) tablero + arista de muro y (b) tablero + cara lateral plana de muro, incluyendo cara de muro inclinada en planta si esta disponible; verificar posicion XY, giro esperado, Z inalterado, Undo/Redo, guardado/reapertura y mensajes de consola. La herramienta sigue **OPERATIVA / CANDIDATA / POR VERIFICAR** hasta esa validacion. No se actualiza HISTORIAL_CAMBIOS ni se publica en GitHub en esta etapa.
+---
+
+## Recibo de cierre Git - 2026-09-14T12:50:03-06:00
+
+**A1 / Objeto electromecanico comun v1 = ACEPTADO**. FreeCAD 1.1.3; regresion lifecycle/Undo del 2026-09-14: PASS.
+
+Commit de cierre: `38d4d0d140a0ea67785b177964664221b4d4a5b6`. Rama: `codex/cierre-a1-20260909`. Push a origin: **SUCCESS**, verificado mediante referencia remota identica. Incluye 48 archivos de A1/Demo, pruebas, evidencia anonimizada y documentacion; ningun cambio funcional nuevo durante el cierre. Se usa el staging A1 existente para preservar el trabajo ajeno de DEV, cuya rama permanece `agent/respaldo-electriccr-2026-08-10`.
+
+Cierre finalizado. A1 default global pendiente de trabajo funcional separado; no se implementa automaticamente. Sin merge a main, RELEASE ni siguiente fase. Este recibo documental registra el commit de cierre ya publicado.
+
+---
+
+## Cierre formal vigente - 2026-09-14T12:46:32-06:00
+
+**A1 / Objeto electromecanico comun v1 = ACEPTADO**
+
+Marco acepta formalmente el contrato y la regresion real FreeCAD 1.1.3 del 2026-09-14 como prueba de cierre. Las 19 etapas finales PASS documentadas en [la evidencia aprobada](tests/evidence/2026-09-14_a1_undo_lifecycle/README.md) cubren Demo 2 Spaces / 5 walls / 7 Owners / 7 PLAN, movimiento con transaccion propia y Undo/Redo, Delete/Undo/Redo Owner+PLAN, rollback, Undo/Redo de creacion completa, guardar/cerrar/reabrir, BIM/Draft/Part y seleccion PLAN -> Owner. Cero Access violation, PLAN huerfanos y errores Placement finales. Los dos avisos nativos `TopoShapeExpansion.cpp(983): hasher mismatch` se aceptan como observacion no bloqueante por no afectar integridad, persistencia ni comportamiento.
+
+Verificacion documental del cierre: las ocho huellas SHA-256 de summary.json coinciden con los archivos actuales. No se modifica funcionalidad ni se repiten pruebas al retomar. La comprobacion parcial de cierre iniciada antes de la interrupcion queda conservada por separado; no sustituye la regresion completa aprobada. [Verificacion de huellas y alcance](tests/evidence/2026-09-14_a1_v1_closure/README.md).
+
+Contrato estable: Device/Owner = App::Link, identidad electrica unica y Placement autoritativo; fisico 3D y PLAN documental Part::Feature reconstruible, schema 2, DocumentationOnly, Owner PropertyLinkHidden, Placement derivado, SnapPoints=[Vector(0,0,0)], fuera de grupos de usuario y oculto en el arbol. Runtime A1 permanece activo al cambiar de Workbench tras inicializar ElectricCR.
+
+A1 sigue **opt-in**, salvo la Demo que lo solicita explicitamente. No se convierte en default en este cierre: la fabrica conserva separate_documentation=False; tomas y apagadores ofrecen use_a1=False; ColocarLuminarias_Link crea enlaces mediante una ruta propia y ColocarDetectores_NFPA usa crear_toma_uno (FeaturePython directo). No existe un unico interruptor cuya activacion cubra de forma segura las cuatro familias. Adaptar esas rutas y validar su creacion/edicion seria trabajo funcional adicional. Pendiente separado, no bloqueante para aceptar v1; legacy y documentos existentes se conservan.
+
+Clasificacion del contrato A1: NUCLEO / ESTABLE / COMPROBADA, aceptada por Marco. No implica RELEASE ni migracion general. Se preservan los FAIL y las restricciones historicas como antecedentes; las frases antiguas 'pendiente aceptacion' o 'sin autorizacion Git' no describen el estado vigente. No iniciar otra fase.
+
+Git: integridad comprobada (fsck completo, codigo 0). DEV contiene trabajo ajeno, preservado; cierre aislado sobre la rama A1 existente `codex/cierre-a1-20260909`, desde su staging limpio. Commit/push autorizados para este cierre; recibo definitivo confirmado al inicio de este documento. Sin merge a main ni release.
+
+---
+
+## Resultado Codex - 2026-09-14 07:46 -0600 - A1 Undo / PLAN Lifecycle
+
+**CORRECCION PROBADA EN FREECAD 1.1.3: regresion final PASS. A1 intacto. Sin commit/push.**
+
+Se reprodujo Access violation dos veces al deshacer la creacion de Demo. Causa demostrada: las guardas usaban metodos C++ inexistentes en Python y silenciaban AttributeError. Con `Transacting=True`, lifecycle encolaba y eliminaba PLAN dentro del replay nativo (14 entradas en dos Undo). FreeCAD devolvia incluso con documento vacio, pero registraba Access violation posteriormente; no se considero PASS.
+
+Cambio minimo en `electriccr/features/plan_lifecycle.py` y `plan_live_sync.py`: usar los atributos booleanos Python `Transacting` / `HasPendingTransaction`. Lifecycle vacia su cola existente tambien en `slotBeforeRecomputeDocument`. Ese callback se justifico al detectar que Std_Delete recomputa antes de cerrar su transaccion: el intento intermedio daba error Placement con Owner ya borrado y PLAN aun pendiente. La evidencia de ese FAIL se conserva. Sin nuevos timers ni redisenos.
+
+FreeCAD 1.1.3 revision 20260725, DESKTOP-5586S7P, pruebas 07:32-07:46. Resultado: 19 etapas PASS; creacion 2 Spaces/5 walls/7 Owners/7 PLAN, movimiento con entrada Undo independiente, Undo/Redo de movimiento, Delete/Undo/Redo del par, rollback antes/despues del flush, Undo/Redo de creacion completa, guardar/cerrar/reabrir y movimientos en BIM/Draft/Part. Seleccion PLAN hacia Owner unico comprobada. Smoke original sin cambios e Undo/Redo completo sin instrumentacion tambien PASS; vista vacia sin graficos residuales tras Undo. Observers restaurados sin wrappers y cero documentos temporales abiertos.
+
+Consola final: cero Access violation, errores Placement, unknown opcode o traceback; dos avisos nativos `TopoShapeExpansion.cpp(983): hasher mismatch` en Redo, sin fallo de integridad/persistencia observado. Se registran sin ampliar alcance. La traza final tiene cero encolados/flush de lifecycle durante replay.
+
+Movimiento: asignar Placement sin abrir transaccion reprodujo cambio de posicion sin nueva entrada Undo; con transaccion explicita se verifica la entrada propia y el replay correcto. El gesto historico exacto no quedo registrado, por lo que no se atribuye a Draft Move ni seleccion. El smoke existente ya usaba transaccion y quedo intacto.
+
+[Causa, matriz, consola previa/intermedia/final, fuentes nativas y diff](tests/evidence/2026-09-14_a1_undo_lifecycle/README.md). Fuentes actuales y hashes previos preservados, sin descartar cambios locales ni consultar Git. Nuevas pruebas: `tests/freecad_a1_transaction_probe.py` y `tests/freecad_a1_lifecycle_regression.py`; compilacion PASS. Seleccion, fabrica, Demo, auditor, smoke e InitGui sin cambios verificados. Metadata ya estaba corregida; no se reimplemento. No se tocaron IFC, Upala, registry, masters u otras herramientas.
+
+Documentacion actualizada: RESULTADO_CODEX, ESTADO_PROYECTO, TAREA_ACTUAL, evidencia y sesion Memoria_FreeCAD. Clasificacion NUCLEO / CANDIDATA / COMPROBADA-PARCIAL: correccion tecnicamente verificada, pendiente revision/aceptacion; no RELEASE automatica. No requiere cambio de MAPA_WORKBENCH/REVISION_MACROS. HISTORIAL_CAMBIOS intacto. Trabajo detenido al terminar pruebas y documentacion.
+
+---
+
+## Resultado Codex - 2026-09-13 16:49 -0600 - Recuperar Tasks
+
+**Prueba tecnica GUI FreeCAD 1.1.3: PASS. Sin cambios de codigo funcional. Panel negro no reproducido; no se declara resuelto.**
+
+Se reconstruyo el estado real leyendo instrucciones, conciliacion vigente y fuentes locales. La prioridad actual es validar Programacion / Recuperar Tasks, implementado previamente por GPT; Undo Demo A1 / PLAN Lifecycle es independiente. `_create_metadata()` ya usa `App::FeaturePython`; se confirmo su hash sin cambios y no se rehizo esa correccion. Las skills de arquitectura y memoria estan disponibles en este equipo.
+
+Pruebas por MCP en DESKTOP-5586S7P, 16:41-16:46, FreeCAD 1.1.3 / revision 20260725, Python 3.11.14 y Qt/PySide6 6.8.3. FreeCAD estaba cerrado y se inicio automaticamente; MCP conecto al tercer intento. Dos documentos temporales, 28 ejecuciones: creacion del escenario, seleccion/vista/datos conservados, tarea Sketch nativa preservada, diez pulsaciones y seis alternancias A/B con recuperacion antes/despues. Cinco docks constantes, cero duplicados y 897 widgets constantes durante los diez ciclos. Auditoria antes/despues y revision visual del escritorio realizadas. Ambos documentos cerrados sin guardar; visibilidad inicial de Tasks restaurada.
+
+Fuente cargada: carpeta local Programacion vigente, macro v0.1.0 y toolbar v1.1.0. Compilacion PASS; una barra y nueve botones, Recuperar Tasks unico. Hashes de macro, toolbar, helper, auditor y SVG identicos antes/despues. Se conservaron los demas botones, sin ejecutar sus funciones ajenas al alcance.
+
+Consola: 28 BEFORE/AFTER/RESULT, cero ERROR/WARNING del recuperador. Error separado de arranque a las 16:39:25 en FacilArquitecturaWB/InitGui.py: `attempted relative import with no known parent package`; no investigado. Limitacion confirmada: `tab=unknown` con Model/Tasks como docks separados; la visibilidad se mantuvo en la prueba. No se demostro una regresion que justifique cambiar codigo.
+
+[Matriz, consola, hashes y capturas](tests/evidence/2026-09-13_tasks_recovery_gui/README.md). Solo se agregaron evidencia de pruebas y documentacion, y se actualizo Memoria_FreeCAD (sesion y equipo, conservando el registro anterior). No se tocaron IFC, Upala ni Git. No se modifican MAPA_WORKBENCH, REVISION_MACROS o HISTORIAL_CAMBIOS; no hay nueva funcionalidad ni aceptacion para RELEASE.
+
+Clasificacion: SOPORTE / CANDIDATA / COMPROBADA-PARCIAL; PROBADA TECNICAMENTE / VERIFICADO_MCP / VERIFICADO_VISUAL del mecanismo. Complementa la auditoria existente. Pendiente de Marco: validar durante una reproduccion real del panel negro. Undo Demo A1 / PLAN Lifecycle sigue pendiente por separado. Se detiene el trabajo tras probar y documentar, sin ampliar alcance.
+
+---
+
+## Conciliacion G/E - 2026-09-12 - estado de continuidad
+
+Conciliacion documental autorizada por Marco: Google Drive es la fuente principal de desarrollo y OneDrive la copia de trabajo/sincronizacion. Esta entrada integra las contribuciones de ambas copias; no constituye validacion funcional de FreeCAD ni activa sincronizacion automatica.
+
+Contexto vigente: el avance GPT mas reciente disponible corresponde a Programacion / Recuperar Tasks (2026-09-10 17:54), implementado y pendiente de prueba GUI real. El diagnostico/correccion de Undo Demo A1 / PLAN Lifecycle del 10/9 14:01 sigue siendo un pendiente independiente. No se ejecuta ninguna de esas tareas durante la conciliacion.
+
+La inspeccion Codex del 12/9 que se conserva a continuacion fue escrita desde E, que no contenia el avance GPT de Recuperar Tasks. Su afirmacion sobre la tarea mas reciente debe leerse con esa limitacion de contexto; sus hallazgos de archivos, falta de skill y error Git son observaciones historicas de aquella inspeccion, no pruebas nuevas. Se mantienen las atribuciones GPT/Codex y las conclusiones tecnicas originales. No se duplico el historial comun.
+
+Los siguientes bloques conservan primero la inspeccion Codex del 12/9, luego las aportaciones GPT del 10/9 y finalmente el historial compartido. El trabajo funcional posterior requiere una instruccion separada; esta fase se limita a conciliar y verificar archivos.
+
+---
+
+## Continuidad vigente - 2026-09-12 - inspeccion previa, desarrollo detenido
+
+La tarea vigente es el diagnostico/correccion del Access violation en Undo de Demo A1 / PLAN Lifecycle, definida el 2026-09-10 14:01 al final de TAREA_ACTUAL.md. No esta resuelta.
+
+Se encontro trabajo local anterior que los resumenes iniciales no reflejaban: metadata ya usa App::FeaturePython y existe Demo_ElectricCR_A1_Prueba_Arquitectura.FCMacro. Se preservo todo, sin atribuir autoria ni validacion nueva. Git status falla con `bad tree object HEAD`; el inventario parcial del indice no permite declarar el arbol limpio ni reconstruir todo el historial.
+
+Bloqueo: falta la skill obligatoria freecad-cr-workbench-architecture y su contrato, exigidos por AGENTS.md padre. Se busco tambien fuera de la ruta indicada sin encontrarla. La skill de memoria si se localizo en .agents/skills/freecad-project-memory y se leyo. No se modifico codigo, ejecuto FreeCAD ni demostro la causa del fallo. Sin commit/push, reparacion Git, cambios de modelos ni actualizacion de HISTORIAL_CAMBIOS.
+
+[Inspeccion, limites y hashes previos](tests/evidence/2026-09-12_continuity_inventory/README.md). Solo se anadio documentacion de continuidad y evidencia del inventario. Arreglo: SOPORTE / DESARROLLO / POR VERIFICAR. Siguiente paso: recuperar la skill de arquitectura y su contrato; completar contexto y reproducir el fallo en FreeCAD 1.1.3 antes de modificar lifecycle. AGENTS ElectricCR aun indica 1.1.1; prevalece 1.1.3 para esta tarea. Las entradas inferiores se conservan como antecedentes.
+
+---
+
+## Trabajo GPT - 2026-09-10 17:54 -0600 America/Costa_Rica - Programacion / Recuperar panel Tasks
+
+> Esta entrada corresponde a trabajo directo de GPT en Google Drive; no es resultado de Codex.
+
+Marco autorizo una herramienta paliativa y diagnostica para el fallo visual asociado a Combo View / Tasks al cambiar entre documentos. Antes de implementar se reviso la barra Programacion vigente, `programacion_common.py`, `AuditarInterfazFreeCAD.FCMacro`, `UI_Audit_FreeCAD.FCMacro` y la auditoria runtime previa. Se confirmo en la API de FreeCAD que `ControlPy` expone `activeDialog()`, `showModelView()` y `showTaskView()`.
+
+Cambios en Drive:
+
+- nuevo `Programación/RecuperarPanelTareas.FCMacro` v0.1.0;
+- nuevo `Programación/RecuperarPanelTareas.svg`;
+- `Programación/programacion_toolbar.py` v1.1.0, misma identidad de archivo, con `Programacion_RecoverTasks` insertado junto a `Programacion_UIAudit`;
+- no se modificaron las macros de auditoria existentes.
+
+La recuperacion registra BEFORE/AFTER y diferencias de documento, MDI, TaskDialog, centralWidget, pestaña Model/Tasks, todos los docks, geometria/tamanos y duplicados. La accion usa `showModelView()`, actualizacion GUI/event loop y vuelve a `showTaskView()` solamente cuando el estado previo lo requiere. No usa `closeDialog`, `resizeDocks`, `restoreState`, `setCentralWidget`, `splitDockWidget`, destruccion/reparenting de docks ni operaciones sobre objetos de documento.
+
+Verificacion GPT: compilacion sintactica PASS sobre los bytes finales re-leidos desde Drive; inspeccion de guardas PASS; comando nuevo aparece una sola vez en el manifiesto. **FreeCAD 1.1.3 GUI no fue ejecutado desde este entorno**, por lo que quedan pendientes la prueba de dos documentos, TaskDialog nativo, 10 ciclos y la comprobacion durante el panel negro real. No se declara resuelto el defecto visual.
+
+---
+
+## Demo ElectricCR A1 v0.1 - 2026-09-09 22:39 -0600 America/Costa_Rica
+
+**PRUEBA REAL FAIL; PRIMER FALLO REPRODUCIDO; SIN MODIFICAR CODIGO.** A1 aprobado permanece sin cambios.
+
+Se ejecuto `tests/freecad_electric_demo_smoke.py` original en FreeCAD 1.1.3 (2026-09-09T22:37:32.318785-06:00). Falla en `electriccr/demo/electric_demo_freecad.py:100`, `_create_metadata`: `doc.addObject("App::Feature", "ECR_Demo_Metadata")` produce `TypeError: Document::addObject: 'App::Feature' is not a document object type`. La misma llamada en un documento vacio reprodujo el error.
+
+La demo se cierra al fallar antes de crear edificio, Oficina, Bodega, muros o dispositivos. No se alcanzaron auditoria 7/7, movimiento, Undo/Redo, Delete, save/reopen ni comprobacion visual. No aprobar esas etapas. Todos los documentos de esta prueba quedaron cerrados.
+
+Resultado, traceback y consola: [evidencia del primer fallo](tests/evidence/2026-09-09_electric_demo_v01_first_failure/README.md). El registro distingue un KeyError previo de preparacion (Workbench no registrado; test luego importado directamente) del fallo real reproducido. No se hicieron cambios de codigo, IFC, apertura de Upala, reparaciones, commit/push ni diagnostico de fallos posteriores.
+
+---
+
+## Trabajo GPT - 2026-09-09 22:09 -0600 America/Costa_Rica - implementacion Drive de Demo ElectricCR A1 v0.1
+
+> Esta entrada corresponde a trabajo directo de GPT; no es resultado de Codex.
+
+Marco autorizo la implementacion de una Demo/Macro de pruebas autocontenida. Se investigo y reutilizo el patron de la Demo Casa de 2 Plantas de Facil Arquitectura: nucleo puro reproducible, adaptador FreeCAD y diagnostico separado. Tambien se verifico en la API oficial de FreeCAD 1.1.3 que `Arch.makeSpace()` acepta un objeto solido como Base y que `Arch.makeWall()` crea muros parametrizados a partir de una geometria base; no se implementaron versiones propias de Space o Wall.
+
+Se implemento en Drive:
+- `electriccr/demo/electric_demo_core.py` v0.1.0: escenario fijo JSON-compatible y UIDs UUIDv5 deterministas;
+- `electriccr/demo/electric_demo_freecad.py` v0.1.0: documento nuevo, Building/Level, Spaces, Walls y 7 Owners A1 usando servicios existentes;
+- `electriccr/demo/electric_demo_audit.py` v0.1.0: auditor read-only de UID, Owner/PLAN, master, Placement, Space, Host, snaps y huerfanos;
+- `commands/demo_electriccr.py`: comandos crear/auditar;
+- `Demo_ElectricCR_A1.FCMacro`: lanzador pequeno;
+- `tests/test_electric_demo_core.py`;
+- `tests/freecad_electric_demo_smoke.py`: regresion real preparada;
+- `InitGui.py`: registro de los dos comandos en menu/barra ElectricCR.
+
+Resultado verificable en el entorno GPT:
+
+```text
+pytest test_electric_demo_core.py   7 passed
+py_compile                         PASS
+FreeCAD 1.1.3 real                PENDIENTE
+```
+
+La demo no implementa todavia IFC, Circuit como entidad, Control como entidad ni randomizacion. `CircuitoID` se usa solo como dato de compatibilidad para que el escenario empiece a ejercer la semantica existente sin fijar una arquitectura de circuito aun pendiente.
+
+No se modificaron A1, PLAN, lifecycle, selection, live sync, masters ni `registry_electric.json`. No se toco ningun FCStd productivo y no se hizo commit/push.
+
+---
+
+## Trabajo GPT - 2026-09-09 22:09 -0600 America/Costa_Rica - investigacion del adaptador IFC A1
+
+> Esta entrada corresponde a trabajo directo de GPT en Drive; no es resultado de Codex.
+
+Se amplio la investigacion posterior al experimento NativeIFC de cuatro elementos sin modificar codigo productivo. La conclusion provisional es conservar A1 como autoridad de diseno y estudiar NativeIFC/IfcOpenShell como capa transitoria de exportacion/interoperabilidad.
+
+Puntos demostrados por lectura del codigo FreeCAD 1.1.3 y coherentes con el experimento real previo:
+- NativeIFC puede crear productos IFC desde objetos FreeCAD y reutiliza actualmente el exportador Arch para construir la representacion geometrica;
+- `ObjectPlacement` puede derivarse del `Placement` FreeCAD;
+- el exportador puede operar sobre un `ifcopenshell.file` ya existente y devuelve las entidades creadas, habilitando resolver `Device.Space` contra el `IfcSpace` del mismo archivo;
+- FreeCAD puede conservar/generar GUID IFC; para ElectricCR se recomienda evaluar `GlobalId` determinista derivado de `ElementUID` para evitar dos identidades independientes;
+- NativeIFC soporta Psets editables, aunque cantidades/Qto conservan limitaciones/TODO;
+- el contexto `Plan` existe, pero PLAN A1 no debe exportarse como segundo dispositivo electrico.
+
+Riesgo principal: convertir/agregar directamente un Owner A1 a NativeIFC puede reemplazar/eliminar el objeto FreeCAD original dependiendo de `KeepAggregated`. Por ello no se recomienda probar esa ruta en modelos productivos.
+
+Tambien se detectaron deudas semanticas del registro para una fase futura: `Telecom_TV` usa `IfcCommunicationsOutlet` y debe revisarse contra la taxonomia IFC vigente; `Luminaria 60x60` y `Sensor_Humo` no tienen clase IFC en el registro. No se modifico el registro en esta fase.
+
+Se propone como siguiente instrumento de validacion una macro/demo autocontenida de ElectricCR, analoga a la Demo Casa de 2 Plantas, que genere un escenario reproducible para probar elementos A1, Space y exportacion IFC. No se genero codigo porque requiere autorizacion expresa de Marco.
+
+---
+
+## Resultado vigente - 2026-09-09 20:02 -0600 America/Costa_Rica
+
+**A1 = APROBADO PARA CONTINUAR. Cierre GitHub completado. Experimento NativeIFC de cuatro elementos completado.**
+
+A1 cerrado en GitHub: [4a9ade9](https://github.com/MVM444/Macros-de-Freecad/commit/4a9ade9645d9227ac5323676ee911c972502e869), constancia [285d5a7](https://github.com/MVM444/Macros-de-Freecad/commit/285d5a74b6463dc859d0bc0a940b2879aa6c4c2a), rama `codex/cierre-a1-20260909`; ambos pushes confirmados, staging limpio. Se separaron cambios ajenos y la evidencia publica se anonimizo conforme AGENTS. No merge a main ni release Addon. DEV funcional sin cambios.
+
+NativeIFC real en FreeCAD 1.1.3/IfcOpenShell 0.8.4, 2026-09-09T09:21:49.645609-06:00 a 2026-09-09T09:22:33.267892-06:00: esquema **IFC4**; exactamente IfcOutlet, IfcSwitchingDevice, IfcLightFixture e **IfcElectricDistributionBoard**. Son Part::FeaturePython; Class=IfcClass, GlobalId unico, StepId 23/39/55/71, Type=None (propiedad App::PropertyLink). Cuatro IfcElement y un IfcProject de infraestructura; sin Upala ni conversiones existentes.
+
+| Clase | PredefinedType inicial | Plantillas Pset aplicables | Edicion / FCStd+IFC / reabrir IFC |
+| --- | --- | --- | --- |
+| IfcOutlet | POWEROUTLET | 10 | APROBADO |
+| IfcSwitchingDevice | TOGGLESWITCH | 12 | APROBADO |
+| IfcLightFixture | POINTSOURCE | 10 | APROBADO |
+| IfcElectricDistributionBoard | DISTRIBUTIONBOARD | 11 | APROBADO |
+
+Todos nacieron sin Psets adjuntos. Se editaron etiqueta/descripcion, PredefinedType=USERDEFINED, ObjectType=ProbeDevice, Placement/giro15 grados y un Pset simple (before -> after). Persistieron GUIDs, StepIds, atributos, Placement y Pset tras guardar IFC+FCStd, cerrar/reabrir FCStd y reabrir el IFC. Consola sin excepciones. Capturas revisadas; cuatro mallas/superficies, Shape no nula y 0 solidos. Prueba mediante propiedades Python nativas/callbacks reales; no se afirma edicion manual del panel ni autonomia FCStd sin companero IFC.
+
+| Alternativa | Evidencia a favor | Limite / decision provisional |
+| --- | --- | --- |
+| 1. NativeIFC como nucleo | Clase, GlobalId, atributos IFC, Placement y Pset editados/persistidos nativamente en las cuatro clases. | No adoptar todavia: no se probo edicion colectiva por Type, rendimiento, documentos grandes ni equivalencia con App::Link. |
+| 2. NativeIFC como capa/adaptador alrededor de A1 | Permite estudiar semantica/intercambio IFC conservando el A1 aprobado. | **Opcion recomendada para el siguiente diseno exploratorio**, sin implementar aun. Definir primero una sola autoridad para identidad, Placement y propiedades. |
+| 3. Hibrida | Los mapas IFC pueden compartir representacion, mientras A1 conserva su autoría y documentacion. | Hipotesis pendiente; duplicar motores introduce sincronizacion y persistencia adicionales. No hay integracion validada. |
+
+
+IFC/IfcOpenShell y NativeIFC ofrecen RepresentationMaps/IfcMappedItem al asignar un Type con mapas, pero NativeIFC usa Part::FeaturePython y Shape por objeto; **no se demostro equivalencia de rendimiento ni funcionamiento con Master + App::Link**. Type=None en los cuatro: no se crearon ocurrencias extra. Desasignar Type y Psets no simples tienen limites visibles en codigo; no se probaron esas rutas. La recomendacion de opcion2 es para estudio posterior, no una integracion aprobada. Fuentes primarias y distincion entre hecho/prueba/inferencia en el reporte.
+
+Evidencia completa, GlobalId/Placement/Psets por elemento, hashes y limites: [reporte NativeIFC](tests/evidence/2026-09-09_nativeifc_four_elements/README.md), [results.json](tests/evidence/2026-09-09_nativeifc_four_elements/results.json). Modelos desechables en `C:\Users\marco\AppData\Local\Temp\ecr_nativeifc_four_20260909`; documentos cerrados. Helper nuevo: tests/freecad_nativeifc_four_elements_probe.py. Se preservaron hashes de los13 archivos A1 revisados; no se modificaron PLAN, lifecycle, seleccion, masters o produccion.
+
+Documentacion actualizada: resultado, estado, tarea y memoria. NativeIFC queda **SOPORTE / EXPERIMENTAL / COMPROBADA-PARCIAL**. Sin integracion A1-NativeIFC, puertos ni cambios arquitectonicos. Esta fase nueva permanece local y no se mezcla con el cierre A1 publicado. Entradas inferiores historicas.
+
+---
+
+## A1 GitHub closure confirmed - 2026-09-09T09:16:00.625279-06:00
+
+Commit: `4a9ade9645d9227ac5323676ee911c972502e869`.
+Branch: `codex/cierre-a1-20260909`.
+Remote: https://github.com/MVM444/Macros-de-Freecad . Push: **SUCCESS**, upstream configured and remote branch created.
+
+26 files: approved A1 implementation/dependencies, generic tests, documentation and anonymized evidence. No new functionality. Unrelated door-side hunks and other local work excluded. Public documentation retains history with neutralized local references; complete DEV records retain their identity/location. No merge to main or Addon release performed.
+
+---
+
+## Cierre vigente A1 - 2026-09-08 17:49 -0600 America/Costa_Rica
+
+**A1 = APROBADO PARA CONTINUAR**, con ElectricCR inicializado una vez por sesion. Seleccion, movimiento, giro y Delete/Undo/Redo funcionan tambien con BIM, Draft y Part activos. Correccion minima implementada y validada en FreeCAD 1.1.3 real; no implica aceptacion definitiva de otros pendientes ni cambia el opt-in A1.
+
+Esta entrada sustituye el bloqueo de ruta de las 12:32 y los planes historicos de feedback de septiembre 5. El usuario corrigio la fuente a `C:\Users\marco`; el archivo actual ya no es la copia antigua con siete PLAN huerfanos. Los apartados inferiores se conservan como historia, no como instrucciones vigentes. No reintroducir ghostTracker.
+
+### Fuente protegida y entorno
+
+- Original: `C:\Users\marco\OneDrive - Caja Costarricense de Seguro Social\Documentos\FreeCAD\Sucursales\Upala\1416 Levantamiento 250424 Compu D.FCStd`.
+- 1363006 bytes; fecha de archivo 2026-09-08 09:44:46 -06:00; SHA256 `F5E1A372D162F02E5D91CD874F47A13B412380972F0604E27D9D77D71E87077F` antes y despues.
+- Copia verificada para pruebas: `C:\Users\marco\AppData\Local\Temp\ecr_a1_acceptance_20260908_5_mtcyyd\A1_workbench_regression.FCStd`. Original nunca guardado ni modificado.
+- FreeCAD 1.1.3, revision 20260725, commit 145529fe741292ff0b3977a01195bf0247425794, Windows DESKTOP-5586S7P. Regresion final 2026-09-08T17:36:24.420274-06:00 a 2026-09-08T17:44:52.151735-06:00, en sesion GUI reiniciada con el codigo cargado normalmente.
+- Evidencia durable: [tests/evidence/2026-09-08_a1_workbench_runtime/README.md](tests/evidence/2026-09-08_a1_workbench_runtime/README.md), con resultados JSON, consola, capturas y delta exacto de codigo.
+
+### Causa demostrada y correccion
+
+Se revisaron primero InitGui.py, ui/plan_selection.py, electriccr/features/plan_live_sync.py y plan_lifecycle.py. Initialize ya instalaba lifecycle y live sync como observers de documento; ambos seguian activos al salir de ElectricCR. Activated instalaba el redirector de seleccion y Deactivated lo desinstalaba explicitamente. La matriz nativa anterior al cambio confirma que solo ese servicio desaparecia en BIM/Draft/Part.
+
+Consecuencia reproducida en copia: con Part activo, seleccionar PLAN y ejecutar Std_Delete borraba solo PLAN. Quedaban 10 Owners y 9 PLAN; auditoria `owner_without_plan` y `owner_without_linked_plan`. Undo restauraba el par. Es un fallo GUI con consecuencia de integridad (Owner sin PLAN); no se demostro un PLAN huerfano nuevo por este mecanismo. El borrado directo de Owner seguia eliminando ambos porque lifecycle permanecia instalado. No es corrupcion persistida de binding y no se reconstruyo ningun PLAN existente.
+
+Delta funcional exclusivo de esta tarea:
+
+1. `InitGui.py`: instalar seleccion tambien al Initialize y conservarla en Deactivated; paneles/barras siguen su ciclo GUI habitual.
+2. `ui/plan_selection.py` v0.4.1: install idempotente, reutiliza singleton; uninstall queda solo para mantenimiento/recarga explicita. Filtros y seleccion unica de Owner conservados.
+3. `electriccr/features/plan_live_sync.py` v0.4.1: corregir import de normalizacion de arbol a `ElectricCR.ui`, ruta real del paquete.
+
+`plan_lifecycle.py`, fabrica A1, contrato, propiedades, expresion canonica, Host/Space/puerta y ClaimHosted no se modificaron en este delta. Los archivos funcionales ya tenian trabajo previo sin commit; `changes.patch` separa exactamente este cambio. Se reutilizaron observers y comandos nativos existentes: REUTILIZAR App.addDocumentObserver/Gui.Selection.addObserver, Std_Delete/Undo/Redo y Draft.move/rotate; EXTENDER solo duracion e idempotencia del adaptador de seleccion. No se creo otro runtime ni se repitio investigacion amplia.
+
+### Auditoria y regresion real
+
+| Comprobacion | Resultado |
+| --- | --- |
+| Inventario actual inicial y final tras reapertura | 10 Owners App::Link / 10 PLAN Part::Feature |
+| Unico dispositivo nuevo de prueba | 11/11; vuelve a 10/10 al eliminarlo |
+| UID, master, contrato, referencias reciprocas, schema=2, DocumentationOnly, Owner hidden, expresion y Placement real | APROBADO |
+| Huerfanos, Owners sin PLAN, duplicados UID/claims/PLAN, enlaces cruzados, expresiones rotas, estados Invalid/Error | 0 en todas las etapas posteriores al cambio |
+| PLAN -> Owner existente en ElectricCR/BIM/Draft/Part | APROBADO; solo Owner seleccionado |
+| BIM: mover/girar, guardar, Delete/Undo/Redo/Undo, mover, save/close/reopen | APROBADO |
+| Draft: seleccionar, mover/girar, Delete/Undo/Redo/Undo, save/close/reopen | APROBADO |
+| Part: seleccionar, mover/girar, Ambos/Solo2D/Solo3D, Delete/Undo/Redo | APROBADO |
+| Part: clic real sobre PLAN, guardar/cerrar/reabrir, repetir movimiento y Delete/Undo/Redo | APROBADO |
+| Reapertura final sin sonda, auditar y cerrar | APROBADO; 10/10 |
+| PLAN acompana antes de recompute global | APROBADO; XY, Z documental y giro |
+| Instalacion repetida, cambio de WB/documento, ShowInTree=False, fuera de grupos | APROBADO; mismos tres singletons |
+| Valores serializados de todos los Owners existentes, incluido Placement/Host/Space/puerta | Iguales al original |
+| Graficos residuales tras Delete / PLAN duplicados o huerfanos | 0 observados |
+
+El nuevo movimiento tras Undo invalido Redo (RedoCount=0); Redo del borrado se probo antes de ese nuevo movimiento y en secuencias nuevas validas. No hubo reparacion, sync o reconstruccion despues del replay. Girar se verifico en las rotaciones reales Owner/PLAN (0, 25, 40, 65, 90, 115 grados). Movimiento y giro se ejecutaron con API Draft sobre la seleccion GUI; clic fisico de PLAN comprobado ademas con raton en Part. Capturas de la misma vista demuestran desaparicion y retorno tras Undo; PLAN no figura como segundo dispositivo del arbol.
+
+Consola: cero `No attribute named 'Placement'`, cero Access violation y cero errores de recompute A1 observados. Se conserva consola completa: hubo errores del instrumento de prueba (consulta CenterOfMass inexistente, dos comparaciones de estado transitorio y una ruta de importacion corregida). No se presentan como errores del producto ni se ocultan. El mensaje lifecycle «removed orphan PLAN after owner deletion» describe su eliminacion dentro del ciclo de borrado; las auditorias no dejan huerfanos.
+
+El primer cierre estricto detecto solo State/status Touched. Se demostro con recompute -> auditoria -> recompute que lecturas/evaluacion nativa del auditor activan esos marcadores y un recalculo de 22 features los limpia. La comparacion final excluye solamente State/status; sigue rechazando Invalid/Error y conserva todos los demas campos. Comparacion XML independiente: valores y definiciones de todas las propiedades Owner sin cambios; solo difieren atributos nativos status. No se modifico codigo de produccion para este ajuste del instrumento.
+
+### Archivos y limites de aprobacion
+
+Nuevos helpers reutilizables: `tests/freecad_a1_runtime_audit.py` (inventario sin asignaciones/reparaciones) y `tests/freecad_a1_runtime_regression.py` (copia verificada, secuencia controlada). Sintaxis AST validada en estos dos y los tres archivos funcionales; revision independiente del delta y de los resultados sin hallazgos bloqueantes. Documentacion actualizada en sus ubicaciones: RESULTADO_CODEX.md, ESTADO_PROYECTO.md, TAREA_ACTUAL.md y Memoria_FreeCAD/sesiones/2026-09-08_electriccr-a1-runtime-workbench_DESKTOP-5586S7P.md.
+
+Alcance aprobado: contrato A1 actual, despues de inicializar ElectricCR una vez en cada sesion de FreeCAD. No se promete runtime antes de esa inicializacion. El auditor reconoce Owners por contrato A1; la perdida simultanea de contrato y PLAN anterior al inventario inicial requeriria otra fuente de identidad. Los guards preexistentes de lifecycle/live sync invocan metodos hasPendingTransaction()/isPerformingTransaction() ausentes en 1.1.3 (expone HasPendingTransaction/Transacting); no se atribuye la aprobacion a esos guards. No fueron modificados: las operaciones reales probadas aprobaron y no justifican una ampliacion arquitectonica.
+
+Pendientes no bloqueantes y fuera de esta tarea: feedback persistente PLAN, NativeIFC/IFC electrico, arbol semantico y doble aparicion Wall/electrico, ClaimHosted, relacion historica Rectangle006, orientacion en muros inclinados. Rectangle009/010 no se reportan como perdida accidental. A1 conserva una unica identidad/autoridad espacial en Owner; PLAN es auxiliar documental reconstruible.
+
+Clasificacion: servicio estructural A1 existente, corregido localmente y validado funcionalmente por Codex en FreeCAD 1.1.3; listo para continuar desarrollo dentro del alcance anterior. Sin commit ni push. Drive sigue siendo fuente de verdad; cambios locales autorizados, sin afirmar sincronizacion Drive no verificada. HISTORIAL_CAMBIOS no se actualiza como aceptacion definitiva de Marco.
+
+---
+## Auditoria A1 actual - 2026-09-08 12:32 America/Costa_Rica
+
+Estado: PENDIENTE DE ACCESO AL MODELO ACTUAL. No es una regresion actual demostrada ni un dictamen negativo sobre A1.
+
+La instruccion vigente sustituye el diagnostico de la copia antigua por una auditoria de cierre del modelo ya validado manualmente por Marco. Objetivo: FreeCAD 1.1.3; correspondencia Owner/PLAN 1:1 y regresion controlada de un dispositivo nuevo mediante Std_Delete, Undo, Redo y guardar/cerrar/reabrir. No modificar codigo si pasa; detenerse ante una regresion actual reproducible.
+
+Fuente actual indicada por el usuario:
+`C:\Users\mmfallas\OneDrive - Caja Costarricense de Seguro Social\Documentos\FreeCAD\Sucursales\Upala\1416 Levantamiento 250424 Compu D.FCStd`
+
+Esa ruta no existe en este host (`DESKTOP-5586S7P`, usuario `marco`). Se solicito la ubicacion accesible de la version validada. La copia local homonima bajo `C:\Users\marco` conserva fecha 2026-09-05 22:02:29, 1345428 bytes y SHA-256 `2522F5F33E7D86ABEB3EBE6737AE5B63EC6DAF7A4C38750309B4B8D49A00E91E`; corresponde al estado antiguo y NO se utiliza para decidir la estabilidad actual.
+
+Evidencia actual disponible:
+
+- Prueba manual declarada por el usuario: crear, guardar, Delete de Owner+PLAN, Undo enlazado, Redo, guardar, cerrar y reabrir: APROBADA.
+- Inventario independiente del modelo actual: NO EJECUTADO; cantidades Owners/PLAN e inconsistencias actuales: NO DISPONIBLES.
+- Regresion independiente sobre copia del modelo actual: NO EJECUTADA por falta de la fuente.
+- Errores de consola actuales: NO EVALUADOS. No se extrapolan los errores historicos.
+- FreeCAD 1.1.3 local fue identificado en el diagnostico previo: revision 20260725, commit 145529fe741292ff0b3977a01195bf0247425794.
+
+Preparacion completada sin cambiar produccion: revision acotada de la fabrica, observers y pruebas existentes; auditor read-only preparado en `%TEMP%\ecr_plan_diagnosis_20260908\audit_current_a1.py`. Para crear el unico dispositivo se reutilizara `crear_toma_link(... separate_documentation=True, recompute=False)`, `ensure_device_semantics(... manage_transaction=False)` y `sync_plan_representation(... manage_transaction=False)` en una transaccion. El Delete se probara con `Std_Delete`, no con una funcion que borre manualmente ambos objetos. Tras Undo/Redo se recuperaran los objetos por nombre y no se ejecutaran reparaciones que oculten regresiones. Redo inmediato se verifica antes de mover; un movimiento nuevo tras Undo invalida el Redo anterior.
+
+Evidencia historica separada: el diagnostico previo en una copia temporal confirmo siete PLAN con Owner=None, Placement legible y fallo tambien al evaluar de nuevo Owner.Placement; los Owners ya no estaban. No demuestra corrupcion de binding ni un fallo vigente del modelo validado. Se conserva el reporte temporal `readonly_report.json`; no se reparo nada. Rectangle009/010 fueron borrados intencionalmente y no se reportan como perdida accidental.
+
+Archivos funcionales modificados: NINGUNO. Originales y respaldos no modificados. Documentacion de esta pausa: RESULTADO_CODEX.md, ESTADO_PROYECTO.md y TAREA_ACTUAL.md en sus ubicaciones existentes. Sin commit/push. Los cambios documentales se realizan localmente; no se afirma una sincronizacion Drive no verificada.
+
+Conclusion: falta la fuente actual para emitir `A1 = APROBADO PARA CONTINUAR` o demostrar una regresion actual. El estado antiguo no justifica declarar `A1 = NO APROBADO`.
+
+---
+## Trabajo GPT 2026-09-05 21:01 - feedback PLAN persistente y diagnostico nativo del arbol
+
+> Trabajo directo de GPT en Drive; no atribuir a Codex.
+
+### Feedback PLAN
+
+La prueba real de Marco demostro que `Gui.Selection.setPreselection(PLAN, "")` resalta el PLAN completo pero deja de hacerlo cuando cambia la preseleccion del cursor. Se reutilizo `draftguitools.gui_trackers.ghostTracker` de FreeCAD 1.1.3 como overlay Coin temporal, sin seleccionar PLAN logicamente.
+
+Implementado:
+- `plan_selection.py` v0.3.0: overlay persistente completo, unpickable, GUI-only; Owner unica seleccion; PLAN `ShowInTree=False` cuando se soporta; cleanup al deseleccionar/salir del Workbench.
+- `plan_live_sync.py` v0.3.0: refresca overlay despues de Placement/giro/visibilidad y al activar documentos.
+
+### Multiparentalidad
+
+El arbol de Upala confirma `TreeParents=[Wall, Apagadores BIM]` para cada apagador A1. FreeCAD BIM `claimChildren()` usa el parametro `ClaimHosted` (default True) para presentar hosted objects bajo su host.
+
+Durante la investigacion se detecto una restriccion importante: `ArchComponent.getMovableChildren()` tambien descubre hosted objects por `Wall.InList` y `Device.Host`; si el objeto no tiene `MoveWithHost`, lo considera movible. Por ello convertir `Device.Host` a `PropertyLinkHidden` eliminaria el backlink y podria eliminar una capacidad BIM existente.
+
+Se habia preparado rev O con Host hidden, pero **se revirtio antes de prueba de usuario**. Drive conserva `objeto_toma_uno.py` rev N. No se cambia Host/MuroReferencia.
+
+Candidatos pendientes:
+- `ClaimHosted=False`: nativo, preserva backlinks y movimiento, pero afecta globalmente la vista BIM;
+- referencia de proyeccion electrica: localizada y alineada con el contrato semantico, pero requiere lifecycle/seleccion adicional;
+- Host hidden solo si se implementa y prueba un reemplazo explicito para movimiento con host.
+
+### Verificacion
+
+`py_compile` de `plan_selection.py`, `plan_live_sync.py` y `objeto_toma_uno.py`: APROBADO.
+No se modifico ningun FCStd.
+Prueba GUI real del overlay: PENDIENTE.
+
+---
+
+## Trabajo GPT 2026-09-05 20:22 - feedback PLAN completo y PropertyLinkHidden
+
+> Trabajo directo de GPT en Drive; no atribuir a Codex.
+
+Marco aporto nueva evidencia en Upala / FreeCAD 1.1.3: al apuntar/clicar el PLAN el sistema
+redirige correctamente la seleccion a Owner, pero el highlight nativo cae sobre el
+subelemento alcanzado (`Edge6`, `Edge18`, `Vertex41`, etc.) y no sobre todo el simbolo.
+El mismo caso sigue mostrando el dialogo `Dependencias del objeto` listando el PLAN antes
+de borrar el Owner.
+
+Investigacion nativa adicional:
+- la API Python 1.1.3 define `Gui.Selection.setPreselection(obj, subname="", ...)`;
+- usar subname vacio permite pedir preseleccion del objeto completo;
+- Draft Layer en FreeCAD usa propiedades `*Link*Hidden` precisamente para evitar avisos
+  `might break` al borrar objetos y migra tipos dinamicos mediante `removeProperty()` +
+  `addProperty()` conservando el valor.
+
+Cambios guardados en los mismos IDs de Drive:
+
+1. `electriccr/ui/plan_selection.py` v0.2.0
+   - normaliza hover de `Edge`/`Vertex` a preseleccion del PLAN completo;
+   - tras redirigir la seleccion a Owner reaplica feedback PLAN completo;
+   - PLAN nunca entra como segunda seleccion logica.
+
+2. `electriccr/features/objeto_toma_uno.py` rev N
+   - `Owner` documental pasa a `App::PropertyLinkHidden`;
+   - los PLAN A1 existentes con `App::PropertyLink` se migran transaccionalmente al pasar
+     por `sync_plan_representation()`;
+   - se preservan expresiones que referencian Owner y se verifica nuevamente el binding
+     canonico `PLAN.Placement <- Owner`;
+   - dry-run reporta `MIGRATE_PLAN_OWNER_LINK_HIDDEN`.
+
+Verificacion realizada fuera de FreeCAD real:
+- `python -m py_compile`: APROBADO para ambos archivos;
+- actualizacion in-place de Drive: APROBADA.
+
+Prueba real 1.1.3 sigue obligatoria antes de declarar estable, especialmente Delete,
+Undo/Redo y persistencia save/reopen. A1 permanece opt-in.
+
+---
+
+## Trabajo GPT 2026-09-05 - correccion del modo visual A1
+
+> Trabajo directo de GPT en Drive; no atribuir a Codex.
+
+Se identifico que el problema recurrente de Solo2D/Solo3D no era falta de una herramienta:
+ya existe `Gestionar_Visibilidad_ElectricCR.FCMacro`, que opera mediante `ModoVisual`.
+
+El defecto era de integracion A1: las representaciones separadas usaban
+`MostrarModelo3D` / `MostrarSimboloPlano` y no reaccionaban automaticamente a
+`ModoVisual`.
+
+Cambios:
+- `objeto_toma_uno.py` rev M: traduccion bidireccional coherente entre modos canonicos y
+  flags de visibilidad A1;
+- `plan_live_sync.py` v0.2.0: sincroniza visibilidad en cambios interactivos y conserva
+  la actualizacion de Placement ya aprobada;
+- `InitGui.py`: agrega a la barra principal ElectricCR, cuando existen, `Draft_Move`,
+  `Draft_Snap_Special` y el comando historico `Gestionar_Visibilidad_ElectricCR`.
+
+No se creo un gestor alternativo, no se reconstruyo geometria y no se modificaron FCStd.
+
+Verificacion:
+- compilacion/sintaxis en memoria: OK;
+- Drive actualizado en los mismos IDs: OK;
+- prueba funcional FreeCAD 1.1.3 de los tres modos visuales: PENDIENTE.
+
+---
+
+## Trabajo GPT 2026-09-05 16:10 - separacion visual durante Transformar y Access violation en Undo
+
+> Trabajo directo de GPT/Marco; no atribuir a Codex.
+
+En Upala, Marco confirmo que el dragger `Transformar` queda en el origen 2D pero mueve visualmente
+solo el Owner/3D. PLAN conserva temporalmente el Placement anterior y se corrige con F5/recompute.
+El JSON posterior mantiene Owner, expresion schema 2 y SnapPoints `(0,0,0)`, por lo que la
+dependencia persistente sigue valida; el defecto es de refresco interactivo.
+
+El registro tambien mostro un `Access violation` dentro de `Transactions.cpp` al hacer Undo de la
+transaccion de creacion de apagadores. Antes del fallo, `plan_lifecycle` estaba eliminando PLANs mientras
+FreeCAD ya deshacia los Owners. Se clasifica como regresion critica introducida por el observer.
+
+Cambios GPT en Drive:
+
+- `plan_lifecycle.py` 0.1.1: guardas `Document.isPerformingTransaction()` en delete/flush/commit;
+- nuevo `plan_live_sync.py`: `PLAN.recompute()` dirigido ante cambio de `Owner.Placement`;
+- `InitGui.py`: instala live sync.
+
+Compilacion sintactica local de los tres archivos: OK. Prueba real FreeCAD 1.1.3: PENDIENTE.
+
+`Draft Snap Special` queda aclarado como modo de snap para Draft Move; no interviene en Transformar.
+
+A1 permanece opt-in.
+
+---
+
+## Trabajo GPT 2026-09-05 15:43 - validacion de campo posterior: seleccion visual y Delete
+
+> Trabajo directo de GPT/Marco; no atribuir a Codex.
+
+Marco probo en Upala con FreeCAD 1.1.3:
+
+- PLAN redirige correctamente la seleccion al Owner;
+- 2D y 3D se mueven juntos;
+- FreeCAD resalta visualmente solo el 3D del Owner, no PLAN;
+- ocultar Owner deja PLAN visible, confirmando visibilidad fisica/documental independiente;
+- Delete elimina Owner + PLAN con el nuevo lifecycle;
+- antes del borrado aparece el dialogo nativo `Dependencias del objeto` listando PLAN.
+
+La causa del dialogo es anterior al observer: `Std_Delete` detecta
+`PLAN.Owner : App::PropertyLink` como dependencia.
+
+Investigacion oficial posterior identifica `App::PropertyLinkHidden`, heredero de
+`PropertyLink`, cuya finalidad es ocultar la referencia al chequeo de dependencias.
+Se clasifica como **REUTILIZAR SI PASA PROBE REAL**. No se modifico aun el tipo de
+`Owner`, porque debe comprobarse que la expresion PLAN<-Owner sigue recibiendo
+actualizaciones/recompute.
+
+Para el feedback visual se evita doble seleccion. Primera alternativa a probar:
+preseleccion nativa de PLAN mediante `Gui.Selection.setPreselection()` mientras Owner
+permanece como unica seleccion funcional.
+
+`Draft Snap Special` se confirma como modo nativo Draft/BIM que consume los `SnapPoints`
+especiales del objeto. PLAN ya expone `(0,0,0)`.
+
+Estado: desarrollo activo; A1 sigue opt-in.
+
+---
+
+## Trabajo GPT 2026-09-05 14:35 - punto de insercion PLAN / Snap Special
+
+Este bloque corresponde a trabajo directo de GPT en Drive; no atribuir a Codex.
+
+### Investigacion
+
+Se confirmo en el codigo actual de Draft que `snapToSpecials()` consume cualquier
+objeto con `SnapPoints` y transforma cada punto local con `obj.Placement.multVec(p)`.
+Esto permite implementar el punto base CAD sin geometria auxiliar.
+
+Se auditaron los STEP 2D vigentes. Toma y apagador ya poseen referencias geometricas
+en `(0,0,0)`; otros simbolos no son uniformes, por lo que se adopta SnapPoints como
+contrato comun.
+
+### Cambios
+
+- `electriccr/features/objeto_toma_uno.py` rev L:
+  `PLAN.SnapPoints=[Vector(0,0,0)]` y diagnostico
+  `SET_PLAN_INSERTION_SNAP`.
+- `InitGui.py`: agrega `Draft_Snap_Special` a `Draft compacto`.
+- `tests/freecad_plan_owner_spatial_sync_a1_smoke.py`: verifica SnapPoints y su
+  transformacion mundial.
+
+No se modificaron recursos STEP ni Shape PLAN. No se hizo migracion automatica.
+
+### Verificacion
+
+- compilacion sintactica: OK;
+- inspeccion STEP: OK;
+- prueba interactiva FreeCAD del nuevo Snap Special: PENDIENTE.
+
+Clasificacion provisional:
+- Rol: SOPORTE/UX del nucleo A1.
+- Madurez: DESARROLLO.
+- Resultado: POR VERIFICAR.
+
+---
+
+## Trabajo GPT 2026-09-05 14:05 - ciclo de vida PLAN al borrar Owner
+
+> Esta seccion corresponde a trabajo directo de GPT en Google Drive; no es resultado de Codex.
+
+### Hallazgo de campo
+
+Marco valido seleccion PLAN -> Owner y movimiento conjunto 2D/3D. Al borrar un
+dispositivo, su PLAN persiste con `Owner=null`. Se confirma un defecto distinto de la
+sincronizacion espacial: **borrado semantico incompleto**.
+
+### Investigacion
+
+Se revisaron mecanismos nativos de FreeCAD:
+
+- `ViewProvider.onDelete()` admite eliminar objetos relacionados;
+- `App::PropertyLink` rompe referencias al objeto eliminado;
+- `PropertyLinkChild` no se toma como garantia de cascada;
+- `App::DocumentObserverPython` expone `slotDeletedObject`;
+- `Document.hasPendingTransaction()` permite coordinar con Undo/Redo.
+
+No se sustituye el `ViewProviderLink` nativo del `App::Link`.
+
+### Codigo modificado en Drive
+
+- NUEVO: `ElectricCR/electriccr/features/plan_lifecycle.py`
+- MODIFICADO: `ElectricCR/InitGui.py`
+
+El observador se instala idempotentemente desde `Initialize()` y permanece activo
+despues de cambiar de Workbench.
+
+### Pruebas
+
+Fuera de FreeCAD real:
+
+- sintaxis: OK;
+- mock transaccion abierta: OK;
+- mock sin transaccion: OK;
+- mock fallback post-commit: OK.
+
+Prueba real FreeCAD 1.1.3: PENDIENTE.
+
+Clasificacion provisional:
+
+```text
+Rol: NUCLEO / SOPORTE DE CICLO DE VIDA
+Madurez: DESARROLLO
+Resultado: POR VERIFICAR
+```
+
+No autoriza A1 default ni migracion legacy.
+
+---
+
+## Nota posterior 2026-09-05 - UX 2D no cubierta por el cierre PLAN/Owner
+
+El resultado de Codex sobre sincronizacion espacial sigue siendo valido: PLAN
+sigue automaticamente el Placement del Owner mediante expresion persistente.
+
+Despues del cierre se identifica un requisito adicional que esa tarea no tenia
+como alcance: **editar el mismo dispositivo desde su representacion 2D**.
+Actualmente hacer clic en PLAN puede seleccionar el `Part::Feature` documental y
+mostrarlo como objeto auxiliar en el arbol; ademas su Placement, correctamente
+gobernado por expresion, no debe editarse como segunda autoridad.
+
+La solucion a estudiar no es eliminar la expresion ni volver a unir 2D/3D. El
+contrato nuevo es:
+
+```text
+clic/mover 3D  -> Device.Placement
+clic/mover PLAN -> Device.Placement
+Device.Placement -> PLAN por expresion
+```
+
+La preferencia preliminar es ocultar PLAN del arbol, redirigir seleccion a Owner
+y reutilizar `Draft Move` con el origen local `(0,0,0)` del simbolo como punto
+base. Se requiere prueba real en FreeCAD 1.1.3 antes de convertir esta nota en
+implementacion.
+
+Esta nota no modifica retrospectivamente el resultado tecnico cerrado por
+Codex; amplia el contrato de UX para la siguiente fase.
+
+---
+
 # ElectricCR - Resultado de Codex
+
+## Resultado 2026-09-05 - A1 sincronizacion espacial PLAN-Owner
+
+**Objetivo:** hacer que `Device.Placement` sea la unica autoridad espacial y
+que PLAN siga automaticamente X/Y/orientacion, conservando
+`DocumentationPlaneZ` y `PlanSymbolScale` como parametros documentales.
+
+**Estado:** IMPLEMENTADO Y PROBADO EN FREECAD 1.1.3 / A1 APTO PARA DEFAULT DE
+OBJETOS NUEVOS / DEFAULT TODAVIA OPT-IN.
+
+### Diagnostico confirmado
+
+`sync_plan_representation` calculaba `_plan_placement(owner)` y lo asignaba una
+sola vez a `PLAN.Placement`. `Owner` ya era `App::PropertyLink`, pero el PLAN
+era `Part::Feature` sin expresion ni proxy. El enlace creaba dependencia de
+pertenencia, no una regla para derivar Placement. `RepresentationSignature`
+incluia UID, X/Y/Z y quaternion, de modo que tambien confundia transformacion
+espacial con geometria documental.
+
+La copia del FCStd guardado mostro `TomaBIM_011` y su PLAN alineados en
+X=`19003.999751956`; el movimiento a X=`19263` estaba en la sesion real no
+guardada descrita por el usuario. La regresion reprodujo exactamente ese estado
+en la copia, dejando PLAN atras `259.000248044 mm` antes de sincronizar.
+
+### Evaluacion nativa y decision
+
+La documentacion oficial de FreeCAD confirma expresiones sobre Placement
+completo, componentes, vectores y rotaciones. Una prueba minima en 1.1.3
+demostro que esta expresion atraviesa `Owner`, responde a movimiento/giro y Z,
+participa en Undo/Redo y persiste despues de save/reopen:
+
+```text
+placement(vector(Owner.Placement.Base.x;
+                 Owner.Placement.Base.y;
+                 Owner.DocumentationPlaneZ);
+          Owner.Placement.Rotation)
+```
+
+Clasificacion:
+
+- expresion nativa: **REUTILIZAR**;
+- PLAN `Part::FeaturePython`: **COEXISTIR / RESERVA NO NECESARIA**;
+- observador GUI/Qt: **DESCARTAR**, porque la dependencia parametrica resuelve
+  el caso sin estado global.
+
+### Cambio minimo
+
+Solo se modifico
+`ElectricCR/electriccr/features/objeto_toma_uno.py`:
+
+- `REPRESENTATION_SCHEMA_VERSION` paso de 1 a 2;
+- PLAN sigue siendo `Part::Feature` y `Owner` sigue siendo `PropertyLink`;
+- `PLAN.Placement` recibe la expresion nativa persistente;
+- una sincronizacion actualiza automaticamente PLAN antiguos sin expresion;
+- `RepresentationSignature` conserva solo version, `KeyRegistro`, giro/offset
+  local del simbolo y `PlanSymbolScale`;
+- Placement, UID y `DocumentationPlaneZ` salieron de la firma.
+
+No se combinaron 2D/3D, no se agrego proxy, observador, comando ni arquitectura
+paralela. `separate_documentation=False` permanece como default del API.
+
+### Pruebas y resultados
+
+`freecad_plan_owner_expression_probe.py` aprobo expresion, PropertyLink,
+movimiento, giro, Z, Undo/Redo y save/reopen en un fixture minimo.
+
+`freecad_plan_owner_spatial_sync_a1_smoke.py` aprobo sobre copia temporal de
+Chomes:
+
+| prueba | resultado |
+|---|---|
+| desfase de campo | reproducido 259.000248044 mm y corregido por sincronizacion |
+| mover Owner X/Y | PLAN siguio automaticamente |
+| girar Owner | PLAN copio la rotacion completa de planta |
+| `AlturaRel` | 300 -> 450 mm en toma; 1200 -> 1350 mm en apagador, sin deriva PLAN |
+| `DocumentationPlaneZ` | 225 mm toma / 75 mm apagador; solo transformacion Z |
+| `PlanSymbolScale` | 1.35 toma / 0.80 apagador; solo geometria documental |
+| Undo/Redo | aprobado para movimiento y giro en ambas familias |
+| save/reopen | expresiones, Owner, Placement y propiedades persistieron |
+| recompute repetido | tres pasadas, conteo y Placement estables |
+| huerfanos | cero |
+| DXF | dos PLAN, 20008 bytes |
+| Shape fisica | toma 84518.072443 mm3 / 18 solidos; apagador 82232.284217 mm3 / 2 solidos |
+
+La regresion A1 general
+`freecad_electromechanical_outlet_switch_a1_smoke.py` tambien aprobo nuevamente
+con save/reopen, Undo/Redo, escala, alturas, DXF y cero huerfanos.
+
+El original de Chomes no se guardo ni modifico. Antes y despues conservo
+SHA-256 `E36A28A4AADE9615701B7B7354F905EA370B1FD057F5F2D0AD8A66E785404E7D`,
+`3898540` bytes y la misma fecha. El FCStd temporal fue eliminado. Drive guarda
+`A1_PLAN_OWNER_SYNC_2026-09-05_reporte.json` y
+`A1_PLAN_OWNER_SYNC_2026-09-05.dxf`.
+
+### Compatibilidad y limite deliberado
+
+Los PLAN nuevos reciben la expresion durante su creacion/sincronizacion. Los
+PLAN A1 esquema 1 existentes se actualizan de forma idempotente la proxima vez
+que pasan por `sync_plan_representation`; no se hizo una migracion automatica
+del documento productivo.
+
+Clasificacion provisional:
+
+- Rol funcional: **NUCLEO DE REPRESENTACION**;
+- Madurez: **ACTIVA / A1 OPT-IN**;
+- Resultado comprobado: **COMPROBADA TECNICAMENTE EN FREECAD 1.1.3**;
+- Decision: **A1 APTO PARA DEFAULT DE OBJETOS NUEVOS**, sin cambiarlo en esta
+  tarea y sin migrar legacy.
+
+---
+
+## Nota historica posterior al cierre 2026-09-03 - hallazgo de campo no cubierto por la aceptacion
+
+La aceptacion GUI registrada abajo fue correcta para el alcance ejecutado en ese
+momento: creacion desde los comandos completos, contrato A1, separacion
+fisica/documental, save/reopen, Undo/Redo e invariancia fisica.
+
+Posteriormente, un uso real en `Chomes-Segundo Piso.FCStd` revelo un escenario
+que esa prueba no incluia: **mover manualmente una identidad A1 despues de
+creada y comprobar si PLAN la sigue automaticamente**.
+
+Caso:
+
+```text
+TomaBIM_011 / Link_TomaBIM_011
+ElementUID = 975bd98d-7a56-4765-b5d5-f6d778452c90
+Owner Placement X/Y = 19263 / 11260
+PLAN Placement X/Y  = 19004 / 11260
+Delta X = 259 mm
+PLAN.Owner = Link_TomaBIM_011
+PLAN.ExpressionEngine = []
+```
+
+`RepresentationSignature` del PLAN conserva tambien la posicion anterior.
+
+Por este hallazgo, la decision historica `A1 APTO PARA SER DEFAULT` queda
+**suspendida hasta corregir y verificar la sincronizacion espacial PLAN-Owner**.
+No se modifica retrospectivamente el resultado de Codex: se amplian los
+criterios de aceptacion con una regresion que faltaba.
+
+No se realizo cambio de codigo en esta nota documental.
+
+---
+
+# ElectricCR - Resultado de Codex
+
+## Resultado 2026-09-03 - aceptacion funcional GUI de A1
+
+**Estado:** APROBADA EN FREECAD 1.1.3 / SIN CAMBIOS DE CODIGO / A1 APTO PARA
+SER DEFAULT DE OBJETOS NUEVOS, PERO TODAVIA OPT-IN.
+
+Se activaron desde `ElectricCRWorkbench` los dos comandos registrados reales y
+se recorrieron seis dialogos completos: legacy, A1 y reapertura para toma; y
+legacy, A1 y reapertura para apagador. En las seis aperturas la casilla A1
+inicio desmarcada. Solo quedo marcada en las dos ejecuciones opt-in, y al
+reabrir cada herramienta volvio a desmarcarse.
+
+La ejecucion legacy creo 31 tomas sobre los 19 tramos del `Wall` seleccionado y
+un apagador junto a `Window`; todos fueron `LegacyCompound` y se eliminaron
+mediante Undo despues de comprobar Redo. La ejecucion A1 creo, por el mismo
+algoritmo productivo, 31 tomas y un apagador. Antes de guardar habia 32
+identidades A1, 32 PLAN, cero PLAN huerfanos y todos los UID eran unicos.
+
+Instancias representativas verificadas:
+
+| propiedad | tomacorriente | apagador |
+|---|---|---|
+| contrato | `PhysicalDocumentationA1` | `PhysicalDocumentationA1` |
+| Host / Space | `Wall` / `Space` | `Wall` / `Space` |
+| PuertaOrigen | no aplica | `Window` |
+| altura | 300 mm | 1200 mm |
+| Placement XY / yaw | 1878.748293, 9250 / 0 grados | 3145.344424, 8632.545499 / -90 grados |
+| volumen / solidos | 84518.072443 / 18 | 82232.284217 / 2 |
+| PLAN | documental, Owner correcto, volumen 0, solidos 0 | documental, Owner correcto, volumen 0, solidos 0 |
+
+La Shape fisica no cambio al alternar la visibilidad de PLAN. Undo/Redo aprobo
+en ambas familias. Save/reopen mantuvo 260 objetos antes y despues, incluso
+tras un segundo recompute, y conservo contrato, UID, Host, Space, master,
+Placement y metricas fisicas. El apagador conservo la regla productiva de jamba
+de 150 mm y cara interior; no se modifico el caso historico
+`Apagador - Rectangle006`.
+
+El DXF documental ya habia sido aprobado para el mismo contrato PLAN en el
+baseline MCP vigente; la aceptacion GUI confirmo que los comandos completos
+producen ese contrato sin contaminar la Shape fisica.
+
+El original de Upala permanecio byte a byte igual: SHA-256
+`103FD471564E589F8E952954848A519D20AC58527C1ADCF39053CFCE3FF07F1E` y
+`1237860` bytes. La copia temporal se cerro y elimino. Drive conserva el informe
+`Aceptacion_GUI_A1_2026-09-03_reporte.json` y seis capturas de los dialogos.
+
+El primer puente MCP de interfaz quedo ocupado al intentar capturar la vista
+completa del modelo pesado. Para no reiniciar ni arriesgar documentos abiertos
+del usuario, la aceptacion se completo en una segunda sesion GUI aislada de
+FreeCAD 1.1.3, siempre mediante los comandos registrados y sus dialogos reales.
+La sesion principal quedo con los dos documentos Chomes originales abiertos.
+
+**Decision:** A1 es **APTO PARA SER DEFAULT DE OBJETOS NUEVOS**. Esta tarea no
+activa ese cambio, no migra legacy y no autoriza cambios productivos masivos.
+
+## Resultado 2026-09-03 - A1 opt-in en algoritmos BIM reales
+
+**Estado:** IMPLEMENTADO / VERIFICADO POR MCP EN FREECAD 1.1.3 / DEFAULT LEGACY INTACTO.
+
+### Generadores reales confirmados
+
+`ElectricCR/commands/macros.py` registra y lanza:
+
+- `ElectricCR_Tomacorrientes_InstalarTomacorrientesEnParedesBIM` ->
+  `Tomacorrientes/InstalarTomacorrientesEnParedesBIM.FCMacro`;
+- `ElectricCR_Iluminaci_n_ColocarApagadoresEnPuertas` ->
+  `Iluminación/ColocarApagadoresEnPuertas.FCMacro`.
+
+El tomacorriente se decide mediante los tramos del muro, intervalos de
+puertas/ventanas, espacios utilizables, separacion y cara interior. El apagador
+se decide mediante puerta BIM, tramo de muro paralelo, aperturas, jamba libre y
+cara del recinto. Los dos crean la instancia mediante
+`electriccr.features.objeto_toma_uno.crear_toma_link`.
+
+### Integracion
+
+Las dos macros agregan una casilla A1 opt-in desmarcada. No se guarda en
+preferencias. Cuando se marca:
+
+- se exige `PhysicalDocumentationA1`; no existe fallback silencioso a legacy;
+- Placement y metadatos siguen procediendo del algoritmo existente;
+- `ensure_device_semantics` asigna UID, Space y Host dentro de la transaccion
+  exterior mediante el nuevo parametro `manage_transaction=False`;
+- `sync_plan_representation` crea PLAN independiente;
+- un apagador legacy existente se preserva y se omite en vez de migrarse.
+
+### Evidencia Upala y discrepancia del baseline
+
+Google Drive es la evidencia primaria del estado historico: los inventarios
+`Arbol_Grupos_1416_Levantamiento_250424_Compu_D_20260903_091034` y
+`..._092039` registran 48 tomacorrientes y 11 apagadores legacy. En el momento
+de la prueba, el archivo guardado y el documento abierto de Upala ya habian
+vuelto a 187 objetos y cero dispositivos ElectricCR. La prueba no oculta esta
+discrepancia ni atribuye una causa sin evidencia.
+
+El caso `Apagador - Rectangle006` quedo explicado por relaciones reales del
+inventario de Drive:
+
+- identidad `Link_Apagador_Sketch_Centros_Puertas_001`;
+- puerta `Window`;
+- muro `Wall`;
+- `AreaRecinto=Rectangle`, Label `Rectangle006`;
+- master legacy `Master_Apagador_Simple_Apagador_Ambos_Vertical_1200`.
+
+El Label reflejaba el recinto auxiliar, no una puerta llamada Rectangle006. Su
+Placement historico `[2995.344424,8632.545499,0]` coincide con el origen de la
+puerta, mientras el algoritmo vigente calculo la jamba a
+`[3145.344424,8632.545499,0]`. No se aplico ninguna correccion.
+
+### Prueba MCP controlada
+
+`tests/freecad_upala_real_placement_a1_smoke.py` copio el FCStd vigente a TEMP,
+derivo un Space nativo temporal del `Rectangle006` existente y ejecuto los
+helpers reales. Creo exactamente:
+
+- `Link_TomaBIM_049`, Host `Wall`, altura 300 -> 450 mm;
+- `Link_Apagador_Sketch_Centros_Puertas_001`, Host `Wall`,
+  `PuertaOrigen=Window`, altura 1200 -> 1350 mm.
+
+Ambos tuvieron contrato A1 en Link y master, ElementUID unico, Space resuelto,
+Shape fisica con volumen/solidos y PLAN `DocumentationOnly/Owner` con volumen y
+solidos cero. La toma midio Volume `84518.072443` y 18 Solids; el apagador
+Volume `82232.284217` y 2 Solids. La sincronizacion PLAN no cambio
+Volume/BoundBox/Solids fisicos. Aprobaron relink conservando Placement,
+Undo/Redo individual, save/reopen y DXF documental de `11104` bytes.
+
+El verificador comparo SHA-256 y tamano de la fuente antes/despues, restauro el
+documento activo anterior y elimino FCStd, DXF y `.FCBak` temporales. Una
+repeticion headless tambien aprobo y dejo `TEMP_LEFT=0`.
+
+Las pruebas unitarias de `RoomResolver`, semantica de dispositivos, recintos de
+iluminacion y cambio de altura aprobaron. `pytest` no esta instalado en el
+entorno. La prueba comun `CRBIMCore/tests/test_common_rooms_contract.py` conserva
+un fallo ajeno y preexistente porque el `FacilArquitecturaWB/InitGui.py` ya
+modificado en el arbol de trabajo no contiene el import esperado; no se altero
+ese archivo como parte de esta integracion.
+
+No se modifico el original, no hubo migracion masiva, no se cambio el default,
+no se hizo commit ni push.
+
+## Resultado 2026-09-03 - A1 fisico/documental, tomacorriente y apagador
+
+**Estado:** IMPLEMENTADO COMO PROTOTIPO OPT-IN / VERIFICADO MCP EN FREECAD 1.1.3.
+
+### Diagnostico previo
+
+La implementacion A1 real no coincidia con lo descrito en el diseno. Antes de
+esta tarea, `TomaUnoProxy._build_shape()` agregaba el simbolo 2D y el modelo 3D
+a la misma lista y asignaba `Part.makeCompound(shapes)` a `obj.Shape`. No habia
+PLAN independiente ni un contrato de representacion persistente. Por ello el
+punto de partida se clasifico como `LegacyCompound`, no como A1.
+
+Tambien se evaluaron las alternativas visuales A/B/C. Cambiar el ViewProvider
+de un `App::Link` es una intervencion fragil sobre el proveedor nativo y una
+escena Coin del ViewProvider no constituye una fuente documental semantica para
+DXF. Se adopto la alternativa C: auxiliar PLAN controlado, ocultable en el arbol
+y vinculado a la identidad.
+
+### Implementacion
+
+- `RepresentationContract` distingue `LegacyCompound` de
+  `PhysicalDocumentationA1`.
+- A1 crea masters fisicos separados; la `Shape` contiene solamente `model3D`.
+- PLAN es `Part::Feature`, `DocumentationOnly`, rol `PLAN`, sin `ElementUID` y
+  con `Owner` hacia el `App::Link`.
+- La instancia conserva la unica identidad, `Placement`, master, `AlturaRel`,
+  registro y propiedades legacy; agrega `ElementUID`, `Space` y `Host`.
+- Cambiar escala o visibilidad PLAN no reconstruye ni altera la Shape fisica.
+- El cambio de altura conserva UID, Space, Host y Placement y relinka a otro
+  master A1 inmutable.
+- Save/reopen conserva ambas representaciones y sus enlaces.
+- El exportador DXF experimental consume exclusivamente PLAN.
+- La sincronizacion es idempotente y existen funciones de eliminacion
+  controlada y auditoria de huerfanos.
+- La ruta legacy continua siendo el default para no migrar documentos.
+
+### Evidencia MCP
+
+El script `tests/freecad_electromechanical_outlet_switch_a1_smoke.py` creo un
+documento temporal con exactamente un tomacorriente y un apagador. Resultado:
+
+| verificacion | tomacorriente | apagador |
+|---|---:|---:|
+| contrato instancia/master | `PhysicalDocumentationA1` | `PhysicalDocumentationA1` |
+| altura final | 450 mm | 1350 mm |
+| Shape Volume | 84518.072443 | 82232.284217 |
+| Shape Solids | 18 | 2 |
+| Shape BoundBox Z | 414.76..484.76 | 1291.453..1408.547 |
+| PLAN Volume / Solids | 0 / 0 | 0 / 0 |
+| PLAN BoundBox Z | 0..0 | 0..0 |
+| ElementUID | `...0001` | `...0002` |
+
+Los dos enlaces apuntaron a masters A1 propios de sus alturas. `Space` resolvio
+al Space nativo temporal y `Host` al muro BIM temporal. Los Placement fueron
+`[1000,100,0]` sin giro y `[2000,100,0]` con giro Z de 12 grados, y se
+mantuvieron despues del cambio de altura y save/reopen.
+
+Undo/Redo aprobo para creacion conjunta, visibilidad y altura. La segunda
+sincronizacion PLAN produjo cero cambios. El DXF de exactamente dos PLAN midio
+`18405` bytes. No quedaron PLAN huerfanos, FCStd, DXF ni documento temporal.
+
+MCP listo antes y despues solamente el documento previamente abierto
+`_1416_Levantamiento_250424_Compu_D`; no se activo, guardo ni modifico. No se
+tocaron Upala, los 48 tomacorrientes ni los 11 apagadores existentes.
+
+### Verificaciones adicionales
+
+- `ECR_SEMANTIC_DEVICE_CORE_OK`.
+- Seis pruebas puras de resolucion espacial de iluminacion aprobaron.
+- `py_compile` y `git diff --check` aprobaron en los archivos A1.
+- `freecadcmd` reprodujo la prueba; emitio un error de inicializacion previo de
+  `FacilArquitecturaWB/Init.py`, ajeno a esta implementacion.
+- No se hizo commit ni push.
 
 ## Resultado 2026-09-01 - Prototipo luminaria semantica y arbol idempotente
 
@@ -1461,3 +2434,20 @@ reproducida; validacion funcional durante uso real pendiente.
 
 Clasificacion provisional: Rol SOPORTE/SISTEMA; Madurez ACTIVA; Resultado
 COMPROBADA-PARCIAL hasta validacion visual de Marco.
+
+
+## Trabajo GPT 2026-09-05 21:50 America/Costa_Rica - rollback del overlay PLAN y limpieza de pertenencia a grupos
+
+> Trabajo directo de GPT en Drive; no atribuir a Codex.
+
+La prueba real en Upala invalido `plan_selection.py` v0.3.0: `Draft ghostTracker` dejo representaciones graficas residuales tras Move/Delete y la sesion termino con multiples `Access violation` y `SystemError: unknown opcode`.
+
+Cambios aplicados:
+- `plan_selection.py` v0.4.0: eliminado `ghostTracker`, cache `_FEEDBACK`, reconstruccion de overlays y preseleccion persistente. Seleccion logica sigue siendo exclusivamente Owner.
+- `plan_live_sync.py` v0.4.0: eliminadas llamadas de refresco del overlay; se mantiene recompute dirigido de PLAN y normalizacion `ShowInTree=False`.
+- `objeto_toma_uno.py` rev O: nuevo control para que PLAN no sea miembro de `App::DocumentObjectGroup`; el dry-run informa `DETACH_PLAN_FROM_GROUPS` y la sincronizacion elimina esa pertenencia accidental.
+
+Verificacion estatica: `py_compile` OK en los tres archivos.
+Verificacion FreeCAD real: pendiente tras reinicio completo.
+
+Aclaracion de prueba: Rectangle009 y Rectangle010 fueron eliminados intencionalmente por Marco durante Delete/Undo/Redo.

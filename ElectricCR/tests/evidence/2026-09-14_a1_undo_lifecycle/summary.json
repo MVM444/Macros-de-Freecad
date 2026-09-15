@@ -1,0 +1,62 @@
+{
+  "completed_at": "2026-09-14T07:45:59.105108-06:00",
+  "version": [
+    "1",
+    "1",
+    "3",
+    "20260725 (Git shallow)",
+    "Unknown",
+    "2026/07/25 04:52:02",
+    "grafted,grafted",
+    "145529fe741292ff0b3977a01195bf0247425794"
+  ],
+  "pid": 41788,
+  "files": [
+    {
+      "path": "electriccr/features/plan_lifecycle.py",
+      "sha256": "dde3c80910d194b5e0dfda1e442b7d5f8c829bfb0512ca8d012675ddf9c5fde3",
+      "changed": true
+    },
+    {
+      "path": "electriccr/features/plan_live_sync.py",
+      "sha256": "9edacf4268c18d7af54e3ec845fce892c5514b1e0a55367382f2b91dc277c1fb",
+      "changed": true
+    },
+    {
+      "path": "ui/plan_selection.py",
+      "sha256": "448b8818431b270f963c23b2bf023a40af2738d9407958fd19ede479c2c56ea4",
+      "changed": false
+    },
+    {
+      "path": "electriccr/features/objeto_toma_uno.py",
+      "sha256": "bc6d82c2abba84bb98ec6a4e68afc8db37d2cd4f42e72612d6d6ebcf3c36c173",
+      "changed": false
+    },
+    {
+      "path": "electriccr/demo/electric_demo_freecad.py",
+      "sha256": "3f199c02a666417e05312f3845e7f31420bdc0d34d0aa3fe0dc75297d106681d",
+      "changed": false
+    },
+    {
+      "path": "electriccr/demo/electric_demo_audit.py",
+      "sha256": "f8ce2c073b34381dd8f74fd9a324dc461e99e3ed772aadec0f4f5fba238cdf88",
+      "changed": false
+    },
+    {
+      "path": "tests/freecad_electric_demo_smoke.py",
+      "sha256": "4368b8a687f95ccb04da7f6475b3e3e4438f29ac4814351363dd5ebf384caae5",
+      "changed": false
+    },
+    {
+      "path": "InitGui.py",
+      "sha256": "7b703cd874d5c0aed697c04649c8cd8d35db63096a69804d57a255288bcd9825",
+      "changed": false
+    }
+  ],
+  "syntax": "PASS",
+  "remaining_documents": [],
+  "runtime_observers_uninstrumented": true,
+  "temp_fcstd": "C:\\Users\\marco\\AppData\\Local\\Temp\\electriccr_a1_undo_ts_dozgk\\ElectricCR_A1_Regression.FCStd",
+  "stages": 19,
+  "all_stages_pass": true
+}

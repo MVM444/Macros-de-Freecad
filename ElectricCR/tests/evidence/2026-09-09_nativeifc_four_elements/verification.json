@@ -1,0 +1,34 @@
+{
+  "documented_at": "2026-09-09 20:02 -0600",
+  "passed": true,
+  "a1_dev_files_unchanged": {
+    "ElectricCR/InitGui.py": true,
+    "ElectricCR/electriccr/features/objeto_toma_uno.py": true,
+    "ElectricCR/electriccr/semantic/freecad_adapter.py": true,
+    "ElectricCR/electriccr/features/plan_lifecycle.py": true,
+    "ElectricCR/electriccr/features/plan_live_sync.py": true,
+    "ElectricCR/ui/plan_selection.py": true,
+    "Tomacorrientes/InstalarTomacorrientesEnParedesBIM.FCMacro": true,
+    "ElectricCR/tests/freecad_a1_runtime_audit.py": true,
+    "ElectricCR/tests/freecad_a1_runtime_regression.py": true,
+    "ElectricCR/tests/freecad_physical_documentation_a1_smoke.py": true,
+    "ElectricCR/tests/freecad_electromechanical_outlet_switch_a1_smoke.py": true,
+    "ElectricCR/tests/freecad_plan_owner_expression_probe.py": true,
+    "Iluminación/ColocarApagadoresEnPuertas.FCMacro": true
+  },
+  "a1_commit": "4a9ade9645d9227ac5323676ee911c972502e869",
+  "a1_push_receipt_commit": "285d5a74b6463dc859d0bc0a940b2879aa6c4c2a",
+  "branch": "codex/cierre-a1-20260909",
+  "files_verified": {
+    "NativeIFC_four_elements.FCStd": "8a8cfc89c2a46a346463b49f055ecdd41970f076f05e3a1228e5ba5ef6bc34b3",
+    "NativeIFC_four_elements.ifc": "ebc5c64bc6aad462a0936c3a7002fca8a7b25a1298a350681473cf6232ffaf77"
+  },
+  "helper_sha256": "b3a316b19838576cceeb0cb9c6c5c0345eecef907f93ba48b2d07c551f88f0c1",
+  "evidence_sha256": {
+    "console.txt": "a0a6670e2289c3ba7cc09e09e9e6b7e4c93ca97f0263267d39e7c97e4e13ab02",
+    "created.png": "fee75b85f8678bb5ac11ee2d57af8e7e159e7a9934897fc59717ddcf79ccba1b",
+    "README.md": "9de2a54b0835310a4fe7a8949e97901b9e0f430be57c636c2f82aa807e68710b",
+    "reopened.png": "789aff63af86dfa8dd8da371251703e12843f33f3aa6dd93905d6507d783afe8",
+    "results.json": "0467d24bd18d9d83da9a1070139493a96e46475639c6f2e2e4d15b70001d177f"
+  }
+}

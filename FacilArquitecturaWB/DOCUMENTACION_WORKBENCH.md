@@ -1,3 +1,124 @@
+# Build 2026.09.14.2 - FA Centros de ventanas: seleccion completa de Draft Layer
+
+Version: `0.14.11`  
+FreeCAD objetivo: `1.1.3`  
+`centerline_utils.py`: `0.24.0`  
+Estado: implementado en Drive; 47/47 pruebas focales aprobadas; smoke Layer real pendiente.
+
+La prueba real de la build anterior demostro que el reconocimiento de cada `App::Link` era correcto, pero al ejecutar la herramienta sobre el Layer completo los ejes resultantes se sometian despues a la consolidacion general de redes de muros. Esa etapa unia ventanas colineales distintas y reducia seis ejes validos a cuatro.
+
+`FA Centros de ventanas` trata ahora un Draft Layer como alcance de seleccion: expande su propiedad `Group`, conserva cada miembro como candidato independiente y, una vez resuelto un eje de ventana, evita la union/snap de red de muros. Se mantiene la deduplicacion exacta y se conserva el clustering compartido previo cuando el usuario selecciona manualmente varios Shapes simples en vez de seleccionar un Layer.
+
+Caso canonico Guadalupe: `Layer002`/`Ventanas`, seis `App::Link` + un `Part::Feature`. El resultado automatizado esperado y aprobado es 6 ejes de `297, 1512, 2434, 5334, 5334 y 14239 mm`; no deben aparecer las fusiones falsas de `15901 mm` ni `2881 mm`.
+
+---
+
+# Build 2026.09.14.1 - FA Centros de ventanas: bloques CAD complejos mediante App::Link
+
+Version: `0.14.11`  
+FreeCAD objetivo: `1.1.3`  
+`centerline_utils.py`: `0.23.0`  
+Estado: implementado en Drive; 45/45 pruebas focales aprobadas; smoke real pendiente.
+
+`FA Centros de ventanas` incorpora soporte conservador para bloques CAD anonimos complejos enlazados mediante `App::Link`. La ruta `profile_axis` ya no mezcla los bordes de diferentes instancias Link antes del clustering: cada Link se analiza como una unidad independiente, reutilizando las heuristicas existentes de proximidad y eje longitudinal. Esto evita que geometria auxiliar o duplicada y distante de un bloque se conecte accidentalmente con otra instancia y destruya la proporcion del perfil.
+
+No se utiliza el `BoundingBox` global como eje de respaldo para este caso. Si dentro de un Link aparecen varios perfiles longitudinales validos, solo se selecciona uno cuando existe una dominancia geometrica clara; candidatos equivalentes permanecen ambiguos. Los objetos CAD normales no-Link conservan el agrupamiento compartido anterior, por lo que los casos simples siguen siendo compatibles.
+
+Caso de regresion canonico: Guadalupe, `L1 D.R.S.C.130613.FCStd`, capa `Ventanas`, con seis `App::Link` de bloques anonimos (`*U5`, `*U6`, `*U11`, `*U12`, `*U001`, `*U26`). Resultado esperado: un eje por Link valido, total 6, respetando las rotaciones de instancia y sin generar ejes falsos desde extensiones globales de 10700.5 mm o mayores.
+
+---
+
+# Build 2026.09.03.6 - FA Reparar puertas: puerta + jamba
+
+Version: `0.14.11`  
+FreeCAD objetivo: `1.1.3`  
+Estado: implementado en Drive; smoke real pendiente.
+
+Nuevo contrato de interfaz: el usuario selecciona una puerta FA y una **jamba vertical de la pared**. Puede preseleccionar ambos o seleccionar primero la puerta, ejecutar el comando y luego hacer clic en la jamba. La herramienta ya no expone AUTO/BUQUE_COMPLETE/LEGACY_LEAF. El reparador conserva el `Width` nativo y alinea el extremo exterior del marco mas cercano con la jamba seleccionada. La aplicacion usa transaccion, recompute y verificacion posterior fijando el mismo extremo; un fallo aborta la transaccion. Se registran jamba, subelemento, extremo, shift, Placement antes/despues y error de verificacion. `FA Puertas BIM` permanece sin cambios.
+
+---
+
+# Build 2026.09.03.5 - FA Reparar puertas: criterio asistido de buque heredado
+
+Version: `0.14.11`  
+FreeCAD objetivo: `1.1.3`  
+Estado: implementacion preparada y pruebas puras 15/15; smoke real pendiente.
+
+## Diagnostico de origen
+
+La build `2026.09.03.4` se cargo correctamente en FreeCAD. En `Upala_GUI_Acceptance`, `Puerta BIM - Sketch_Centros_Puertas - 002` fue clasificada como `resize_and_move` con `Width=763.851 -> 663.851 mm`. La diferencia exacta de `100 mm` coincide con `Frame2+Frame3`. La revision del generador confirma que las puertas BOUNDED historicas guardaban `FA_ProjectedFirst/Second` con semantica de segmento de hoja mientras el `Width` nativo incorporaba los margenes del marco. Por tanto, el reparador `.4` estaba aplicando el contrato nuevo de buque completo a metadatos producidos con el contrato anterior.
+
+## Solucion limitada al reparador
+
+No se modifica `FA Puertas BIM`. `door_repair_core.py` v0.5.0 agrega una resolucion explicita del contrato de abertura:
+
+- `BUQUE_COMPLETE`: el segmento FA se usa directamente como buque completo.
+- `LEGACY_LEAF`: el segmento historico se expande por `Frame2` y `Frame3` para recuperar el marco/buque efectivo.
+- `AUTO`: respeta primero una pista explicita `FA_OpeningSemantic` si existe y, en ausencia de ella, reconoce la firma numerica historica `Width ~= segmento + Frame2 + Frame3`.
+
+El comando realiza un primer diagnostico read-only, muestra la interpretacion detectada y pide al usuario confirmar el criterio antes de cualquier transaccion. Despues vuelve a planificar desde la geometria original. La misma semantica confirmada se usa durante la verificacion posterior para mantener determinismo e idempotencia.
+
+La aplicacion registra `FA_DoorRepairOpeningSemantic`, `FA_DoorRepairSourceOpening_mm` y `FA_DoorRepairEffectiveOpening_mm`, ademas de las propiedades de reparacion ya existentes. La consola informa `semantic`, `mode`, desplazamiento, Width antes/despues y segmento/buque efectivo.
+
+## Regla geometrica vigente
+
+1. Si el marco exterior ya esta completamente dentro del buque efectivo: no modificar.
+2. Si cabe pero esta desplazado: `move_only`, conservar `Width`.
+3. Si no cabe realmente: `resize_and_move`.
+4. `JAMB_ONLY`, `SNAPPED`, `NO_FIT` y casos no paralelos siguen siendo diagnostico solamente.
+5. No se modifican bisagra, sentido de apertura, Host ni el Sketch fuente.
+
+## Validacion previa
+
+Pruebas puras focales: `15/15`. Se cubre el caso historico de Upala con segmento `663.850602 mm`, `Frame2=50 mm`, `Frame3=50 mm`, `Width=763.850602 mm` y desfase perpendicular `75 mm`: `LEGACY_LEAF` y `AUTO` producen `move_only`, `Width` se conserva y el desplazamiento esperado es exclusivamente `75 mm` perpendicular. Forzar `BUQUE_COMPLETE` sobre la misma geometria conserva la conducta de `resize_and_move`, demostrando que la informacion del usuario controla la ambiguedad en vez de ocultarla.
+
+---
+
+# Build 2026.09.03.4 - FA Reparar puertas: conservar tamano si cabe
+
+Version: `0.14.11`  
+FreeCAD objetivo: `1.1.3`  
+Estado: implementado en Drive; smoke real pendiente.
+
+La prueba manual del build `.3` aclaro la prioridad correcta de reparacion. Una puerta cuyo marco exterior **cabe dentro del buque** no debe encogerse para hacer coincidir sus extremos con el Sketch; debe mantener su `Width` y trasladarse solamente lo necesario para quedar completamente contenida. Solo una puerta cuyo marco exterior sea **mas grande que el buque** debe reducir `Width` a la longitud real de `FA_ProjectedFirst/Second` y despues colocarse dentro. Una puerta que ya esta contenida no se modifica.
+
+El planner `door_repair_core.py` v0.4.0 calcula contencion proyectando el marco sobre el eje del buque, separa desborde longitudinal y desplazamiento perpendicular, rechaza automaticamente marcos no paralelos y produce dos modos explicitos: `move_only` y `resize_and_move`. La comprobacion posterior usa el mismo criterio de contencion, por lo que una puerta mas pequena puede quedar correctamente dentro sin tocar ambos jambas. Se mantienen transaccion, rollback, Undo/Redo e idempotencia.
+
+---
+
+# Build 2026.09.03.3 - FA Reparar puertas: marco completo dentro del buque
+
+Version: `0.14.11`  
+FreeCAD objetivo: `1.1.3`  
+Estado: implementado en Drive; smoke real pendiente.
+
+La prueba manual del build `.2` confirmo una falla conceptual restante: la hoja podia quedar alineada mientras parte del marco exterior permanecia fuera del buque. Se establece como contrato de FA que el segmento autoritativo del Sketch de puertas representa el **buque arquitectonico completo**. En consecuencia, la reparacion ya no usa la hoja como referencia de contencion: mide `frame_first/frame_second` del `Base` nativo, alinea el marco con `FA_ProjectedFirst/Second` y fija `Width = FA_Width_mm`. `Frame2` y `Frame3` solo determinan el retranqueo y ancho libre de la hoja dentro del marco.
+
+La fase sigue limitada a `BOUNDED`. Se conservan diagnostico previo, `dry-run` conceptual por dialogo antes de aplicar, transaccion FreeCAD, verificacion geometrica posterior, rollback ante fallo e idempotencia. No se modifica todavia la generacion original de puertas; primero se valida la reparacion sobre el documento real.
+
+# Build 2026.09.03.3 - FA Reparar puertas: primera fase fuera del buque
+
+
+
+## Ajuste 2026-09-03 - reparacion por desfase medido
+
+La primera prueba real de `FA Reparar puertas` en `1416 Levantamiento 250424 Compu D` detecto correctamente una puerta `BOUNDED` fuera del buque con error de `75.00 mm`, pero la reparacion inicial asumio que el desplazamiento era exactamente `Frame2` y la comprobacion posterior cancelo la transaccion. La build `2026.09.03.3` corrige este supuesto: la traslacion del Base se calcula con el desfase XY realmente medido entre la hoja visible y `FA_ProjectedFirst/Second`; `Frame2/Frame3` se usan solamente para normalizar el ancho exterior del Base. Se conserva verificacion posterior, rollback, Undo/Redo e idempotencia.
+Version: `0.14.11`  
+FreeCAD objetivo: `1.1.3`  
+Estado: implementado en Drive; smoke real pendiente.
+
+Se agrega `FA_RepairDoors` / **FA Reparar puertas** en la barra `FA Aberturas BIM`, inmediatamente despues de `FA Puertas BIM`. La herramienta reutiliza la geometria autoritativa ya almacenada por FA (`FA_ProjectedFirst`, `FA_ProjectedSecond`, `FA_Width_mm`) y diagnostica la posicion real de la hoja nativa a partir del `Base` de ArchWindow.
+
+Primera fase deliberadamente conservadora: solo repara automaticamente puertas con `FA_CornerStatus=BOUNDED` cuya hoja visible no coincide con el buque y cuyo Base nativo expone `Width`, `Frame2` y `Frame3`. El diagnostico ocurre antes de cualquier escritura. Estados `JAMB_ONLY`, `SNAPPED`, `NO_FIT` u otros casos no deterministas se reportan pero no se modifican.
+
+La correccion mueve solamente el Base nativo y ajusta su ancho exterior para que `Wire1` coincida con el segmento autoritativo, conservando el ancho publico de puerta, Host, bisagra, apertura, tabla y metadatos FA. Se ejecuta dentro de una transaccion, verifica geometricamente el resultado y aborta si alguna puerta reparada no queda dentro de tolerancia. La operacion es idempotente.
+
+Arquitectura: `core/door_repair_core.py` contiene el planner puro JSON-compatible; `commands/cmd_repair_doors.py` realiza el adaptador FreeCAD/GUI; `tests/test_door_repair_core.py` cubre el caso BOUNDED historico de 663.850602 mm con margenes de 50 mm, idempotencia, direccion invertida y diagnostico sin aplicar para estados no BOUNDED.
+
+Pendiente obligatorio: smoke en FreeCAD 1.1.3 sobre copia del levantamiento real, incluyendo la puerta historica que visualmente quedaba fuera del buque, Undo/Redo, guardar/reabrir y reejecucion.
+
+---
+
 # Build 2026.09.02.8 - cierre pre-RELEASE y Addon autosuficiente
 
 Version: `0.14.11`  

@@ -1,0 +1,779 @@
+{
+  "document": "Upala_A1_runtime",
+  "file": "C:/Users/marco/AppData/Local/Temp/ecr_a1_runtime_20260908/Upala_A1_runtime.FCStd",
+  "object_count": 222,
+  "owner_count": 10,
+  "plan_count": 9,
+  "owners": [
+    {
+      "name": "Link_Apagador_Rectangle006",
+      "label": "Apagador - Rectangle006",
+      "TypeId": "App::Link",
+      "RepresentationContract": "PhysicalDocumentationA1",
+      "ElementUID": "6e9ca8b1-5361-4e59-aac7-0fe1f1adfc6f",
+      "DocumentationRepresentationName": "ECR_DocPlan_6e9ca8b1_5361_4e59_aac7_0fe1f1adfc6f",
+      "Placement": {
+        "base": [
+          2995.344423732503,
+          8632.545498540147,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.7071067811865476,
+          0.7071067811865476
+        ]
+      },
+      "master": {
+        "name": "Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical",
+        "document": "Upala_A1_runtime",
+        "TypeId": "Part::FeaturePython"
+      }
+    },
+    {
+      "name": "Link_Apagador_Rectangle007",
+      "label": "Apagador - Rectangle007",
+      "TypeId": "App::Link",
+      "RepresentationContract": "PhysicalDocumentationA1",
+      "ElementUID": "bbe195cb-999e-4557-9e07-b18e29ccb8d0",
+      "DocumentationRepresentationName": "ECR_DocPlan_bbe195cb_999e_4557_9e07_b18e29ccb8d0",
+      "Placement": {
+        "base": [
+          3155.1521616105833,
+          9250.000000000311,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "master": {
+        "name": "Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical",
+        "document": "Upala_A1_runtime",
+        "TypeId": "Part::FeaturePython"
+      }
+    },
+    {
+      "name": "Link_Apagador_Rectangle008",
+      "label": "Apagador - Rectangle008",
+      "TypeId": "App::Link",
+      "RepresentationContract": "PhysicalDocumentationA1",
+      "ElementUID": "3a4555d3-b61c-4660-903e-71adb0051ed2",
+      "DocumentationRepresentationName": "ECR_DocPlan_3a4555d3_b61c_4660_903e_71adb0051ed2",
+      "Placement": {
+        "base": [
+          1475.3770350516056,
+          12070.000000000487,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "master": {
+        "name": "Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical",
+        "document": "Upala_A1_runtime",
+        "TypeId": "Part::FeaturePython"
+      }
+    },
+    {
+      "name": "Link_Apagador_Rectangle009",
+      "label": "Apagador - Rectangle009",
+      "TypeId": "App::Link",
+      "RepresentationContract": "PhysicalDocumentationA1",
+      "ElementUID": "f9b2c5b2-354a-4ecb-899a-c07d9f519302",
+      "DocumentationRepresentationName": "ECR_DocPlan_f9b2c5b2_354a_4ecb_899a_c07d9f519302",
+      "Placement": {
+        "base": [
+          7541.264464278291,
+          12070.000000000487,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "master": {
+        "name": "Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical",
+        "document": "Upala_A1_runtime",
+        "TypeId": "Part::FeaturePython"
+      }
+    },
+    {
+      "name": "Link_Apagador_Rectangle011",
+      "label": "Apagador - Rectangle011",
+      "TypeId": "App::Link",
+      "RepresentationContract": "PhysicalDocumentationA1",
+      "ElementUID": "aee7a987-8ecc-4ce9-9061-e9467c478734",
+      "DocumentationRepresentationName": "ECR_DocPlan_aee7a987_8ecc_4ce9_9061_e9467c478734",
+      "Placement": {
+        "base": [
+          6687.648204623836,
+          14780.000000000397,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          1.0,
+          6.123233995736766e-17
+        ]
+      },
+      "master": {
+        "name": "Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical",
+        "document": "Upala_A1_runtime",
+        "TypeId": "Part::FeaturePython"
+      }
+    },
+    {
+      "name": "Link_Apagador_Rectangle012",
+      "label": "Apagador - Rectangle012",
+      "TypeId": "App::Link",
+      "RepresentationContract": "PhysicalDocumentationA1",
+      "ElementUID": "0e08896f-8bb5-4435-bbc0-c161cba6c618",
+      "DocumentationRepresentationName": "ECR_DocPlan_0e08896f_8bb5_4435_bbc0_c161cba6c618",
+      "Placement": {
+        "base": [
+          3356.344423731569,
+          14309.668592686134,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.7071067811865476,
+          0.7071067811865476
+        ]
+      },
+      "master": {
+        "name": "Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical",
+        "document": "Upala_A1_runtime",
+        "TypeId": "Part::FeaturePython"
+      }
+    },
+    {
+      "name": "Link_Apagador_Recinto_poligonal_01",
+      "label": "Apagador - Recinto poligonal 01",
+      "TypeId": "App::Link",
+      "RepresentationContract": "PhysicalDocumentationA1",
+      "ElementUID": "dce48ebf-82c1-42aa-a0ae-90f834d192d1",
+      "DocumentationRepresentationName": "ECR_DocPlan_dce48ebf_82c1_42aa_a0ae_90f834d192d1",
+      "Placement": {
+        "base": [
+          5046.350145820496,
+          17955.334860958435,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "master": {
+        "name": "Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical",
+        "document": "Upala_A1_runtime",
+        "TypeId": "Part::FeaturePython"
+      }
+    },
+    {
+      "name": "Link_Apagador_Rectangle013",
+      "label": "Apagador - Rectangle013",
+      "TypeId": "App::Link",
+      "RepresentationContract": "PhysicalDocumentationA1",
+      "ElementUID": "3f9bfe49-e56b-4ea7-b86a-85bd05e1c354",
+      "DocumentationRepresentationName": "ECR_DocPlan_3f9bfe49_e56b_4ea7_b86a_85bd05e1c354",
+      "Placement": {
+        "base": [
+          4199.879395,
+          7619.000000000248,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "master": {
+        "name": "Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical",
+        "document": "Upala_A1_runtime",
+        "TypeId": "Part::FeaturePython"
+      }
+    },
+    {
+      "name": "Link_Apagador_Rectangle014",
+      "label": "Apagador - Rectangle014",
+      "TypeId": "App::Link",
+      "RepresentationContract": "PhysicalDocumentationA1",
+      "ElementUID": "e0535e2a-af46-4b61-9c87-af2023043663",
+      "DocumentationRepresentationName": "ECR_DocPlan_e0535e2a_af46_4b61_9c87_af2023043663",
+      "Placement": {
+        "base": [
+          6515.344423731464,
+          12134.386719,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.7071067811865476,
+          0.7071067811865476
+        ]
+      },
+      "master": {
+        "name": "Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical",
+        "document": "Upala_A1_runtime",
+        "TypeId": "Part::FeaturePython"
+      }
+    },
+    {
+      "name": "Link_Apagador_Rectangle010",
+      "label": "Apagador - Rectangle010",
+      "TypeId": "App::Link",
+      "RepresentationContract": "PhysicalDocumentationA1",
+      "ElementUID": "da924136-d34d-4008-9583-9252db3ca4f3",
+      "DocumentationRepresentationName": "ECR_DocPlan_da924136_d34d_4008_9583_9252db3ca4f3",
+      "Placement": {
+        "base": [
+          6515.344423731464,
+          13865.402423168667,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.7071067811865476,
+          0.7071067811865476
+        ]
+      },
+      "master": {
+        "name": "Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical",
+        "document": "Upala_A1_runtime",
+        "TypeId": "Part::FeaturePython"
+      }
+    }
+  ],
+  "plans": [
+    {
+      "name": "ECR_DocPlan_6e9ca8b1_5361_4e59_aac7_0fe1f1adfc6f",
+      "label": "Apagador - Rectangle006 [PLAN]",
+      "TypeId": "Part::Feature",
+      "RepresentationRole": "PLAN",
+      "RepresentationSchemaVersion": 2,
+      "DocumentationOnly": true,
+      "Placement": {
+        "base": [
+          2995.344423732503,
+          8632.545498540147,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.7071067811865476,
+          0.7071067811865476
+        ]
+      },
+      "ExpressionEngine": [
+        [
+          "Placement",
+          "placement(vector(.Owner.Placement.Base.x; .Owner.Placement.Base.y; .Owner.DocumentationPlaneZ); .Owner.Placement.Rotation)"
+        ]
+      ],
+      "ShowInTree": false,
+      "groups": [],
+      "Owner": "Link_Apagador_Rectangle006",
+      "OwnerPropertyType": "App::PropertyLinkHidden",
+      "SnapPoints": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "evaluatedPlacement": {
+        "base": [
+          2995.344423732503,
+          8632.545498540147,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.7071067811865476,
+          0.7071067811865476
+        ]
+      },
+      "State": [
+        "Touched"
+      ],
+      "status": "Touched"
+    },
+    {
+      "name": "ECR_DocPlan_bbe195cb_999e_4557_9e07_b18e29ccb8d0",
+      "label": "Apagador - Rectangle007 [PLAN]",
+      "TypeId": "Part::Feature",
+      "RepresentationRole": "PLAN",
+      "RepresentationSchemaVersion": 2,
+      "DocumentationOnly": true,
+      "Placement": {
+        "base": [
+          3155.1521616105833,
+          9250.000000000311,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "ExpressionEngine": [
+        [
+          "Placement",
+          "placement(vector(.Owner.Placement.Base.x; .Owner.Placement.Base.y; .Owner.DocumentationPlaneZ); .Owner.Placement.Rotation)"
+        ]
+      ],
+      "ShowInTree": false,
+      "groups": [],
+      "Owner": "Link_Apagador_Rectangle007",
+      "OwnerPropertyType": "App::PropertyLinkHidden",
+      "SnapPoints": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "evaluatedPlacement": {
+        "base": [
+          3155.1521616105833,
+          9250.000000000311,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "State": [
+        "Touched"
+      ],
+      "status": "Touched"
+    },
+    {
+      "name": "ECR_DocPlan_3a4555d3_b61c_4660_903e_71adb0051ed2",
+      "label": "Apagador - Rectangle008 [PLAN]",
+      "TypeId": "Part::Feature",
+      "RepresentationRole": "PLAN",
+      "RepresentationSchemaVersion": 2,
+      "DocumentationOnly": true,
+      "Placement": {
+        "base": [
+          1475.3770350516056,
+          12070.000000000487,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "ExpressionEngine": [
+        [
+          "Placement",
+          "placement(vector(.Owner.Placement.Base.x; .Owner.Placement.Base.y; .Owner.DocumentationPlaneZ); .Owner.Placement.Rotation)"
+        ]
+      ],
+      "ShowInTree": false,
+      "groups": [],
+      "Owner": "Link_Apagador_Rectangle008",
+      "OwnerPropertyType": "App::PropertyLinkHidden",
+      "SnapPoints": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "evaluatedPlacement": {
+        "base": [
+          1475.3770350516056,
+          12070.000000000487,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "State": [
+        "Touched"
+      ],
+      "status": "Touched"
+    },
+    {
+      "name": "ECR_DocPlan_f9b2c5b2_354a_4ecb_899a_c07d9f519302",
+      "label": "Apagador - Rectangle009 [PLAN]",
+      "TypeId": "Part::Feature",
+      "RepresentationRole": "PLAN",
+      "RepresentationSchemaVersion": 2,
+      "DocumentationOnly": true,
+      "Placement": {
+        "base": [
+          7541.264464278291,
+          12070.000000000487,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "ExpressionEngine": [
+        [
+          "Placement",
+          "placement(vector(.Owner.Placement.Base.x; .Owner.Placement.Base.y; .Owner.DocumentationPlaneZ); .Owner.Placement.Rotation)"
+        ]
+      ],
+      "ShowInTree": false,
+      "groups": [],
+      "Owner": "Link_Apagador_Rectangle009",
+      "OwnerPropertyType": "App::PropertyLinkHidden",
+      "SnapPoints": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "evaluatedPlacement": {
+        "base": [
+          7541.264464278291,
+          12070.000000000487,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "State": [
+        "Touched"
+      ],
+      "status": "Touched"
+    },
+    {
+      "name": "ECR_DocPlan_aee7a987_8ecc_4ce9_9061_e9467c478734",
+      "label": "Apagador - Rectangle011 [PLAN]",
+      "TypeId": "Part::Feature",
+      "RepresentationRole": "PLAN",
+      "RepresentationSchemaVersion": 2,
+      "DocumentationOnly": true,
+      "Placement": {
+        "base": [
+          6687.648204623836,
+          14780.000000000397,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          1.0,
+          6.123233995736766e-17
+        ]
+      },
+      "ExpressionEngine": [
+        [
+          "Placement",
+          "placement(vector(.Owner.Placement.Base.x; .Owner.Placement.Base.y; .Owner.DocumentationPlaneZ); .Owner.Placement.Rotation)"
+        ]
+      ],
+      "ShowInTree": false,
+      "groups": [],
+      "Owner": "Link_Apagador_Rectangle011",
+      "OwnerPropertyType": "App::PropertyLinkHidden",
+      "SnapPoints": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "evaluatedPlacement": {
+        "base": [
+          6687.648204623836,
+          14780.000000000397,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          1.0,
+          6.123233995736766e-17
+        ]
+      },
+      "State": [
+        "Touched"
+      ],
+      "status": "Touched"
+    },
+    {
+      "name": "ECR_DocPlan_0e08896f_8bb5_4435_bbc0_c161cba6c618",
+      "label": "Apagador - Rectangle012 [PLAN]",
+      "TypeId": "Part::Feature",
+      "RepresentationRole": "PLAN",
+      "RepresentationSchemaVersion": 2,
+      "DocumentationOnly": true,
+      "Placement": {
+        "base": [
+          3356.344423731569,
+          14309.668592686134,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.7071067811865476,
+          0.7071067811865476
+        ]
+      },
+      "ExpressionEngine": [
+        [
+          "Placement",
+          "placement(vector(.Owner.Placement.Base.x; .Owner.Placement.Base.y; .Owner.DocumentationPlaneZ); .Owner.Placement.Rotation)"
+        ]
+      ],
+      "ShowInTree": false,
+      "groups": [],
+      "Owner": "Link_Apagador_Rectangle012",
+      "OwnerPropertyType": "App::PropertyLinkHidden",
+      "SnapPoints": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "evaluatedPlacement": {
+        "base": [
+          3356.344423731569,
+          14309.668592686134,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.7071067811865476,
+          0.7071067811865476
+        ]
+      },
+      "State": [
+        "Touched"
+      ],
+      "status": "Touched"
+    },
+    {
+      "name": "ECR_DocPlan_dce48ebf_82c1_42aa_a0ae_90f834d192d1",
+      "label": "Apagador - Recinto poligonal 01 [PLAN]",
+      "TypeId": "Part::Feature",
+      "RepresentationRole": "PLAN",
+      "RepresentationSchemaVersion": 2,
+      "DocumentationOnly": true,
+      "Placement": {
+        "base": [
+          5046.350145820496,
+          17955.334860958435,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "ExpressionEngine": [
+        [
+          "Placement",
+          "placement(vector(.Owner.Placement.Base.x; .Owner.Placement.Base.y; .Owner.DocumentationPlaneZ); .Owner.Placement.Rotation)"
+        ]
+      ],
+      "ShowInTree": false,
+      "groups": [],
+      "Owner": "Link_Apagador_Recinto_poligonal_01",
+      "OwnerPropertyType": "App::PropertyLinkHidden",
+      "SnapPoints": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "evaluatedPlacement": {
+        "base": [
+          5046.350145820496,
+          17955.334860958435,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "State": [
+        "Touched"
+      ],
+      "status": "Touched"
+    },
+    {
+      "name": "ECR_DocPlan_3f9bfe49_e56b_4ea7_b86a_85bd05e1c354",
+      "label": "Apagador - Rectangle013 [PLAN]",
+      "TypeId": "Part::Feature",
+      "RepresentationRole": "PLAN",
+      "RepresentationSchemaVersion": 2,
+      "DocumentationOnly": true,
+      "Placement": {
+        "base": [
+          4199.879395,
+          7619.000000000248,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "ExpressionEngine": [
+        [
+          "Placement",
+          "placement(vector(.Owner.Placement.Base.x; .Owner.Placement.Base.y; .Owner.DocumentationPlaneZ); .Owner.Placement.Rotation)"
+        ]
+      ],
+      "ShowInTree": false,
+      "groups": [],
+      "Owner": "Link_Apagador_Rectangle013",
+      "OwnerPropertyType": "App::PropertyLinkHidden",
+      "SnapPoints": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "evaluatedPlacement": {
+        "base": [
+          4199.879395,
+          7619.000000000248,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "State": [
+        "Touched"
+      ],
+      "status": "Touched"
+    },
+    {
+      "name": "ECR_DocPlan_da924136_d34d_4008_9583_9252db3ca4f3",
+      "label": "Apagador - Rectangle010 [PLAN]",
+      "TypeId": "Part::Feature",
+      "RepresentationRole": "PLAN",
+      "RepresentationSchemaVersion": 2,
+      "DocumentationOnly": true,
+      "Placement": {
+        "base": [
+          6515.344423731464,
+          13865.402423168667,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.7071067811865476,
+          0.7071067811865476
+        ]
+      },
+      "ExpressionEngine": [
+        [
+          "Placement",
+          "placement(vector(.Owner.Placement.Base.x; .Owner.Placement.Base.y; .Owner.DocumentationPlaneZ); .Owner.Placement.Rotation)"
+        ]
+      ],
+      "ShowInTree": false,
+      "groups": [],
+      "Owner": "Link_Apagador_Rectangle010",
+      "OwnerPropertyType": "App::PropertyLinkHidden",
+      "SnapPoints": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "evaluatedPlacement": {
+        "base": [
+          6515.344423731464,
+          13865.402423168667,
+          0.0
+        ],
+        "rotation_q": [
+          0.0,
+          0.0,
+          0.7071067811865476,
+          0.7071067811865476
+        ]
+      },
+      "State": [
+        "Touched"
+      ],
+      "status": "Touched"
+    }
+  ],
+  "errors": [
+    {
+      "kind": "owner_without_plan",
+      "object": "Link_Apagador_Rectangle014",
+      "detail": "ECR_DocPlan_e0535e2a_af46_4b61_9c87_af2023043663"
+    },
+    {
+      "kind": "owner_without_linked_plan",
+      "object": "Link_Apagador_Rectangle014",
+      "detail": "no PLAN.Owner references this identity"
+    }
+  ],
+  "ok": false
+}

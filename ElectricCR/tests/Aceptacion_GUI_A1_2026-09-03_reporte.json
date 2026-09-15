@@ -1,0 +1,563 @@
+{
+  "status": "PASS",
+  "freecad": "1.1.3",
+  "commands": {
+    "outlet_registered": true,
+    "switch_registered": true,
+    "active_workbench": "ElectricCRWorkbench"
+  },
+  "dialogs": [
+    {
+      "phase": "outlet_legacy",
+      "command": "ElectricCR_Tomacorrientes_InstalarTomacorrientesEnParedesBIM",
+      "title": "Tomacorrientes generales en paredes BIM",
+      "a1_initial": false,
+      "checkboxes": [
+        {
+          "text": "Colocar en ambas caras de paredes divisorias",
+          "checked": true
+        },
+        {
+          "text": "Usar contrato A1 (fisico 3D + PLAN documental independiente)",
+          "checked": false
+        }
+      ],
+      "action": "accept",
+      "a1_submitted": false,
+      "screenshot": "C:\\Users\\marco\\AppData\\Local\\Temp\\ElectricCR_GUI_Acceptance_a0454a393d34462dbdf299fe22d1851d\\outlet_legacy_dialog.png"
+    },
+    {
+      "phase": "outlet_a1",
+      "command": "ElectricCR_Tomacorrientes_InstalarTomacorrientesEnParedesBIM",
+      "title": "Tomacorrientes generales en paredes BIM",
+      "a1_initial": false,
+      "checkboxes": [
+        {
+          "text": "Colocar en ambas caras de paredes divisorias",
+          "checked": true
+        },
+        {
+          "text": "Usar contrato A1 (fisico 3D + PLAN documental independiente)",
+          "checked": false
+        }
+      ],
+      "action": "accept",
+      "a1_submitted": true,
+      "screenshot": "C:\\Users\\marco\\AppData\\Local\\Temp\\ElectricCR_GUI_Acceptance_a0454a393d34462dbdf299fe22d1851d\\outlet_a1_dialog.png"
+    },
+    {
+      "phase": "outlet_reopen",
+      "command": "ElectricCR_Tomacorrientes_InstalarTomacorrientesEnParedesBIM",
+      "title": "Tomacorrientes generales en paredes BIM",
+      "a1_initial": false,
+      "checkboxes": [
+        {
+          "text": "Colocar en ambas caras de paredes divisorias",
+          "checked": true
+        },
+        {
+          "text": "Usar contrato A1 (fisico 3D + PLAN documental independiente)",
+          "checked": false
+        }
+      ],
+      "action": "cancel",
+      "screenshot": "C:\\Users\\marco\\AppData\\Local\\Temp\\ElectricCR_GUI_Acceptance_a0454a393d34462dbdf299fe22d1851d\\outlet_reopen_dialog.png"
+    },
+    {
+      "phase": "switch_legacy",
+      "command": "ElectricCR_Iluminaci_n_ColocarApagadoresEnPuertas",
+      "title": "Apagadores junto a puertas y aberturas BIM",
+      "a1_initial": false,
+      "checkboxes": [
+        {
+          "text": "Actualizar apagadores existentes sin duplicarlos",
+          "checked": true
+        },
+        {
+          "text": "Usar contrato A1 (fisico 3D + PLAN documental independiente)",
+          "checked": false
+        }
+      ],
+      "action": "accept",
+      "a1_submitted": false,
+      "screenshot": "C:\\Users\\marco\\AppData\\Local\\Temp\\ElectricCR_GUI_Acceptance_a0454a393d34462dbdf299fe22d1851d\\switch_legacy_dialog.png"
+    },
+    {
+      "phase": "switch_a1",
+      "command": "ElectricCR_Iluminaci_n_ColocarApagadoresEnPuertas",
+      "title": "Apagadores junto a puertas y aberturas BIM",
+      "a1_initial": false,
+      "checkboxes": [
+        {
+          "text": "Actualizar apagadores existentes sin duplicarlos",
+          "checked": true
+        },
+        {
+          "text": "Usar contrato A1 (fisico 3D + PLAN documental independiente)",
+          "checked": false
+        }
+      ],
+      "action": "accept",
+      "a1_submitted": true,
+      "screenshot": "C:\\Users\\marco\\AppData\\Local\\Temp\\ElectricCR_GUI_Acceptance_a0454a393d34462dbdf299fe22d1851d\\switch_a1_dialog.png"
+    },
+    {
+      "phase": "switch_reopen",
+      "command": "ElectricCR_Iluminaci_n_ColocarApagadoresEnPuertas",
+      "title": "Apagadores junto a puertas y aberturas BIM",
+      "a1_initial": false,
+      "checkboxes": [
+        {
+          "text": "Actualizar apagadores existentes sin duplicarlos",
+          "checked": true
+        },
+        {
+          "text": "Usar contrato A1 (fisico 3D + PLAN documental independiente)",
+          "checked": false
+        }
+      ],
+      "action": "cancel",
+      "screenshot": "C:\\Users\\marco\\AppData\\Local\\Temp\\ElectricCR_GUI_Acceptance_a0454a393d34462dbdf299fe22d1851d\\switch_reopen_dialog.png"
+    }
+  ],
+  "messages": [
+    {
+      "phase": "outlet_legacy",
+      "title": "ElectricCR - resultado",
+      "text": "Creados: 31 | tramos BIM: 19 | mochetas menores a 100 mm: 7 | tramos sin cara interior reconocible: 6. No se modificaron muros ni aperturas."
+    },
+    {
+      "phase": "outlet_a1",
+      "title": "ElectricCR - resultado",
+      "text": "Creados: 31 | tramos BIM: 19 | mochetas menores a 100 mm: 7 | tramos sin cara interior reconocible: 6. No se modificaron muros ni aperturas."
+    },
+    {
+      "phase": "switch_legacy",
+      "title": "Apagadores BIM",
+      "text": "Creados: 1\nActualizados: 0\nLegacy preservados: 0\nOmitidos: 0\nGrupo: Apagadores BIM"
+    },
+    {
+      "phase": "switch_a1",
+      "title": "Apagadores BIM",
+      "text": "Creados: 1\nActualizados: 0\nLegacy preservados: 0\nOmitidos: 0\nGrupo: Apagadores BIM"
+    }
+  ],
+  "phases": {
+    "outlet_legacy": {
+      "created": [
+        "Link_TomaBIM_001",
+        "Link_TomaBIM_002",
+        "Link_TomaBIM_003",
+        "Link_TomaBIM_004",
+        "Link_TomaBIM_005",
+        "Link_TomaBIM_006",
+        "Link_TomaBIM_007",
+        "Link_TomaBIM_008",
+        "Link_TomaBIM_009",
+        "Link_TomaBIM_010",
+        "Link_TomaBIM_011",
+        "Link_TomaBIM_012",
+        "Link_TomaBIM_013",
+        "Link_TomaBIM_014",
+        "Link_TomaBIM_015",
+        "Link_TomaBIM_016",
+        "Link_TomaBIM_017",
+        "Link_TomaBIM_018",
+        "Link_TomaBIM_019",
+        "Link_TomaBIM_020",
+        "Link_TomaBIM_021",
+        "Link_TomaBIM_022",
+        "Link_TomaBIM_023",
+        "Link_TomaBIM_024",
+        "Link_TomaBIM_025",
+        "Link_TomaBIM_026",
+        "Link_TomaBIM_027",
+        "Link_TomaBIM_028",
+        "Link_TomaBIM_029",
+        "Link_TomaBIM_030",
+        "Link_TomaBIM_031"
+      ],
+      "contracts": [
+        "LegacyCompound",
+        "LegacyCompound",
+        "LegacyCompound",
+        "LegacyCompound",
+        "LegacyCompound",
+        "LegacyCompound",
+        "LegacyCompound",
+        "LegacyCompound",
+        "LegacyCompound",
+        "LegacyCompound",
+        "LegacyCompound",
+        "LegacyCompound",
+        "LegacyCompound",
+        "LegacyCompound",
+        "LegacyCompound",
+        "LegacyCompound",
+        "LegacyCompound",
+        "LegacyCompound",
+        "LegacyCompound",
+        "LegacyCompound",
+        "LegacyCompound",
+        "LegacyCompound",
+        "LegacyCompound",
+        "LegacyCompound",
+        "LegacyCompound",
+        "LegacyCompound",
+        "LegacyCompound",
+        "LegacyCompound",
+        "LegacyCompound",
+        "LegacyCompound",
+        "LegacyCompound"
+      ],
+      "has_uid": [
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false
+      ],
+      "has_host": [
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false
+      ],
+      "undo_removed_created": true,
+      "redo_restored_created": true,
+      "final_undo_removed_created": true
+    },
+    "outlet_a1": {
+      "name": "Link_TomaBIM_001",
+      "label": "TomaBIM_001",
+      "contract": "PhysicalDocumentationA1",
+      "uid": "f39af34f-dfc8-4824-9af9-08a8c4fa0ccf",
+      "host": "Wall",
+      "space": "Space",
+      "door": null,
+      "placement": [
+        1878.748293,
+        9250.0,
+        0.0
+      ],
+      "yaw": 0.0,
+      "height": 300.0,
+      "linked_object": "Master_Tomacorriente_120V_Toma_Ambos_Vertical_300_A1Physical",
+      "master_hidden": true,
+      "master_parents": [
+        {
+          "name": "_lib_devices",
+          "label": "_lib_devices"
+        }
+      ],
+      "physical": {
+        "volume": 84518.072443,
+        "solids": 18,
+        "bbox": [
+          1821.337475,
+          9201.25,
+          264.76,
+          1936.337475,
+          9258.749108,
+          334.76
+        ]
+      },
+      "plan": {
+        "name": "ECR_DocPlan_f39af34f_dfc8_4824_9af9_08a8c4fa0ccf",
+        "role": "PLAN",
+        "documentation_only": true,
+        "owner": "Link_TomaBIM_001",
+        "metrics": {
+          "volume": 0.0,
+          "solids": 0,
+          "bbox": [
+            1828.767615,
+            9250.0,
+            0.0,
+            1928.748293,
+            9389.505101,
+            0.0
+          ]
+        }
+      },
+      "physical_invariant_after_plan_visibility": true,
+      "created_count": 31,
+      "source_wall": "Wall",
+      "avoids_openings": true,
+      "placement_rule": "NEC 2020 210.52(A) / parametros editables",
+      "undo_removed_created": true,
+      "redo_restored_created": true
+    },
+    "switch_legacy": {
+      "created": [
+        "Link_Apagador_Sketch_Centros_Puertas_001"
+      ],
+      "contracts": [
+        "LegacyCompound"
+      ],
+      "door": [
+        "Window"
+      ],
+      "distance_jamb": [
+        150.0
+      ],
+      "undo_removed_created": true,
+      "redo_restored_created": true,
+      "final_undo_removed_created": true
+    },
+    "switch_a1": {
+      "name": "Link_Apagador_Sketch_Centros_Puertas_001",
+      "label": "Apagador - Sketch_Centros_Puertas - 001",
+      "contract": "PhysicalDocumentationA1",
+      "uid": "b2ea5a24-168d-4583-9954-43d47856346b",
+      "host": "Wall",
+      "space": "Space",
+      "door": "Window",
+      "placement": [
+        3145.344424,
+        8632.545499,
+        0.0
+      ],
+      "yaw": -90.0,
+      "height": 1200.0,
+      "linked_object": "Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical",
+      "master_hidden": true,
+      "master_parents": [
+        {
+          "name": "_lib_devices",
+          "label": "_lib_devices"
+        }
+      ],
+      "physical": {
+        "volume": 82232.284217,
+        "solids": 2,
+        "bbox": [
+          3095.90278,
+          8597.620499,
+          1141.453,
+          3159.237877,
+          8667.470499,
+          1258.547
+        ]
+      },
+      "plan": {
+        "name": "ECR_DocPlan_b2ea5a24_168d_4583_9954_43d47856346b",
+        "role": "PLAN",
+        "documentation_only": true,
+        "owner": "Link_Apagador_Sketch_Centros_Puertas_001",
+        "metrics": {
+          "volume": 0.0,
+          "solids": 0,
+          "bbox": [
+            3145.344424,
+            8605.912457,
+            0.0,
+            3283.296427,
+            8658.474136,
+            0.0
+          ]
+        }
+      },
+      "physical_invariant_after_plan_visibility": true,
+      "created_count": 1,
+      "distance_jamb": 150.0,
+      "wall_reference": "Wall",
+      "area_room": "Sketch_Centros_Puertas",
+      "placement_rule": "jamba_picaporte_muro_libre_cara_interior",
+      "interior_rule": "recinto_encontrado_por_nombre",
+      "undo_removed_created": true,
+      "redo_restored_created": true
+    }
+  },
+  "screenshots": [
+    "C:\\Users\\marco\\AppData\\Local\\Temp\\ElectricCR_GUI_Acceptance_a0454a393d34462dbdf299fe22d1851d\\outlet_legacy_dialog.png",
+    "C:\\Users\\marco\\AppData\\Local\\Temp\\ElectricCR_GUI_Acceptance_a0454a393d34462dbdf299fe22d1851d\\outlet_a1_dialog.png",
+    "C:\\Users\\marco\\AppData\\Local\\Temp\\ElectricCR_GUI_Acceptance_a0454a393d34462dbdf299fe22d1851d\\outlet_reopen_dialog.png",
+    "C:\\Users\\marco\\AppData\\Local\\Temp\\ElectricCR_GUI_Acceptance_a0454a393d34462dbdf299fe22d1851d\\switch_legacy_dialog.png",
+    "C:\\Users\\marco\\AppData\\Local\\Temp\\ElectricCR_GUI_Acceptance_a0454a393d34462dbdf299fe22d1851d\\switch_a1_dialog.png",
+    "C:\\Users\\marco\\AppData\\Local\\Temp\\ElectricCR_GUI_Acceptance_a0454a393d34462dbdf299fe22d1851d\\switch_reopen_dialog.png"
+  ],
+  "fixture": {
+    "document": "Upala_GUI_Acceptance_Secondary3",
+    "source_file": "C:\\Users\\marco\\AppData\\Local\\Temp\\ElectricCR_GUI_Acceptance_a0454a393d34462dbdf299fe22d1851d\\Upala_GUI_Acceptance_Secondary3.FCStd",
+    "initial_objects": 189,
+    "wall": "Wall",
+    "door": "Window",
+    "space": "Space"
+  },
+  "tree_before_save": {
+    "a1_owner_count": 32,
+    "plan_count": 32,
+    "orphan_plans": [],
+    "uids_unique": true
+  },
+  "save_reopen": {
+    "objects_before_save": 260,
+    "objects_after_reopen": 260,
+    "objects_after_second_recompute": 260,
+    "count_stable": true,
+    "outlet": {
+      "name": "Link_TomaBIM_001",
+      "label": "TomaBIM_001",
+      "contract": "PhysicalDocumentationA1",
+      "uid": "f39af34f-dfc8-4824-9af9-08a8c4fa0ccf",
+      "host": "Wall",
+      "space": "Space",
+      "door": null,
+      "placement": [
+        1878.748293,
+        9250.0,
+        0.0
+      ],
+      "yaw": 0.0,
+      "height": 300.0,
+      "linked_object": "Master_Tomacorriente_120V_Toma_Ambos_Vertical_300_A1Physical",
+      "master_hidden": true,
+      "master_parents": [
+        {
+          "name": "_lib_devices",
+          "label": "_lib_devices"
+        }
+      ],
+      "physical": {
+        "volume": 84518.072443,
+        "solids": 18,
+        "bbox": [
+          1821.337475,
+          9201.25,
+          264.76,
+          1936.337475,
+          9258.749108,
+          334.76
+        ]
+      },
+      "plan": {
+        "name": "ECR_DocPlan_f39af34f_dfc8_4824_9af9_08a8c4fa0ccf",
+        "role": "PLAN",
+        "documentation_only": true,
+        "owner": "Link_TomaBIM_001",
+        "metrics": {
+          "volume": 0.0,
+          "solids": 0,
+          "bbox": [
+            1828.767615,
+            9250.0,
+            0.0,
+            1928.748293,
+            9389.505101,
+            0.0
+          ]
+        }
+      },
+      "physical_invariant_after_plan_visibility": true
+    },
+    "switch": {
+      "name": "Link_Apagador_Sketch_Centros_Puertas_001",
+      "label": "Apagador - Sketch_Centros_Puertas - 001",
+      "contract": "PhysicalDocumentationA1",
+      "uid": "b2ea5a24-168d-4583-9954-43d47856346b",
+      "host": "Wall",
+      "space": "Space",
+      "door": "Window",
+      "placement": [
+        3145.344424,
+        8632.545499,
+        0.0
+      ],
+      "yaw": -90.0,
+      "height": 1200.0,
+      "linked_object": "Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical",
+      "master_hidden": true,
+      "master_parents": [
+        {
+          "name": "_lib_devices",
+          "label": "_lib_devices"
+        }
+      ],
+      "physical": {
+        "volume": 82232.284217,
+        "solids": 2,
+        "bbox": [
+          3095.90278,
+          8597.620499,
+          1141.453,
+          3159.237877,
+          8667.470499,
+          1258.547
+        ]
+      },
+      "plan": {
+        "name": "ECR_DocPlan_b2ea5a24_168d_4583_9954_43d47856346b",
+        "role": "PLAN",
+        "documentation_only": true,
+        "owner": "Link_Apagador_Sketch_Centros_Puertas_001",
+        "metrics": {
+          "volume": 0.0,
+          "solids": 0,
+          "bbox": [
+            3145.344424,
+            8605.912457,
+            0.0,
+            3283.296427,
+            8658.474136,
+            0.0
+          ]
+        }
+      },
+      "physical_invariant_after_plan_visibility": true
+    }
+  }
+}

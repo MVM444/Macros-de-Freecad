@@ -1,0 +1,407 @@
+{
+  "started": "2026-09-13T16:41:10.337025-06:00",
+  "finished": "2026-09-13T16:45:30.653940-06:00",
+  "preflight": {
+    "files": [
+      {
+        "file": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Programación\\RecuperarPanelTareas.FCMacro",
+        "bytes": 10909,
+        "mtime": 1789084456.807,
+        "sha256": "9d43a64ea983f073b76e371951b5a1fad92995fd866267bcb827e3901f203760",
+        "syntax": "PASS"
+      },
+      {
+        "file": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Programación\\programacion_toolbar.py",
+        "bytes": 6664,
+        "mtime": 1789084399.783,
+        "sha256": "d95ae5f98c7a23a076801db741d437ffa25895898e8c04af81d6b09a820b3a21",
+        "syntax": "PASS"
+      },
+      {
+        "file": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Programación\\programacion_common.py",
+        "bytes": 3811,
+        "mtime": 1786543952.630758,
+        "sha256": "29556b9b73f9bc9b664d5a21d77349914fcad957e4a1eacc8e8c85a7be97941d",
+        "syntax": "PASS"
+      },
+      {
+        "file": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Programación\\UI_Audit_FreeCAD.FCMacro",
+        "bytes": 7984,
+        "mtime": 1786407823.1179266,
+        "sha256": "693f75a324e56db060d9f36b07a7189f3b40f7040b4cc637c13f00f84d84098e",
+        "syntax": "PASS"
+      },
+      {
+        "file": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Programación\\RecuperarPanelTareas.svg",
+        "bytes": 787,
+        "mtime": 1789084412.388,
+        "sha256": "331678f2de93d73e306eb73d5d5ec1d38abd7b315702b37ac79efd1981c267c9",
+        "syntax": "n/a"
+      }
+    ],
+    "controller_folder": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Programación",
+    "toolbars": 1,
+    "toolbar_visible": true,
+    "actions": [
+      {
+        "text": "Copiar ultimo minuto",
+        "visible": true,
+        "enabled": true
+      },
+      {
+        "text": "Capturar arbol y prompt",
+        "visible": true,
+        "enabled": true
+      },
+      {
+        "text": "Copiar resumen de seleccion",
+        "visible": true,
+        "enabled": true
+      },
+      {
+        "text": "Extraer propiedades del objeto",
+        "visible": true,
+        "enabled": true
+      },
+      {
+        "text": "Auditar interfaz de FreeCAD",
+        "visible": true,
+        "enabled": true
+      },
+      {
+        "text": "Recuperar Tasks",
+        "visible": true,
+        "enabled": true
+      },
+      {
+        "text": "Capturar coordenadas 3D",
+        "visible": true,
+        "enabled": true
+      },
+      {
+        "text": "Abrir directorios recurrentes",
+        "visible": true,
+        "enabled": true
+      },
+      {
+        "text": "Ollama Asistente Local",
+        "visible": true,
+        "enabled": true
+      }
+    ],
+    "version": [
+      "1",
+      "1",
+      "3",
+      "20260725 (Git shallow)",
+      "Unknown",
+      "2026/07/25 04:52:02",
+      "grafted,grafted",
+      "145529fe741292ff0b3977a01195bf0247425794"
+    ],
+    "qt": "6.8.3",
+    "python": "3.11.14 | packaged by conda-forge | (main, Oct 13 2025, 14:00:26) [MSC v.1944 64 bit (AMD64)]",
+    "host": "DESKTOP-5586S7P",
+    "pid": 22684
+  },
+  "cleanup": {
+    "documents_remaining": [],
+    "dialog_remaining": false,
+    "closed_only": [
+      "TasksRecovery_A",
+      "TasksRecovery_B"
+    ],
+    "saved_fcstd": false,
+    "test_changed_tasks_visibility_restored": true
+  },
+  "final_audit": {
+    "label": "FINAL_LAYOUT_RESTORED",
+    "dock_total": 5,
+    "dock_visible": 3,
+    "dock_invisible": 2,
+    "duplicates": {},
+    "relevant_widgets": 9,
+    "active_dialog": false
+  },
+  "final_toolbar": [
+    {
+      "text": "Copiar ultimo minuto",
+      "visible": true,
+      "enabled": true
+    },
+    {
+      "text": "Capturar arbol y prompt",
+      "visible": true,
+      "enabled": true
+    },
+    {
+      "text": "Copiar resumen de seleccion",
+      "visible": true,
+      "enabled": true
+    },
+    {
+      "text": "Extraer propiedades del objeto",
+      "visible": true,
+      "enabled": true
+    },
+    {
+      "text": "Auditar interfaz de FreeCAD",
+      "visible": true,
+      "enabled": true
+    },
+    {
+      "text": "Recuperar Tasks",
+      "visible": true,
+      "enabled": true
+    },
+    {
+      "text": "Capturar coordenadas 3D",
+      "visible": true,
+      "enabled": true
+    },
+    {
+      "text": "Abrir directorios recurrentes",
+      "visible": true,
+      "enabled": true
+    },
+    {
+      "text": "Ollama Asistente Local",
+      "visible": true,
+      "enabled": true
+    }
+  ],
+  "source_unchanged": true,
+  "cycle_start": {
+    "document": "TasksRecovery_A",
+    "dialog": true,
+    "central": [
+      741,
+      99,
+      947,
+      1046
+    ],
+    "docks": [
+      {
+        "name": "Selection view",
+        "visible": false,
+        "geometry": [
+          0,
+          0,
+          210,
+          129
+        ]
+      },
+      {
+        "name": "Python console",
+        "visible": true,
+        "geometry": [
+          -600,
+          -592,
+          100,
+          92
+        ]
+      },
+      {
+        "name": "Report view",
+        "visible": true,
+        "geometry": [
+          0,
+          1151,
+          2560,
+          161
+        ]
+      },
+      {
+        "name": "Model",
+        "visible": true,
+        "geometry": [
+          0,
+          99,
+          735,
+          1046
+        ]
+      },
+      {
+        "name": "Tasks",
+        "visible": true,
+        "geometry": [
+          1694,
+          99,
+          866,
+          1046
+        ]
+      }
+    ],
+    "widgets": 897,
+    "edit": {
+      "TasksRecovery_A": "<View provider geometry object at 000002145839FA70>",
+      "TasksRecovery_B": "None"
+    },
+    "selection": [],
+    "cameras": {
+      "TasksRecovery_A": "#Inventor V2.1 ascii\n\n\nOrthographicCamera {\n  viewportMapping ADJUST_CAMERA\n  position 4.9994607 4.9964938 255.00238\n  orientation 0 0 1  0\n  nearDistance 244.75739\n  farDistance 255.2574\n  aspectRatio 1\n  focalDistance 250\n  height 17.320509\n\n}\n",
+      "TasksRecovery_B": "#Inventor V2.1 ascii\n\n\nOrthographicCamera {\n  viewportMapping ADJUST_CAMERA\n  position 144.80847 -145.34129 149.2692\n  orientation 0.74290609 0.30772209 0.59447283  1.2171158\n  nearDistance 245.37027\n  farDistance 256.26352\n  aspectRatio 1\n  focalDistance 250\n  height 11.488722\n\n}\n"
+    }
+  },
+  "cycle_end_settled": {
+    "document": "TasksRecovery_A",
+    "dialog": true,
+    "central": [
+      741,
+      99,
+      947,
+      1046
+    ],
+    "docks": [
+      {
+        "name": "Selection view",
+        "visible": false,
+        "geometry": [
+          0,
+          0,
+          210,
+          129
+        ]
+      },
+      {
+        "name": "Python console",
+        "visible": true,
+        "geometry": [
+          -600,
+          -592,
+          100,
+          92
+        ]
+      },
+      {
+        "name": "Report view",
+        "visible": true,
+        "geometry": [
+          0,
+          1151,
+          2560,
+          161
+        ]
+      },
+      {
+        "name": "Model",
+        "visible": true,
+        "geometry": [
+          0,
+          99,
+          735,
+          1046
+        ]
+      },
+      {
+        "name": "Tasks",
+        "visible": true,
+        "geometry": [
+          1694,
+          99,
+          866,
+          1046
+        ]
+      }
+    ],
+    "widgets": 897,
+    "edit": {
+      "TasksRecovery_A": "<View provider geometry object at 000002145839FA70>",
+      "TasksRecovery_B": "None"
+    },
+    "selection": [],
+    "cameras": {
+      "TasksRecovery_A": "#Inventor V2.1 ascii\n\n\nOrthographicCamera {\n  viewportMapping ADJUST_CAMERA\n  position 4.9994607 4.9964938 255.00238\n  orientation 0 0 1  0\n  nearDistance 244.75739\n  farDistance 255.2574\n  aspectRatio 1\n  focalDistance 250\n  height 17.320509\n\n}\n",
+      "TasksRecovery_B": "#Inventor V2.1 ascii\n\n\nOrthographicCamera {\n  viewportMapping ADJUST_CAMERA\n  position 144.80847 -145.34129 149.2692\n  orientation 0.74290609 0.30772209 0.59447283  1.2171158\n  nearDistance 245.37027\n  farDistance 256.26352\n  aspectRatio 1\n  focalDistance 250\n  height 11.488722\n\n}\n"
+    }
+  },
+  "audit_before_switches": {
+    "label": "BEFORE_DOCUMENT_SWITCHES",
+    "dock_total": 5,
+    "dock_visible": 4,
+    "dock_invisible": 1,
+    "duplicates": {},
+    "relevant_widgets": 13,
+    "active_dialog": false
+  },
+  "audit_after_switches": {
+    "label": "AFTER_DOCUMENT_SWITCHES",
+    "dock_total": 5,
+    "dock_visible": 4,
+    "dock_invisible": 1,
+    "duplicates": {},
+    "relevant_widgets": 13,
+    "active_dialog": false
+  },
+  "runs": 28,
+  "all_runtime_checks_pass": true,
+  "black_panel_reproduced": false,
+  "black_panel_resolved": "NOT_DEMONSTRATED",
+  "tab_detection_limit": "unknown for separate Model and Tasks docks; visibility preserved in observed session",
+  "final_ui": {
+    "document": null,
+    "dialog": false,
+    "central": [
+      741,
+      99,
+      1819,
+      1046
+    ],
+    "docks": [
+      {
+        "name": "Selection view",
+        "visible": false,
+        "geometry": [
+          0,
+          0,
+          210,
+          129
+        ]
+      },
+      {
+        "name": "Python console",
+        "visible": true,
+        "geometry": [
+          -600,
+          -592,
+          100,
+          92
+        ]
+      },
+      {
+        "name": "Report view",
+        "visible": true,
+        "geometry": [
+          0,
+          1151,
+          2560,
+          161
+        ]
+      },
+      {
+        "name": "Model",
+        "visible": true,
+        "geometry": [
+          0,
+          99,
+          735,
+          1046
+        ]
+      },
+      {
+        "name": "Tasks",
+        "visible": false,
+        "geometry": [
+          1694,
+          99,
+          866,
+          1046
+        ]
+      }
+    ],
+    "widgets": 1148,
+    "edit": {},
+    "selection": [],
+    "cameras": {}
+  }
+}

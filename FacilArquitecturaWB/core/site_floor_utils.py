@@ -4,8 +4,8 @@ Descripcion: crea una losa BIM y un sitio/terreno desde sketches arquitectonicos
 Funcion principal: integrar Site -> Building -> Level -> Slab y evitar terreno superpuesto bajo la losa.
 Mantenimiento: conservar Arch.makeStructure/Arch.makeSite y las dependencias nativas; no duplicar contencion.
 FreeCAD objetivo: 1.1.3.
-Fecha y hora: 2026-09-01 15:15 America/Costa_Rica.
-Version: 0.3.0.
+Fecha: 2026-09-15 America/Costa_Rica.
+Version: 0.3.2.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ MIN_FLOOR_SIZE_MM = 500.0
 
 
 def collect_plan_sketches(doc, selection=None):
-    """Collect wall, door and window sketches from a selection or the document."""
+    """Collect architectural sketches and explicitly tagged slab footprints."""
     selected = list(selection or [])
     pending = selected if selected else list(getattr(doc, "Objects", []) or [])
     result = []
@@ -168,6 +168,18 @@ def create_site_floor_from_sketches(doc, bim_group, sketches, options, building=
             True,
         )
         doc.recompute()
+
+    # Multi-level callers may need an additional slab without creating a second
+    # Site.  The default remains True to preserve every existing caller.
+    if not bool(options.get("create_site", True)):
+        _set_view(footprint, visible=False)
+        _set_view(slab, color=(0.78, 0.72, 0.62), transparency=0)
+        doc.recompute()
+        msg(
+            "Piso BIM creado desde %d sketches | espesor %.1f mm | sitio: no"
+            % (len(usable), float(options.get("floor_thickness_mm", 150.0)))
+        )
+        return {"site": None, "slab": slab, "terrain": terrain, "footprint": footprint}
 
     site_objects = [building] if building is not None else [slab]
     try:
@@ -501,6 +513,10 @@ def _is_plan_source_sketch(obj):
     element_type = str(getattr(obj, "FA_ElementType", "") or "").strip().lower()
     if kind == "columns" or element_type in ("columnas", "columns"):
         return False
+    # The minimal stair demo needs only a slab outline, with no wall semantics.
+    # Explicit role opt-in preserves the existing name-based exclusions.
+    if str(getattr(obj, "FA_Role", "") or "") == "slab_footprint_source":
+        return _geometry_count(obj) > 0
     label = _object_label(obj)
     text = ("%s %s" % (str(getattr(obj, "Name", "")), label)).lower()
     if any(keyword in text for keyword in EXCLUDED_KEYWORDS):

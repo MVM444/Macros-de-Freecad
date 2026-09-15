@@ -4,8 +4,8 @@ Descripcion: genera lineas de centro desde shapes importados de distintos sistem
 Funcion principal: extrae ejes y espesores sin modificar ni explotar destructivamente la geometria fuente.
 Mantenimiento: conservar la descomposicion virtual de Compound/CompSolid antes de aplicar heuristicas de eje principal; no convertir el contenedor completo en un unico muro.
 FreeCAD objetivo: 1.1.3.
-Fecha y hora: 2026-08-23 11:31 America/Costa_Rica.
-Version: 0.22.0.
+Fecha y hora: 2026-09-14 11:50 America/Costa_Rica.
+Version: 0.24.0.
 """
 
 from __future__ import annotations
@@ -89,9 +89,18 @@ def create_centerline_sketch_from_objects(doc, parent_group, objects, extraction
         extraction_strategy == "auto" and _selection_prefers_opening_profile(source_labels)
     )
     prefer_column_profile = extraction_strategy == "auto" and _selection_prefers_column_profile(source_labels)
-    source_objects = _collect_leaf_objects(objects)
+    source_roots = selected_objects
+    expanded_layer_count = 0
+    if extraction_strategy == "profile_axis":
+        source_roots, expanded_layer_count = _profile_selection_roots(selected_objects)
+    source_objects = _collect_leaf_objects(source_roots)
     if not source_objects:
         raise UserFacingError("No hay objetos utiles en la seleccion.")
+    if expanded_layer_count:
+        msg(
+            "Layers de ventanas expandidos explicitamente: %d | objetos fuente utiles: %d"
+            % (expanded_layer_count, len(source_objects))
+        )
     document_source_objects = list(source_objects)
     source_objects = _virtual_edge_sources_for_auto_compounds(
         source_objects,
@@ -144,7 +153,13 @@ def create_centerline_sketch_from_objects(doc, parent_group, objects, extraction
     ignored_compact_profiles = 0
     profile_axis_count = 0
     if extraction_strategy == "profile_axis":
-        profile_segments, profile_axis_count, ignored_compact_profiles = _profile_centerlines_from_objects(source_objects)
+        isolate_plain_sources = bool(expanded_layer_count)
+        if isolate_plain_sources:
+            msg("Layer de ventanas: cada objeto hijo se analiza como candidato independiente")
+        profile_segments, profile_axis_count, ignored_compact_profiles = _profile_centerlines_from_objects(
+            source_objects,
+            isolate_plain_sources=isolate_plain_sources,
+        )
         body_records = [_centerline_record(segment) for segment in profile_segments]
     elif extraction_strategy == "door_swing":
         door_segments, profile_axis_count, ignored_compact_profiles = _door_centerlines_from_objects(source_objects)
@@ -237,11 +252,21 @@ def create_centerline_sketch_from_objects(doc, parent_group, objects, extraction
         record.get("thickness") is not None for record in records
     )
     if records:
-        groups, joined_endpoint_count = _prepare_centerline_groups(
-            records,
-            separate_by_thickness,
-            topology_context=topology_context,
-        )
+        if extraction_strategy == "profile_axis":
+            # Window axes are discrete opening identities, not a wall network.
+            # Generic collinear/network consolidation can bridge neighboring windows
+            # from the same selected layer and turn several valid axes into one long
+            # false axis.  Preserve the already-resolved window axes independently;
+            # exact duplicates are still removed deterministically.
+            groups = [{"thickness": None, "kind": "windows", "records": _dedupe_centerline_records(records)}]
+            joined_endpoint_count = 0
+            msg("Ejes de ventanas preservados por objeto: %d | consolidacion de red omitida" % len(groups[0]["records"]))
+        else:
+            groups, joined_endpoint_count = _prepare_centerline_groups(
+                records,
+                separate_by_thickness,
+                topology_context=topology_context,
+            )
     else:
         groups, joined_endpoint_count = [], 0
     if column_records:
@@ -355,6 +380,58 @@ def _selection_prefers_opening_profile(source_labels):
 def _selection_prefers_column_profile(source_labels):
     text = " ".join(str(label).lower() for label in source_labels)
     return any(keyword in text for keyword in ("columna", "column", "pilar"))
+
+
+def _is_draft_layer_object(obj):
+    """Return True for Draft Layer objects without relying on the visible label."""
+    if obj is None or _is_link_object(obj):
+        return False
+    proxy = getattr(obj, "Proxy", None)
+    proxy_type = str(getattr(proxy, "Type", "") or "").strip().lower()
+    proxy_class = str(getattr(type(proxy), "__name__", "") or "").strip().lower() if proxy is not None else ""
+    proxy_module = str(getattr(type(proxy), "__module__", "") or "").strip().lower() if proxy is not None else ""
+    if proxy_type == "layer" or proxy_class == "layer" or "draftobjects.layer" in proxy_module:
+        return True
+    try:
+        return str(obj.getGroupOfProperty("Group") or "").strip().lower() == "layer"
+    except Exception:
+        return False
+
+
+def _profile_selection_roots(objects):
+    """Expand selected Draft Layers into their direct members for window extraction.
+
+    A Draft Layer stores document members in its ``Group`` LinkList.  Expanding that
+    membership explicitly keeps App::Link instances and plain Part::Feature members
+    as separate selection roots instead of depending on generic dependency traversal.
+    Other selected groups/shapes keep their historical behavior.
+    """
+    roots = []
+    expanded_layers = 0
+    for obj in objects or []:
+        if not _is_draft_layer_object(obj):
+            roots.append(obj)
+            continue
+        try:
+            members = list(getattr(obj, "Group", []) or [])
+        except Exception:
+            members = []
+        if not members:
+            roots.append(obj)
+            continue
+        expanded_layers += 1
+        roots.extend(members)
+        msg(
+            "Layer Draft expandido para centros de ventanas: %s | miembros=%d"
+            % (str(getattr(obj, "Label", getattr(obj, "Name", "Layer"))), len(members))
+        )
+    return roots, expanded_layers
+
+
+def _selection_expands_profile_sources_independently(objects):
+    """Compatibility/test helper: True only when a selected Draft Layer is expanded."""
+    _roots, layer_count = _profile_selection_roots(objects)
+    return bool(layer_count)
 
 
 def _should_validate_geometry_scale(extraction_strategy, prefer_column_profile=False):
@@ -2144,9 +2221,25 @@ def _segments_from_shape(
 
     return body_records, raw_edges, ignored_compact_profiles, 0
 
-def _profile_centerlines_from_objects(objects):
-    """Group nearby shape edges and create one dominant axis per component."""
-    segments = []
+def _profile_centerlines_from_objects(objects, isolate_plain_sources=False):
+    """Create opening axes while preserving the intended selection scope.
+
+    ``App::Link.Shape`` is already exposed by FreeCAD in instance coordinates, so each
+    link is always isolated before clustering.  Plain objects preserve the historical
+    shared-clustering path for direct multi-object selections.  When the command starts
+    from a selected layer/group, however, every leaf object is an independent document
+    member and is evaluated independently; this prevents geometry from neighboring window
+    symbols in the same layer from being fused into one candidate.
+    """
+    shared_segments = []
+    result = []
+    ignored = 0
+    component_count = 0
+    isolated_link_count = 0
+    isolated_plain_count = 0
+    ambiguous_link_count = 0
+    ambiguous_plain_count = 0
+
     for obj in objects:
         shape = getattr(obj, "Shape", None)
         if shape is None:
@@ -2156,24 +2249,136 @@ def _profile_centerlines_from_objects(objects):
         except Exception:
             edges = []
         obj_segments = _segments_from_edges(edges, min_length=1.0)
-        if obj_segments:
-            segments.extend(obj_segments)
-            msg(
-                "Geometria de perfil leida en %s: bordes=%d"
-                % (str(getattr(obj, "Label", getattr(obj, "Name", ""))), len(obj_segments))
-            )
+        if not obj_segments:
+            continue
 
-    components = _group_segments_by_proximity(segments, PROFILE_COMPONENT_GAP_MM)
-    result = []
-    ignored = 0
-    for component in components:
+        label = str(getattr(obj, "Label", getattr(obj, "Name", "")))
+        msg("Geometria de perfil leida en %s: bordes=%d" % (label, len(obj_segments)))
+
+        is_link = _is_link_object(obj)
+        isolate_object = is_link or bool(isolate_plain_sources)
+        if not isolate_object:
+            shared_segments.extend(obj_segments)
+            continue
+
+        components = _group_segments_by_proximity(obj_segments, PROFILE_COMPONENT_GAP_MM)
+        component_count += len(components)
+        candidates = []
+        local_rejected = 0
+        for component in components:
+            centerline = _centerline_from_segments(
+                component,
+                prefer_opening_profile=True,
+                minimum_edges=1,
+            )
+            if centerline is None:
+                local_rejected += 1
+                continue
+            candidates.append((centerline, component))
+
+        selected = _select_link_profile_candidate(candidates)
+        if selected is not None:
+            result.append(selected)
+            local_rejected += max(0, len(candidates) - 1)
+            if is_link:
+                isolated_link_count += 1
+                msg(
+                    "Perfil enlazado aislado: %s | componentes=%d | candidatos=%d | eje=1"
+                    % (label or "Link", len(components), len(candidates))
+                )
+            else:
+                isolated_plain_count += 1
+                msg(
+                    "Perfil de layer aislado: %s | componentes=%d | candidatos=%d | eje=1"
+                    % (label or "Shape", len(components), len(candidates))
+                )
+        elif candidates:
+            local_rejected += len(candidates)
+            if is_link:
+                ambiguous_link_count += 1
+                warn(
+                    "Perfil enlazado ambiguo omitido: %s | componentes=%d | candidatos_validos=%d"
+                    % (label or "Link", len(components), len(candidates))
+                )
+            else:
+                ambiguous_plain_count += 1
+                warn(
+                    "Perfil de layer ambiguo omitido: %s | componentes=%d | candidatos_validos=%d"
+                    % (label or "Shape", len(components), len(candidates))
+                )
+        else:
+            msg(
+                "%s sin eje valido: %s | componentes=%d"
+                % ("Perfil enlazado" if is_link else "Perfil de layer", label or "Objeto", len(components))
+            )
+        ignored += local_rejected
+
+    # Directly selected ordinary CAD shapes keep the pre-existing behavior: several
+    # simple objects may intentionally form one opening and can share one component.
+    shared_components = _group_segments_by_proximity(shared_segments, PROFILE_COMPONENT_GAP_MM)
+    component_count += len(shared_components)
+    for component in shared_components:
         centerline = _centerline_from_segments(component, prefer_opening_profile=True, minimum_edges=1)
         if centerline is None:
             ignored += 1
             continue
         result.append(centerline)
-    msg("Perfiles complejos agrupados: %d | ejes validos: %d" % (len(components), len(result)))
+
+    msg(
+        "Perfiles complejos agrupados: %d | ejes validos: %d | links aislados: %d | "
+        "shapes de layer aislados: %d | links ambiguos: %d | shapes de layer ambiguos: %d"
+        % (
+            component_count,
+            len(result),
+            isolated_link_count,
+            isolated_plain_count,
+            ambiguous_link_count,
+            ambiguous_plain_count,
+        )
+    )
     return result, len(result), ignored
+
+
+def _select_link_profile_candidate(candidates):
+    """Return one clearly dominant link component, or ``None`` when ambiguous.
+
+    A valid link normally contains one elongated window body plus compact helper
+    geometry.  If several elongated bodies survive validation, prefer a component
+    only when its geometric support is clearly stronger; otherwise do not invent
+    a centreline.
+    """
+    candidates = list(candidates or [])
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0][0]
+
+    ranked = sorted(
+        (
+            (_profile_component_support_score(component, centerline), centerline)
+            for centerline, component in candidates
+        ),
+        key=lambda item: item[0],
+        reverse=True,
+    )
+    best_score, best_centerline = ranked[0]
+    second_score = ranked[1][0]
+    # A 25 % lead is deliberately conservative.  Similar candidates remain
+    # ambiguous instead of selecting one by order or by the global bounding box.
+    if best_score > 0.0 and best_score >= second_score * 1.25:
+        return best_centerline
+    return None
+
+
+def _profile_component_support_score(component, centerline):
+    """Measure how strongly a local edge cluster supports its inferred axis."""
+    axis_length = _segment_length(centerline)
+    if axis_length <= 1e-9:
+        return 0.0
+    support_length = sum(_segment_length(segment) for segment in component)
+    # Repeated rails/mullions provide more evidence than one isolated long edge;
+    # the capped edge term prevents tiny decorative tessellation from dominating.
+    return support_length / axis_length + min(len(component), 50) / 100.0
 
 
 def _door_centerlines_from_objects(objects):

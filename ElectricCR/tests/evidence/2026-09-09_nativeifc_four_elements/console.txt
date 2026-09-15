@@ -1,0 +1,5 @@
+09:21:49  [NativeIFC probe] creating four generic IFC elements; this may take several seconds
+09:21:52  Python code executed successfully.
+09:22:01  [NativeIFC probe] editing native properties, Placement and a simple attached Pset
+09:22:02  Python code executed successfully.
+09:22:31  [NativeIFC probe] saving companion IFC and FreeCAD document, then reopening

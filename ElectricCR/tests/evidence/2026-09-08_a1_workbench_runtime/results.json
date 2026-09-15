@@ -1,0 +1,729 @@
+{
+  "started": "2026-09-08T17:36:24.420274-06:00",
+  "version": [
+    "1",
+    "1",
+    "3",
+    "20260725 (Git shallow)",
+    "Unknown",
+    "2026/07/25 04:52:02",
+    "grafted,grafted",
+    "145529fe741292ff0b3977a01195bf0247425794"
+  ],
+  "source": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Sucursales\\Upala\\1416 Levantamiento 250424 Compu D.FCStd",
+  "source_sha256": "f5e1a372d162f02e5d91cd874f47a13b412380972f0604e27d9d77d71e87077f",
+  "copy": "C:\\Users\\marco\\AppData\\Local\\Temp\\ecr_a1_acceptance_20260908_5_mtcyyd\\A1_workbench_regression.FCStd",
+  "stages": [
+    {
+      "stage": "initial",
+      "workbench": "ElectricCRWorkbench",
+      "owners": 10,
+      "plans": 10,
+      "errors": [],
+      "undo": 0,
+      "redo": 0,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      }
+    },
+    {
+      "stage": "initial_recompute",
+      "workbench": "ElectricCRWorkbench",
+      "owners": 10,
+      "plans": 10,
+      "errors": [],
+      "undo": 0,
+      "redo": 0,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      }
+    },
+    {
+      "stage": "created",
+      "workbench": "ElectricCRWorkbench",
+      "owners": 11,
+      "plans": 11,
+      "errors": [],
+      "undo": 1,
+      "redo": 0,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      }
+    },
+    {
+      "stage": "bim_selection",
+      "workbench": "BIMWorkbench",
+      "owners": 11,
+      "plans": 11,
+      "errors": [],
+      "undo": 1,
+      "redo": 0,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      },
+      "selection": [
+        "ECR_A1_RuntimeProbe"
+      ]
+    },
+    {
+      "stage": "bim_move_rotate",
+      "workbench": "BIMWorkbench",
+      "owners": 11,
+      "plans": 11,
+      "errors": [],
+      "undo": 2,
+      "redo": 0,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      },
+      "live_follow": true,
+      "native_operations": [
+        "Draft.move",
+        "Draft.rotate"
+      ]
+    },
+    {
+      "stage": "bim_saved_before_delete",
+      "workbench": "BIMWorkbench",
+      "owners": 11,
+      "plans": 11,
+      "errors": [],
+      "undo": 2,
+      "redo": 0,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      }
+    },
+    {
+      "stage": "bim_delete",
+      "workbench": "BIMWorkbench",
+      "owners": 10,
+      "plans": 10,
+      "errors": [],
+      "undo": 3,
+      "redo": 0,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      }
+    },
+    {
+      "stage": "bim_undo_delete",
+      "workbench": "BIMWorkbench",
+      "owners": 11,
+      "plans": 11,
+      "errors": [],
+      "undo": 2,
+      "redo": 1,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      }
+    },
+    {
+      "stage": "bim_redo_delete",
+      "workbench": "BIMWorkbench",
+      "owners": 10,
+      "plans": 10,
+      "errors": [],
+      "undo": 3,
+      "redo": 0,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      }
+    },
+    {
+      "stage": "bim_restore_for_new_move",
+      "workbench": "BIMWorkbench",
+      "owners": 11,
+      "plans": 11,
+      "errors": [],
+      "undo": 2,
+      "redo": 1,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      }
+    },
+    {
+      "stage": "bim_selection_after_undo",
+      "workbench": "BIMWorkbench",
+      "owners": 11,
+      "plans": 11,
+      "errors": [],
+      "undo": 2,
+      "redo": 1,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      },
+      "selection": [
+        "ECR_A1_RuntimeProbe"
+      ]
+    },
+    {
+      "stage": "bim_move_after_undo",
+      "workbench": "BIMWorkbench",
+      "owners": 11,
+      "plans": 11,
+      "errors": [],
+      "undo": 3,
+      "redo": 0,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      },
+      "live_follow": true,
+      "native_operations": [
+        "Draft.move",
+        "Draft.rotate"
+      ]
+    },
+    {
+      "stage": "bim_save_close_reopen_pair",
+      "workbench": "BIMWorkbench",
+      "owners": 11,
+      "plans": 11,
+      "errors": [],
+      "undo": 0,
+      "redo": 0,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      }
+    },
+    {
+      "stage": "draft_selection",
+      "workbench": "DraftWorkbench",
+      "owners": 11,
+      "plans": 11,
+      "errors": [],
+      "undo": 0,
+      "redo": 0,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      },
+      "selection": [
+        "ECR_A1_RuntimeProbe"
+      ]
+    },
+    {
+      "stage": "draft_move_rotate",
+      "workbench": "DraftWorkbench",
+      "owners": 11,
+      "plans": 11,
+      "errors": [],
+      "undo": 1,
+      "redo": 0,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      },
+      "live_follow": true,
+      "native_operations": [
+        "Draft.move",
+        "Draft.rotate"
+      ]
+    },
+    {
+      "stage": "draft_delete",
+      "workbench": "DraftWorkbench",
+      "owners": 10,
+      "plans": 10,
+      "errors": [],
+      "undo": 2,
+      "redo": 0,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      }
+    },
+    {
+      "stage": "draft_undo_delete",
+      "workbench": "DraftWorkbench",
+      "owners": 11,
+      "plans": 11,
+      "errors": [],
+      "undo": 1,
+      "redo": 1,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      }
+    },
+    {
+      "stage": "draft_redo_delete",
+      "workbench": "DraftWorkbench",
+      "owners": 10,
+      "plans": 10,
+      "errors": [],
+      "undo": 2,
+      "redo": 0,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      }
+    },
+    {
+      "stage": "draft_restore",
+      "workbench": "DraftWorkbench",
+      "owners": 11,
+      "plans": 11,
+      "errors": [],
+      "undo": 1,
+      "redo": 1,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      }
+    },
+    {
+      "stage": "draft_save_close_reopen_pair",
+      "workbench": "DraftWorkbench",
+      "owners": 11,
+      "plans": 11,
+      "errors": [],
+      "undo": 0,
+      "redo": 0,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      }
+    },
+    {
+      "stage": "part_selection",
+      "workbench": "PartWorkbench",
+      "owners": 11,
+      "plans": 11,
+      "errors": [],
+      "undo": 0,
+      "redo": 0,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      },
+      "selection": [
+        "ECR_A1_RuntimeProbe"
+      ]
+    },
+    {
+      "stage": "part_move_rotate",
+      "workbench": "PartWorkbench",
+      "owners": 11,
+      "plans": 11,
+      "errors": [],
+      "undo": 1,
+      "redo": 0,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      },
+      "live_follow": true,
+      "native_operations": [
+        "Draft.move",
+        "Draft.rotate"
+      ]
+    },
+    {
+      "stage": "part_visibility_Solo2D",
+      "workbench": "PartWorkbench",
+      "owners": 11,
+      "plans": 11,
+      "errors": [],
+      "undo": 1,
+      "redo": 0,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      },
+      "visibility": [
+        false,
+        true
+      ]
+    },
+    {
+      "stage": "part_visibility_Solo3D",
+      "workbench": "PartWorkbench",
+      "owners": 11,
+      "plans": 11,
+      "errors": [],
+      "undo": 1,
+      "redo": 0,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      },
+      "visibility": [
+        true,
+        false
+      ]
+    },
+    {
+      "stage": "part_visibility_Ambos",
+      "workbench": "PartWorkbench",
+      "owners": 11,
+      "plans": 11,
+      "errors": [],
+      "undo": 1,
+      "redo": 0,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      },
+      "visibility": [
+        true,
+        true
+      ]
+    },
+    {
+      "stage": "part_mouse_click_plan",
+      "workbench": "PartWorkbench",
+      "owners": 11,
+      "plans": 11,
+      "errors": [],
+      "undo": 1,
+      "redo": 0,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      },
+      "input_method": "real_mouse",
+      "mode": "Solo2D"
+    },
+    {
+      "stage": "part_mouse_delete",
+      "workbench": "PartWorkbench",
+      "owners": 10,
+      "plans": 10,
+      "errors": [],
+      "undo": 2,
+      "redo": 0,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      },
+      "input_method": "real_mouse_selection_then_Std_Delete"
+    },
+    {
+      "stage": "part_undo",
+      "workbench": "PartWorkbench",
+      "owners": 11,
+      "plans": 11,
+      "errors": [],
+      "undo": 1,
+      "redo": 1,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      }
+    },
+    {
+      "stage": "part_redo",
+      "workbench": "PartWorkbench",
+      "owners": 10,
+      "plans": 10,
+      "errors": [],
+      "undo": 2,
+      "redo": 0,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      }
+    },
+    {
+      "stage": "part_undo_for_reopen",
+      "workbench": "PartWorkbench",
+      "owners": 11,
+      "plans": 11,
+      "errors": [],
+      "undo": 1,
+      "redo": 1,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      }
+    },
+    {
+      "stage": "part_reopened_with_pair",
+      "workbench": "PartWorkbench",
+      "owners": 11,
+      "plans": 11,
+      "errors": [],
+      "undo": 0,
+      "redo": 0,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      }
+    },
+    {
+      "stage": "part_reopened_selection",
+      "workbench": "PartWorkbench",
+      "owners": 11,
+      "plans": 11,
+      "errors": [],
+      "undo": 0,
+      "redo": 0,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      },
+      "selection": [
+        "ECR_A1_RuntimeProbe"
+      ]
+    },
+    {
+      "stage": "part_reopened_move_rotate",
+      "workbench": "PartWorkbench",
+      "owners": 11,
+      "plans": 11,
+      "errors": [],
+      "undo": 1,
+      "redo": 0,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      },
+      "live_follow": true,
+      "native_operations": [
+        "Draft.move",
+        "Draft.rotate"
+      ]
+    },
+    {
+      "stage": "runtime_idempotent_install",
+      "workbench": "PartWorkbench",
+      "owners": 11,
+      "plans": 11,
+      "errors": [],
+      "undo": 1,
+      "redo": 0,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      },
+      "repeated_installs": 2
+    },
+    {
+      "stage": "part_document_activation_tree",
+      "workbench": "PartWorkbench",
+      "owners": 11,
+      "plans": 11,
+      "errors": [],
+      "undo": 1,
+      "redo": 0,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      },
+      "ShowInTree": false
+    },
+    {
+      "stage": "electriccr_return_selection",
+      "workbench": "ElectricCRWorkbench",
+      "owners": 11,
+      "plans": 11,
+      "errors": [],
+      "undo": 1,
+      "redo": 0,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      },
+      "selection": [
+        "ECR_A1_RuntimeProbe"
+      ]
+    },
+    {
+      "stage": "part_final_selection",
+      "workbench": "PartWorkbench",
+      "owners": 11,
+      "plans": 11,
+      "errors": [],
+      "undo": 1,
+      "redo": 0,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      },
+      "selection": [
+        "ECR_A1_RuntimeProbe"
+      ]
+    },
+    {
+      "stage": "part_reopened_delete",
+      "workbench": "PartWorkbench",
+      "owners": 10,
+      "plans": 10,
+      "errors": [],
+      "undo": 2,
+      "redo": 0,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      }
+    },
+    {
+      "stage": "part_reopened_undo",
+      "workbench": "PartWorkbench",
+      "owners": 11,
+      "plans": 11,
+      "errors": [],
+      "undo": 1,
+      "redo": 1,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      }
+    },
+    {
+      "stage": "part_reopened_redo",
+      "workbench": "PartWorkbench",
+      "owners": 10,
+      "plans": 10,
+      "errors": [],
+      "undo": 2,
+      "redo": 0,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      }
+    },
+    {
+      "stage": "final_reopened_without_probe",
+      "workbench": "PartWorkbench",
+      "owners": 10,
+      "plans": 10,
+      "errors": [],
+      "undo": 0,
+      "redo": 0,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      }
+    },
+    {
+      "stage": "final",
+      "workbench": "PartWorkbench",
+      "owners": 10,
+      "plans": 10,
+      "errors": [],
+      "undo": 0,
+      "redo": 0,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      }
+    },
+    {
+      "stage": "final",
+      "workbench": "PartWorkbench",
+      "owners": 10,
+      "plans": 10,
+      "errors": [],
+      "undo": 0,
+      "redo": 0,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      }
+    },
+    {
+      "stage": "final",
+      "workbench": "PartWorkbench",
+      "owners": 10,
+      "plans": 10,
+      "errors": [],
+      "undo": 0,
+      "redo": 0,
+      "observers": {
+        "_ElectricCRPlanLifecycleObserver": 1641228067792,
+        "_ElectricCRPlanLiveSyncObserver": 1641227936464,
+        "_ElectricCRPlanSelectionRedirector": 1641228069904
+      }
+    }
+  ],
+  "source_unchanged": true,
+  "notes": [
+    "Two initial finish assertions compared transient State/status as persistent data. A controlled recompute -> audit -> recompute probe demonstrated audit native reads/evaluation mark dependencies Touched and native recompute clears them. The helper now compares all inventoried fields except State/status; Invalid/Error are still rejected. Every serialized Owner property value/definition matched the original including Placement, Host, Space and door relations; native status attributes differed.",
+    "Diagnostic-only errors: unavailable Part.Compound.CenterOfMass query corrected to BoundBox.Center, and one incorrect test-module path corrected to ElectricCR/tests. No A1 runtime defect in these diagnostic exceptions.",
+    "Runtime scope: ElectricCR initialized normally once in this FreeCAD session; subsequent BIM/Draft/Part switches and document reopen preserve services."
+  ],
+  "serialized_owner_values_unchanged": true,
+  "existing_owner_data_unchanged": true,
+  "final_touched_objects": [
+    "Link_Apagador_Rectangle006",
+    "Link_Apagador_Rectangle007",
+    "Link_Apagador_Rectangle008",
+    "Link_Apagador_Rectangle009",
+    "Link_Apagador_Rectangle011",
+    "Link_Apagador_Rectangle012",
+    "Link_Apagador_Recinto_poligonal_01",
+    "Link_Apagador_Rectangle013",
+    "Link_Apagador_Rectangle014",
+    "ECR_DocPlan_6e9ca8b1_5361_4e59_aac7_0fe1f1adfc6f",
+    "ECR_DocPlan_bbe195cb_999e_4557_9e07_b18e29ccb8d0",
+    "ECR_DocPlan_3a4555d3_b61c_4660_903e_71adb0051ed2",
+    "ECR_DocPlan_f9b2c5b2_354a_4ecb_899a_c07d9f519302",
+    "ECR_DocPlan_aee7a987_8ecc_4ce9_9061_e9467c478734",
+    "ECR_DocPlan_0e08896f_8bb5_4435_bbc0_c161cba6c618",
+    "ECR_DocPlan_dce48ebf_82c1_42aa_a0ae_90f834d192d1",
+    "ECR_DocPlan_3f9bfe49_e56b_4ea7_b86a_85bd05e1c354",
+    "ECR_DocPlan_e0535e2a_af46_4b61_9c87_af2023043663",
+    "ECR_DocPlan_da924136_d34d_4008_9583_9252db3ca4f3",
+    "Link_Apagador_Rectangle010"
+  ],
+  "completed": "2026-09-08T17:44:52.151735-06:00",
+  "passed": true
+}

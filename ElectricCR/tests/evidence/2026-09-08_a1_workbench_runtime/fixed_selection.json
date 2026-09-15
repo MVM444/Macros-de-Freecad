@@ -1,0 +1,68 @@
+[
+  {
+    "workbench": "ElectricCRWorkbench",
+    "selection": [
+      "Link_Apagador_Rectangle014"
+    ],
+    "singleton_ids": {
+      "_ElectricCRPlanLifecycleObserver": 1389056471760,
+      "_ElectricCRPlanLiveSyncObserver": 1389056227024,
+      "_ElectricCRPlanSelectionRedirector": 1389133922896
+    }
+  },
+  {
+    "workbench": "BIMWorkbench",
+    "selection": [
+      "Link_Apagador_Rectangle014"
+    ],
+    "singleton_ids": {
+      "_ElectricCRPlanLifecycleObserver": 1389056471760,
+      "_ElectricCRPlanLiveSyncObserver": 1389056227024,
+      "_ElectricCRPlanSelectionRedirector": 1389133922896
+    }
+  },
+  {
+    "workbench": "DraftWorkbench",
+    "selection": [
+      "Link_Apagador_Rectangle014"
+    ],
+    "singleton_ids": {
+      "_ElectricCRPlanLifecycleObserver": 1389056471760,
+      "_ElectricCRPlanLiveSyncObserver": 1389056227024,
+      "_ElectricCRPlanSelectionRedirector": 1389133922896
+    }
+  },
+  {
+    "workbench": "PartWorkbench",
+    "selection": [
+      "Link_Apagador_Rectangle014"
+    ],
+    "singleton_ids": {
+      "_ElectricCRPlanLifecycleObserver": 1389056471760,
+      "_ElectricCRPlanLiveSyncObserver": 1389056227024,
+      "_ElectricCRPlanSelectionRedirector": 1389133922896
+    }
+  },
+  {
+    "workbench": "ElectricCRWorkbench",
+    "selection": [
+      "Link_Apagador_Rectangle014"
+    ],
+    "singleton_ids": {
+      "_ElectricCRPlanLifecycleObserver": 1389056471760,
+      "_ElectricCRPlanLiveSyncObserver": 1389056227024,
+      "_ElectricCRPlanSelectionRedirector": 1389133922896
+    }
+  },
+  {
+    "workbench": "PartWorkbench",
+    "selection": [
+      "Link_Apagador_Rectangle014"
+    ],
+    "singleton_ids": {
+      "_ElectricCRPlanLifecycleObserver": 1389056471760,
+      "_ElectricCRPlanLiveSyncObserver": 1389056227024,
+      "_ElectricCRPlanSelectionRedirector": 1389133922896
+    }
+  }
+]

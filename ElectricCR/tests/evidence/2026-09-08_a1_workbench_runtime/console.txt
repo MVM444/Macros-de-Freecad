@@ -1,0 +1,148 @@
+17:36:27  [2026-09-08 17:36:27][TOMA1][INFO] created link device 'ECR_A1_RuntimeProbe' -> 'Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical' (Tipo=Apagador, Key=Apagador_Simple)
+17:36:27  [2026-09-08 17:36:27][TOMA1][INFO] execute() llamado para Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical
+17:36:27  [2026-09-08 17:36:27][TOMA1][INFO] KeyRegistro='Apagador_Simple' | symbol2D='switch_simple.step' -> C:\Users\marco\OneDrive - Caja Costarricense de Seguro Social\Documentos\FreeCAD\Macros\Macros-de-Freecad\Resources\prototypes\2d\switch_simple.step | model3D='switch_simple.step' -> C:\Users\marco\OneDrive - Caja Costarricense de Seguro Social\Documentos\FreeCAD\Macros\Macros-de-Freecad\Resources\prototypes\3d\switch_simple.step
+17:36:27  [2026-09-08 17:36:27][TOMA1][INFO] Shape regenerada en Master_Apagador_Simple_Apagador_Ambos_Vertical_1200_A1Physical con modo=Ambos contrato=PhysicalDocumentationA1
+17:36:27  [2026-09-08 17:36:27][TOMA1][INFO] KeyRegistro='Apagador_Simple' | symbol2D='switch_simple.step' -> C:\Users\marco\OneDrive - Caja Costarricense de Seguro Social\Documentos\FreeCAD\Macros\Macros-de-Freecad\Resources\prototypes\2d\switch_simple.step | model3D='switch_simple.step' -> C:\Users\marco\OneDrive - Caja Costarricense de Seguro Social\Documentos\FreeCAD\Macros\Macros-de-Freecad\Resources\prototypes\3d\switch_simple.step
+17:36:27  [2026-09-08 17:36:27][TOMA1][INFO] PLAN synchronized owner=ECR_A1_RuntimeProbe representation=ECR_DocPlan_26c8de44_d862_469d_9179_a715bc1a9e1a actions=CREATE_PLAN_REPRESENTATION
+17:36:27  Python code executed successfully.
+17:36:35  [ElectricCR][PLAN Select] redirected ECR_DocPlan_26c8de44_d862_469d_9179_a715bc1a9e1a.Edge1 -> ECR_A1_RuntimeProbe; feedback=native-owner-only
+17:36:38  [ElectricCR][PLAN Select] redirected ECR_DocPlan_26c8de44_d862_469d_9179_a715bc1a9e1a.Edge1 -> ECR_A1_RuntimeProbe; feedback=native-owner-only
+17:36:38  [ElectricCR][PLAN Lifecycle] queued owner=ECR_A1_RuntimeProbe plans=ECR_DocPlan_26c8de44_d862_469d_9179_a715bc1a9e1a
+17:36:38  [ElectricCR][PLAN Lifecycle] removed orphan PLAN after owner deletion doc=A1_workbench_regression plans=ECR_DocPlan_26c8de44_d862_469d_9179_a715bc1a9e1a
+17:36:38  Python code executed successfully.
+17:36:47  [ElectricCR][PLAN Select] redirected ECR_DocPlan_26c8de44_d862_469d_9179_a715bc1a9e1a.Edge1 -> ECR_A1_RuntimeProbe; feedback=native-owner-only
+17:36:51  [ElectricCR][PLAN Select] redirected ECR_DocPlan_26c8de44_d862_469d_9179_a715bc1a9e1a.Edge1 -> ECR_A1_RuntimeProbe; feedback=native-owner-only
+17:36:51  Python code executed successfully.
+17:37:18  [ElectricCR][PLAN Select] redirected ECR_DocPlan_26c8de44_d862_469d_9179_a715bc1a9e1a.Edge1 -> ECR_A1_RuntimeProbe; feedback=native-owner-only
+17:37:18  [ElectricCR][PLAN Lifecycle] queued owner=ECR_A1_RuntimeProbe plans=ECR_DocPlan_26c8de44_d862_469d_9179_a715bc1a9e1a
+17:37:18  [ElectricCR][PLAN Lifecycle] removed orphan PLAN after owner deletion doc=A1_workbench_regression plans=ECR_DocPlan_26c8de44_d862_469d_9179_a715bc1a9e1a
+17:37:22  [ElectricCR][PLAN Select] redirected ECR_DocPlan_26c8de44_d862_469d_9179_a715bc1a9e1a.Edge1 -> ECR_A1_RuntimeProbe; feedback=native-owner-only
+17:37:23  Python code executed successfully.
+17:37:43  MCP RPC: GUI task raised AttributeError: 'Part.Compound' object has no attribute 'CenterOfMass'
+Traceback (most recent call last):
+  File "C:\Users\marco\AppData\Roaming\FreeCAD\v1-1\Mod\FreeCADMCP\rpc_server\gui_dispatch.py", line 175, in _wrapped
+    res = task()
+          ^^^^^^
+  File "C:\Users\marco\AppData\Roaming\FreeCAD\v1-1\Mod\FreeCADMCP\rpc_server\rpc_server.py", line 160, in task
+    exec(code, globals())
+  File "<string>", line 13, in <module>
+AttributeError: 'Part.Compound' object has no attribute 'CenterOfMass'
+17:37:43  Error executing Python code: AttributeError: 'Part.Compound' object has no attribute 'CenterOfMass'
+--- code ---
+ecr_o,ecr_p=ecr_run.pair()
+for mode, expected in [('Solo2D',(False,True)),('Solo3D',(True,False)),('Ambos',(True,True))]:
+    ecr_o.ModoVisual=mode
+    actual=(ecr_o.ViewObject.Visibility,ecr_p.ViewObject.Visibility)
+    assert actual==expected,(mode,actual)
+    ecr_run.record('part_visibility_'+mode,visibility=actual)
+Gui.activeDocument().activeView().viewTop()
+Gui.runCommand('Std_ViewFitSelection')
+ecr_o.ModoVisual='Solo2D'
+Gui.Selection.clearSelection()
+Gui.updateGui()
+print('VISUAL_PAIR',ecr_o.Name,ecr_p.Name,ecr_p.Shape.BoundBox)
+print('POINT',Gui.activeDocument().activeView().getPointOnScreen(ecr_p.Shape.CenterOfMass))
+--- end ---
+17:37:59  Python code executed successfully.
+17:38:19  Python code executed successfully.
+17:38:47  [ElectricCR][PLAN Select] redirected ECR_DocPlan_26c8de44_d862_469d_9179_a715bc1a9e1a.Edge13 -> ECR_A1_RuntimeProbe; feedback=native-owner-only
+17:38:49  Python code executed successfully.
+17:41:27  Python code executed successfully.
+17:41:46  [ElectricCR][PLAN Lifecycle] queued owner=ECR_A1_RuntimeProbe plans=ECR_DocPlan_26c8de44_d862_469d_9179_a715bc1a9e1a
+17:41:46  [ElectricCR][PLAN Lifecycle] removed orphan PLAN after owner deletion doc=A1_workbench_regression plans=ECR_DocPlan_26c8de44_d862_469d_9179_a715bc1a9e1a
+17:41:46  Python code executed successfully.
+17:42:00  [ElectricCR][PLAN Select] redirected ECR_DocPlan_26c8de44_d862_469d_9179_a715bc1a9e1a.Edge1 -> ECR_A1_RuntimeProbe; feedback=native-owner-only
+17:42:00  Python code executed successfully.
+17:42:27  [ElectricCR][Mode] mode_combo_reused=False
+17:42:27  [ElectricCR][Mode] panel_reused=True
+17:42:27  [ElectricCR][Mode] selected=Iluminación
+17:42:27  [ElectricCR][Mode] visible=ElectricCR,Objetos,Draft compacto,Iluminacion
+17:42:27  [ElectricCR][Mode] hidden=Areas,Deteccion,Tomacorrientes,Conectar,Cajas,Tableros,Configuracion del proyecto,Importar y Exportar
+17:42:27  [ElectricCR][Mode] missing=Draft compacto,Areas
+17:42:27  ElectricCR: autoactivacion de Draft toolbar desactivada (config 'draft_toolbar_autoload': true para reactivarla).
+17:42:27  ElectricCR: overlay de Snapper desactivado en Windows (config 'draft_snapper_overlay': true para reactivarlo).
+17:42:27  [ElectricCR][PLAN Select] redirected ECR_DocPlan_26c8de44_d862_469d_9179_a715bc1a9e1a.Edge1 -> ECR_A1_RuntimeProbe; feedback=native-owner-only
+17:42:27  [ElectricCR][PLAN Select] redirected ECR_DocPlan_26c8de44_d862_469d_9179_a715bc1a9e1a.Edge1 -> ECR_A1_RuntimeProbe; feedback=native-owner-only
+17:42:27  [ElectricCR][PLAN Select] redirected ECR_DocPlan_26c8de44_d862_469d_9179_a715bc1a9e1a.Edge1 -> ECR_A1_RuntimeProbe; feedback=native-owner-only
+17:42:27  [ElectricCR][PLAN Lifecycle] queued owner=ECR_A1_RuntimeProbe plans=ECR_DocPlan_26c8de44_d862_469d_9179_a715bc1a9e1a
+17:42:27  [ElectricCR][PLAN Lifecycle] removed orphan PLAN after owner deletion doc=A1_workbench_regression plans=ECR_DocPlan_26c8de44_d862_469d_9179_a715bc1a9e1a
+17:42:31  MCP RPC: GUI task raised AssertionError: Existing owner data changed
+Traceback (most recent call last):
+  File "C:\Users\marco\AppData\Roaming\FreeCAD\v1-1\Mod\FreeCADMCP\rpc_server\gui_dispatch.py", line 175, in _wrapped
+    res = task()
+          ^^^^^^
+  File "C:\Users\marco\AppData\Roaming\FreeCAD\v1-1\Mod\FreeCADMCP\rpc_server\rpc_server.py", line 160, in task
+    exec(code, globals())
+  File "<string>", line 22, in <module>
+  File "C:\Users\marco\OneDrive - Caja Costarricense de Seguro Social\Documentos\FreeCAD\Macros\Macros-de-Freecad\ElectricCR\tests\freecad_a1_runtime_regression.py", line 187, in finish
+    assert {o['name']:o for o in report['owners']}==self.original_owners, 'Existing owner data changed'
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Existing owner data changed
+17:42:31  Error executing Python code: AssertionError: Existing owner data changed
+--- code ---
+ecr_before_ids=ecr_run.observer_ids()
+for ecr_module in (ecr_selection,ecr_live,ecr_lifecycle):
+    assert ecr_module.install()
+    assert ecr_module.install()
+assert ecr_run.observer_ids()==ecr_before_ids
+ecr_run.record('runtime_idempotent_install', repeated_installs=2)
+ecr_o,ecr_p=ecr_run.pair()
+ecr_p.ViewObject.ShowInTree=True
+ecr_empty=App.newDocument('A1_document_activation_probe')
+App.setActiveDocument(ecr_run.doc.Name)
+Gui.activeDocument().activeView()
+Gui.updateGui()
+assert ecr_p.ViewObject.ShowInTree is False
+App.closeDocument(ecr_empty.Name)
+ecr_run.record('part_document_activation_tree', ShowInTree=ecr_p.ViewObject.ShowInTree)
+ecr_run.switch_select('ElectricCRWorkbench','electriccr_return_selection')
+ecr_run.switch_select('PartWorkbench','part_final_selection')
+ecr_run.delete('p
+...(truncated)
+--- end ---
+17:42:46  Python code executed successfully.
+17:42:59  Python code executed successfully.
+17:43:09  MCP RPC: GUI task raised AssertionError: Existing owner data changed
+Traceback (most recent call last):
+  File "C:\Users\marco\AppData\Roaming\FreeCAD\v1-1\Mod\FreeCADMCP\rpc_server\gui_dispatch.py", line 175, in _wrapped
+    res = task()
+          ^^^^^^
+  File "C:\Users\marco\AppData\Roaming\FreeCAD\v1-1\Mod\FreeCADMCP\rpc_server\rpc_server.py", line 160, in task
+    exec(code, globals())
+  File "<string>", line 5, in <module>
+  File "C:\Users\marco\OneDrive - Caja Costarricense de Seguro Social\Documentos\FreeCAD\Macros\Macros-de-Freecad\ElectricCR\tests\freecad_a1_runtime_regression.py", line 187, in finish
+    assert {o['name']:o for o in report['owners']}==self.original_owners, 'Existing owner data changed'
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Existing owner data changed
+17:43:09  Error executing Python code: AssertionError: Existing owner data changed
+--- code ---
+ecr_final=ecr_test_module._audit.audit(ecr_run.doc)
+print('OWNER_DATA_EQUAL', {o['name']:o for o in ecr_final['owners']}==ecr_run.original_owners)
+print('TOUCHED_AFTER_EVENT',ecr_final['touched_objects'])
+ecr_run.results['notes']=['First finish comparison stopped on native Touched state after reopen, with all identity/Placement/link/group fields equal. A second native document recompute processed 22 features and cleared all Touched states; no repair or owner writes were used.','Diagnostic view-center query used Part.Compound.CenterOfMass (unavailable); corrected to BoundBox.Center. This was a test-query error, not A1 runtime.']
+ecr_run.finish()
+--- end ---
+17:43:18  Python code executed successfully.
+17:43:41  Python code executed successfully.
+17:44:16  Python code executed successfully.
+17:44:37  MCP RPC: GUI task raised FileNotFoundError: [Errno 2] No such file or directory: 'C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\tests\\freecad_a1_runtime_regression.py'
+Traceback (most recent call last):
+  File "C:\Users\marco\AppData\Roaming\FreeCAD\v1-1\Mod\FreeCADMCP\rpc_server\gui_dispatch.py", line 175, in _wrapped
+    res = task()
+          ^^^^^^
+  File "C:\Users\marco\AppData\Roaming\FreeCAD\v1-1\Mod\FreeCADMCP\rpc_server\rpc_server.py", line 160, in task
+    exec(code, globals())
+  File "<string>", line 3, in <module>
+  File "<frozen importlib._bootstrap_external>", line 936, in exec_module
+  File "<frozen importlib._bootstrap_external>", line 1073, in get_code
+  File "<frozen importlib._bootstrap_external>", line 1130, in get_data
+FileNotFoundError: [Errno 2] No such file or directory: 'C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\tests\\freecad_a1_runtime_regression.py'
+17:44:37  Error executing Python code: FileNotFoundError: [Errno 2] No such file or directory: 'C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\tests\\freecad_a1_runtime_regression.py'
+--- code ---
+ecr_test_spec=importlib.util.spec_from_file_location('ecr_runtime_regression_final',str(ECR_PROJECT/'tests'/'freecad_a1_runtime_regression.py'))
+ecr_test_final=importlib.util.module_from_spec(ecr_test_spec)
+ecr_test_spec.loader.exec_module(ecr_test_final)
+ecr_run.__class__=ecr_test_final.RuntimeRegression
+ecr_run.results['notes']=['Two initial finish assertions compared transient State/status as persistent data. A controlled recompute -> audit -> recompute probe demonstrated that audit native reads/evaluation mark dependencies Touched and native recompute clears them. The helper now compares all inventoried fields except State/status; Invalid/Error are still rejected. Separately, every serialized Owner property value/definition matched the original, including Placement, Host, Space and doo
+...(truncated)
+--- end ---

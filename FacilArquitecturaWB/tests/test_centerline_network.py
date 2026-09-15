@@ -156,6 +156,77 @@ class ShapeObject:
         self.Shape = shape
 
 
+class LinkShapeObject(ShapeObject):
+    def __init__(self, name, shape):
+        super().__init__(name, shape)
+        self.TypeId = "App::Link"
+
+
+class EdgeShape:
+    def __init__(self, edges):
+        self.Edges = list(edges)
+        self.Wires = []
+
+
+def _rectangle_edges(x1, y1, x2, y2):
+    return [
+        Edge(x1, y1, x2, y1),
+        Edge(x2, y1, x2, y2),
+        Edge(x2, y2, x1, y2),
+        Edge(x1, y2, x1, y1),
+    ]
+
+
+def _anonymous_window_block_edges(length):
+    """Synthetic equivalent of the 46-edge anonymous Guadalupe window blocks."""
+    length = float(length)
+    edges = [
+        Edge(length - 25.0, 40.0, 25.0, 40.0),
+        Edge(25.0, 110.0, length - 25.0, 110.0),
+        Edge(length, 0.0, 0.0, 0.0),
+        Edge(0.0, 150.0, length, 150.0),
+        Edge(32.5, 77.25, length - 32.5, 77.25),
+        Edge(length - 32.5, 72.75, 32.5, 72.75),
+    ]
+    positive = []
+    positive.extend(_rectangle_edges(0.0, 40.0, 25.0, 110.0))
+    positive.extend(_rectangle_edges(5.0, 45.0, 20.0, 105.0))
+    positive.extend(_rectangle_edges(25.0, 65.25, 32.5, 72.75))
+    positive.extend(_rectangle_edges(25.0, 77.25, 32.5, 84.75))
+    positive.extend(
+        [
+            Edge(32.5, 65.25, 25.0, 72.75),
+            Edge(32.5, 72.75, 25.0, 65.25),
+            Edge(32.5, 77.25, 25.0, 84.75),
+            Edge(32.5, 84.75, 25.0, 77.25),
+        ]
+    )
+    edges.extend(positive)
+    for edge in positive:
+        p1 = edge.Vertexes[0].Point
+        p2 = edge.Vertexes[-1].Point
+        edges.append(Edge(-length - p1.x, p1.y, -length - p2.x, p2.y))
+    return edges
+
+
+def _transform_edges(edges, tx, ty, angle_degrees):
+    angle = math.radians(float(angle_degrees))
+    c = math.cos(angle)
+    s = math.sin(angle)
+
+    def point(x, y):
+        return float(tx) + c * x - s * y, float(ty) + s * x + c * y
+
+    result = []
+    for edge in edges:
+        p1 = edge.Vertexes[0].Point
+        p2 = edge.Vertexes[-1].Point
+        x1, y1 = point(p1.x, p1.y)
+        x2, y2 = point(p2.x, p2.y)
+        result.append(Edge(x1, y1, x2, y2))
+    return result
+
+
 def _record(segment, thickness, source_ids=()):
     return centerlines._centerline_record(segment, thickness, source_ids=source_ids)
 
@@ -168,6 +239,160 @@ def _topology_context(profiles_by_source=None, compact_profiles=None):
 
 
 class CenterlineNetworkTests(unittest.TestCase):
+    def test_profile_axis_isolates_guadalupe_anonymous_window_links(self):
+        # Regression from Guadalupe / Layer Ventanas.  Each App::Link exposes a
+        # transformed 46-edge anonymous CAD block.  Global clustering merges
+        # geometry from different instances and previously produced 0 axes.
+        specs = [
+            ("*U5", 5334.0, 2584.0, 10323.0, -90.0),
+            ("*U6", 1512.0, 3904.0, 10573.0, 0.0),
+            ("*U11", 14239.0, 5566.0, 10573.0, 0.0),
+            ("*U12", 2434.0, 150.0, 10573.0, 0.0),
+            ("*U001", 5334.0, 5416.0, 10323.0, -90.0),
+            ("*U26", 297.0, 2734.0, 10573.0, 0.0),
+        ]
+        objects = []
+        for name, length, tx, ty, angle in specs:
+            edges = _transform_edges(_anonymous_window_block_edges(length), tx, ty, angle)
+            self.assertEqual(46, len(edges))
+            objects.append(LinkShapeObject(name, EdgeShape(edges)))
+
+        # The real layer also contains two loose jamb/end lines.  They must not
+        # contaminate the App::Link clusters and do not form an axis by themselves.
+        objects.append(
+            ShapeObject(
+                "Ventanas",
+                EdgeShape(
+                    [
+                        Edge(3904.0, 10573.0, 3904.0, 10723.0),
+                        Edge(3031.0, 10723.0, 3031.0, 10573.0),
+                    ]
+                ),
+            )
+        )
+
+        axes, axis_count, ignored = centerlines._profile_centerlines_from_objects(objects)
+
+        self.assertEqual(6, axis_count)
+        self.assertEqual(6, len(axes))
+        self.assertEqual([297, 1512, 2434, 5334, 5334, 14239], sorted(round(centerlines._segment_length(axis)) for axis in axes))
+        vertical_axes = [axis for axis in axes if abs(axis[0] - axis[2]) < 1e-6]
+        self.assertEqual(2, len(vertical_axes))
+        self.assertEqual([2659, 5491], sorted(round((axis[0] + axis[2]) / 2.0) for axis in vertical_axes))
+        self.assertGreaterEqual(ignored, 6)
+
+    def test_profile_axis_guadalupe_draft_layer_selection_creates_six_axes(self):
+        specs = [
+            ("*U5", 5334.0, 2584.0, 10323.0, -90.0),
+            ("*U6", 1512.0, 3904.0, 10573.0, 0.0),
+            ("*U11", 14239.0, 5566.0, 10573.0, 0.0),
+            ("*U12", 2434.0, 150.0, 10573.0, 0.0),
+            ("*U001", 5334.0, 5416.0, 10323.0, -90.0),
+            ("*U26", 297.0, 2734.0, 10573.0, 0.0),
+        ]
+        members = [
+            LinkShapeObject(name, EdgeShape(_transform_edges(_anonymous_window_block_edges(length), tx, ty, angle)))
+            for name, length, tx, ty, angle in specs
+        ]
+        members.append(
+            ShapeObject(
+                "Ventanas",
+                EdgeShape(
+                    [
+                        Edge(3904.0, 10573.0, 3904.0, 10723.0),
+                        Edge(3031.0, 10723.0, 3031.0, 10573.0),
+                    ]
+                ),
+            )
+        )
+        layer = types.SimpleNamespace(
+            Name="Layer002",
+            Label="Ventanas",
+            TypeId="App::FeaturePython",
+            Proxy=types.SimpleNamespace(Type="Layer"),
+            Group=members,
+            OutList=members,
+        )
+
+        roots, layer_count = centerlines._profile_selection_roots([layer])
+        self.assertEqual(1, layer_count)
+        self.assertEqual(members, roots)
+
+        doc = FakeDocument()
+        _primary, segments = centerlines.create_centerline_sketch_from_objects(
+            doc,
+            FakeGroup(),
+            [layer],
+            extraction_strategy="profile_axis",
+        )
+
+        self.assertEqual(6, len(segments))
+        self.assertEqual(
+            [297, 1512, 2434, 5334, 5334, 14239],
+            sorted(round(centerlines._segment_length(axis)) for axis in segments),
+        )
+
+    def test_profile_axis_keeps_equally_plausible_link_components_ambiguous(self):
+        edges = _rectangle_edges(0.0, 0.0, 1000.0, 100.0)
+        edges += _rectangle_edges(2000.0, 0.0, 3000.0, 100.0)
+        source = LinkShapeObject("ambiguous_link", EdgeShape(edges))
+
+        axes, axis_count, ignored = centerlines._profile_centerlines_from_objects([source])
+
+        self.assertEqual([], axes)
+        self.assertEqual(0, axis_count)
+        self.assertEqual(2, ignored)
+
+    def test_profile_axis_preserves_shared_clustering_for_plain_objects(self):
+        first = ShapeObject("line_a", EdgeShape([Edge(0.0, 0.0, 1000.0, 0.0)]))
+        second = ShapeObject("line_b", EdgeShape([Edge(0.0, 100.0, 1000.0, 100.0)]))
+
+        axes, axis_count, ignored = centerlines._profile_centerlines_from_objects([first, second])
+
+        self.assertEqual(1, axis_count)
+        self.assertEqual(0, ignored)
+        axis = axes[0]
+        self.assertAlmostEqual(50.0, (axis[1] + axis[3]) / 2.0)
+
+    def test_profile_axis_layer_keeps_plain_children_as_independent_windows(self):
+        # A layer is a selection scope: neighboring child Shapes represent separate
+        # CAD members.  Their geometry must not be pooled merely because the layer
+        # itself was selected.  The same two Shapes selected directly retain the
+        # historical shared-clustering behavior tested above.
+        first = ShapeObject("Window_A", EdgeShape(_rectangle_edges(0.0, 0.0, 1000.0, 100.0)))
+        second = ShapeObject("Window_B", EdgeShape(_rectangle_edges(0.0, 200.0, 1000.0, 300.0)))
+        layer = types.SimpleNamespace(
+            Name="Layer002",
+            Label="Ventanas",
+            TypeId="App::FeaturePython",
+            Proxy=types.SimpleNamespace(Type="Layer"),
+            Group=[first, second],
+            OutList=[first, second],
+        )
+
+        layer_doc = FakeDocument()
+        _primary, layer_segments = centerlines.create_centerline_sketch_from_objects(
+            layer_doc,
+            FakeGroup(),
+            [layer],
+            extraction_strategy="profile_axis",
+        )
+
+        direct_doc = FakeDocument()
+        _direct_primary, direct_segments = centerlines.create_centerline_sketch_from_objects(
+            direct_doc,
+            FakeGroup(),
+            [first, second],
+            extraction_strategy="profile_axis",
+        )
+
+        self.assertTrue(centerlines._selection_expands_profile_sources_independently([layer]))
+        self.assertFalse(centerlines._selection_expands_profile_sources_independently([first, second]))
+        self.assertEqual(2, len(layer_segments))
+        self.assertEqual([50, 250], sorted(round((segment[1] + segment[3]) / 2.0) for segment in layer_segments))
+        self.assertEqual(1, len(direct_segments))
+        self.assertAlmostEqual(150.0, (direct_segments[0][1] + direct_segments[0][3]) / 2.0)
+
     def test_part_feature_compound_is_decomposed_without_collapsing_independent_walls(self):
         first = RectangleShape(0.0, 0.0, 4000.0, 150.0)
         second = RectangleShape(5000.0, 0.0, 9000.0, 150.0)

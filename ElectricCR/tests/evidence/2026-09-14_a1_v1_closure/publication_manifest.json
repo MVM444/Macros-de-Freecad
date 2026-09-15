@@ -1,0 +1,77 @@
+[
+  {
+    "path": "InitGui.py",
+    "sha256": "7b703cd874d5c0aed697c04649c8cd8d35db63096a69804d57a255288bcd9825",
+    "copy": "byte-identical DEV"
+  },
+  {
+    "path": "electriccr/features/plan_lifecycle.py",
+    "sha256": "dde3c80910d194b5e0dfda1e442b7d5f8c829bfb0512ca8d012675ddf9c5fde3",
+    "copy": "byte-identical DEV"
+  },
+  {
+    "path": "electriccr/features/plan_live_sync.py",
+    "sha256": "9edacf4268c18d7af54e3ec845fce892c5514b1e0a55367382f2b91dc277c1fb",
+    "copy": "byte-identical DEV"
+  },
+  {
+    "path": "Demo_ElectricCR_A1.FCMacro",
+    "sha256": "41b1e18e73c9c3d81ca50da4b28229e8ce5f854abb0373bd4d93f17972eab850",
+    "copy": "byte-identical DEV"
+  },
+  {
+    "path": "commands/demo_electriccr.py",
+    "sha256": "aef0742939e380966b1ca8ac9ca18503fe53b676d0c939a627f2363963b5f260",
+    "copy": "byte-identical DEV"
+  },
+  {
+    "path": "icons/Auditar_Demo_ElectricCR_A1.svg",
+    "sha256": "afe4329e4fdfef4411af4695931e34e0a9fde7f4981b775ba83c5bb205f452eb",
+    "copy": "byte-identical DEV"
+  },
+  {
+    "path": "icons/Demo_ElectricCR_A1.svg",
+    "sha256": "b6f6965cca1d0c5186dc5f10b4e05c61c8049c198f274d2086156290a436d769",
+    "copy": "byte-identical DEV"
+  },
+  {
+    "path": "tests/freecad_a1_lifecycle_regression.py",
+    "sha256": "f2c727285e88472dae2029fc14fc9809fa0d082d57eeda4356a92d9fcaaa5913",
+    "copy": "byte-identical DEV"
+  },
+  {
+    "path": "tests/freecad_a1_transaction_probe.py",
+    "sha256": "d994cb9541aeabcc01503720c4de85a751e932f55bb21aefa41be0e159bb66ea",
+    "copy": "byte-identical DEV"
+  },
+  {
+    "path": "tests/freecad_electric_demo_smoke.py",
+    "sha256": "4368b8a687f95ccb04da7f6475b3e3e4438f29ac4814351363dd5ebf384caae5",
+    "copy": "byte-identical DEV"
+  },
+  {
+    "path": "tests/test_electric_demo_core.py",
+    "sha256": "0e11a51eb5529d896aec6df46139572b7f600d742a5d6bda0fd509677bb6288b",
+    "copy": "byte-identical DEV"
+  },
+  {
+    "path": "electriccr/demo/electric_demo_audit.py",
+    "sha256": "f8ce2c073b34381dd8f74fd9a324dc461e99e3ed772aadec0f4f5fba238cdf88",
+    "copy": "byte-identical DEV"
+  },
+  {
+    "path": "electriccr/demo/electric_demo_core.py",
+    "sha256": "10daa9740c40f5a0d3737cb8a85e50b02faa3935bd47774ca4c37f0d63f3bcd2",
+    "copy": "byte-identical DEV"
+  },
+  {
+    "path": "electriccr/demo/electric_demo_freecad.py",
+    "sha256": "3f199c02a666417e05312f3845e7f31420bdc0d34d0aa3fe0dc75297d106681d",
+    "copy": "byte-identical DEV"
+  },
+  {
+    "path": "electriccr/demo/__init__.py",
+    "sha256": "93a7190b3195b682f2501ac1203fb62e98e03c63164b02dce4604d646ee7a8f7",
+    "copy": "byte-identical DEV"
+  }
+]

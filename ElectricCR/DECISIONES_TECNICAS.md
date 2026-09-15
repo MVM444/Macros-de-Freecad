@@ -1,3 +1,11 @@
+## Decision estable - 2026-09-14 - A1 v1
+
+**A1 / Objeto electromecanico comun v1 = ACEPTADO** por Marco. La regresion FreeCAD 1.1.3 del 2026-09-14 (19 etapas PASS) constituye la prueba de cierre. Owner/App::Link mantiene identidad y Placement unicos; PLAN es documental reconstruible y no un dispositivo. Los observers estructurales sobreviven a cambios de Workbench y respetan Transacting / HasPendingTransaction; la cola lifecycle se vacia antes de recompute, sin intervenir en replay nativo. No redisenar este contrato al continuar.
+
+A1 sigue opt-in para herramientas existentes: el default global requiere adaptar mas de una ruta de creacion, incluyendo luminarias y sensores. Ese cambio funcional queda separado del cierre v1, sin migracion masiva ni retiro de legacy. Los dos avisos nativos hasher mismatch observados se aceptan como no bloqueantes. [Prueba de cierre](tests/evidence/2026-09-14_a1_undo_lifecycle/README.md).
+
+---
+
 # ElectricCR - Decisiones tecnicas
 
 **Proposito:** Registrar decisiones de arquitectura y proceso que deben mantenerse entre tareas y agentes.
@@ -258,4 +266,77 @@ Reglas:
   una segunda identidad semantica del mismo elemento.
 - Debe evitarse crear por separado un "objeto 2D" y un "objeto 3D" que el usuario
   tenga que mantener sincronizados manualmente.
+
+## DT-013 - Punto de insercion local y SnapPoints para representaciones PLAN
+
+Para ElectricCR A1 se adopta el origen local `(0,0,0)` como punto canonico de
+insercion y movimiento desde planta.
+
+Reglas:
+
+- `Device.Placement` continua siendo la unica autoridad espacial.
+- PLAN deriva su Placement del Owner.
+- PLAN debe exponer `SnapPoints=[Vector(0,0,0)]`.
+- Usar `Draft Snap Special` como referencia uniforme de insercion.
+- Reutilizar `Draft Move` para movimiento punto-base -> punto-destino mientras
+  resuelva adecuadamente el flujo real.
+- Los endpoints, centros o puntos ya presentes en el STEP pueden seguir
+  capturandose con Snap Endpoint/Center, pero no son requisito para el contrato.
+- No agregar geometria visible a Shape solo para obtener un punto de snap si
+  `SnapPoints` resuelve el caso.
+- No modificar el STEP ni el DXF por esta funcion salvo necesidad demostrada.
+- Un simbolo nuevo debe diseñarse preferentemente alrededor del origen local
+  `(0,0,0)`, aunque SnapPoints proporcione el punto tecnico de insercion.
+
+Fecha: 2026-09-05 America/Costa_Rica.
+
+## DT-014 - A1 como autoridad de diseno y IFC como proyeccion de interoperabilidad
+
+Fecha: 2026-09-09 22:09 -0600 America/Costa_Rica.
+
+Mientras no exista evidencia funcional suficiente para sustituir el contrato A1, ElectricCR adopta la siguiente frontera:
+
+```text
+A1 Owner        = autoridad de identidad operativa y Placement
+NativeIFC/IFC   = capa de interoperabilidad/exportacion
+PLAN            = representacion documental owned de A1
+```
+
+Reglas:
+
+- No mantener dos autoridades independientes para identidad, Placement o propiedades electricas.
+- No convertir automaticamente Owners A1 productivos a objetos NativeIFC ni usar agregacion que pueda reemplazar/eliminar la instancia original.
+- Preferir un adaptador transitorio que cree/actualice las entidades IFC durante una operacion explicita de exportacion.
+- Derivar el `IfcGlobalId` de una identidad ElectricCR estable cuando se pruebe el mecanismo; evitar generar una segunda identidad sin relacion determinista.
+- Reutilizar `IfcSpace`, Psets, tipos, sistemas, puertos y otras estructuras IFC nativas cuando correspondan, sin duplicar conceptos ya existentes.
+- Resolver diferencias de esquema en el adaptador; por ejemplo, no fijar una sola clase de tablero para IFC4 e IFC4X3.
+- No equiparar automaticamente un master A1 a `IfcTypeProduct`; primero separar y probar propiedades de familia frente a propiedades de ocurrencia.
+- PLAN no se exporta como segundo producto electrico. Una futura `IfcAnnotation` de planta sera opcional y documental.
+- Cualquier conversion estructural A1 -> NativeIFC debe probarse primero en documentos desechables y pasar regresion completa antes de considerarse arquitectura productiva.
+
+## DT-014 - Demo canonica como banco permanente de regresion
+
+Fecha: 2026-09-09 22:09 -0600 America/Costa_Rica.
+
+ElectricCR debe disponer de una demo autocontenida y reproducible para probar el nucleo sin depender de documentos productivos. El patron preferente es:
+
+```text
+especificacion pura JSON-compatible
+    -> adaptador FreeCAD
+    -> auditor read-only
+    -> comando/boton
+    -> .FCMacro pequeno
+    -> prueba real MCP/Codex cuando el entorno sea imprescindible
+```
+
+Reglas:
+
+- la demo crea siempre un documento nuevo;
+- no usa Upala, Chomes u otro FCStd real como plantilla;
+- reutiliza objetos nativos FreeCAD/BIM y las fabricas/servicios ElectricCR ya aprobados;
+- la primera variante es fija antes de agregar aleatoriedad reproducible;
+- cada ampliacion de alcance se prueba por capas para poder atribuir fallos;
+- el auditor diagnostica y no repara;
+- IFC se agrega despues de cerrar la demo A1 basica, no como requisito simultaneo;
+- la demo es una herramienta de demostracion y regresion, no una segunda arquitectura de produccion.
 

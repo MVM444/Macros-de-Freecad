@@ -1,0 +1,699 @@
+{
+  "demo_id": "electriccr-a1-canonical-v1",
+  "document_name": "ElectricCR_Demo_A1",
+  "document_label": "ElectricCR Demo A1 - Canonica",
+  "status": "PASS",
+  "read_only": true,
+  "counts": {
+    "spaces": 2,
+    "walls": 5,
+    "owners": 7,
+    "plans": 7,
+    "physical_masters": 4
+  },
+  "checks": [
+    {
+      "code": "DEMO_ID",
+      "status": "PASS",
+      "message": "Documento identificado como demo canonica ElectricCR.",
+      "data": {}
+    },
+    {
+      "code": "SPACE_SPACE_OFFICE",
+      "status": "PASS",
+      "message": "Space Oficina unico.",
+      "data": {
+        "matches": [
+          "Space"
+        ]
+      }
+    },
+    {
+      "code": "SPACE_SPACE_STORAGE",
+      "status": "PASS",
+      "message": "Space Bodega unico.",
+      "data": {
+        "matches": [
+          "Space001"
+        ]
+      }
+    },
+    {
+      "code": "WALL_WALL_SOUTH",
+      "status": "PASS",
+      "message": "Host Muro Sur unico.",
+      "data": {
+        "matches": [
+          "Wall"
+        ]
+      }
+    },
+    {
+      "code": "WALL_WALL_NORTH",
+      "status": "PASS",
+      "message": "Host Muro Norte unico.",
+      "data": {
+        "matches": [
+          "Wall001"
+        ]
+      }
+    },
+    {
+      "code": "WALL_WALL_WEST",
+      "status": "PASS",
+      "message": "Host Muro Oeste unico.",
+      "data": {
+        "matches": [
+          "Wall002"
+        ]
+      }
+    },
+    {
+      "code": "WALL_WALL_EAST",
+      "status": "PASS",
+      "message": "Host Muro Este unico.",
+      "data": {
+        "matches": [
+          "Wall003"
+        ]
+      }
+    },
+    {
+      "code": "WALL_WALL_PARTITION",
+      "status": "PASS",
+      "message": "Host Muro Division unico.",
+      "data": {
+        "matches": [
+          "Wall004"
+        ]
+      }
+    },
+    {
+      "code": "OWNER_OUTLET_OFFICE_01",
+      "status": "PASS",
+      "message": "Owner unico para Toma Oficina 01.",
+      "data": {
+        "matches": [
+          "ECR_Demo_outlet_office_01"
+        ],
+        "uid": "1d6b2fd0-eceb-5433-b147-8e0f8c836c22"
+      }
+    },
+    {
+      "code": "DEVICE_CONTRACT_OUTLET_OFFICE_01",
+      "status": "PASS",
+      "message": "Contrato A1 de Toma Oficina 01.",
+      "data": {
+        "type": true,
+        "a1": true,
+        "key": true,
+        "uid_unique": true,
+        "master": true,
+        "master_shape": true,
+        "space": true,
+        "host": true,
+        "placement_xyz": true,
+        "placement_rotation": true,
+        "circuit": true,
+        "plan_exists": true,
+        "plan_unique_name": true,
+        "plan_role": true,
+        "plan_schema": true,
+        "plan_documentation_only": true,
+        "plan_owner": true,
+        "plan_xy": true,
+        "plan_z": true,
+        "plan_rotation": true,
+        "snap_origin": true
+      }
+    },
+    {
+      "code": "OWNER_OUTLET_STORAGE_01",
+      "status": "PASS",
+      "message": "Owner unico para Toma Bodega 01.",
+      "data": {
+        "matches": [
+          "ECR_Demo_outlet_storage_01"
+        ],
+        "uid": "691a3ff4-5383-5f81-9d49-e1c8d255670a"
+      }
+    },
+    {
+      "code": "DEVICE_CONTRACT_OUTLET_STORAGE_01",
+      "status": "PASS",
+      "message": "Contrato A1 de Toma Bodega 01.",
+      "data": {
+        "type": true,
+        "a1": true,
+        "key": true,
+        "uid_unique": true,
+        "master": true,
+        "master_shape": true,
+        "space": true,
+        "host": true,
+        "placement_xyz": true,
+        "placement_rotation": true,
+        "circuit": true,
+        "plan_exists": true,
+        "plan_unique_name": true,
+        "plan_role": true,
+        "plan_schema": true,
+        "plan_documentation_only": true,
+        "plan_owner": true,
+        "plan_xy": true,
+        "plan_z": true,
+        "plan_rotation": true,
+        "snap_origin": true
+      }
+    },
+    {
+      "code": "OWNER_SWITCH_OFFICE_01",
+      "status": "PASS",
+      "message": "Owner unico para Apagador Oficina 01.",
+      "data": {
+        "matches": [
+          "ECR_Demo_switch_office_01"
+        ],
+        "uid": "c75d5345-8cad-5652-a0f7-6184344450eb"
+      }
+    },
+    {
+      "code": "DEVICE_CONTRACT_SWITCH_OFFICE_01",
+      "status": "PASS",
+      "message": "Contrato A1 de Apagador Oficina 01.",
+      "data": {
+        "type": true,
+        "a1": true,
+        "key": true,
+        "uid_unique": true,
+        "master": true,
+        "master_shape": true,
+        "space": true,
+        "host": true,
+        "placement_xyz": true,
+        "placement_rotation": true,
+        "circuit": true,
+        "plan_exists": true,
+        "plan_unique_name": true,
+        "plan_role": true,
+        "plan_schema": true,
+        "plan_documentation_only": true,
+        "plan_owner": true,
+        "plan_xy": true,
+        "plan_z": true,
+        "plan_rotation": true,
+        "snap_origin": true
+      }
+    },
+    {
+      "code": "OWNER_SWITCH_STORAGE_01",
+      "status": "PASS",
+      "message": "Owner unico para Apagador Bodega 01.",
+      "data": {
+        "matches": [
+          "ECR_Demo_switch_storage_01"
+        ],
+        "uid": "f8533089-a2fc-5d5b-8c32-d2a34a203363"
+      }
+    },
+    {
+      "code": "DEVICE_CONTRACT_SWITCH_STORAGE_01",
+      "status": "PASS",
+      "message": "Contrato A1 de Apagador Bodega 01.",
+      "data": {
+        "type": true,
+        "a1": true,
+        "key": true,
+        "uid_unique": true,
+        "master": true,
+        "master_shape": true,
+        "space": true,
+        "host": true,
+        "placement_xyz": true,
+        "placement_rotation": true,
+        "circuit": true,
+        "plan_exists": true,
+        "plan_unique_name": true,
+        "plan_role": true,
+        "plan_schema": true,
+        "plan_documentation_only": true,
+        "plan_owner": true,
+        "plan_xy": true,
+        "plan_z": true,
+        "plan_rotation": true,
+        "snap_origin": true
+      }
+    },
+    {
+      "code": "OWNER_LIGHT_OFFICE_01",
+      "status": "PASS",
+      "message": "Owner unico para Luminaria Oficina 01.",
+      "data": {
+        "matches": [
+          "ECR_Demo_light_office_01"
+        ],
+        "uid": "640c0890-cd38-59b6-8f87-30bfd228f92c"
+      }
+    },
+    {
+      "code": "DEVICE_CONTRACT_LIGHT_OFFICE_01",
+      "status": "PASS",
+      "message": "Contrato A1 de Luminaria Oficina 01.",
+      "data": {
+        "type": true,
+        "a1": true,
+        "key": true,
+        "uid_unique": true,
+        "master": true,
+        "master_shape": true,
+        "space": true,
+        "host": true,
+        "placement_xyz": true,
+        "placement_rotation": true,
+        "circuit": true,
+        "plan_exists": true,
+        "plan_unique_name": true,
+        "plan_role": true,
+        "plan_schema": true,
+        "plan_documentation_only": true,
+        "plan_owner": true,
+        "plan_xy": true,
+        "plan_z": true,
+        "plan_rotation": true,
+        "snap_origin": true
+      }
+    },
+    {
+      "code": "OWNER_LIGHT_STORAGE_01",
+      "status": "PASS",
+      "message": "Owner unico para Luminaria Bodega 01.",
+      "data": {
+        "matches": [
+          "ECR_Demo_light_storage_01"
+        ],
+        "uid": "b254bc18-b18d-54e7-baac-fb87da7baa14"
+      }
+    },
+    {
+      "code": "DEVICE_CONTRACT_LIGHT_STORAGE_01",
+      "status": "PASS",
+      "message": "Contrato A1 de Luminaria Bodega 01.",
+      "data": {
+        "type": true,
+        "a1": true,
+        "key": true,
+        "uid_unique": true,
+        "master": true,
+        "master_shape": true,
+        "space": true,
+        "host": true,
+        "placement_xyz": true,
+        "placement_rotation": true,
+        "circuit": true,
+        "plan_exists": true,
+        "plan_unique_name": true,
+        "plan_role": true,
+        "plan_schema": true,
+        "plan_documentation_only": true,
+        "plan_owner": true,
+        "plan_xy": true,
+        "plan_z": true,
+        "plan_rotation": true,
+        "snap_origin": true
+      }
+    },
+    {
+      "code": "OWNER_SMOKE_STORAGE_01",
+      "status": "PASS",
+      "message": "Owner unico para Sensor Humo Bodega 01.",
+      "data": {
+        "matches": [
+          "ECR_Demo_smoke_storage_01"
+        ],
+        "uid": "671ea9f6-eb63-5653-9ae1-ecde09041fd3"
+      }
+    },
+    {
+      "code": "DEVICE_CONTRACT_SMOKE_STORAGE_01",
+      "status": "PASS",
+      "message": "Contrato A1 de Sensor Humo Bodega 01.",
+      "data": {
+        "type": true,
+        "a1": true,
+        "key": true,
+        "uid_unique": true,
+        "master": true,
+        "master_shape": true,
+        "space": true,
+        "host": true,
+        "placement_xyz": true,
+        "placement_rotation": true,
+        "circuit": true,
+        "plan_exists": true,
+        "plan_unique_name": true,
+        "plan_role": true,
+        "plan_schema": true,
+        "plan_documentation_only": true,
+        "plan_owner": true,
+        "plan_xy": true,
+        "plan_z": true,
+        "plan_rotation": true,
+        "snap_origin": true
+      }
+    },
+    {
+      "code": "NO_ORPHAN_PLAN",
+      "status": "PASS",
+      "message": "No existen PLAN huerfanos.",
+      "data": {
+        "orphans": []
+      }
+    },
+    {
+      "code": "EXPECTED_COUNTS",
+      "status": "PASS",
+      "message": "Conteos canonicos de la demo.",
+      "data": {
+        "actual": {
+          "spaces": 2,
+          "walls": 5,
+          "owners": 7,
+          "plans": 7,
+          "physical_masters": 4
+        },
+        "expected": {
+          "spaces": 2,
+          "walls": 5,
+          "owners": 7,
+          "plans": 7,
+          "physical_masters": 4
+        }
+      }
+    }
+  ],
+  "devices": [
+    {
+      "id": "outlet-office-01",
+      "owner_name": "ECR_Demo_outlet_office_01",
+      "owner_label": "Toma Oficina 01",
+      "uid": "1d6b2fd0-eceb-5433-b147-8e0f8c836c22",
+      "plan_name": "ECR_DocPlan_1d6b2fd0_eceb_5433_b147_8e0f8c836c22",
+      "space_name": "Space",
+      "host_name": "Wall",
+      "placement": {
+        "x": 900.0,
+        "y": 110.0,
+        "z": 0.0,
+        "q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "checks": {
+        "type": true,
+        "a1": true,
+        "key": true,
+        "uid_unique": true,
+        "master": true,
+        "master_shape": true,
+        "space": true,
+        "host": true,
+        "placement_xyz": true,
+        "placement_rotation": true,
+        "circuit": true,
+        "plan_exists": true,
+        "plan_unique_name": true,
+        "plan_role": true,
+        "plan_schema": true,
+        "plan_documentation_only": true,
+        "plan_owner": true,
+        "plan_xy": true,
+        "plan_z": true,
+        "plan_rotation": true,
+        "snap_origin": true
+      }
+    },
+    {
+      "id": "outlet-storage-01",
+      "owner_name": "ECR_Demo_outlet_storage_01",
+      "owner_label": "Toma Bodega 01",
+      "uid": "691a3ff4-5383-5f81-9d49-e1c8d255670a",
+      "plan_name": "ECR_DocPlan_691a3ff4_5383_5f81_9d49_e1c8d255670a",
+      "space_name": "Space001",
+      "host_name": "Wall",
+      "placement": {
+        "x": 6500.0,
+        "y": 110.0,
+        "z": 0.0,
+        "q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "checks": {
+        "type": true,
+        "a1": true,
+        "key": true,
+        "uid_unique": true,
+        "master": true,
+        "master_shape": true,
+        "space": true,
+        "host": true,
+        "placement_xyz": true,
+        "placement_rotation": true,
+        "circuit": true,
+        "plan_exists": true,
+        "plan_unique_name": true,
+        "plan_role": true,
+        "plan_schema": true,
+        "plan_documentation_only": true,
+        "plan_owner": true,
+        "plan_xy": true,
+        "plan_z": true,
+        "plan_rotation": true,
+        "snap_origin": true
+      }
+    },
+    {
+      "id": "switch-office-01",
+      "owner_name": "ECR_Demo_switch_office_01",
+      "owner_label": "Apagador Oficina 01",
+      "uid": "c75d5345-8cad-5652-a0f7-6184344450eb",
+      "plan_name": "ECR_DocPlan_c75d5345_8cad_5652_a0f7_6184344450eb",
+      "space_name": "Space",
+      "host_name": "Wall",
+      "placement": {
+        "x": 4200.0,
+        "y": 110.0,
+        "z": 0.0,
+        "q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "checks": {
+        "type": true,
+        "a1": true,
+        "key": true,
+        "uid_unique": true,
+        "master": true,
+        "master_shape": true,
+        "space": true,
+        "host": true,
+        "placement_xyz": true,
+        "placement_rotation": true,
+        "circuit": true,
+        "plan_exists": true,
+        "plan_unique_name": true,
+        "plan_role": true,
+        "plan_schema": true,
+        "plan_documentation_only": true,
+        "plan_owner": true,
+        "plan_xy": true,
+        "plan_z": true,
+        "plan_rotation": true,
+        "snap_origin": true
+      }
+    },
+    {
+      "id": "switch-storage-01",
+      "owner_name": "ECR_Demo_switch_storage_01",
+      "owner_label": "Apagador Bodega 01",
+      "uid": "f8533089-a2fc-5d5b-8c32-d2a34a203363",
+      "plan_name": "ECR_DocPlan_f8533089_a2fc_5d5b_8c32_d2a34a203363",
+      "space_name": "Space001",
+      "host_name": "Wall004",
+      "placement": {
+        "x": 4900.0,
+        "y": 1200.0,
+        "z": 0.0,
+        "q": [
+          0.0,
+          0.0,
+          0.7071067811865476,
+          0.7071067811865476
+        ]
+      },
+      "checks": {
+        "type": true,
+        "a1": true,
+        "key": true,
+        "uid_unique": true,
+        "master": true,
+        "master_shape": true,
+        "space": true,
+        "host": true,
+        "placement_xyz": true,
+        "placement_rotation": true,
+        "circuit": true,
+        "plan_exists": true,
+        "plan_unique_name": true,
+        "plan_role": true,
+        "plan_schema": true,
+        "plan_documentation_only": true,
+        "plan_owner": true,
+        "plan_xy": true,
+        "plan_z": true,
+        "plan_rotation": true,
+        "snap_origin": true
+      }
+    },
+    {
+      "id": "light-office-01",
+      "owner_name": "ECR_Demo_light_office_01",
+      "owner_label": "Luminaria Oficina 01",
+      "uid": "640c0890-cd38-59b6-8f87-30bfd228f92c",
+      "plan_name": "ECR_DocPlan_640c0890_cd38_59b6_8f87_30bfd228f92c",
+      "space_name": "Space",
+      "host_name": "",
+      "placement": {
+        "x": 2400.0,
+        "y": 2500.0,
+        "z": 0.0,
+        "q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "checks": {
+        "type": true,
+        "a1": true,
+        "key": true,
+        "uid_unique": true,
+        "master": true,
+        "master_shape": true,
+        "space": true,
+        "host": true,
+        "placement_xyz": true,
+        "placement_rotation": true,
+        "circuit": true,
+        "plan_exists": true,
+        "plan_unique_name": true,
+        "plan_role": true,
+        "plan_schema": true,
+        "plan_documentation_only": true,
+        "plan_owner": true,
+        "plan_xy": true,
+        "plan_z": true,
+        "plan_rotation": true,
+        "snap_origin": true
+      }
+    },
+    {
+      "id": "light-storage-01",
+      "owner_name": "ECR_Demo_light_storage_01",
+      "owner_label": "Luminaria Bodega 01",
+      "uid": "b254bc18-b18d-54e7-baac-fb87da7baa14",
+      "plan_name": "ECR_DocPlan_b254bc18_b18d_54e7_baac_fb87da7baa14",
+      "space_name": "Space001",
+      "host_name": "",
+      "placement": {
+        "x": 6400.0,
+        "y": 2500.0,
+        "z": 0.0,
+        "q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "checks": {
+        "type": true,
+        "a1": true,
+        "key": true,
+        "uid_unique": true,
+        "master": true,
+        "master_shape": true,
+        "space": true,
+        "host": true,
+        "placement_xyz": true,
+        "placement_rotation": true,
+        "circuit": true,
+        "plan_exists": true,
+        "plan_unique_name": true,
+        "plan_role": true,
+        "plan_schema": true,
+        "plan_documentation_only": true,
+        "plan_owner": true,
+        "plan_xy": true,
+        "plan_z": true,
+        "plan_rotation": true,
+        "snap_origin": true
+      }
+    },
+    {
+      "id": "smoke-storage-01",
+      "owner_name": "ECR_Demo_smoke_storage_01",
+      "owner_label": "Sensor Humo Bodega 01",
+      "uid": "671ea9f6-eb63-5653-9ae1-ecde09041fd3",
+      "plan_name": "ECR_DocPlan_671ea9f6_eb63_5653_9ae1_ecde09041fd3",
+      "space_name": "Space001",
+      "host_name": "",
+      "placement": {
+        "x": 6500.0,
+        "y": 3800.0,
+        "z": 0.0,
+        "q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "checks": {
+        "type": true,
+        "a1": true,
+        "key": true,
+        "uid_unique": true,
+        "master": true,
+        "master_shape": true,
+        "space": true,
+        "host": true,
+        "placement_xyz": true,
+        "placement_rotation": true,
+        "circuit": true,
+        "plan_exists": true,
+        "plan_unique_name": true,
+        "plan_role": true,
+        "plan_schema": true,
+        "plan_documentation_only": true,
+        "plan_owner": true,
+        "plan_xy": true,
+        "plan_z": true,
+        "plan_rotation": true,
+        "snap_origin": true
+      }
+    }
+  ],
+  "errors": 0,
+  "warnings": 0
+}

@@ -811,3 +811,44 @@ Hechos de organizacion confirmados:
   copia no justificada por esta tarea.
 - Las referencias de uso en logs se conservaron como evidencia historica y no
   se interpretan como prueba de madurez.
+
+## Revision provisional - colocacion BIM A1 opt-in 2026-09-03
+
+| Herramienta | Rol funcional | Madurez | Resultado comprobado | Decision ElectricCR provisional |
+|---|---|---|---|---|
+| `Tomacorrientes/InstalarTomacorrientesEnParedesBIM.FCMacro` | OPERATIVA | ACTIVA / A1 OPT-IN | ACEPTACION FUNCIONAL GUI APROBADA EN FREECAD 1.1.3 | MANTENER; A1 APTO PARA DEFAULT NUEVO, NO ACTIVADO |
+| `Iluminación/ColocarApagadoresEnPuertas.FCMacro` | OPERATIVA | ACTIVA / A1 OPT-IN | ACEPTACION FUNCIONAL GUI APROBADA EN FREECAD 1.1.3 | MANTENER; A1 APTO PARA DEFAULT NUEVO, NO ACTIVADO |
+| `ElectricCR/electriccr/features/objeto_toma_uno.py` | NUCLEO | ACTIVA | A1 Y LEGACY COMPROBADOS | REUTILIZAR COMO GENERADOR COMUN |
+| `ElectricCR/electriccr/semantic/freecad_adapter.py` | NUCLEO SEMANTICO | ACTIVA | UID/SPACE/HOST COMPROBADOS DENTRO DE TRANSACCION EXTERNA | MANTENER |
+
+Hechos confirmados:
+
+- los comandos provienen del escaneo dinamico de `ElectricCR/commands/macros.py`;
+- ambas macros administran su propia transaccion y terminan en
+  `objeto_toma_uno.crear_toma_link`;
+- el opt-in A1 no se persiste y falla si la version cargada no lo admite;
+- la macro de apagadores no actualiza un objeto legacy cuando A1 esta activo;
+- la prueba real controlada creo una sola instancia A1 de cada familia y
+  aprobo MCP, Space/Host/PuertaOrigen, PLAN/DXF, save/reopen y Undo/Redo;
+- la fuente de Upala permanecio byte a byte igual y los temporales se borraron.
+
+Aceptacion funcional posterior:
+
+- ambos comandos registrados se ejecutaron con sus dialogos completos;
+- legacy fue el default real y la casilla A1 volvio a desmarcarse al reabrir;
+- el `Wall` controlado genero 31 tomas por sus 19 tramos y `Window` genero un
+  apagador, conservando los algoritmos productivos;
+- las 32 identidades A1 tuvieron 32 PLAN, cero huerfanos y UID unicos;
+- save/reopen, Undo/Redo e invariancia fisica aprobaron;
+- no hubo una falla reproducible ni cambios de codigo;
+- A1 queda apto para ser default de objetos nuevos, sin activar ese cambio.
+
+La evidencia historica de Drive registra 48 tomas y 11 apagadores legacy, pero
+el FCStd vigente ya no los contenia durante esta prueba. La preservacion
+productiva se sostiene por no haber abierto el original para escritura y por el
+bloqueo explicito de actualizacion legacy en modo A1; no se afirma una
+comparacion inexistente de 59 objetos en el estado guardado actual.
+
+`Apagador - Rectangle006` conserva decision **NO CORREGIR SIN EVIDENCIA**:
+`Rectangle006` era el `AreaRecinto`; la puerta real era `Window` y el host
+`Wall`. El Label reflejaba el recinto auxiliar.

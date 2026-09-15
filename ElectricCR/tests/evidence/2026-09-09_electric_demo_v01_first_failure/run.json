@@ -1,0 +1,22 @@
+{
+  "started": "2026-09-09T22:37:32.318785-06:00",
+  "version": [
+    "1",
+    "1",
+    "3",
+    "20260725 (Git shallow)",
+    "Unknown",
+    "2026/07/25 04:52:02",
+    "grafted,grafted",
+    "145529fe741292ff0b3977a01195bf0247425794"
+  ],
+  "test": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\tests\\freecad_electric_demo_smoke.py",
+  "test_sha256": "4368b8a687f95ccb04da7f6475b3e3e4438f29ac4814351363dd5ebf384caae5",
+  "before_documents": [],
+  "setup_note": "ElectricCRWorkbench not registered in this GUI session. Requested smoke is imported directly from DEV; no installation or code changes.",
+  "status": "FAIL",
+  "exception": "TypeError(\"Document::addObject: 'App::Feature' is not a document object type\")",
+  "traceback": "Traceback (most recent call last):\n  File \"<string>\", line 16, in <module>\n  File \"C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\tests\\freecad_electric_demo_smoke.py\", line 63, in run\n    result = create_fixed_demo(spec)\n             ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\electriccr\\demo\\electric_demo_freecad.py\", line 294, in create_fixed_demo\n    created[\"metadata\"] = _create_metadata(doc, data)\n                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\electriccr\\demo\\electric_demo_freecad.py\", line 100, in _create_metadata\n    obj = doc.addObject(\"App::Feature\", \"ECR_Demo_Metadata\")\n          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nTypeError: Document::addObject: 'App::Feature' is not a document object type\n",
+  "completed": "2026-09-09T22:37:32.706730-06:00",
+  "after_documents": []
+}

@@ -1,3 +1,303 @@
+# RESULTADO - Facil Arquitectura / buque L continuo y tapichel abierto
+
+Fecha: 2026-09-14 20:00 America/Costa_Rica  
+Intervencion: GPT directa sobre fuente de verdad en Google Drive.  
+FreeCAD objetivo: **1.1.3**  
+Version: **0.14.11 / build 2026.09.14.6**
+
+Se corrigio el defecto visual reportado en la Demo de dos pisos: el hueco ya no se modela como cuatro zonas que dejan una esquina incompleta. El nucleo `fa_stair_core` 0.3.0 genera dos brazos rectangulares solapados alrededor del recorrido de tres puntos; su union produce una sola L completa para losa, cielorraso y documentacion 2D.
+
+El adaptador `stair_freecad_adapter` 0.6.0 conserva la sustraccion nativa Arch para la losa, pero cambia el tapichel: el plan publica los extremos abiertos de entrada/salida, esos bordes no reciben faldon vertical y, adicionalmente, la geometria final del tapichel se recorta contra el prisma completo del paso libre. Esto evita que el remate arquitectonico reduzca la pasada.
+
+La Demo 0.9.3 exige `l_union_v2`, conserva la ubicacion actual de la escalera para aislar esta correccion y registra el numero de extremos abiertos del tapichel. `py_compile` OK y pruebas puras focales **11/11 OK**. Validacion real en FreeCAD queda pendiente.
+
+---
+
+# RESULTADO - Facil Arquitectura / correccion smoke tapichel y DAG
+
+Fecha: 2026-09-14 17:11 America/Costa_Rica  
+Intervencion: GPT directa sobre fuente de verdad en Google Drive.  
+FreeCAD objetivo: **1.1.3**  
+Version: **0.14.11 / build 2026.09.14.5**  
+Demo: **0.9.2**  
+Adaptador escalera: **0.5.1**  
+Cielorraso: **0.7.1**  
+Estado: **CORREGIDO EN DRIVE / PRUEBAS FOCALES OK / SMOKE REAL PENDIENTE**.
+
+El smoke real de la build `.4` identifico una falla concreta de interfaz: `cmd_demo_building.py` llamaba `create_stair_opening_liner()` con los argumentos `ceiling_plane_id` y `target_container`, pero el adaptador exponia `plane_id` y `level`. La Demo llegaba correctamente hasta escalera, buque de losa y exclusion de cielo y fallaba solo al entrar al tapichel.
+
+Correcciones aplicadas:
+
+- Demo 0.9.2 llama la API canonica del tapichel con `plane_id` y `level`.
+- Adaptador 0.5.1 acepta temporalmente los dos alias antiguos para tolerar sincronizacion parcial/hot-reload entre modulos.
+- Se elimina la causa estructural del warning DAG: una escalera que enlaza `FA_LowerLevel`/`FA_UpperLevel` ya no se agrega dentro del Level inferior; el master inter-nivel se aloja en el Building comun. Bases y PLAN siguen siendo locales al Level inferior.
+- Cielorraso 0.7.1 deja de aplicar cortes adicionales si una exclusion ya elimino completamente el panel, evitando `Null shape`.
+- Los `ReferenceError` de `ArchWindow.py` del registro ocurrieron despues de la excepcion principal durante la interrupcion y no se tratan como causa primaria.
+
+Validacion fuera de FreeCAD: compilacion sintactica OK y **5/5 pruebas focales** aprobadas. La validacion runtime sigue pendiente; no se declara resuelto hasta repetir la Demo en FreeCAD 1.1.3 y confirmar ausencia de TypeError, DAG y warnings Null shape.
+
+---
+
+# RESULTADO - Facil Arquitectura / tapichel perimetral del buque de escalera
+
+Fecha: 2026-09-14 16:41 America/Costa_Rica  
+Intervencion: GPT directa sobre fuente de verdad en Google Drive.  
+FreeCAD objetivo: **1.1.3**  
+Version: **0.14.11 / build 2026.09.14.4**  
+Demo: **0.9.1**  
+Adaptador escalera: **0.5.0**  
+Estado: **IMPLEMENTADO / PRUEBAS FOCALES OK / SMOKE FREECAD PENDIENTE**.
+
+La retroalimentacion visual del usuario confirmo que el buque real y la exclusion del cielo ya funcionan, pero dejan visible el interior del plenum. Se implemento `create_stair_opening_liner()` como remate vertical reutilizable, derivado de la zona `lower_ceiling` del mismo plan de holgura. El tapichel crece hacia afuera de la abertura para preservar el ancho libre y ocupa verticalmente desde el plano inferior del cielorraso hasta la cara inferior de la losa superior.
+
+La Demo usa 100 mm de espesor nominal, aloja el objeto en Nivel 00 y lo enlaza a la escalera (`FA_OpeningLiner`). Se conservan por separado la sustraccion nativa Arch de la losa, la exclusion de paneles y el PLAN 2D. No se modifica `Arch.makeStairs()` ni se agrega geometria paralela de escalera.
+
+Pruebas fuera de FreeCAD: `py_compile` OK; 7/7 demo core; 2/2 contratos focales Demo; 5/5 comprobaciones estaticas del contrato del tapichel. La validacion visual/runtime queda pendiente. El giro de 90 grados y la simplificacion de la forma del buque se mantienen como siguiente ajuste, separado de esta incorporacion.
+
+---
+
+# RESULTADO - Facil Arquitectura / FA Escalera entre losas - buque real
+
+Fecha: 2026-09-14 15:40 America/Costa_Rica  
+Intervencion: GPT directa sobre fuente de verdad en Google Drive; no se uso Codex/MCP porque no estan disponibles en esta conversacion.  
+FreeCAD objetivo: **1.1.3**  
+Version preparada: **0.14.11 / build 2026.09.14.3**  
+Demo: **0.9.0**  
+Estado: **IMPLEMENTADO EN DRIVE / 22/22 PRUEBAS FOCALES OK / SMOKE FREECAD PENDIENTE**.
+
+## Resultado tecnico
+
+Se paso de previews documentales a una implementacion real manteniendo las autoridades nativas existentes. La losa superior sigue siendo el `Arch Structure` original y recibe un volumen cortador en `Subtractions`; el cielorraso FA se genera con zonas de exclusion y no mediante ocultamiento posterior.
+
+- `stair_freecad_adapter.py` 0.4.0: `create_native_slab_opening()` usa `Arch.removeComponents`/`Subtractions`, valida que el volumen de la losa disminuya y conserva cutter oculto/reversible.
+- `ceiling_utils.py` 0.7.0: `exclusion_zones_world_mm` recorta cada panel en coordenadas locales antes de extruirlo; se registran cantidad, JSON y motivo de exclusion.
+- `cmd_demo_building.py` 0.9.0: la planta baja se crea hasta Spaces, se crea Nivel 01 hasta muros, se calcula/aplica escalera+hueco y solo entonces se genera el cielo de Nivel 00 con la exclusion.
+- `model_diagnostic_*` 0.2.0: nuevas comprobaciones para buque nativo y cielo recortado.
+- PLAN 2D de hueco y cielo se conserva como documentacion, deja de llevar etiqueta PREVIEW y queda oculto por defecto.
+- Se evitaron back-links que pudieran cerrar ciclos DAG.
+
+Investigacion: FreeCAD Arch/BIM ya soporta `Additions`/`Subtractions` y el comando Arch Remove agrega objetos como huecos del host. Esta ruta se eligio en vez de un `Part::Cut` paralelo.
+
+Validacion fuera de FreeCAD: `py_compile` OK y **22/22** pruebas focales. Falta comprobar geometria, Undo/Redo y persistencia en FreeCAD real.
+
+---
+
+# RESULTADO - Facil Arquitectura / FA Centros de ventanas - Layer Draft conserva una ventana por miembro
+
+Fecha: 2026-09-14 11:50 America/Costa_Rica  
+Intervencion: GPT directa sobre fuente de verdad en Google Drive.  
+FreeCAD objetivo: **1.1.3**  
+Version: **0.14.11 / build 2026.09.14.2**  
+`centerline_utils.py`: **0.24.0**  
+Estado: **IMPLEMENTADO / 47/47 PRUEBAS FOCALES OK / SMOKE LAYER REAL PENDIENTE**.
+
+## Diagnostico posterior al smoke del usuario
+
+El usuario confirmo que la build anterior funciona al seleccionar cada Shape/App::Link por separado, pero no al seleccionar el Layer completo. La inspeccion read-only del `Document.xml` del FCStd real confirma que `Layer002`/`Ventanas` es un Draft Layer `App::FeaturePython` con proxy `draftobjects.layer.Layer` y siete miembros: seis Links y un Part::Feature.
+
+La extraccion 0.23.0 producia correctamente seis ejes antes del postprocesado. La perdida ocurria en la etapa comun de red: `_prepare_centerline_groups()` unia ejes colineales de ventanas distintas. En la reproduccion exacta del caso sintetizado desde Guadalupe, seis ejes se reducian a cuatro: `1512 + 14239 -> 15901 mm` y `2434 + 297 -> 2881 mm`. Por eso Shape por Shape era correcto mientras el Layer no.
+
+## Correccion
+
+- Draft Layer se expande explicitamente por su `Group` para `profile_axis`.
+- Cada miembro del Layer conserva identidad de candidato; los Links siguen aislados por instancia.
+- Plain Shapes del Layer se aislan entre si, mientras una seleccion manual directa de varios Shapes conserva el clustering compartido previo.
+- Los ejes de ventana ya resueltos no pasan por consolidacion/snap de red de muros. Solo se deduplican coincidencias exactas.
+- No se cambia la logica de muros, puertas ni BIM.
+
+## Verificacion
+
+- `py_compile`: OK.
+- `tests/test_centerline_network.py`: **47/47 OK**.
+- Regresion Layer Guadalupe completa: **6 ejes finales**, longitudes `297, 1512, 2434, 5334, 5334, 14239 mm`.
+- Las dos instancias -90 grados permanecen verticales.
+- Seleccion manual directa de Shapes simples conserva el comportamiento historico.
+- El FCStd original no fue modificado.
+
+Pendiente: smoke manual en FreeCAD 1.1.3 seleccionando solamente el Layer `Ventanas`. Esperado: seis ejes y ausencia de los falsos tramos 15901/2881 mm.
+
+---
+
+# RESULTADO - Facil Arquitectura / FA Centros de ventanas - App::Link CAD complejo Guadalupe
+
+Fecha: 2026-09-14 11:18 America/Costa_Rica  
+Intervencion: GPT directa sobre fuente de verdad en Google Drive.  
+FreeCAD objetivo: **1.1.3**  
+Version: **0.14.11 / build 2026.09.14.1**  
+`centerline_utils.py`: **0.23.0**  
+Estado: **IMPLEMENTADO EN DRIVE / PRUEBAS UNITARIAS APROBADAS / SMOKE FREECAD PENDIENTE**.
+
+## Diagnostico
+
+Se analizo el archivo real `L1 D.R.S.C.130613.FCStd` de Guadalupe. La capa `Ventanas` contiene seis instancias `App::Link` hacia bloques `Part::Feature` anonimos y un objeto adicional de lineas. El BRep de `*U5` confirma el caso reportado: aproximadamente 46 bordes y 8 wires, con tres familias geometricas relevantes: cuerpo longitudinal de ventana, detalle compacto y una copia/extension distante. Esta ultima explica que el BoundingBox global llegue aproximadamente a 10700.5 mm y no sea una referencia segura para deducir el eje.
+
+La causa raiz estaba en `_profile_centerlines_from_objects()`: la version 0.22.0 mezclaba primero los bordes de todas las instancias seleccionadas y agrupaba despues. En Guadalupe, la geometria auxiliar distante de una instancia queda proxima a geometria de otra y los seis componentes globales resultantes dejan de tener proporciones compatibles con una ventana; por eso se obtenian 0 ejes. Al agrupar cada Link por separado, cada bloque valido presenta un unico componente longitudinal aceptable.
+
+## Cambio implementado
+
+- `App::Link` se aisla antes del clustering de `profile_axis`.
+- Se trabaja sobre `obj.Shape` de la instancia; no se reaplica `LinkPlacement`.
+- Se reutilizan `_group_segments_by_proximity()` y `_centerline_from_segments()`; no se crea un motor paralelo.
+- Varios candidatos dentro del mismo Link se ordenan por soporte geometrico; solo se elige el dominante cuando supera de forma conservadora al segundo. Si son equivalentes, el Link se mantiene ambiguo.
+- La seleccion no utiliza el BoundingBox global.
+- Los objetos CAD normales conservan exactamente la ruta de agrupamiento compartido anterior.
+- Se agregaron trazas: `Perfil enlazado aislado`, `Perfil enlazado ambiguo omitido`, `links aislados` y `links ambiguos`.
+
+## Verificacion
+
+- `py_compile`: aprobado.
+- `tests/test_centerline_network.py`: **45/45 OK**.
+- Regresion Guadalupe: seis Links complejos -> **6 ejes esperados**, incluyendo las dos instancias rotadas -90 grados.
+- Regresion de seguridad: dos candidatos equivalentes -> **ambiguo / 0 ejes**.
+- No regresion: perfiles simples distribuidos entre objetos no-Link siguen agrupandose como antes.
+- El archivo FCStd original no fue modificado.
+
+Pendiente obligatorio: ejecutar el smoke de `FA Centros de ventanas` en FreeCAD 1.1.3 sobre el documento real/copia de Guadalupe y revisar visualmente los seis ejes. En esta conversacion no hay acceso MCP/GUI de FreeCAD, por lo que no se declara validacion runtime.
+
+GitHub `main` no se actualizo en esta intervencion: la comparacion previa mostro que su copia de Facil Arquitectura esta varias versiones detras de la fuente primaria de Drive (`centerline_utils.py` 0.20.0 y `constants.py` 0.7.0). Un push aislado de estos archivos produciria un repositorio incoherente; la sincronizacion con GitHub debe hacerse como actualizacion integral del Workbench desde la fuente vigente de Drive.
+
+---
+
+# RESULTADO - Facil Arquitectura / Stair clearance preview
+
+Fecha: 2026-09-09 20:20 America/Costa_Rica
+Intervencion: GPT directa sobre fuente de verdad en Google Drive.
+
+Estado: **IMPLEMENTADO / build 2026.09.09.7 / smoke FreeCAD pendiente**.
+
+Se reubico la escalera canonica de la Demo para retirarla de la fachada frontal sin cruzar el tabique superior con su hueco calculado. Se agrego `plan_stair_clearance()` al nucleo independiente y `create_clearance_previews()` al adaptador FreeCAD. El calculo diferencia correctamente la cara inferior de la losa superior y la cara inferior del cielorraso inferior. En esta fase solo se crean previews documentales; no se modifica la Shape de la losa ni se regeneran paneles de cielo.
+
+Pruebas fuera de FreeCAD: `py_compile` aprobado; 15/15 pruebas focales aprobadas (`test_stair_core`, contrato de escalera, core Demo y contratos especificos Demo).
+
+Investigacion previa: FreeCAD Arch procesa `Subtractions` en Arch Components/Structures de forma nativa, por lo que la siguiente fase debe preferir esa capacidad antes que sustituir la losa por un solido FA paralelo. El cielorraso FA ya trabaja por celdas recortables, por lo que la siguiente fase debe incorporar exclusiones al planner/generador en vez de hacer booleans destructivos posteriores.
+
+---
+
+# RESULTADO - Facil Arquitectura / Diagnostico automatico Demo + UI de reporte
+
+Fecha: 2026-09-09 16:25 America/Costa_Rica
+Intervencion: GPT directa sobre fuente de verdad en Google Drive.
+Estado: **IMPLEMENTADO / PRUEBAS FOCALES APROBADAS / SMOKE FREECAD PENDIENTE**.
+
+Implementacion:
+
+- `commands/cmd_model_diagnostic.py` pasa a 0.2.0. El comando manual pregunta explicitamente si diagnosticar documento completo o seleccion cuando hay objetos seleccionados.
+- Se agrego `DiagnosticResultDialog`, reutilizable por el comando manual y por la Demo, con botones persistentes `Copiar ruta del MD`, `Abrir carpeta` y `Cerrar`.
+- La ruta se copia solo bajo accion explicita del usuario. La apertura de carpeta usa `QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(...))`, sin comandos de shell dependientes de Windows.
+- `generate_report()` conserva `copy_prompt=True` como compatibilidad programatica; el comando manual y la Demo llaman con `copy_prompt=False`; `CapturarArbolYPrompt.FCMacro` llama explicitamente con `copy_prompt=True`.
+- `commands/cmd_demo_building.py` pasa a 0.8.1 y ejecuta `generate_report(doc=..., selection=[], ...)` despues de una Demo inmediata satisfactoria. Esto fuerza `documento_completo` y evita la regresion observada cuando quedaba seleccionada `Base cubierta`.
+- La Demo guiada dispara el mismo diagnostico al completar su ultimo paso.
+- El build general pasa a `2026.09.09.6`.
+
+Pruebas fuera de FreeCAD:
+
+- `py_compile`: aprobado para comando diagnostico, Demo, constants y macro.
+- nucleo diagnostico puro: **2/2**.
+- contratos nuevos de diagnostico: **2/2**.
+- contratos focales Demo (integracion diagnostico + contrato escalera 0.8.x): **2/2**.
+
+Investigacion previa: se mantuvo el directorio de macros resuelto por FreeCAD y para clipboard/carpeta se reutilizan APIs Qt disponibles desde PySide (`QApplication.clipboard()` y `QDesktopServices`) en lugar de introducir una integracion externa o shell paralelo.
+
+---
+
+# RESULTADO - 2026-09-09 15:25 - FA Escalera desde Demo 0.8.0
+
+Implementacion realizada directamente sobre las fuentes vigentes de Google Drive.
+
+## Cambios
+
+1. `bim_structure_utils.py` 0.5.1: resolucion de Level prioriza el padre `Building Storey` directo antes de dependencias recursivas.
+2. `stair_freecad_adapter.py` 0.2.0:
+   - `build_stair_context()` reutilizable por comando y Demo;
+   - proteccion contra duplicados por mismo par de losas;
+   - adopcion del recorrido fuente cuando queda raiz;
+   - conserva `FA_LowerLevel` y `FA_UpperLevel`;
+   - politica de barandillas nativas: visibles solo en modo `native`, ocultas para el flujo 1.1.3 multisegmento;
+   - PLAN 2D y geometria `Arch.makeStairs()` conservados.
+3. `cmd_stair_between_slabs.py` 0.2.0 usa por defecto la politica de barandilla segura para FreeCAD 1.1.3.
+4. `demo_building_core.py` 0.5.0 define una escalera canonica reproducible en la zona del distribuidor.
+5. `cmd_demo_building.py` 0.8.0 materializa esa escalera llamando al mismo nucleo/adaptador de la herramienta real.
+6. Build general: `2026.09.09.5`.
+
+## Verificacion fuera de FreeCAD
+
+- `py_compile`: OK en todos los archivos tocados.
+- Suite focal montada con las fuentes modificadas: **22/22 OK**.
+- Plan canonico: 17 contrahuellas; 8+9; 176.47 mm; giro 90 deg; huellas 257.14/250 mm; sin warnings del planificador.
+
+## Pendiente de runtime
+
+FreeCAD estaba cerrado durante esta intervencion, por lo que el comportamiento real de `Arch.makeStairs()` y la ocultacion de sus railings se debe comprobar al reabrir 1.1.3. El hueco de la losa superior no se implemento aun.
+
+---
+
+# RESULTADO - Facil Arquitectura / FA Informe diagnostico 0.1.1
+
+Fecha: 2026-09-09 15:05 America/Costa_Rica
+Intervencion: GPT directa sobre fuente de verdad en Google Drive.
+Estado: IMPLEMENTADO / PRUEBAS DE CONTRATO APROBADAS / SMOKE DE RUTA PENDIENTE
+
+Cambio incremental: `_output_dir()` usa `App.getUserMacroDir(True)` y crea `_reportes_diagnostico` bajo el directorio de macros configurado. No se hardcodea usuario ni ruta Windows. Se conserva fallback al directorio del Workbench si FreeCAD no entrega MacroDir. `CapturarArbolYPrompt.FCMacro` hereda este destino porque delega al mismo comando.
+
+Version comando: `0.1.1`. Build general: `2026.09.09.4`. `py_compile` aprobado y contrato fuente 3/3 aprobado, incluido uso de `getUserMacroDir(True)` y ausencia de ruta personal hardcodeada.
+
+---
+
+# RESULTADO - Facil Arquitectura / FA Escalera entre losas 0.1.0
+
+Fecha: 2026-09-09 12:58 America/Costa_Rica
+Intervencion: GPT directa sobre la fuente de verdad en Google Drive; sin MCP/Codex runtime en esta iteracion.
+Estado: IMPLEMENTADO / PRUEBAS PURAS APROBADAS / FREECAD REAL PENDIENTE
+
+Se recuperaron los dos prototipos entregados por el usuario: `FA_Escalera_Entre_Losas.FCMacro` y `fa_stair_core.py`. La investigacion confirma que FreeCAD Arch Stairs admite bases multiples para vuelos/descansos y que `Arch.makeStairs()` debe mantenerse como autoridad geometrica.
+
+Integracion realizada:
+- `core/fa_stair_core.py`: nucleo JSON-compatible independiente de FreeCAD/Qt.
+- `core/stair_freecad_adapter.py`: lectura global de dos losas + Wire/Sketch, bases nativas, `Arch.makeStairs()`, enlaces de trazabilidad y PLAN 2D.
+- `commands/cmd_stair_between_slabs.py`: dialogo/seleccion/transaccion, registrado como `FA_StairBetweenSlabs`.
+- `InitGui.py`: comando agregado a `FA Estructura BIM`.
+- build general actualizado a `2026.09.09.2`.
+- pruebas nuevas `test_stair_core.py` y `test_stair_command_contract.py`.
+
+Pruebas fuera de FreeCAD: compilacion Python aprobada; 3/3 pruebas puras del planificador y 2/2 contratos de integracion aprobados. La losa superior no se corta en esta version.
+
+Pendiente: smoke real en FreeCAD 1.1.3 sobre la demo de dos pisos y captura MD/JSON del arbol despues de crear la escalera.
+
+---
+
+# RESULTADO - Facil Arquitectura / Demo edificio 0.7.0
+
+Fecha: 2026-09-09 12:20 America/Costa_Rica
+Intervencion: GPT directa sobre fuente de verdad en Google Drive; Codex/MCP no ejecutados en esta iteracion.
+Estado: IMPLEMENTADO / PRUEBAS PURAS APROBADAS / FREECAD REAL PENDIENTE
+
+Cambios:
+- build general `2026.09.09.1`;
+- creacion opt-in de un Level nuevo cuando falta la etiqueta exacta;
+- dos Levels BIM distintos exigidos por la demo multinivel;
+- cielorrasos y Spreadsheet separados por Level;
+- planta superior nueva con 3 recintos, 2 puertas interiores, 5 ventanas y sin puerta exterior;
+- comando demo 0.7.0;
+- filtro de objetos vivos para `GeneratedObjects`.
+
+Pruebas fuera de FreeCAD: 7/7 demo core, 8/8 estructura BIM, 8/8 cielorrasos, 2/2 contratos focales y compilacion Python aprobada. No se declara validacion runtime hasta repetir el smoke en FreeCAD 1.1.3.
+
+---
+
+# RESULTADO - Facil Arquitectura / Demo edificio 2 pisos
+
+Fecha: 2026-09-08 America/Costa_Rica
+Intervencion: GPT directa sobre la fuente de verdad en Google Drive; no se ejecuto Codex/MCP en esta sesion.
+Estado: **IMPLEMENTADO / PRUEBAS PURAS APROBADAS / VALIDACION FREECAD PENDIENTE**.
+
+Se agrego `build_two_storey_demo_spec()` al nucleo independiente y `_materialize_two_storey()` al adaptador FreeCAD. El nuevo modo crea dos especificaciones de planta reutilizando el contrato canonico, un Building comun, dos Levels nativos y los mismos servicios existentes. `site_floor_utils.create_site_floor_from_sketches()` admite ahora `create_site=False` con default `True`, exclusivamente para crear la losa de entrepiso sin duplicar el Site.
+
+Pruebas ejecutadas fuera de FreeCAD: `py_compile` aprobado; 7/7 pruebas de `test_demo_building_core.py`; 1/1 prueba contractual focal de dos pisos. No se incremento el build general.
+
+Pendiente obligatorio: smoke real en FreeCAD 1.1.3 para confirmar transformacion de BuildingPart/Level, alturas globales, hosts, persistencia, save/reopen y regresion del demo existente. La escalera queda expresamente fuera hasta verificar la API BIM nativa; no se implemento una escalera propia.
+
+---
+
 # RESULTADO CODEX - ElectricCR / RoomResolver fase 2A
 
 Fecha: 2026-09-01 America/Costa_Rica
@@ -1813,3 +2113,42 @@ Validacion fuera de FreeCAD:
 Se dejo preparada tambien `tests/freecad_door_corner_snap_end_to_end.py`, que crea un documento temporal controlado con un muro host, una pared lateral y dos puertas; comprueba snap a la cara real, ancho conservado, bisagra/apertura, corte BIM, puerta lejana sin mover, reejecucion, Undo/Redo y guardar/reabrir.
 
 Queda pendiente ejecutar `tests/freecad_door_corner_snap_probe.py` y `tests/freecad_door_corner_snap_end_to_end.py` en FreeCAD 1.1.3/MCP. No se declara validado en entorno real todavia.
+
+
+---
+
+# RESULTADO - Facil Arquitectura / FA Informe diagnostico 0.1.0
+
+Fecha: 2026-09-09 14:55 America/Costa_Rica
+Intervencion: GPT directa sobre la fuente de verdad en Google Drive.
+Estado: IMPLEMENTADO / PRUEBAS PURAS 4/4 / FREECAD REAL PENDIENTE
+
+Se reutilizo el contrato probado de `CapturarArbolYPrompt.FCMacro` en lugar de crear otro exportador paralelo. La investigacion de FreeCAD confirma que `ViewProvider.claimChildren()` representa los hijos reclamados por el ViewProvider para el Tree View, mientras `InList/OutList` son relaciones de dependencia y no deben sustituir la jerarquia visual.
+
+Arquitectura implementada:
+- `core/model_diagnostic_core.py`: nucleo puro JSON-compatible para hallazgos y renderizado.
+- `core/model_diagnostic_freecad.py`: adaptador read-only FreeCAD/FreeCADGui.
+- `commands/cmd_model_diagnostic.py`: comando del Workbench y escritura TXT/MD/JSON.
+- `CapturarArbolYPrompt.FCMacro`: convertido en wrapper pequeno del motor compartido, conservando seleccion/documento completo, objetivo opcional y salidas TXT/MD/JSON.
+
+Reglas iniciales de diagnostico:
+- errores de captura y estados `Error/Invalid`;
+- ciclos del arbol y multiples padres visuales;
+- Building Storey sin Building padre;
+- cantidad de Levels BIM por Building;
+- escaleras FA duplicadas entre las mismas losas;
+- contexto Lower/Upper Level de escaleras;
+- Wire/Sketch fuente de escalera que permanece como raiz;
+- etiquetas visibles repetidas como informacion, no error.
+
+Integracion:
+- comando visible `FA Informe diagnostico` en `FA Proyecto BIM`;
+- build general `0.14.11 / 2026.09.09.3`;
+- carpeta de salida `_reportes_diagnostico`;
+- prompt breve para GPT/Codex copiado al portapapeles.
+
+Validacion fuera de FreeCAD:
+- `py_compile`: OK;
+- pruebas focales: 4/4 OK.
+
+Pendiente: smoke en FreeCAD 1.1.3 sobre la casa demo actual con escalera. Solo despues de revisar el primer MD real se integrara la generacion automatica del informe al final de `FA Demo edificio`.

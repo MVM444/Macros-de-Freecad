@@ -1,0 +1,108 @@
+{
+  "source": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Sucursales\\Upala\\1416 Levantamiento 250424 Compu D.FCStd",
+  "copy": "C:\\Users\\marco\\AppData\\Local\\Temp\\ecr_a1_acceptance_20260908_5_mtcyyd\\A1_workbench_regression.FCStd",
+  "owner_count": 10,
+  "value_or_definition_differences": {},
+  "property_status_differences": {
+    "Link_Apagador_Rectangle006": {
+      "Placement": [
+        "256",
+        "264"
+      ]
+    },
+    "Link_Apagador_Rectangle007": {
+      "Placement": [
+        "256",
+        "264"
+      ]
+    },
+    "Link_Apagador_Rectangle008": {
+      "Placement": [
+        "256",
+        "264"
+      ]
+    },
+    "Link_Apagador_Rectangle009": {
+      "Placement": [
+        "256",
+        "264"
+      ]
+    },
+    "Link_Apagador_Rectangle011": {
+      "Placement": [
+        "256",
+        "264"
+      ]
+    },
+    "Link_Apagador_Rectangle012": {
+      "Placement": [
+        "256",
+        "264"
+      ]
+    },
+    "Link_Apagador_Recinto_poligonal_01": {
+      "Placement": [
+        "256",
+        "264"
+      ]
+    },
+    "Link_Apagador_Rectangle013": {
+      "Placement": [
+        "256",
+        "264"
+      ]
+    },
+    "Link_Apagador_Rectangle014": {
+      "Placement": [
+        "256",
+        "264"
+      ]
+    },
+    "Link_Apagador_Rectangle010": {
+      "ElementoOrigen": [
+        "2097153",
+        "2097152"
+      ],
+      "Host": [
+        "2097153",
+        "2097152"
+      ],
+      "AreaRecinto": [
+        "2097153",
+        "2097152"
+      ],
+      "Space": [
+        "2097153",
+        "2097152"
+      ],
+      "MuroReferencia": [
+        "2097153",
+        "2097152"
+      ],
+      "ColoredElements": [
+        "67109121",
+        "67109120"
+      ],
+      "ElementList": [
+        "267",
+        "266"
+      ],
+      "Placement": [
+        "256",
+        "264"
+      ],
+      "PuertaOrigen": [
+        "2097153",
+        "2097152"
+      ],
+      "LinkCopyOnChangeGroup": [
+        "265",
+        "264"
+      ],
+      "LinkedObject": [
+        "257",
+        "256"
+      ]
+    }
+  }
+}

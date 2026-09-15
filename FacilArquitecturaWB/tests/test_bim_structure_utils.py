@@ -87,6 +87,18 @@ class BIMStructureTests(unittest.TestCase):
     def tearDown(self):
         structure.Arch = self.previous_arch
 
+    def test_resolve_level_prefers_direct_native_parent_over_recursive_controller_path(self):
+        level0 = FakeObject("Level0", "Building Storey")
+        level1 = FakeObject("Level1", "Building Storey")
+        controller_group = FakeObject("DemoSources")
+        controller = FakeObject("Controller")
+        slab = FakeObject("UpperSlab", "Slab")
+        controller_group.InList = [level0]
+        controller.InList = [controller_group]
+        slab.InList = [level1, controller]
+        doc = FakeDocument([level0, level1, controller_group, controller, slab])
+        self.assertIs(structure.resolve_level_context(doc, objects=[slab]), level1)
+
     def test_native_building_and_level_are_reused(self):
         doc = FakeDocument()
         structure.Arch = FakeArch(doc)
@@ -99,6 +111,39 @@ class BIMStructureTests(unittest.TestCase):
         self.assertEqual(1, len(structure.collect_buildings(doc)))
         self.assertEqual(1, len(structure.collect_levels(doc)))
         self.assertIn(first["level"], first["building"].Group)
+
+    def test_multistorey_can_require_new_level_when_label_is_missing(self):
+        doc = FakeDocument()
+        structure.Arch = FakeArch(doc)
+
+        ground = structure.ensure_bim_structure(
+            doc, "Casa demo", "Nivel 00", 0.0, create_level_if_label_missing=True
+        )
+        upper = structure.ensure_bim_structure(
+            doc,
+            "Casa demo",
+            "Nivel 01",
+            3000.0,
+            building=ground["building"],
+            update_existing=True,
+            create_level_if_label_missing=True,
+        )
+
+        self.assertIsNot(ground["level"], upper["level"])
+        self.assertEqual(["Nivel 00", "Nivel 01"], [obj.Label for obj in structure.collect_levels(doc, ground["building"])])
+        self.assertEqual(2, len(structure.collect_levels(doc)))
+
+    def test_default_single_level_fallback_is_preserved(self):
+        doc = FakeDocument()
+        structure.Arch = FakeArch(doc)
+
+        first = structure.ensure_bim_structure(doc, "Sucursal", "Nivel 00", 0.0)
+        reused = structure.ensure_bim_structure(
+            doc, "Sucursal", "Otro nombre", 0.0, building=first["building"], update_existing=True
+        )
+
+        self.assertIs(first["level"], reused["level"])
+        self.assertEqual(1, len(structure.collect_levels(doc)))
 
     def test_add_to_level_creates_real_group_and_property_links(self):
         level = FakeObject("Level", "Building Storey")

@@ -1,0 +1,2 @@
+22:37:32  [2026-09-09 22:37:32][TOMA1][INFO] Registro cargado: C:\Users\marco\OneDrive - Caja Costarricense de Seguro Social\Documentos\FreeCAD\Macros\Macros-de-Freecad\Resources\registry\registry_electric.json
+22:37:32  Python code executed successfully.

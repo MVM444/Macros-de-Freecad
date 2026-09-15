@@ -1,0 +1,18 @@
+{
+  "isPerformingTransaction": {
+    "exception": "AttributeError",
+    "message": "'App.Document' object has no attribute 'isPerformingTransaction'"
+  },
+  "hasPendingTransaction": {
+    "exception": "AttributeError",
+    "message": "'App.Document' object has no attribute 'hasPendingTransaction'"
+  },
+  "Transacting": {
+    "type": "bool",
+    "value": false
+  },
+  "HasPendingTransaction": {
+    "type": "bool",
+    "value": false
+  }
+}

@@ -1,0 +1,86 @@
+{
+  "document_label": "Casa_demo_antes",
+  "environment": {
+    "skybox_dir": "",
+    "skybox_source": "castle_executable",
+    "use_skybox": true
+  },
+  "export_launch_cache": {
+    "fingerprint": "daa4cd7b2b52838cbfa1cc25cc9659d3f09772bb3b8f0a1cfedec8ce5a5fc46b",
+    "saved_utc": "2026-09-15T15:57:28.142031+00:00",
+    "version": "gameexport-scene-v6-camera-fill",
+    "x3d_mtime_ns": 1789487847558115400,
+    "x3d_path": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\FacilArquitecturaWB\\tests\\evidence\\2026-09-15_minimal_stair\\Casa_demo_antes.x3d",
+    "x3d_size": 1125192
+  },
+  "export_names": [],
+  "export_pointlights": false,
+  "export_profile_version": "architectural-complete-v5",
+  "gamestart_label": "GameStart",
+  "geometry_export": {
+    "minimum_payload_chars": 2048,
+    "mode": "Optimized"
+  },
+  "global_light": {
+    "ambient_intensity": 0.12,
+    "color": [
+      1.0,
+      0.95,
+      0.85
+    ],
+    "enabled": true,
+    "intensity": 0.32,
+    "pitch": -45.0,
+    "shadows": true,
+    "yaw": -30.0
+  },
+  "ground_texture": {
+    "enabled": true,
+    "generate_planar_uv": true,
+    "object_label": "",
+    "object_name": "",
+    "repeat_s": 20.0,
+    "repeat_t": 20.0,
+    "texture_path": "C:/Users/mmfallas/OneDrive - Caja Costarricense de Seguro Social/2026/07-Julio-2026/Puriscal/Puriscal_Flujo_Completo_Facil_Arquitectura_assets/textures/Zacate.png"
+  },
+  "lighting_profile_name": "Arquitectonico equilibrado",
+  "materials": {
+    "improve_interior_lighting": true,
+    "interior_lighting_mode": "Architectural"
+  },
+  "navigation": {
+    "camera_fill_ambient_intensity": 0.25,
+    "camera_fill_enabled": true,
+    "camera_fill_intensity": 0.45,
+    "eye_height_mm": 1600.0,
+    "gravity_up": "Z+",
+    "speed": 2.0
+  },
+  "output": {
+    "base_name": "Casa_demo_antes",
+    "dir": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\FacilArquitecturaWB\\tests\\evidence\\2026-09-15_minimal_stair"
+  },
+  "point_light_options": {
+    "ambient_intensity": 0.02,
+    "attenuation": "1 0.30 0.06",
+    "auto_detect_luminaires": true,
+    "beam_width": 0.59,
+    "cut_off_angle": 0.79,
+    "default_beam_angle_deg": 120.0,
+    "default_cct_kelvin": 4000.0,
+    "default_lumens": 3600.0,
+    "falloff": "Interior",
+    "light_mode": "SpotNoShadows",
+    "max_shadow_lights": 2,
+    "shadow_map_size": 256,
+    "shadows": false
+  },
+  "root_label": "",
+  "root_name": "",
+  "root_names": [],
+  "scene_lights": [],
+  "scene_selection": {
+    "automatic_3d_scene": true,
+    "include_hidden_3d_objects": true
+  }
+}

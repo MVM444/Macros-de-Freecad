@@ -1,10 +1,177 @@
+## Actualizacion 2026-09-09 22:09 -0600 America/Costa_Rica - Demo canonica ElectricCR A1 disponible
+
+Se implemento un banco de pruebas propio para que el desarrollo del dispositivo electromecanico comun deje de depender de modelos productivos. La demo v0.1 reproduce de forma determinista siete dispositivos sobre dos Spaces BIM y reutiliza exclusivamente el contrato A1 aprobado.
+
+```text
+Demo spec pura
+   -> Building / Level / 2 Spaces / 5 Walls
+   -> 2 Toma + 2 Apagador + 2 Luminaria + 1 Sensor
+   -> Owner App::Link + master + ElementUID + Space/Host + PLAN
+   -> auditor read-only
+```
+
+El instrumento queda pensado para crecer por capas. Primero debe aprobar A1 + Space/Host en FreeCAD 1.1.3; despues se podran agregar Circuit/Control y, en una fase separada, el adaptador IFC. No se mezcla todavia la prueba de interoperabilidad con la validez basica de la demo.
+
+Pruebas puras: 7/7 aprobadas. Prueba FreeCAD real: pendiente.
+
+---
+
+## Actualizacion 2026-09-09 22:09 -0600 America/Costa_Rica - A1 como autoridad y IFC como adaptador
+
+La investigacion posterior al experimento NativeIFC refuerza la decision de no sustituir A1 ni crear por ahora un espejo IFC persistente. La opcion de trabajo preferente es un adaptador de interoperabilidad/exportacion que lea el elemento A1 y construya su equivalente IFC de forma controlada.
+
+```text
+Elemento A1
+  App::Link + master fisico
+  ElementUID
+  Placement
+  Space / Host / relaciones
+  PLAN documental
+        |
+        `-- adaptador IFC
+              GlobalId <- ElementUID
+              clase / PredefinedType <- registro + esquema
+              ObjectPlacement <- Owner.Placement
+              Representation <- geometria fisica A1
+              Psets <- propiedades compatibles
+              containment <- Space/IfcSpace
+```
+
+El master A1 no se considera automaticamente un `IfcTypeProduct`: hoy su firma mezcla definicion de familia con valores de ocurrencia como altura/orientacion. La definicion IFC Type, si se adopta, debe derivarse de la familia/registro y probarse aparte.
+
+PLAN sigue siendo documentacion A1 y no debe duplicar el producto electrico en IFC. Una exportacion como `IfcAnnotation` puede investigarse posteriormente solo si aporta valor documental.
+
+Como estrategia de prueba se propone una Demo ElectricCR autocontenida, semejante a la Demo Casa de 2 Plantas, para generar un modelo pequeno/reproducible y validar de extremo a extremo los contratos A1 + Space + IFC. No implementada aun.
+
+---
+
+## Actualizacion 2026-09-05 - pendiente UX 2D editable
+
+La sincronizacion espacial PLAN/Owner ya esta corregida, pero se identifica un
+requisito adicional de producto: la representacion 2D debe ser tambien una
+interfaz de edicion de la misma identidad.
+
+Estado deseado:
+
+```text
+clic 3D  -> seleccionar/mover Device
+clic PLAN -> seleccionar/mover el mismo Device
+```
+
+PLAN no debe presentarse como segunda identidad. La opcion de diseno preferida
+es ocultarlo del arbol (`ShowInTree=false`) y redirigir su seleccion al `Owner`.
+El movimiento desde 2D debe modificar `Owner.Placement`; la expresion vigente
+mantiene PLAN derivado y evita ciclos.
+
+Primera alternativa de movimiento: reutilizar `Draft Move`, con el punto base en
+el origen local `(0,0,0)` del simbolo 2D. Los prototipos deben auditarse para
+confirmar que ese origen contiene un vertice/punto utilizable. No se agregara
+geometria visible automaticamente sin revisar el impacto documental/DXF.
+
+La seleccion redirigida debe probarse en FreeCAD 1.1.3 con varios documentos
+abiertos. Si se usa `Gui.Selection` como mediador, sera acotado a PLAN ElectricCR,
+con guardia de recursion y sin modificar el documento durante la seleccion.
+
+Por este requisito de UX, A1 continua opt-in hasta que se compruebe que puede
+trabajarse con el 3D oculto y el PLAN visible como en un plano normal.
+
+---
+
+## Actualizacion 2026-09-05 - autoridad espacial A1 corregida
+
+El defecto de campo de `TomaBIM_011` quedo corregido mediante una dependencia
+nativa persistente. PLAN sigue siendo un objeto documental separado, pero su
+Placement se expresa desde `Owner.Placement` para X/Y/orientacion y desde
+`Owner.DocumentationPlaneZ` para Z.
+
+La firma documental esquema 2 ya no contiene coordenadas, rotacion, UID ni Z;
+solo describe la geometria del simbolo y su escala. `PlanSymbolScale` permanece
+independiente de la Shape fisica.
+
+Una copia temporal de Chomes reprodujo el delta de 259 mm y aprobo correccion,
+movimiento, giro, altura, Z, escala, Undo/Redo, save/reopen, tres recomputes,
+una toma, un apagador, DXF y cero huerfanos. No se modifico el original.
+
+Resultado: **A1 APTO PARA SER DEFAULT DE OBJETOS NUEVOS**, aunque continua
+opt-in hasta autorizacion separada. Los PLAN esquema 1 se actualizan al pasar
+por la sincronizacion A1; no se ejecuto migracion productiva.
+
+---
+
+## Actualizacion historica 2026-09-03 - A1 no pasaba aun a default
+
+La recomendacion anterior de considerar A1 apto para default queda suspendida
+por un hallazgo de campo posterior en `Chomes-Segundo Piso.FCStd`.
+
+`TomaBIM_011` conserva una sola identidad y `PLAN.Owner` correcto, pero tras
+mover la toma el PLAN quedo 259 mm atras:
+
+```text
+Owner X = 19263
+PLAN X  = 19004
+```
+
+`PLAN.ExpressionEngine=[]` y `RepresentationSignature` conserva la posicion
+anterior, por lo que el PLAN no tiene actualmente una dependencia espacial
+dinamica suficiente con el Owner.
+
+Esto no invalida lo ya aprobado de A1:
+
+- Shape fisica solo 3D;
+- PLAN sin volumen/solidos;
+- Owner correcto;
+- UID/Space/Host;
+- save/reopen;
+- Undo/Redo;
+- DXF documental;
+- idempotencia de sincronizacion explicita.
+
+Si invalida la conclusion de que la representacion ya se comporta como una sola
+identidad espacial durante edicion manual.
+
+Contrato vigente corregido:
+
+```text
+Device.Placement -> unica autoridad espacial
+3D               -> derivado
+PLAN              -> derivado en X/Y/orientacion
+DocumentationPlaneZ / PlanSymbolScale -> independientes y documentales
+```
+
+Pendiente prioritario antes de hacer A1 default:
+`A1 sincronizacion espacial PLAN-Owner`.
+
+No migrar legacy ni corregir Chomes manualmente como sustituto de la causa raiz.
+
+---
+
 # RESUMEN - Dispositivo electromecanico comun de ElectricCR
 
-Fecha de consolidacion: 2026-09-02  
+Fecha de consolidacion: 2026-09-03
 Proyecto: Programacion en FreeCAD  
 Workbench principal: ElectricCR  
 FreeCAD objetivo y verificado: 1.1.3  
-Estado general: ARQUITECTURA DEFINIDA / PROTOTIPO DE LUMINARIA IMPLEMENTADO Y VERIFICADO / MIGRACION GENERAL NO INICIADA
+Estado general: A1 FISICO/DOCUMENTAL CON AUTORIDAD ESPACIAL PROBADA Y APTO PARA DEFAULT NUEVO, AUN OPT-IN / BARRA ESPACIOS V0.1 INTEGRADA / MIGRACION GENERAL NO INICIADA
+
+---
+
+## 0. Aceptacion funcional GUI cerrada
+
+El 2026-09-03 los comandos registrados reales de tomacorrientes en paredes BIM
+y apagadores junto a puertas BIM aprobaron sus dialogos completos en FreeCAD
+1.1.3. Legacy siguio siendo el default real, la casilla A1 no persistio y las
+instancias A1 creadas por la GUI cumplieron el contrato ya consolidado.
+
+La prueba temporal sobre Upala dejo 32 identidades A1 y 32 PLAN independientes,
+sin huerfanos y con UID unicos. Se verificaron Shape fisica, Host, Space,
+PuertaOrigen, Placement, alturas, App::Link/master, Undo/Redo, save/reopen e
+invariancia de Volume/BoundBox/Solids. El contrato PLAN producido es el mismo
+que ya aprobo el DXF documental del baseline A1.
+
+No se cambio arquitectura ni codigo. El original de Upala permanecio byte a
+byte igual y los temporales se eliminaron. La decision de cierre es **A1 APTO
+PARA SER DEFAULT DE OBJETOS NUEVOS**, sin activar aun ese default y sin migrar
+legacy.
 
 ---
 
@@ -48,40 +215,51 @@ Por tanto, se decidio **evolucionar este nucleo y no crear otro objeto electrome
 
 ---
 
-## 3. Contrato geometrico actual que debe conservarse
+## 3. Contratos de representacion: legacy y A1
 
-El nucleo existente ya cumple una regla importante del proyecto: 2D y 3D son representaciones de una misma identidad.
+El nucleo historico conserva una ruta legacy necesaria para compatibilidad, pero
+esa ruta ya no es el objetivo arquitectonico.
 
-Conceptualmente:
+### LegacyCompound
 
 ```text
 Placement del elemento
     |
     +-- simbolo 2D: Z local = 0
-    |
     `-- modelo 3D: Z local = AlturaRel
+             \
+              -> ambos dentro de obj.Shape
 ```
 
-Propiedades y comportamientos relevantes:
+Propiedades como `ModoVisual`, `AlturaRel`, `OrientacionPared`, `KeyRegistro`,
+`RecursoProto2D` y `RecursoProto3D` siguen siendo importantes para compatibilidad.
 
-- un solo `Placement` global;
-- `AlturaRel` controla la altura del 3D;
-- el simbolo 2D permanece en Z local 0;
-- `ModoVisual = Ambos | Solo2D | Solo3D`;
-- `Categoria` permite Pared, Cielo, Piso, etc.;
-- `Giro`, `OffsetX`, `OffsetY` y `OrientacionPared`;
-- `KeyRegistro` enlaza con `registry_electric.json`;
-- `RecursoProto2D` y `RecursoProto3D` mantienen trazabilidad de representacion;
-- el flujo directo usa `Part::FeaturePython`;
-- el flujo repetitivo usa `App::Link` hacia masters ocultos.
+### PhysicalDocumentationA1
 
-Tambien existen servicios reutilizables para reconocer dispositivos y manejar altura semantica:
+Verificado en FreeCAD 1.1.3 el 2026-09-03:
 
-- `is_electriccr_device()`;
-- `installation_elevation_mm()`;
-- `set_installation_elevation()`.
+```text
+App::Link = identidad unica
+  |-- LinkedObject -> master fisico A1
+  |                    `-- Shape = solo model3D fisico
+  |-- ElementUID
+  |-- Space
+  |-- Host
+  `-- PLAN DocumentationOnly
+       `-- Owner -> App::Link
+```
 
----
+Reglas cerradas:
+
+- la Shape fisica no contiene el simbolo 2D;
+- PLAN no tiene ElementUID ni semantica funcional propia;
+- PLAN puede cambiar visibilidad/escala sin modificar Volume, BoundBox o Solids;
+- `ModelScale` permanece 1:1;
+- la representacion documental puede tener escala propia para legibilidad;
+- los servicios `is_electriccr_device()`, `installation_elevation_mm()` y
+  `set_installation_elevation()` siguen siendo reutilizables;
+- `LegacyCompound` permanece disponible solo para no romper llamadas/documentos
+  existentes mientras A1 se integra gradualmente.
 
 ## 4. Registro de familias y representaciones
 
@@ -144,27 +322,37 @@ Regla importante:
 
 ---
 
-## 6. Arquitectura semantica propuesta
+## 6. Arquitectura semantica vigente y pendiente
 
 La identidad comun debe separar propiedades comunes de propiedades especificas por familia.
 
-### Contrato comun conceptual
+### Contrato comun
+
+Confirmado en A1:
 
 ```text
 ElementUID
+Space
+Host
+Placement
+LinkedObject/master fisico
+PLAN documental asociado
+```
+
+Contrato comun a consolidar progresivamente:
+
+```text
 ElementClass
 Family / TypeCode
-Space
 Circuit
 Control
 System
-Host
 ```
 
-Otros datos pueden derivarse:
+Datos que deben derivarse antes de duplicarse:
 
-- `Level` preferentemente desde `Space`;
-- `Panel` preferentemente desde `Circuit`.
+- `Level` desde `Space`;
+- `Panel` desde `Circuit` cuando sea posible.
 
 No conviene duplicar datos que ya pertenecen a otra entidad.
 
@@ -554,68 +742,58 @@ No se ha realizado:
 
 ## 19. Proximos pasos recomendados para este tema
 
-Cuando se retome **dispositivo_electromecanico** en otro chat, no volver a diseñar desde cero.
+No volver a diseñar A1 desde cero. El prototipo fisico/documental ya aprobo.
 
-Orden recomendado:
+### Fase inmediata - politica separada para activar el nuevo default
 
-### Fase A - refactor de nombre sin cambio funcional
+La integracion y la aceptacion funcional GUI ya estan cerradas. A1 fue
+clasificado **APTO PARA SER DEFAULT DE OBJETOS NUEVOS**, pero esta tarea no
+cambio el default. Una fase posterior, con autorizacion expresa, debe definir
+el momento de activacion, el mensaje de compatibilidad y las regresiones de
+instalacion; no debe migrar automaticamente ningun objeto legacy.
 
-1. Auditar todos los imports de `objeto_toma_uno.py`.
-2. Crear `dispositivo_electromecanico.py` como fuente de verdad.
-3. Mantener `objeto_toma_uno.py` como shim.
-4. Mantener aliases de funciones/clases antiguas.
-5. Ejecutar todas las regresiones de directos, Links, masters, altura y 2D/3D.
-6. No migrar objetos reales.
+### Fase posterior - consolidar relaciones de proyecto
 
-### Fase B - consolidar contrato semantico de instancia
+1. Definir objeto/contrato estable `Circuit`.
+2. Formalizar `Control` sin competir con los LinkList existentes.
+3. Derivar `Panel` de Circuit cuando sea posible.
+4. Derivar `Level` de Space.
+5. Definir `System` solo cuando exista autoridad clara.
+6. Mantener propiedades legacy durante la transicion.
 
-1. Formalizar `ElementUID`.
-2. Formalizar `Space`.
-3. Definir objeto/contrato estable `Circuit`.
-4. Formalizar `Control`.
-5. Derivar `Panel` de Circuit cuando sea posible.
-6. Derivar `Level` de Space cuando sea posible.
-7. Definir `System` y `Host`.
-8. Mantener compatibilidad legacy.
+### Refactor de nombre - separado y posterior
 
-### Fase C - herramienta opt-in de enriquecimiento
+El cambio `objeto_toma_uno.py` -> `dispositivo_electromecanico.py` sigue siendo
+conveniente, pero ya no es prerequisito para probar la integracion A1 real. Debe
+hacerse despues, como refactor no funcional con shim y regresion completa.
 
-1. `dry_run` por defecto.
-2. Detectar dispositivos existentes.
-3. Resolver Space con RoomResolver.
-4. Proponer relaciones.
-5. Clasificar MATCH / AMBIGUOUS / NO_MATCH.
-6. Escribir solo casos seguros.
-7. No sustituir masters ni LinkedObject.
-8. Probar primero sobre copia controlada.
+### Migracion legacy
 
-### Fase D - extender a familias
+Solo despues de integrar A1 en herramientas reales:
 
-Despues de validar luminarias:
-
-- tomacorrientes;
-- apagadores;
-- detectores/sensores;
-- camaras;
-- otros dispositivos.
-
-Cada familia debe conservar sus propiedades especificas fuera del nucleo comun.
+1. inventariar;
+2. resolver Space/Host;
+3. `dry_run`;
+4. clasificar MATCH / AMBIGUOUS / NO_MATCH;
+5. migrar solo casos seguros;
+6. reconstruir arbol despues de consolidar relaciones.
 
 ---
 
-## 20. Separacion respecto a la tarea actual de barras comunes
+## 20. Relacion con la barra comun Espacios y Recintos
 
-Este tema debe continuar en un chat propio.
+La barra y el dispositivo conservan responsabilidades separadas, pero ya no son
+lineas conceptualmente independientes. Comparten el contrato espacial:
 
-La tarea activa actual del proyecto es distinta:
+- la barra/CRBIMCore resuelve la identidad `Space`;
+- Facil Arquitectura produce y mantiene Space/Wall/Door/Window;
+- ElectricCR consume `Space` y `Host` en la instancia A1;
+- `Level` se deriva de Space;
+- el arbol disciplinar proyecta las relaciones sin duplicar el Space.
 
-**CRBIMCore / Barra comun de Espacios y Recintos**
-
-Por tanto:
-
-- no mezclar la refactorizacion de `dispositivo_electromecanico` con la barra comun;
-- la barra comun sigue trabajando sobre Space/RoomResolver;
-- el dispositivo electromecanico queda como linea paralela ya documentada y con prototipo verificado.
+No se debe mezclar el codigo GUI de la barra con el nucleo del dispositivo, ni
+hacer que ElectricCR importe a FA para obtener estas relaciones. La integracion
+se realiza por contratos y objetos BIM compartidos.
 
 ---
 
@@ -643,26 +821,26 @@ Proyecto: Programacion en FreeCAD
 Workbench: ElectricCR
 FreeCAD: 1.1.3
 
-Quiero continuar el tema del dispositivo electromecanico comun.
+Quiero continuar el dispositivo electromecanico comun usando como fuente:
+RESUMEN_DISPOSITIVO_ELECTROMECANICO.md.
 
-Use como contexto principal el archivo:
-RESUMEN_DISPOSITIVO_ELECTROMECANICO.md
+A1 ya fue implementado y verificado en FreeCAD real:
+- PhysicalDocumentationA1;
+- Shape solo fisica;
+- PLAN DocumentationOnly;
+- ElementUID, Space y Host;
+- App::Link + master fisico;
+- save/reopen, Undo/Redo y DXF.
 
-El prototipo de luminaria semantica ya fue implementado y verificado.
-No quiero rediseñar el objeto desde cero.
+La barra Espacios y Recintos v0.1 tambien esta integrada. Space BIM es la
+identidad espacial canonica, Level se deriva de Space y FA conserva la autoria
+de Wall/Door/Window/Space.
 
-La arquitectura vigente conserva:
-- objeto_toma_uno.py como nucleo historico comun;
-- App::Link + masters para dispositivos repetitivos;
-- ElementUID y Space en la instancia;
-- RoomResolver para relacion espacial;
-- relaciones -> arbol como regla autoritativa;
-- Arch Equipment solo como complemento BIM/IFC.
-
-El siguiente tema a revisar es el cambio de nombre/refactor no destructivo hacia
-dispositivo_electromecanico.py y luego la consolidacion del contrato semantico comun.
-
-Diagnosticar antes de modificar y preservar compatibilidad con todas las macros existentes.
+La integracion A1 opt-in en las herramientas reales de tomacorrientes sobre
+muros BIM y apagadores junto a puertas BIM ya aprobo aceptacion funcional desde
+los comandos registrados y sus dialogos. A1 es apto para ser default de objetos
+nuevos, pero el default legacy y la compatibilidad permanecen sin cambios en
+esta fase.
 ```
 
 ---
@@ -671,19 +849,61 @@ Diagnosticar antes de modificar y preservar compatibilidad con todas las macros 
 
 ```text
 Nucleo comun existente:            CONFIRMADO
-Luminaria App::Link semantica:     PROBADA
+A1 PhysicalDocumentation:          PROBADO MCP
+Shape solo fisica:                 PROBADA
+PLAN DocumentationOnly:            PROBADO
+Tomacorriente A1 aislado:          PROBADO
+Apagador A1 aislado:               PROBADO
 ElementUID persistente:            PROBADO
 Space persistente:                 PROBADO
+Host persistente:                  PROBADO
 RoomResolver:                      INTEGRADO
+Level derivado de Space:           CONTRATO DEFINIDO
 Altura por relink de master:       PROBADA
-2D + 3D misma identidad:           CONSERVADO
-DXF del App::Link:                 PROBADO
+DXF desde PLAN:                    PROBADO
 Arbol idempotente:                 PROBADO
+Barra Espacios y Recintos v0.1:    INTEGRADA
 Arch Equipment:                    COMPARADO
 Sustituir App::Link por Equipment: NO RECOMENDADO ACTUALMENTE
-Renombre a dispositivo...:         PENDIENTE
+Integracion A1 en herramientas:    PROBADA MCP / OPT-IN
+Renombre a dispositivo...:         PENDIENTE POSTERIOR
 Migracion de tomas/apagadores:     NO INICIADA
 Migracion masiva:                  NO AUTORIZADA
 ```
 
 Fin del resumen.
+
+
+## 24. Contrato transversal FA / Espacios / objeto electromecanico
+
+La relacion aprobada entre Workbenches es:
+
+```text
+Facil Arquitectura
+  Space --------------> Device.Space
+  Wall  --------------> Device.Host
+  Door  --------------> Switch.PuertaOrigen
+  Level <--- Space ----> derivacion contextual
+              ^
+              |
+        CRBIMCore.RoomResolver
+```
+
+- FA produce/mantiene la arquitectura.
+- CRBIMCore resuelve el recinto.
+- ElectricCR consume enlaces y no crea un segundo recinto.
+- Sketches, poligonos y Areas legacy pueden ayudar al calculo o compatibilidad,
+  pero no sustituyen una identidad BIM valida.
+- El arbol es una proyeccion de estas relaciones.
+
+### Baseline Upala
+
+Drive conserva el inventario historico de 48 tomacorrientes y 11 apagadores
+legacy `LegacyCompound`. Al ejecutar la integracion, el FCStd vigente ya no los
+contenia (187 objetos, cero dispositivos ElectricCR); esta discrepancia queda
+registrada sin inferir una causa. Las herramientas reales ya pueden crear A1 de
+forma opt-in y preservan una coincidencia legacy sin migrarla.
+
+`Apagador - Rectangle006` no era una puerta mal identificada: la puerta era
+`Window`, el host `Wall` y `Rectangle006` el `AreaRecinto` usado para el Label.
+La diferencia de Placement historica queda sin correccion especulativa.

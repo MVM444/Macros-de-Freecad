@@ -1,9 +1,15 @@
 {
   "schema_version": 1,
-  "captured_at": "2026-08-31T12:03:32-06:00",
+  "captured_at": "2026-09-14T07:49:36-06:00",
   "host": "DESKTOP-5586S7P",
+  "user": "marco",
+  "platform": {
+    "system": "Windows",
+    "release": "10",
+    "version": "10.0.26200",
+    "machine": "AMD64"
+  },
   "freecad": {
-    "version_text": "1.1.3",
     "version_tuple": [
       "1",
       "1",
@@ -13,31 +19,24 @@
       "2026/07/25 04:52:02",
       "grafted,grafted",
       "145529fe741292ff0b3977a01195bf0247425794"
-    ]
+    ],
+    "version_text": "1.1.3"
   },
   "python": {
     "version": "3.11.14 | packaged by conda-forge | (main, Oct 13 2025, 14:00:26) [MSC v.1944 64 bit (AMD64)]",
-    "executable": "C:\\Users\\marco\\AppData\\Local\\Programs\\FreeCAD 1.1\\bin\\FreeCAD.exe"
+    "executable": "C:\\Users\\marco\\AppData\\Local\\Programs\\FreeCAD 1.1\\bin\\freecad.exe"
   },
   "qt": {
     "binding": "PySide6",
-    "binding_version": "6.8.3",
-    "qt_version": "6.8.3"
+    "qt_version": "6.8.3",
+    "binding_version": "6.8.3"
   },
-  "active_workbench": "BIMWorkbench",
-  "active_document": {
-    "name": "_1416_Levantamiento_250424_Depurado",
-    "label": "1416 Levantamiento 250424 Depurado",
-    "objects": 157,
-    "touched": false,
-    "file_name": "C:/Users/marco/OneDrive - Caja Costarricense de Seguro Social/Documentos/FreeCAD/Sucursales/1416 Levantamiento 250424 Depurado.FCStd"
-  },
+  "active_workbench": "ElectricCRWorkbench",
+  "active_document": "",
   "paths": {
     "user_app_data_dir": "C:\\Users\\marco\\AppData\\Roaming\\FreeCAD\\v1-1\\",
     "user_macro_dir": "C:\\Users\\marco\\AppData\\Roaming\\FreeCAD\\v1-1\\Macro\\",
-    "macro_path": "C:/Users/marco/OneDrive - Caja Costarricense de Seguro Social/Documentos/FreeCAD/Macros",
-    "repo": "C:/Users/marco/OneDrive - Caja Costarricense de Seguro Social/Documentos/FreeCAD/Macros/Macros-de-Freecad",
-    "repo_is_onedrive": true
+    "macro_path": "C:/Users/marco/OneDrive - Caja Costarricense de Seguro Social/Documentos/FreeCAD/Macros"
   },
   "workbenches": [
     "AssemblyWorkbench",
@@ -46,7 +45,7 @@
     "CablesWorkbench",
     "DraftWorkbench",
     "DynamicDataWorkbench",
-    "FacilArquitecturaWorkbench",
+    "ElectricCRWorkbench",
     "FemWorkbench",
     "FreeCADMCPAddonWorkbench",
     "GameEngineExportWorkbench",
@@ -68,60 +67,577 @@
     "SpreadsheetWorkbench",
     "SurfaceWorkbench",
     "TechDrawWorkbench",
-    "TestWorkbench"
+    "TestWorkbench",
+    "XRWorkbench"
   ],
   "commands": {
-    "FA_CreateDoorsFromSketch": true,
-    "FA_CreateDoorsBIM": true,
-    "FA_DoorTable": true,
-    "FA_WindowTable": true
-  },
-  "facilarq": {
-    "version": "0.14.11",
-    "build": "2026.08.31.3"
+    "total": 845,
+    "electriccr": [
+      "ElectricCR_Areas_AreaPorClick",
+      "ElectricCR_Areas_AsignarNombreEstandar",
+      "ElectricCR_Areas_CrearMurosEntreEspacios",
+      "ElectricCR_Areas_Guia_Areas",
+      "ElectricCR_Areas_PoligonoFromBoundaryLines",
+      "ElectricCR_Areas_PoligonosRecintosDesdeArchWalls",
+      "ElectricCR_Areas_RectFromBoundaryLines",
+      "ElectricCR_Areas_RectFromLines",
+      "ElectricCR_Areas_RectFromSelection",
+      "ElectricCR_Areas_SustituirAreasPorRectangulosNuevos",
+      "ElectricCR_Areas_calcular_area_y_exportar_a_spreadsheet",
+      "ElectricCR_Cajas_Colocar_Cajas_Octogonales_Entre_Luminarias",
+      "ElectricCR_Cajas_Colocar_Cajas_Octogonales_Mejor_Ubicacion",
+      "ElectricCR_Cajas_Colocar_Cajas_Octogonales_Sobre_Dispositivos",
+      "ElectricCR_Cajas_Conectar_Tomas_a_Cajas_Octogonales_Sobre_Muro",
+      "ElectricCR_Cajas_Insertar_Caja_Octogonal_En_Grupo",
+      "ElectricCR_Cajas_Insertar_Cajas_Octogonales",
+      "ElectricCR_Cajas_Insertar_Cajas_Octogonales_Encima",
+      "ElectricCR_Chat_OpenFolder",
+      "ElectricCR_Chat_Print",
+      "ElectricCR_Chat_Save",
+      "ElectricCR_Conectar_Ajustar_Alimentador_o_Ramal_Manual",
+      "ElectricCR_Conectar_ConectarObjetos_rbol",
+      "ElectricCR_Conectar_ConectarObjetos_rbol_WIRE",
+      "ElectricCR_Conectar_ConectarObjetosdeunGrupo",
+      "ElectricCR_Conectar_ConectarTomasOrdenados",
+      "ElectricCR_Conectar_ConectarTomasSnake",
+      "ElectricCR_Conectar_Conectar_Alimentadores_a_Tablero_Auto",
+      "ElectricCR_Conectar_Conectar_Cajas_a_Tablero_Auto",
+      "ElectricCR_Conectar_Conectar_Circuito_Tomas_Plano_2D",
+      "ElectricCR_Conectar_Conectar_Circuitos_Luminarias_Auto",
+      "ElectricCR_Conectar_Conectar_Circuitos_Ramales_Auto",
+      "ElectricCR_Conectar_Conectar_Circuitos_TCOM_a_Cara_Superior_Tablero",
+      "ElectricCR_Conectar_Conectar_Circuitos_TP_a_Cara_Superior_Tablero",
+      "ElectricCR_Conectar_Conectar_Desconectores_HVAC_a_TP",
+      "ElectricCR_Conectar_Conectar_Luminarias_a_Octogonal_Existente",
+      "ElectricCR_Conectar_Conectar_Octogonales_45",
+      "ElectricCR_Conectar_Conectar_Octogonales_Ortogonal_por_Circuito_TCOM",
+      "ElectricCR_Conectar_Conectar_Octogonales_Ortogonal_por_Circuito_TP",
+      "ElectricCR_Conectar_Conectar_Octogonales_por_Circuito",
+      "ElectricCR_Conectar_Conectar_Tableros_Cara_Superior",
+      "ElectricCR_Conectar_Conectar_objetos_en_C",
+      "ElectricCR_Conectar_Conectar_objetos_en_L",
+      "ElectricCR_Conectar_Normalizar_Grupos_Conexiones",
+      "ElectricCR_Conectar_Panel_Conexiones_Endpoints",
+      "ElectricCR_Conectar_Preparar_Red_Iluminacion_Completa",
+      "ElectricCR_Conectar_Preparar_Red_TCOM_Completa",
+      "ElectricCR_Conectar_Proponer_Rutas_Guia_Auto",
+      "ElectricCR_Conectar_RutaCritica_CircuitoPorCircuito",
+      "ElectricCR_Conectar_RutaCritica_Seleccionados",
+      "ElectricCR_Conectar_Sustituir_Conexion_EMT_por_Linea",
+      "ElectricCR_Conectar_conectar_objetos_en_eSe",
+      "ElectricCR_Conectar_conectar_objetos_por_bordes",
+      "ElectricCR_Conectar_conectar_objetos_por_bordes_WIRE",
+      "ElectricCR_Conectar_conectar_puntos_seleccionados",
+      "ElectricCR_Conectar_crear_conector",
+      "ElectricCR_Conectar_crear_conector_flexible",
+      "ElectricCR_Conectar_medir_distancia_y_dibujar_ruta",
+      "ElectricCR_Conectar_medir_distancia_y_dibujar_ruta_independiente",
+      "ElectricCR_Configuracion_del_proyecto_Asignar_Tableros_y_Circuitos",
+      "ElectricCR_Configuracion_del_proyecto_Calculo_Circuitos_PanelSchedule",
+      "ElectricCR_Configuracion_del_proyecto_Compactar_Proyecto_ElectricCR",
+      "ElectricCR_Configuracion_del_proyecto_Crear_Arbol_Proyecto_Electrico",
+      "ElectricCR_Configuracion_del_proyecto_Exportar_DXF_DWG_Plano_Trabajo",
+      "ElectricCR_Configuracion_del_proyecto_Exportar_Imagen_Planta",
+      "ElectricCR_Configuracion_del_proyecto_Exportar_Spreadsheets_a_Excel",
+      "ElectricCR_Configuracion_del_proyecto_Gestionar_Registro_Electrico",
+      "ElectricCR_Configuracion_del_proyecto_Gestionar_Visibilidad_ElectricCR",
+      "ElectricCR_Configuracion_del_proyecto_Mover_Seleccion_a_Circuito",
+      "ElectricCR_Configuracion_del_proyecto_Mover_Seleccion_a_Grupo",
+      "ElectricCR_Configuracion_del_proyecto_Multirenombrar_ElectricCR",
+      "ElectricCR_Configuracion_del_proyecto_Ordenar_Arbol_Electrico_Auto",
+      "ElectricCR_Configuracion_del_proyecto_Ordenar_Grupos_ElectricCR",
+      "ElectricCR_Configuracion_del_proyecto_Organizar_Documento_Electrico",
+      "ElectricCR_Configuracion_del_proyecto_Registrar_Acometida_y_Ruta",
+      "ElectricCR_Configuracion_del_proyecto_UnifilarInteractivoTableros",
+      "ElectricCR_DemoA1_Audit",
+      "ElectricCR_DemoA1_Create",
+      "ElectricCR_Deteccion_ColocarDetectores_NFPA",
+      "ElectricCR_Deteccion_ColocarDetectores_Poligonos_NFPA",
+      "ElectricCR_ElectricCR_Demo_ElectricCR_A1",
+      "ElectricCR_ElectricCR_Demo_ElectricCR_A1_Prueba_Arquitectura",
+      "ElectricCR_ElectricCR_Insertar_Tablero",
+      "ElectricCR_Iluminaci_n_Actualizar_Iluminacion_Completa",
+      "ElectricCR_Iluminaci_n_Asignar_Luminarias_Apagadores",
+      "ElectricCR_Iluminaci_n_Asignar_Luminarias_Circuitos",
+      "ElectricCR_Iluminaci_n_Asignar_Tipo_Luminaria_Areas",
+      "ElectricCR_Iluminaci_n_AsisCSV2Pasos",
+      "ElectricCR_Iluminaci_n_ColocarApagadoresEnPuertas",
+      "ElectricCR_Iluminaci_n_ColocarApagadores_Sketch",
+      "ElectricCR_Iluminaci_n_ColocarLuminarias_Link",
+      "ElectricCR_Iluminaci_n_ColocarLuminarias_Objeto",
+      "ElectricCR_Iluminaci_n_Exportar_Luminarias_CSV_ElectricCR",
+      "ElectricCR_Iluminaci_n_Guia_Iluminacion",
+      "ElectricCR_Iluminaci_n_Hoja_Iluminaci_n",
+      "ElectricCR_Iluminaci_n_Luminaria_Link_Sketch",
+      "ElectricCR_Iluminaci_n_Organizar_Luminarias_por_Circuito_y_Apagador",
+      "ElectricCR_Iluminaci_n_Recalcular_Distribucion_Luminarias_Areas",
+      "ElectricCR_Iluminaci_n_Reemplazar_Luminaria",
+      "ElectricCR_MacroLauncher",
+      "ElectricCR_Macros_Programaci_n_CapturarArbolYPrompt",
+      "ElectricCR_ModePanel",
+      "ElectricCR_MoveToOppositeWallSide",
+      "ElectricCR_Objetos_Alinear",
+      "ElectricCR_Objetos_BorrarCadena",
+      "ElectricCR_Objetos_ContarObjetos",
+      "ElectricCR_Objetos_Copiar_Formato_Electrico",
+      "ElectricCR_Objetos_Fix_Link_Transform_FreeCAD",
+      "ElectricCR_Objetos_Habilitar_Transform_en_Links_Dispositivos",
+      "ElectricCR_Objetos_Insertar_Dispositivo",
+      "ElectricCR_Objetos_RenombrarDi_logo",
+      "ElectricCR_Objetos_Resolve_Link_From_Selection",
+      "ElectricCR_Objetos_Rotar90",
+      "ElectricCR_Objetos_cambiar_altura_y_rotacion_objetos",
+      "ElectricCR_Objetos_cuenta_cu_ntos_objetos_est_n_seleccionados",
+      "ElectricCR_Reload",
+      "ElectricCR_Root_MEPWorkbenchCR_Extraer_HVAC_CAD",
+      "ElectricCR_Tableros_Electrical_Schedule_Base",
+      "ElectricCR_Tableros_Insertar_Desconectores_Aire_Acondicionado",
+      "ElectricCR_Tomacorrientes_Corregir_Desplazamiento_Reemplazo_Tomas",
+      "ElectricCR_Tomacorrientes_CrearCircuitosGeneralesPorParedYRecinto",
+      "ElectricCR_Tomacorrientes_Etiquetar_Circuitos_Secuencial",
+      "ElectricCR_Tomacorrientes_InsertarTomacorrientesenPoligonos_objeto_toma",
+      "ElectricCR_Tomacorrientes_Insertar_Etiqueta_Circuito",
+      "ElectricCR_Tomacorrientes_Insertar_Tomacorriente",
+      "ElectricCR_Tomacorrientes_InstalarTomacorrientesEnParedesBIM",
+      "ElectricCR_Tomacorrientes_Mover_Tomacorrientes_a_grupo",
+      "ElectricCR_Tomacorrientes_Ordenar_Tomas_XY",
+      "ElectricCR_Tomacorrientes_Ordenar_Tomas_XY_Horario",
+      "ElectricCR_Tomacorrientes_Pintar_Tomacorrientes_Computo_Rojo",
+      "ElectricCR_Tomacorrientes_Reemplazar_Tomacorrientes_Registro",
+      "ElectricCR_Tomacorrientes_Renombrar_Circuitos_Dialogo",
+      "ElectricCR_Tomacorrientes_RotarTomacorriente",
+      "ElectricCR_Tomacorrientes_contar_tomacorrientes_y_exportar",
+      "ElectricCR_Tomacorrientes_insertar_tomacorrientes_en_borde",
+      "ElectricCR_UsageStats"
+    ],
+    "mep_hvac": [],
+    "gameexport": [],
+    "facilarq": []
   },
   "modules": {
-    "FacilArquitecturaWB.InitGui": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\FacilArquitecturaWB\\InitGui.py",
-    "FacilArquitecturaWB.core.constants": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\FacilArquitecturaWB\\core\\constants.py",
-    "FacilArquitecturaWB.core.opening_utils": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\FacilArquitecturaWB\\core\\opening_utils.py",
-    "FacilArquitecturaWB.core.door_corner_utils": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\FacilArquitecturaWB\\core\\door_corner_utils.py",
-    "FacilArquitecturaWB.core.door_table_utils": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\FacilArquitecturaWB\\core\\door_table_utils.py",
-    "FacilArquitecturaWB.core.reloadable_command": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\FacilArquitecturaWB\\core\\reloadable_command.py",
-    "FacilArquitecturaWB.commands.cmd_create_doors_bim": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\FacilArquitecturaWB\\commands\\cmd_create_doors_bim.py"
+    "MEPWorkbenchCR": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\MEPWorkbenchCR\\__init__.py",
+    "MEPWorkbenchCR.MEP": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\MEPWorkbenchCR\\MEP\\__init__.py",
+    "MEPWorkbenchCR.Init": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\MEPWorkbenchCR\\Init.py",
+    "GameEngineExportWB": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\__init__.py",
+    "GameEngineExportWB.ui": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\ui\\__init__.py",
+    "GameEngineExportWB.i18n": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\i18n.py",
+    "GameEngineExportWB.commands": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\__init__.py",
+    "GameEngineExportWB.core": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\__init__.py",
+    "GameEngineExportWB.core.material_assignments": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\material_assignments.py",
+    "GameEngineExportWB.core.exporter_x3d": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\exporter_x3d.py",
+    "GameEngineExportWB.core.lights": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\lights.py",
+    "GameEngineExportWB.core.persist": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\persist.py",
+    "GameEngineExportWB.core.gamestart": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\gamestart.py",
+    "GameEngineExportWB.core.lighting_profiles": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\lighting_profiles.py",
+    "GameEngineExportWB.core.web_preview": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\web_preview.py",
+    "GameEngineExportWB.core.json_ai": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\json_ai.py",
+    "GameEngineExportWB.ui.panel_info": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\ui\\panel_info.py",
+    "GameEngineExportWB.ui.output_defaults": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\ui\\output_defaults.py",
+    "GameEngineExportWB.ui.panel_export": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\ui\\panel_export.py",
+    "GameEngineExportWB.commands.cmd_add_light_properties": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_add_light_properties.py",
+    "GameEngineExportWB.commands.cmd_analyze_x3d": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_analyze_x3d.py",
+    "GameEngineExportWB.commands.cmd_bim_doors_windows": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_bim_doors_windows.py",
+    "GameEngineExportWB.core.castle_diagnostics": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\castle_diagnostics.py",
+    "GameEngineExportWB.commands.cmd_castle_diagnostics": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_castle_diagnostics.py",
+    "GameEngineExportWB.commands.cmd_export_and_launch": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_export_and_launch.py",
+    "GameEngineExportWB.commands.cmd_help": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_help.py",
+    "GameEngineExportWB.core.example_layouts": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\example_layouts.py",
+    "GameEngineExportWB.core.maze_generator": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\maze_generator.py",
+    "GameEngineExportWB.core.quick_examples": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\quick_examples.py",
+    "GameEngineExportWB.core.json_importer": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\json_importer.py",
+    "GameEngineExportWB.commands.cmd_import_json_example": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_import_json_example.py",
+    "GameEngineExportWB.commands.cmd_open_panel": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_open_panel.py",
+    "GameEngineExportWB.commands.cmd_quick_examples": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_quick_examples.py",
+    "GameEngineExportWB.commands.cmd_reload_workbench": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_reload_workbench.py",
+    "GameEngineExportWB.commands.cmd_roof_quick_example": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_roof_quick_example.py",
+    "GameEngineExportWB.ui.workbench": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\ui\\workbench.py",
+    "ElectricCR": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\__init__.py",
+    "ElectricCR.usage_log": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\usage_log.py",
+    "ElectricCR.InitGui": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\InitGui.py",
+    "ElectricCR.electriccr": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\electriccr\\__init__.py",
+    "ElectricCR.ui": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\ui\\__init__.py",
+    "ElectricCR.ui.plan_selection": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\ui\\plan_selection.py",
+    "ElectricCR.electriccr.features.caja_emt_octogonal": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\electriccr\\features\\caja_emt_octogonal.py",
+    "ElectricCR.electriccr.features.tablero_electrico": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\electriccr\\features\\tablero_electrico.py",
+    "ElectricCR.electriccr.features": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\electriccr\\features\\__init__.py",
+    "ElectricCR.electriccr.features.objeto_toma_uno": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\electriccr\\features\\objeto_toma_uno.py",
+    "ElectricCR.commands": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\commands\\__init__.py",
+    "ElectricCR.commands.wall_side": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\commands\\wall_side.py",
+    "ElectricCR.commands.demo_electriccr": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\commands\\demo_electriccr.py",
+    "ElectricCR.ui.mode_manager": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\ui\\mode_manager.py",
+    "ElectricCR.ui.mode_panel": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\ui\\mode_panel.py",
+    "ElectricCR.commands.macros": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\commands\\macros.py",
+    "ElectricCR.catalog": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\catalog.py",
+    "ElectricCR.commands.macro_launcher": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\commands\\macro_launcher.py",
+    "ElectricCR.chatlog": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\chatlog.py",
+    "ElectricCR.commands.chatlog_cmds": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\commands\\chatlog_cmds.py",
+    "ElectricCR.commands.usage_stats_cmds": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\commands\\usage_stats_cmds.py",
+    "ElectricCR.commands.reload": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\commands\\reload.py",
+    "ElectricCR.ui.mode_combo": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\ui\\mode_combo.py",
+    "ElectricCR.electriccr.demo.electric_demo_core": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\electriccr\\demo\\electric_demo_core.py",
+    "ElectricCR.electriccr.demo": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\electriccr\\demo\\__init__.py",
+    "ElectricCR.electriccr.semantic.device_core": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\electriccr\\semantic\\device_core.py",
+    "ElectricCR.electriccr.semantic": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\electriccr\\semantic\\__init__.py",
+    "ElectricCR.electriccr.semantic.freecad_adapter": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\electriccr\\semantic\\freecad_adapter.py",
+    "ElectricCR.electriccr.demo.electric_demo_freecad": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\electriccr\\demo\\electric_demo_freecad.py",
+    "ElectricCR.electriccr.demo.electric_demo_audit": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\electriccr\\demo\\electric_demo_audit.py",
+    "ElectricCR.electriccr.features.plan_lifecycle": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\electriccr\\features\\plan_lifecycle.py",
+    "ElectricCR.electriccr.features.plan_live_sync": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\electriccr\\features\\plan_live_sync.py"
   },
   "key_files": {
-    "FacilArquitecturaWB/InitGui.py": {
-      "sha256": "A437D0BE473B19BA8510661629108FDFB09DD61E2DA141548F201DA9F8F54CDC",
-      "size": 11090
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\MEPWorkbenchCR\\__init__.py": {
+      "sha256": "b954a56d6f7f884d813cbee2dec037e24db03a402ec3ad63c4dc7dc5b67415b6",
+      "size": 33,
+      "mtime": 1781299828.671404
     },
-    "FacilArquitecturaWB/core/constants.py": {
-      "sha256": "5C517A8F89933817D8862DEBC27AB5F1D7E8F8FBD45555D2A98D813CA6B391A4",
-      "size": 1788
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\MEPWorkbenchCR\\MEP\\__init__.py": {
+      "sha256": "f5be72cf798fc8de36ac28ca1b0b6e4231e2c80f7fb14d25d9189dc554604064",
+      "size": 41,
+      "mtime": 1781299828.656561
     },
-    "FacilArquitecturaWB/core/opening_utils.py": {
-      "sha256": "548E6D3D03A0B570B926D4E65ABA33A573AC320BEBC143B189449E554A3AE034",
-      "size": 62790
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\MEPWorkbenchCR\\Init.py": {
+      "sha256": "27c9cda8d8aa9c12bf29de8cdec6e17fadf3abdf495f78e2dc8f29b698c9076b",
+      "size": 823,
+      "mtime": 1781299828.656561
     },
-    "FacilArquitecturaWB/core/door_corner_utils.py": {
-      "sha256": "256EAD081EA7637AEFDE7706FAE60C1AA41080CA7FA09242A521855B336444FE",
-      "size": 22565
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\__init__.py": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0,
+      "mtime": 1773266474.436
     },
-    "FacilArquitecturaWB/core/door_table_utils.py": {
-      "sha256": "000A846E049B102D998AD798CC3918A95CC85BE54C49C7A5CF1861731FCA9CC7",
-      "size": 37237
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\ui\\__init__.py": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0,
+      "mtime": 1773266474.45
     },
-    "FacilArquitecturaWB/core/reloadable_command.py": {
-      "sha256": "1A029AC137FD67557380BAF38D0CB63248CBAD7AE140EC0EC2B0029239CDD8AE",
-      "size": 1152
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\i18n.py": {
+      "sha256": "68a16ac73941e043964b76161f257cf33f26b25b61e5b96112604e4a3c621bfc",
+      "size": 5606,
+      "mtime": 1787363026.9796593
     },
-    "FacilArquitecturaWB/commands/cmd_create_doors_bim.py": {
-      "sha256": "E96B98CAEC6EF1A67A4E39DB4554F287FF71C497E4359F7645F3619C8BC0A8B6",
-      "size": 6840
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\__init__.py": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0,
+      "mtime": 1773266752.249
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\__init__.py": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0,
+      "mtime": 1773266474.44
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\material_assignments.py": {
+      "sha256": "f5d918f892a801ad085b2aa86591561f5e913298cc0d3f86c001f527b8fa3229",
+      "size": 9183,
+      "mtime": 1787181799.699
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\exporter_x3d.py": {
+      "sha256": "4c8ba5e45d94390f19945eb6ff86c74f05c3b4e593e1b3c5886431b8aa3ad133",
+      "size": 109372,
+      "mtime": 1788287151.18
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\lights.py": {
+      "sha256": "7de44496b90330ea44b33b2cf690ee38f0943975017b35cfb5ce7c3d7f18e6e9",
+      "size": 51543,
+      "mtime": 1786743358.497
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\persist.py": {
+      "sha256": "c6fbb14d8878b79f4db1b3085040cd854ce675ce834ccbf47ae11fd3cd2b0abe",
+      "size": 2130,
+      "mtime": 1787363029.021213
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\gamestart.py": {
+      "sha256": "7a08eacfb1a86df6c713dda6bd61a373bed0c5ed1a7aaae16aec8ddad2b19fb9",
+      "size": 13031,
+      "mtime": 1787177948.992
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\lighting_profiles.py": {
+      "sha256": "212e12677ee8a559573cacb11d07ba5bdc6839184dd0dc6f3bfa0d832f24462a",
+      "size": 7014,
+      "mtime": 1786769586.494
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\web_preview.py": {
+      "sha256": "2f7284acfeeaf93fc5754bd3b67e3db86478a9014fb8aa203988f37f4d106279",
+      "size": 26799,
+      "mtime": 1787363030.0496426
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\json_ai.py": {
+      "sha256": "7a5986b47fc953505b6251ac42969feea965e14bb07d8e1e38b3bc16648624d4",
+      "size": 4156,
+      "mtime": 1787320663.362
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\ui\\panel_info.py": {
+      "sha256": "000690ecc3170fb89863585209f722b85a7f0b7843434a3ba841656eeb92df03",
+      "size": 36391,
+      "mtime": 1787418299.603
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\ui\\output_defaults.py": {
+      "sha256": "77528637aad6398ef87fcd047a8be83b234ac47ae38391515f9e0e96f5d1e2d6",
+      "size": 4264,
+      "mtime": 1787363027.9808986
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\ui\\panel_export.py": {
+      "sha256": "ceaf1e2eee3cde05ce38b3315ad1dc4c5ff80b3cb4804001f96c5012a88a9488",
+      "size": 167779,
+      "mtime": 1787418280.198
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_add_light_properties.py": {
+      "sha256": "88c40dc03dbd5e45f23f910b36a7cfa339c752d34bb04735958980ca6e9b25d5",
+      "size": 23098,
+      "mtime": 1787182287.789
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_analyze_x3d.py": {
+      "sha256": "677c7dafb5a133bb6ae43cad850c7f1ff3d2f3c10a694044e65383b212d4153f",
+      "size": 8862,
+      "mtime": 1787363132.8639402
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_bim_doors_windows.py": {
+      "sha256": "b88a2958374ff89f33e8c18e097c3a2db9bea17d2a63a8891b9a2b52f1e0f14e",
+      "size": 1889,
+      "mtime": 1787363031.0193546
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\castle_diagnostics.py": {
+      "sha256": "9498c2375d60031c279ad63111135081148bc2b946b249fed68664b954bbe240",
+      "size": 25462,
+      "mtime": 1787371571.0530977
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_castle_diagnostics.py": {
+      "sha256": "172b621d8001baa35fcab39dd5344f8ac2fb89a52828a68af8aaf48b3bb64430",
+      "size": 11680,
+      "mtime": 1787363133.8508754
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_export_and_launch.py": {
+      "sha256": "9f54f2a10bbdfcfbc46accfe4776aaa10f53b17f7d11035cd50a13effe75ce75",
+      "size": 17053,
+      "mtime": 1787418291.321
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_help.py": {
+      "sha256": "d8ed8f97469a0615d94df068d97441af313c982fcf977cdaf61445f947c9a781",
+      "size": 2289,
+      "mtime": 1787322663.562
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\example_layouts.py": {
+      "sha256": "4624cf67a21890870258b5fac5412c791ddd6be8a7996dbc408eba1ffc112442",
+      "size": 3709,
+      "mtime": 1787177959.397
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\maze_generator.py": {
+      "sha256": "b04472efbf258be320b6a7163fcb78b21185c1c5fcb428324be565a3b7c3bc17",
+      "size": 6508,
+      "mtime": 1786752025.278
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\quick_examples.py": {
+      "sha256": "cd15fa09c2fe8e16e86f94a9979f09c0f3c8bf9204de02f42f8ad057c8fb2470",
+      "size": 58327,
+      "mtime": 1787320618.527
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\json_importer.py": {
+      "sha256": "b4e75b1643503f1bc46d996a218d15dc8d2c50ba0a096efccb4e00841ff17ec6",
+      "size": 9113,
+      "mtime": 1786752010.708
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_import_json_example.py": {
+      "sha256": "f51e1ee917e8f2b4fc9fe09b54656def4c04da20d756f7f95de9bba0a81e62dc",
+      "size": 8690,
+      "mtime": 1787320625.336
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_open_panel.py": {
+      "sha256": "5d29711e4906babb03b060c4bd2b9c6c035952ea2834b80135b502920e0c50f6",
+      "size": 3787,
+      "mtime": 1787322656.295
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_quick_examples.py": {
+      "sha256": "8d084606fad70c3eebde12f0d519b607ebbee836760617e588a3cc6a8d1c066a",
+      "size": 13328,
+      "mtime": 1787320610.807
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_reload_workbench.py": {
+      "sha256": "ae6af1a115d54e451b648d711c3b9222d4152d5514be9209aaf82aef943e79ff",
+      "size": 4741,
+      "mtime": 1787322649.595
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_roof_quick_example.py": {
+      "sha256": "e8d9784054bdf2be7bf1b6f0b75fac6edec9539a0cafc77506a2fecf9bd39ce0",
+      "size": 1871,
+      "mtime": 1787363031.99761
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\ui\\workbench.py": {
+      "sha256": "37b1bdb01596fe461b8456836df191b53b638ac81d3de63864767f09b7903a7a",
+      "size": 6758,
+      "mtime": 1787366055.8847888
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\__init__.py": {
+      "sha256": "cc20cc029105ee7e399c776ffaac5e2a9e22eb89e2de64a0a768902e06563c3d",
+      "size": 2475,
+      "mtime": 1781299828.6200218
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\usage_log.py": {
+      "sha256": "2f624c1fe4c067fdef4e20cdbaad6fc189239d249b72f06e7fbef0efb3aebfac",
+      "size": 9210,
+      "mtime": 1786557785.9285827
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\InitGui.py": {
+      "sha256": "7b703cd874d5c0aed697c04649c8cd8d35db63096a69804d57a255288bcd9825",
+      "size": 35304,
+      "mtime": 1789014443.107
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\electriccr\\__init__.py": {
+      "sha256": "5916e1d445612c2df9a1620f92c37b0401bef2f293e338984d9b0ab39a08b567",
+      "size": 16,
+      "mtime": 1758240756.7106338
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\ui\\__init__.py": {
+      "sha256": "fae30978b9cc3562ea379c7e2d31d23048cce8d36ec5cc74c496091e6a692dfd",
+      "size": 239,
+      "mtime": 1786041102.613632
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\ui\\plan_selection.py": {
+      "sha256": "448b8818431b270f963c23b2bf023a40af2738d9407958fd19ede479c2c56ea4",
+      "size": 7593,
+      "mtime": 1788897863.9067218
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\electriccr\\features\\caja_emt_octogonal.py": {
+      "sha256": "0dd9b104bf9e72107e830146d6e0d43c2f416d7c76d0a19286a03ecea0f2bada",
+      "size": 17613,
+      "mtime": 1773327056.9162455
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\electriccr\\features\\tablero_electrico.py": {
+      "sha256": "37939d8dbb749b23453dcc44852080bf83f577c26c5c62ac708ac0786fc6522d",
+      "size": 77330,
+      "mtime": 1785466629.3879533
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\electriccr\\features\\__init__.py": {
+      "sha256": "21e830d42416b7b67eb1bb9784903962997429fd58f57b72b47160169551724d",
+      "size": 642,
+      "mtime": 1781299828.6245694
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\electriccr\\features\\objeto_toma_uno.py": {
+      "sha256": "bc6d82c2abba84bb98ec6a4e68afc8db37d2cd4f42e72612d6d6ebcf3c36c173",
+      "size": 60852,
+      "mtime": 1788666154.734
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\commands\\__init__.py": {
+      "sha256": "3bd093d41d85f9c541f1e953d04a0225b82471f7e3be59aab5ea9abece208838",
+      "size": 25,
+      "mtime": 1757456733.8658717
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\commands\\wall_side.py": {
+      "sha256": "d7c8486ddffaf3b3a6cec92ba2b93fea30ba64add648f0b2cef78739c700f4ec",
+      "size": 15035,
+      "mtime": 1785422813.3612053
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\commands\\demo_electriccr.py": {
+      "sha256": "aef0742939e380966b1ca8ac9ca18503fe53b676d0c939a627f2363963b5f260",
+      "size": 4248,
+      "mtime": 1789057541.608
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\ui\\mode_manager.py": {
+      "sha256": "2d8ccf5ec2e07e657e5fed56255af70f952e79438e4878291251ffba5e3db482",
+      "size": 11791,
+      "mtime": 1785451437.9142413
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\ui\\mode_panel.py": {
+      "sha256": "66a39bb13480f0d1d82789804f40e35c8f584c7605fc48b14082ef2d18c92c8c",
+      "size": 6955,
+      "mtime": 1783438004.3289323
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\commands\\macros.py": {
+      "sha256": "d33329c68bac60f8700f86d86ec3d5491fec3d0c4e2857d459046ceb9adca519",
+      "size": 23908,
+      "mtime": 1786557296.938784
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\catalog.py": {
+      "sha256": "f9a390d77a01067bd1fea19fe3ab13ef7cb1185538ab38a4654c758cffff39d4",
+      "size": 18760,
+      "mtime": 1786561193.5775216
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\commands\\macro_launcher.py": {
+      "sha256": "b2c3ea9bd7dc124624752d0b0891569c7113bc95cbbeefea81c61ad8d54338ab",
+      "size": 31714,
+      "mtime": 1786561068.0756712
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\chatlog.py": {
+      "sha256": "cd05d09fa95c60ee359f34564e8763471505eaa9ac7926f319293896dac41c6e",
+      "size": 2123,
+      "mtime": 1758122802.2325203
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\commands\\chatlog_cmds.py": {
+      "sha256": "075f51e8eb9c777fe9a9240a74c5ec6381b4220f8dd44b912576d43c7554dec5",
+      "size": 6592,
+      "mtime": 1781299828.621022
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\commands\\usage_stats_cmds.py": {
+      "sha256": "949bbbbb1bbeb64c4acb3049a88470352c4b198b56cc7b8697856a5b7dc21541",
+      "size": 5925,
+      "mtime": 1781299828.6220224
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\commands\\reload.py": {
+      "sha256": "a4710b2fa1e02d8f9e87ff91e718d8fff582e14082c9ce3ec13a123ecb172c51",
+      "size": 3061,
+      "mtime": 1771525995.284704
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\ui\\mode_combo.py": {
+      "sha256": "1ee94d7640724608a862a45bfebd671aef34620494dddca55e501a5c479d878e",
+      "size": 5789,
+      "mtime": 1783438310.095157
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\electriccr\\demo\\electric_demo_core.py": {
+      "sha256": "10daa9740c40f5a0d3737cb8a85e50b02faa3935bd47774ca4c37f0d63f3bcd2",
+      "size": 6525,
+      "mtime": 1789014373.684
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\electriccr\\demo\\__init__.py": {
+      "sha256": "93a7190b3195b682f2501ac1203fb62e98e03c63164b02dce4604d646ee7a8f7",
+      "size": 256,
+      "mtime": 1789014398.475
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\electriccr\\semantic\\device_core.py": {
+      "sha256": "5ca8439e8f6b759c05cb708da1f6b9ea1887d21c57a6adb21edea14d943f78da",
+      "size": 3293,
+      "mtime": 1788327857.5648017
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\electriccr\\semantic\\__init__.py": {
+      "sha256": "6d20a8dea38cf7bfa59c94be32215e910a57c8df4e593296db0df0d37a71cad5",
+      "size": 348,
+      "mtime": 1788327857.5632977
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\electriccr\\semantic\\freecad_adapter.py": {
+      "sha256": "498aa1264947763055e421c030ae63c2f32bf9e49ddf02d7cecb755155b8a43b",
+      "size": 22740,
+      "mtime": 1788461066.075
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\electriccr\\demo\\electric_demo_freecad.py": {
+      "sha256": "3f199c02a666417e05312f3845e7f31420bdc0d34d0aa3fe0dc75297d106681d",
+      "size": 14864,
+      "mtime": 1789017336.211
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\electriccr\\demo\\electric_demo_audit.py": {
+      "sha256": "f8ce2c073b34381dd8f74fd9a324dc461e99e3ed772aadec0f4f5fba238cdf88",
+      "size": 12207,
+      "mtime": 1789014720.406
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\electriccr\\features\\plan_lifecycle.py": {
+      "sha256": "dde3c80910d194b5e0dfda1e442b7d5f8c829bfb0512ca8d012675ddf9c5fde3",
+      "size": 11679,
+      "mtime": 1789393306.276376
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\electriccr\\features\\plan_live_sync.py": {
+      "sha256": "9edacf4268c18d7af54e3ec845fce892c5514b1e0a55367382f2b91dc277c1fb",
+      "size": 7875,
+      "mtime": 1789393113.0483992
     }
   },
-  "notes": [
-    "Cierre tecnico FA Puertas BIM: baseline 0.14.11 / 2026.08.31.3 verificada por MCP.",
-    "GeometryIndex 1 registrado como limitacion visual conocida; no se modifico el algoritmo durante el cierre.",
-    "Copia temporal cerrada y eliminada; original unico abierto con 157 objetos y sin cambios pendientes."
-  ]
+  "onedrive_detected": true,
+  "a1_lifecycle_validation": {
+    "evidence": "ElectricCR/tests/evidence/2026-09-14_a1_undo_lifecycle",
+    "status": "PASS_TECHNICAL",
+    "stages": 19,
+    "transacting_api": "Transacting",
+    "pending_api": "HasPendingTransaction",
+    "native_crash_reproduced_before": true,
+    "native_crash_after": false,
+    "publication": "CLOSURE_PUSH_SUCCESS",
+    "acceptance": "ACEPTADO_BY_MARCO_2026-09-14",
+    "closure_commit": "38d4d0d140a0ea67785b177964664221b4d4a5b6",
+    "closure_branch": "codex/cierre-a1-20260909"
+  }
 }

@@ -1,0 +1,103 @@
+{
+  "files": [
+    {
+      "file": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Programación\\RecuperarPanelTareas.FCMacro",
+      "bytes": 10909,
+      "mtime": 1789084456.807,
+      "sha256": "9d43a64ea983f073b76e371951b5a1fad92995fd866267bcb827e3901f203760",
+      "syntax": "PASS"
+    },
+    {
+      "file": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Programación\\programacion_toolbar.py",
+      "bytes": 6664,
+      "mtime": 1789084399.783,
+      "sha256": "d95ae5f98c7a23a076801db741d437ffa25895898e8c04af81d6b09a820b3a21",
+      "syntax": "PASS"
+    },
+    {
+      "file": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Programación\\programacion_common.py",
+      "bytes": 3811,
+      "mtime": 1786543952.630758,
+      "sha256": "29556b9b73f9bc9b664d5a21d77349914fcad957e4a1eacc8e8c85a7be97941d",
+      "syntax": "PASS"
+    },
+    {
+      "file": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Programación\\UI_Audit_FreeCAD.FCMacro",
+      "bytes": 7984,
+      "mtime": 1786407823.1179266,
+      "sha256": "693f75a324e56db060d9f36b07a7189f3b40f7040b4cc637c13f00f84d84098e",
+      "syntax": "PASS"
+    },
+    {
+      "file": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Programación\\RecuperarPanelTareas.svg",
+      "bytes": 787,
+      "mtime": 1789084412.388,
+      "sha256": "331678f2de93d73e306eb73d5d5ec1d38abd7b315702b37ac79efd1981c267c9",
+      "syntax": "n/a"
+    }
+  ],
+  "controller_folder": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Programación",
+  "toolbars": 1,
+  "toolbar_visible": true,
+  "actions": [
+    {
+      "text": "Copiar ultimo minuto",
+      "visible": true,
+      "enabled": true
+    },
+    {
+      "text": "Capturar arbol y prompt",
+      "visible": true,
+      "enabled": true
+    },
+    {
+      "text": "Copiar resumen de seleccion",
+      "visible": true,
+      "enabled": true
+    },
+    {
+      "text": "Extraer propiedades del objeto",
+      "visible": true,
+      "enabled": true
+    },
+    {
+      "text": "Auditar interfaz de FreeCAD",
+      "visible": true,
+      "enabled": true
+    },
+    {
+      "text": "Recuperar Tasks",
+      "visible": true,
+      "enabled": true
+    },
+    {
+      "text": "Capturar coordenadas 3D",
+      "visible": true,
+      "enabled": true
+    },
+    {
+      "text": "Abrir directorios recurrentes",
+      "visible": true,
+      "enabled": true
+    },
+    {
+      "text": "Ollama Asistente Local",
+      "visible": true,
+      "enabled": true
+    }
+  ],
+  "version": [
+    "1",
+    "1",
+    "3",
+    "20260725 (Git shallow)",
+    "Unknown",
+    "2026/07/25 04:52:02",
+    "grafted,grafted",
+    "145529fe741292ff0b3977a01195bf0247425794"
+  ],
+  "qt": "6.8.3",
+  "python": "3.11.14 | packaged by conda-forge | (main, Oct 13 2025, 14:00:26) [MSC v.1944 64 bit (AMD64)]",
+  "host": "DESKTOP-5586S7P",
+  "pid": 22684
+}

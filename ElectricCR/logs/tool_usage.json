@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "updated": "2026-09-02T08:07:40",
+  "updated": "2026-09-14T21:36:51",
   "tools": {
     "Draft_Line": {
       "count": 268,
@@ -65,12 +65,19 @@
       }
     },
     "Draft_Move": {
-      "count": 653,
-      "last_ts": "2026-06-12T11:28:10",
+      "count": 784,
+      "last_ts": "2026-09-10T12:03:41",
       "last_meta": {
         "source": "toolbar_action",
+        "usage_kind": "real",
         "text": "Mover"
-      }
+      },
+      "historical_count": 653,
+      "real_count": 131,
+      "test_count": 0,
+      "first_ts": "2026-09-03T18:04:11",
+      "last_real_ts": "2026-09-10T12:03:41",
+      "last_session_id": "ed12bc427e4a"
     },
     "Draft_AddToGroup": {
       "count": 220,
@@ -126,24 +133,34 @@
       "last_session_id": "7ddb29036bab"
     },
     "Draft_Snap_Endpoint": {
-      "count": 189,
-      "last_ts": "2026-08-10T10:11:46",
+      "count": 193,
+      "last_ts": "2026-09-05T16:30:25",
       "last_meta": {
         "source": "toolbar_action",
+        "usage_kind": "real",
         "text": "Snap Endpoint"
       },
       "first_ts": "2026-07-08T10:54:57",
-      "last_session_id": "c72eb13b38dd"
+      "last_session_id": "ebb23be363ad",
+      "historical_count": 189,
+      "real_count": 4,
+      "test_count": 0,
+      "last_real_ts": "2026-09-05T16:30:25"
     },
     "Draft_Snap_Perpendicular": {
-      "count": 105,
-      "last_ts": "2026-08-10T09:33:00",
+      "count": 111,
+      "last_ts": "2026-09-05T19:50:50",
       "last_meta": {
         "source": "toolbar_action",
+        "usage_kind": "real",
         "text": "Snap Perpendicular"
       },
       "first_ts": "2026-07-08T10:54:56",
-      "last_session_id": "59e5aeb7a3e7"
+      "last_session_id": "c9a388ad505b",
+      "historical_count": 105,
+      "real_count": 6,
+      "test_count": 0,
+      "last_real_ts": "2026-09-05T19:50:50"
     },
     "Draft_Snap_Intersection": {
       "count": 63,
@@ -231,14 +248,19 @@
       }
     },
     "Draft_Snap_Midpoint": {
-      "count": 80,
-      "last_ts": "2026-08-10T07:53:42",
+      "count": 84,
+      "last_ts": "2026-09-05T16:30:18",
       "last_meta": {
         "source": "toolbar_action",
+        "usage_kind": "real",
         "text": "Snap Midpoint"
       },
       "first_ts": "2026-08-10T07:53:42",
-      "last_session_id": "c72eb13b38dd"
+      "last_session_id": "ebb23be363ad",
+      "historical_count": 80,
+      "real_count": 4,
+      "test_count": 0,
+      "last_real_ts": "2026-09-05T16:30:18"
     },
     "Draft_Split": {
       "count": 40,
@@ -511,12 +533,19 @@
       "last_session_id": "c72eb13b38dd"
     },
     "Draft_Polygon": {
-      "count": 4,
-      "last_ts": "2026-03-04T19:47:03",
+      "count": 6,
+      "last_ts": "2026-09-05T17:13:00",
       "last_meta": {
         "source": "toolbar_action",
+        "usage_kind": "real",
         "text": "Pol\u00edgono"
-      }
+      },
+      "historical_count": 4,
+      "real_count": 2,
+      "test_count": 0,
+      "first_ts": "2026-09-05T17:13:00",
+      "last_real_ts": "2026-09-05T17:13:00",
+      "last_session_id": "e28ecda5ba61"
     },
     "macro:C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Tomacorrientes\\RotarTomacorriente.FCMacro": {
       "count": 19,
@@ -639,15 +668,21 @@
       }
     },
     "macro:C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Configuracion del proyecto\\Gestionar_Visibilidad_ElectricCR.FCMacro": {
-      "count": 52,
-      "last_ts": "2026-07-30T14:57:42",
+      "count": 53,
+      "last_ts": "2026-09-05T20:18:33",
       "last_meta": {
-        "cmd": "ElectricCR_Configuracion del proyecto_Gestionar_Visibilidad_ElectricCR_1781299828",
+        "cmd": "ElectricCR_Configuracion_del_proyecto_Gestionar_Visibilidad_ElectricCR",
         "macro": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Configuracion del proyecto\\Gestionar_Visibilidad_ElectricCR.FCMacro",
-        "label": "Gestionar visibilidad ElectricCR"
+        "label": "Gestionar visibilidad ElectricCR",
+        "usage_kind": "real",
+        "source": "macro_command"
       },
       "first_ts": "2026-07-29T16:20:10",
-      "last_session_id": "0acdf83717f6"
+      "last_session_id": "11af95b2971a",
+      "historical_count": 52,
+      "real_count": 1,
+      "test_count": 0,
+      "last_real_ts": "2026-09-05T20:18:33"
     },
     "macro:C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Conectar\\Conectar_Cajas_a_Tablero_Auto.FCMacro": {
       "count": 137,
@@ -1053,15 +1088,21 @@
       }
     },
     "macro:C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Objetos\\Habilitar_Transform_en_Links_Dispositivos.FCMacro": {
-      "count": 4,
-      "last_ts": "2026-08-12T09:59:40",
+      "count": 6,
+      "last_ts": "2026-09-05T14:16:58",
       "last_meta": {
         "cmd": "ElectricCR_Objetos_Habilitar_Transform_en_Links_Dispositivos",
         "macro": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Objetos\\Habilitar_Transform_en_Links_Dispositivos.FCMacro",
-        "label": "Habilitar Transform en links de dispositivos"
+        "label": "Habilitar Transform en links de dispositivos",
+        "usage_kind": "real",
+        "source": "macro_command"
       },
       "first_ts": "2026-08-12T09:56:22",
-      "last_session_id": "97dfdcc11c76"
+      "last_session_id": "15db5f068715",
+      "historical_count": 4,
+      "real_count": 2,
+      "test_count": 0,
+      "last_real_ts": "2026-09-05T14:16:58"
     },
     "macro:C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Conectar\\conectar_puntos_seleccionados.FCMacro": {
       "count": 2,
@@ -1356,13 +1397,21 @@
       }
     },
     "macro:C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Configuracion del proyecto\\UnifilarInteractivoTableros.FCMacro": {
-      "count": 26,
-      "last_ts": "2026-04-20T14:17:54",
+      "count": 28,
+      "last_ts": "2026-09-14T08:16:50",
       "last_meta": {
-        "cmd": "ElectricCR_Configuracion del proyecto_UnifilarInteractivoTableros_1776546373",
+        "cmd": "ElectricCR_Configuracion_del_proyecto_UnifilarInteractivoTableros",
         "macro": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Configuracion del proyecto\\UnifilarInteractivoTableros.FCMacro",
-        "label": "Unifilar interactivo tableros"
-      }
+        "label": "UnifilarInteractivoTableros",
+        "usage_kind": "real",
+        "source": "macro_command"
+      },
+      "historical_count": 26,
+      "real_count": 2,
+      "test_count": 0,
+      "first_ts": "2026-09-14T07:30:52",
+      "last_real_ts": "2026-09-14T08:16:50",
+      "last_session_id": "a65b2a9d4ab6"
     },
     "macro:C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Configuracion del proyecto\\UnifilarInteractivoTableros copy.FCMacro": {
       "count": 4,
@@ -1735,18 +1784,18 @@
       "last_session_id": "9e573132f976"
     },
     "ElectricCR_MacroLauncher": {
-      "count": 71,
-      "last_ts": "2026-09-02T08:07:40",
+      "count": 73,
+      "last_ts": "2026-09-10T20:33:57",
       "last_meta": {
         "source": "toolbar",
         "usage_kind": "real"
       },
       "first_ts": "2026-07-24T14:06:50",
-      "last_session_id": "dfa61c1fcb70",
+      "last_session_id": "0c07b303b6b2",
       "historical_count": 53,
-      "real_count": 16,
+      "real_count": 18,
       "test_count": 0,
-      "last_real_ts": "2026-09-02T08:07:40"
+      "last_real_ts": "2026-09-10T20:33:57"
     },
     "ElectricCR_ModePanel": {
       "count": 2,
@@ -1769,15 +1818,21 @@
       }
     },
     "macro:C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Iluminaci\u00f3n\\AsisCSV2Pasos.FCMacro": {
-      "count": 5,
+      "count": 6,
       "first_ts": "2026-07-20T11:03:37",
-      "last_ts": "2026-07-28T22:10:41",
-      "last_session_id": "267eb91c8f44",
+      "last_ts": "2026-09-03T22:40:18",
+      "last_session_id": "8576238144eb",
       "last_meta": {
-        "cmd": "ElectricCR_Iluminaci\u00f3n_AsisCSV2Pasos_1781299828",
+        "cmd": "ElectricCR_Iluminaci_n_AsisCSV2Pasos",
         "macro": "C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Iluminaci\u00f3n\\AsisCSV2Pasos.FCMacro",
-        "label": "Asistente CSV 2 Pasos"
-      }
+        "label": "Asistente CSV el\u00e9ctrico",
+        "usage_kind": "real",
+        "source": "macro_command"
+      },
+      "historical_count": 5,
+      "real_count": 1,
+      "test_count": 0,
+      "last_real_ts": "2026-09-03T22:40:18"
     },
     "macro:C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Areas\\AreaPorClick.FCMacro": {
       "count": 3,
@@ -1945,15 +2000,21 @@
       }
     },
     "macro:C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Tomacorrientes\\InstalarTomacorrientesEnParedesBIM.FCMacro": {
-      "count": 4,
+      "count": 6,
       "first_ts": "2026-07-28T13:32:38",
-      "last_ts": "2026-07-28T13:53:46",
-      "last_session_id": "267eb91c8f44",
+      "last_ts": "2026-09-03T21:36:07",
+      "last_session_id": "8576238144eb",
       "last_meta": {
-        "cmd": "ElectricCR_Tomacorrientes_InstalarTomacorrientesEnParedesBIM_1785268216",
+        "cmd": "ElectricCR_Tomacorrientes_InstalarTomacorrientesEnParedesBIM",
         "macro": "C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Tomacorrientes\\InstalarTomacorrientesEnParedesBIM.FCMacro",
-        "label": "Instalar tomacorrientes generales en paredes BIM"
-      }
+        "label": "Instalar tomacorrientes generales en paredes BIM",
+        "usage_kind": "real",
+        "source": "macro_command"
+      },
+      "historical_count": 4,
+      "real_count": 2,
+      "test_count": 0,
+      "last_real_ts": "2026-09-03T21:36:07"
     },
     "macro:C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Tomacorrientes\\CrearCircuitosGeneralesPorParedYRecinto.FCMacro": {
       "count": 9,
@@ -2044,15 +2105,21 @@
       }
     },
     "macro:C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Iluminaci\u00f3n\\ColocarApagadoresEnPuertas.FCMacro": {
-      "count": 11,
+      "count": 36,
       "first_ts": "2026-07-30T08:01:25",
-      "last_ts": "2026-08-10T11:43:31",
-      "last_session_id": "59e5aeb7a3e7",
+      "last_ts": "2026-09-05T22:06:01",
+      "last_session_id": "eaf8445e0fa1",
       "last_meta": {
         "cmd": "ElectricCR_Iluminaci_n_ColocarApagadoresEnPuertas",
         "macro": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Iluminaci\u00f3n\\ColocarApagadoresEnPuertas.FCMacro",
-        "label": "Colocar apagadores junto a puertas BIM"
-      }
+        "label": "Colocar apagadores junto a puertas BIM",
+        "usage_kind": "real",
+        "source": "macro_command"
+      },
+      "historical_count": 11,
+      "real_count": 25,
+      "test_count": 0,
+      "last_real_ts": "2026-09-05T22:06:01"
     },
     "macro:C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Objetos\\Insertar_Dispositivo.FCMacro": {
       "count": 2,
@@ -2121,15 +2188,21 @@
       }
     },
     "macro:C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Conectar\\RutaCritica_Seleccionados.FCMacro": {
-      "count": 3,
+      "count": 5,
       "first_ts": "2026-07-31T08:05:02",
-      "last_ts": "2026-07-31T11:10:07",
-      "last_session_id": "64750f0b7238",
+      "last_ts": "2026-09-14T21:36:51",
+      "last_session_id": "635954cbfc88",
       "last_meta": {
-        "cmd": "ElectricCR_Conectar_RutaCritica_Seleccionados_1781299828",
+        "cmd": "ElectricCR_Conectar_RutaCritica_Seleccionados",
         "macro": "C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Conectar\\RutaCritica_Seleccionados.FCMacro",
-        "label": "Ruta critica solo seleccionados"
-      }
+        "label": "Ruta critica solo seleccionados",
+        "usage_kind": "real",
+        "source": "macro_command"
+      },
+      "historical_count": 3,
+      "real_count": 2,
+      "test_count": 0,
+      "last_real_ts": "2026-09-14T21:36:51"
     },
     "macro:C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Conectar\\RutaCritica_CircuitoPorCircuito.FCMacro": {
       "count": 2,
@@ -2143,15 +2216,21 @@
       }
     },
     "macro:C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\Insertar_Tablero.FCMacro": {
-      "count": 7,
+      "count": 11,
       "first_ts": "2026-07-31T10:43:57",
-      "last_ts": "2026-08-03T18:36:09",
-      "last_session_id": "64615dc5d36e",
+      "last_ts": "2026-09-14T21:32:05",
+      "last_session_id": "635954cbfc88",
       "last_meta": {
-        "cmd": "ElectricCR_ElectricCR_Insertar_Tablero_1781299828",
+        "cmd": "ElectricCR_ElectricCR_Insertar_Tablero",
         "macro": "C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\Insertar_Tablero.FCMacro",
-        "label": "Insertar Tablero"
-      }
+        "label": "Insertar Tablero",
+        "usage_kind": "real",
+        "source": "macro_command"
+      },
+      "historical_count": 7,
+      "real_count": 4,
+      "test_count": 0,
+      "last_real_ts": "2026-09-14T21:32:05"
     },
     "macro:C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Tableros\\Insertar_Desconectores_Aire_Acondicionado.FCMacro": {
       "count": 4,
@@ -2220,21 +2299,27 @@
       }
     },
     "macro:C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Tomacorrientes\\InstalarTomacorrientesEnParedesBIM.FCMacro": {
-      "count": 2,
+      "count": 18,
       "first_ts": "2026-08-08T16:55:52",
-      "last_ts": "2026-08-10T12:36:18",
-      "last_session_id": "03577d703b4c",
+      "last_ts": "2026-09-05T15:45:05",
+      "last_session_id": "ba9174d226b2",
       "last_meta": {
         "cmd": "ElectricCR_Tomacorrientes_InstalarTomacorrientesEnParedesBIM",
         "macro": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Tomacorrientes\\InstalarTomacorrientesEnParedesBIM.FCMacro",
-        "label": "Instalar tomacorrientes generales en paredes BIM"
-      }
+        "label": "Instalar tomacorrientes generales en paredes BIM",
+        "usage_kind": "real",
+        "source": "macro_command"
+      },
+      "historical_count": 2,
+      "real_count": 16,
+      "test_count": 0,
+      "last_real_ts": "2026-09-05T15:45:05"
     },
     "macro:C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Areas\\PoligonosRecintosDesdeArchWalls.FCMacro": {
-      "count": 7,
+      "count": 14,
       "first_ts": "2026-08-08T16:56:32",
-      "last_ts": "2026-08-27T07:51:09",
-      "last_session_id": "f84feb6eb0a0",
+      "last_ts": "2026-09-05T15:44:50",
+      "last_session_id": "ba9174d226b2",
       "last_meta": {
         "cmd": "ElectricCR_Areas_PoligonosRecintosDesdeArchWalls",
         "macro": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Areas\\PoligonosRecintosDesdeArchWalls.FCMacro",
@@ -2243,26 +2328,32 @@
         "source": "macro_command"
       },
       "historical_count": 3,
-      "real_count": 4,
+      "real_count": 11,
       "test_count": 0,
-      "last_real_ts": "2026-08-27T07:51:09"
+      "last_real_ts": "2026-09-05T15:44:50"
     },
     "macro:C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Conectar\\Conectar_Alimentadores_a_Tablero_Auto.FCMacro": {
-      "count": 1,
+      "count": 2,
       "first_ts": "2026-08-09T10:56:36",
-      "last_ts": "2026-08-09T10:56:36",
-      "last_session_id": "9f09121461b9",
+      "last_ts": "2026-09-14T19:34:54",
+      "last_session_id": "6426fc58316b",
       "last_meta": {
         "cmd": "ElectricCR_Conectar_Conectar_Alimentadores_a_Tablero_Auto",
         "macro": "C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Conectar\\Conectar_Alimentadores_a_Tablero_Auto.FCMacro",
-        "label": "Conectar Alimentadores..."
-      }
+        "label": "Conectar Alimentadores...",
+        "usage_kind": "real",
+        "source": "macro_command"
+      },
+      "historical_count": 1,
+      "real_count": 1,
+      "test_count": 0,
+      "last_real_ts": "2026-09-14T19:34:54"
     },
     "macro:C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Areas\\PoligonosRecintosDesdeArchWalls.FCMacro": {
-      "count": 8,
+      "count": 9,
       "first_ts": "2026-08-09T11:52:47",
-      "last_ts": "2026-08-28T06:42:03",
-      "last_session_id": "be7fbf5eda77",
+      "last_ts": "2026-09-03T21:35:58",
+      "last_session_id": "8576238144eb",
       "last_meta": {
         "cmd": "ElectricCR_Areas_PoligonosRecintosDesdeArchWalls",
         "macro": "C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Areas\\PoligonosRecintosDesdeArchWalls.FCMacro",
@@ -2271,9 +2362,9 @@
         "source": "macro_command"
       },
       "historical_count": 7,
-      "real_count": 1,
+      "real_count": 2,
       "test_count": 0,
-      "last_real_ts": "2026-08-28T06:42:03"
+      "last_real_ts": "2026-09-03T21:35:58"
     },
     "macro:C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Areas\\AnalizarAreasRectangularesDesdeMurosBIM.FCMacro": {
       "count": 2,
@@ -2428,8 +2519,138 @@
         "macro": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Cajas\\CajaEMT.FCMacro",
         "label": "CajaEMT"
       }
+    },
+    "CRBIM_RoomGuide": {
+      "count": 8,
+      "first_ts": "2026-09-03T09:15:24",
+      "historical_count": 0,
+      "real_count": 8,
+      "test_count": 0,
+      "last_ts": "2026-09-03T21:35:55",
+      "last_real_ts": "2026-09-03T21:35:55",
+      "last_session_id": "9d48116fb8eb",
+      "last_meta": {
+        "source": "toolbar_action",
+        "usage_kind": "real",
+        "text": "Guia de recintos"
+      }
+    },
+    "CRBIM_SelectRoom": {
+      "count": 8,
+      "first_ts": "2026-09-03T09:15:27",
+      "historical_count": 0,
+      "real_count": 8,
+      "test_count": 0,
+      "last_ts": "2026-09-03T21:35:34",
+      "last_real_ts": "2026-09-03T21:35:34",
+      "last_session_id": "9d48116fb8eb",
+      "last_meta": {
+        "source": "toolbar_action",
+        "usage_kind": "real",
+        "text": "Seleccionar recinto"
+      }
+    },
+    "macro:C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Iluminaci\u00f3n\\ColocarApagadoresEnPuertas.FCMacro": {
+      "count": 7,
+      "first_ts": "2026-09-03T21:41:44",
+      "historical_count": 0,
+      "real_count": 7,
+      "test_count": 0,
+      "last_ts": "2026-09-08T09:44:03",
+      "last_real_ts": "2026-09-08T09:44:03",
+      "last_session_id": "b599b6c05c26",
+      "last_meta": {
+        "cmd": "ElectricCR_Iluminaci_n_ColocarApagadoresEnPuertas",
+        "macro": "C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Iluminaci\u00f3n\\ColocarApagadoresEnPuertas.FCMacro",
+        "label": "Colocar apagadores junto a puertas BIM",
+        "usage_kind": "real",
+        "source": "macro_command"
+      }
+    },
+    "Draft_Snap_Special": {
+      "count": 9,
+      "first_ts": "2026-09-05T19:50:33",
+      "historical_count": 0,
+      "real_count": 9,
+      "test_count": 0,
+      "last_ts": "2026-09-05T20:18:27",
+      "last_real_ts": "2026-09-05T20:18:27",
+      "last_session_id": "11af95b2971a",
+      "last_meta": {
+        "source": "toolbar_action",
+        "usage_kind": "real",
+        "text": "Snap Special"
+      }
+    },
+    "macro:C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Configuracion del proyecto\\UnifilarInteractivoTableros.FCMacro": {
+      "count": 1,
+      "first_ts": "2026-09-14T09:44:48",
+      "historical_count": 0,
+      "real_count": 1,
+      "test_count": 0,
+      "last_ts": "2026-09-14T09:44:48",
+      "last_real_ts": "2026-09-14T09:44:48",
+      "last_session_id": "d0d3f8a0e363",
+      "last_meta": {
+        "cmd": "ElectricCR_Configuracion_del_proyecto_UnifilarInteractivoTableros",
+        "macro": "C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Configuracion del proyecto\\UnifilarInteractivoTableros.FCMacro",
+        "label": "UnifilarInteractivoTableros",
+        "usage_kind": "real",
+        "source": "macro_command"
+      }
+    },
+    "macro:C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Conectar\\medir_distancia_y_dibujar_ruta.FCMacro": {
+      "count": 1,
+      "first_ts": "2026-09-14T19:35:35",
+      "historical_count": 0,
+      "real_count": 1,
+      "test_count": 0,
+      "last_ts": "2026-09-14T19:35:35",
+      "last_real_ts": "2026-09-14T19:35:35",
+      "last_session_id": "6426fc58316b",
+      "last_meta": {
+        "cmd": "ElectricCR_Conectar_medir_distancia_y_dibujar_ruta",
+        "macro": "C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Conectar\\medir_distancia_y_dibujar_ruta.FCMacro",
+        "label": "medir_distancia_y_dibujar_ruta",
+        "usage_kind": "real",
+        "source": "macro_command"
+      }
+    },
+    "macro:C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Conectar\\medir_distancia_y_dibujar_ruta_independiente.FCMacro": {
+      "count": 1,
+      "first_ts": "2026-09-14T19:35:43",
+      "historical_count": 0,
+      "real_count": 1,
+      "test_count": 0,
+      "last_ts": "2026-09-14T19:35:43",
+      "last_real_ts": "2026-09-14T19:35:43",
+      "last_session_id": "6426fc58316b",
+      "last_meta": {
+        "cmd": "ElectricCR_Conectar_medir_distancia_y_dibujar_ruta_independiente",
+        "macro": "C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Conectar\\medir_distancia_y_dibujar_ruta_independiente.FCMacro",
+        "label": "medir_distancia_y_dibujar_ruta_independiente",
+        "usage_kind": "real",
+        "source": "macro_command"
+      }
+    },
+    "macro:C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Objetos\\Alinear_En_Planta.FCMacro": {
+      "count": 7,
+      "first_ts": "2026-09-14T21:25:08",
+      "historical_count": 0,
+      "real_count": 7,
+      "test_count": 0,
+      "last_ts": "2026-09-14T21:32:47",
+      "last_real_ts": "2026-09-14T21:32:47",
+      "last_session_id": "635954cbfc88",
+      "last_meta": {
+        "cmd": "ElectricCR_Objetos_Alinear_En_Planta",
+        "macro": "C:\\Users\\mmfallas\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\Objetos\\Alinear_En_Planta.FCMacro",
+        "label": "Alinear en planta",
+        "usage_kind": "real",
+        "source": "macro_command"
+      }
     }
   },
   "event_log": "tool_events.jsonl",
-  "last_session_id": "dfa61c1fcb70"
+  "last_session_id": "635954cbfc88"
 }

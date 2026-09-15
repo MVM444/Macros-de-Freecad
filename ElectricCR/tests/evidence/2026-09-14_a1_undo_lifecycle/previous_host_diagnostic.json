@@ -1,0 +1,352 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-09-13T16:47:37-06:00",
+  "host": "DESKTOP-5586S7P",
+  "user": "marco",
+  "platform": {
+    "system": "Windows",
+    "release": "10",
+    "version": "10.0.26200",
+    "machine": "AMD64"
+  },
+  "freecad": {
+    "version_tuple": [
+      "1",
+      "1",
+      "3",
+      "20260725 (Git shallow)",
+      "Unknown",
+      "2026/07/25 04:52:02",
+      "grafted,grafted",
+      "145529fe741292ff0b3977a01195bf0247425794"
+    ],
+    "version_text": "1.1.3"
+  },
+  "python": {
+    "version": "3.11.14 | packaged by conda-forge | (main, Oct 13 2025, 14:00:26) [MSC v.1944 64 bit (AMD64)]",
+    "executable": "C:\\Users\\marco\\AppData\\Local\\Programs\\FreeCAD 1.1\\bin\\FreeCAD.exe"
+  },
+  "qt": {
+    "binding": "PySide6",
+    "qt_version": "6.8.3",
+    "binding_version": "6.8.3"
+  },
+  "active_workbench": "PartDesignWorkbench",
+  "active_document": "",
+  "paths": {
+    "user_app_data_dir": "C:\\Users\\marco\\AppData\\Roaming\\FreeCAD\\v1-1\\",
+    "user_macro_dir": "C:\\Users\\marco\\AppData\\Roaming\\FreeCAD\\v1-1\\Macro\\",
+    "macro_path": "C:/Users/marco/OneDrive - Caja Costarricense de Seguro Social/Documentos/FreeCAD/Macros"
+  },
+  "workbenches": [
+    "AssemblyWorkbench",
+    "BIMWorkbench",
+    "CAMWorkbench",
+    "CablesWorkbench",
+    "DraftWorkbench",
+    "DynamicDataWorkbench",
+    "FemWorkbench",
+    "FreeCADMCPAddonWorkbench",
+    "GameEngineExportWorkbench",
+    "GearWorkbench",
+    "HVAC",
+    "InspectionWorkbench",
+    "MaterialWorkbench",
+    "MeshWorkbench",
+    "NodesWorkbench",
+    "NoneWorkbench",
+    "OpenSCADWorkbench",
+    "PartDesignWorkbench",
+    "PartWorkbench",
+    "PointsWorkbench",
+    "ReverseEngineeringWorkbench",
+    "RobotWorkbench",
+    "SMWorkbench",
+    "SketcherWorkbench",
+    "SpreadsheetWorkbench",
+    "SurfaceWorkbench",
+    "TechDrawWorkbench",
+    "TestWorkbench",
+    "XRWorkbench"
+  ],
+  "commands": {
+    "total": 483,
+    "electriccr": [],
+    "mep_hvac": [],
+    "gameexport": [],
+    "facilarq": [],
+    "programacion": [
+      "Programacion_Capture3D",
+      "Programacion_CaptureTreePrompt",
+      "Programacion_CopyLastMinute",
+      "Programacion_OllamaAssistant",
+      "Programacion_OpenFolders",
+      "Programacion_PropertiesJSON",
+      "Programacion_RecoverTasks",
+      "Programacion_SelectionSummary",
+      "Programacion_UIAudit"
+    ]
+  },
+  "modules": {
+    "ElectricCR": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\__init__.py",
+    "MEPWorkbenchCR": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\MEPWorkbenchCR\\__init__.py",
+    "MEPWorkbenchCR.MEP": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\MEPWorkbenchCR\\MEP\\__init__.py",
+    "MEPWorkbenchCR.Init": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\MEPWorkbenchCR\\Init.py",
+    "GameEngineExportWB": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\__init__.py",
+    "GameEngineExportWB.ui": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\ui\\__init__.py",
+    "GameEngineExportWB.i18n": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\i18n.py",
+    "GameEngineExportWB.commands": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\__init__.py",
+    "GameEngineExportWB.core": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\__init__.py",
+    "GameEngineExportWB.core.material_assignments": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\material_assignments.py",
+    "GameEngineExportWB.core.exporter_x3d": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\exporter_x3d.py",
+    "GameEngineExportWB.core.lights": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\lights.py",
+    "GameEngineExportWB.core.persist": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\persist.py",
+    "GameEngineExportWB.core.gamestart": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\gamestart.py",
+    "GameEngineExportWB.core.lighting_profiles": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\lighting_profiles.py",
+    "GameEngineExportWB.core.web_preview": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\web_preview.py",
+    "GameEngineExportWB.core.json_ai": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\json_ai.py",
+    "GameEngineExportWB.ui.panel_info": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\ui\\panel_info.py",
+    "GameEngineExportWB.ui.output_defaults": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\ui\\output_defaults.py",
+    "GameEngineExportWB.ui.panel_export": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\ui\\panel_export.py",
+    "GameEngineExportWB.commands.cmd_add_light_properties": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_add_light_properties.py",
+    "GameEngineExportWB.commands.cmd_analyze_x3d": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_analyze_x3d.py",
+    "GameEngineExportWB.commands.cmd_bim_doors_windows": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_bim_doors_windows.py",
+    "GameEngineExportWB.core.castle_diagnostics": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\castle_diagnostics.py",
+    "GameEngineExportWB.commands.cmd_castle_diagnostics": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_castle_diagnostics.py",
+    "GameEngineExportWB.commands.cmd_export_and_launch": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_export_and_launch.py",
+    "GameEngineExportWB.commands.cmd_help": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_help.py",
+    "GameEngineExportWB.core.example_layouts": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\example_layouts.py",
+    "GameEngineExportWB.core.maze_generator": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\maze_generator.py",
+    "GameEngineExportWB.core.quick_examples": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\quick_examples.py",
+    "GameEngineExportWB.core.json_importer": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\json_importer.py",
+    "GameEngineExportWB.commands.cmd_import_json_example": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_import_json_example.py",
+    "GameEngineExportWB.commands.cmd_open_panel": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_open_panel.py",
+    "GameEngineExportWB.commands.cmd_quick_examples": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_quick_examples.py",
+    "GameEngineExportWB.commands.cmd_reload_workbench": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_reload_workbench.py",
+    "GameEngineExportWB.commands.cmd_roof_quick_example": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_roof_quick_example.py",
+    "GameEngineExportWB.ui.workbench": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\ui\\workbench.py"
+  },
+  "key_files": {
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\ElectricCR\\__init__.py": {
+      "sha256": "cc20cc029105ee7e399c776ffaac5e2a9e22eb89e2de64a0a768902e06563c3d",
+      "size": 2475,
+      "mtime": 1781299828.6200218
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\MEPWorkbenchCR\\__init__.py": {
+      "sha256": "b954a56d6f7f884d813cbee2dec037e24db03a402ec3ad63c4dc7dc5b67415b6",
+      "size": 33,
+      "mtime": 1781299828.671404
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\MEPWorkbenchCR\\MEP\\__init__.py": {
+      "sha256": "f5be72cf798fc8de36ac28ca1b0b6e4231e2c80f7fb14d25d9189dc554604064",
+      "size": 41,
+      "mtime": 1781299828.656561
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\MEPWorkbenchCR\\Init.py": {
+      "sha256": "27c9cda8d8aa9c12bf29de8cdec6e17fadf3abdf495f78e2dc8f29b698c9076b",
+      "size": 823,
+      "mtime": 1781299828.656561
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\__init__.py": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0,
+      "mtime": 1773266474.436
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\ui\\__init__.py": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0,
+      "mtime": 1773266474.45
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\i18n.py": {
+      "sha256": "68a16ac73941e043964b76161f257cf33f26b25b61e5b96112604e4a3c621bfc",
+      "size": 5606,
+      "mtime": 1787363026.9796593
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\__init__.py": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0,
+      "mtime": 1773266752.249
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\__init__.py": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0,
+      "mtime": 1773266474.44
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\material_assignments.py": {
+      "sha256": "f5d918f892a801ad085b2aa86591561f5e913298cc0d3f86c001f527b8fa3229",
+      "size": 9183,
+      "mtime": 1787181799.699
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\exporter_x3d.py": {
+      "sha256": "4c8ba5e45d94390f19945eb6ff86c74f05c3b4e593e1b3c5886431b8aa3ad133",
+      "size": 109372,
+      "mtime": 1788287151.18
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\lights.py": {
+      "sha256": "7de44496b90330ea44b33b2cf690ee38f0943975017b35cfb5ce7c3d7f18e6e9",
+      "size": 51543,
+      "mtime": 1786743358.497
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\persist.py": {
+      "sha256": "c6fbb14d8878b79f4db1b3085040cd854ce675ce834ccbf47ae11fd3cd2b0abe",
+      "size": 2130,
+      "mtime": 1787363029.021213
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\gamestart.py": {
+      "sha256": "7a08eacfb1a86df6c713dda6bd61a373bed0c5ed1a7aaae16aec8ddad2b19fb9",
+      "size": 13031,
+      "mtime": 1787177948.992
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\lighting_profiles.py": {
+      "sha256": "212e12677ee8a559573cacb11d07ba5bdc6839184dd0dc6f3bfa0d832f24462a",
+      "size": 7014,
+      "mtime": 1786769586.494
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\web_preview.py": {
+      "sha256": "2f7284acfeeaf93fc5754bd3b67e3db86478a9014fb8aa203988f37f4d106279",
+      "size": 26799,
+      "mtime": 1787363030.0496426
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\json_ai.py": {
+      "sha256": "7a5986b47fc953505b6251ac42969feea965e14bb07d8e1e38b3bc16648624d4",
+      "size": 4156,
+      "mtime": 1787320663.362
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\ui\\panel_info.py": {
+      "sha256": "000690ecc3170fb89863585209f722b85a7f0b7843434a3ba841656eeb92df03",
+      "size": 36391,
+      "mtime": 1787418299.603
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\ui\\output_defaults.py": {
+      "sha256": "77528637aad6398ef87fcd047a8be83b234ac47ae38391515f9e0e96f5d1e2d6",
+      "size": 4264,
+      "mtime": 1787363027.9808986
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\ui\\panel_export.py": {
+      "sha256": "ceaf1e2eee3cde05ce38b3315ad1dc4c5ff80b3cb4804001f96c5012a88a9488",
+      "size": 167779,
+      "mtime": 1787418280.198
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_add_light_properties.py": {
+      "sha256": "88c40dc03dbd5e45f23f910b36a7cfa339c752d34bb04735958980ca6e9b25d5",
+      "size": 23098,
+      "mtime": 1787182287.789
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_analyze_x3d.py": {
+      "sha256": "677c7dafb5a133bb6ae43cad850c7f1ff3d2f3c10a694044e65383b212d4153f",
+      "size": 8862,
+      "mtime": 1787363132.8639402
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_bim_doors_windows.py": {
+      "sha256": "b88a2958374ff89f33e8c18e097c3a2db9bea17d2a63a8891b9a2b52f1e0f14e",
+      "size": 1889,
+      "mtime": 1787363031.0193546
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\castle_diagnostics.py": {
+      "sha256": "9498c2375d60031c279ad63111135081148bc2b946b249fed68664b954bbe240",
+      "size": 25462,
+      "mtime": 1787371571.0530977
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_castle_diagnostics.py": {
+      "sha256": "172b621d8001baa35fcab39dd5344f8ac2fb89a52828a68af8aaf48b3bb64430",
+      "size": 11680,
+      "mtime": 1787363133.8508754
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_export_and_launch.py": {
+      "sha256": "9f54f2a10bbdfcfbc46accfe4776aaa10f53b17f7d11035cd50a13effe75ce75",
+      "size": 17053,
+      "mtime": 1787418291.321
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_help.py": {
+      "sha256": "d8ed8f97469a0615d94df068d97441af313c982fcf977cdaf61445f947c9a781",
+      "size": 2289,
+      "mtime": 1787322663.562
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\example_layouts.py": {
+      "sha256": "4624cf67a21890870258b5fac5412c791ddd6be8a7996dbc408eba1ffc112442",
+      "size": 3709,
+      "mtime": 1787177959.397
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\maze_generator.py": {
+      "sha256": "b04472efbf258be320b6a7163fcb78b21185c1c5fcb428324be565a3b7c3bc17",
+      "size": 6508,
+      "mtime": 1786752025.278
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\quick_examples.py": {
+      "sha256": "cd15fa09c2fe8e16e86f94a9979f09c0f3c8bf9204de02f42f8ad057c8fb2470",
+      "size": 58327,
+      "mtime": 1787320618.527
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\core\\json_importer.py": {
+      "sha256": "b4e75b1643503f1bc46d996a218d15dc8d2c50ba0a096efccb4e00841ff17ec6",
+      "size": 9113,
+      "mtime": 1786752010.708
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_import_json_example.py": {
+      "sha256": "f51e1ee917e8f2b4fc9fe09b54656def4c04da20d756f7f95de9bba0a81e62dc",
+      "size": 8690,
+      "mtime": 1787320625.336
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_open_panel.py": {
+      "sha256": "5d29711e4906babb03b060c4bd2b9c6c035952ea2834b80135b502920e0c50f6",
+      "size": 3787,
+      "mtime": 1787322656.295
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_quick_examples.py": {
+      "sha256": "8d084606fad70c3eebde12f0d519b607ebbee836760617e588a3cc6a8d1c066a",
+      "size": 13328,
+      "mtime": 1787320610.807
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_reload_workbench.py": {
+      "sha256": "ae6af1a115d54e451b648d711c3b9222d4152d5514be9209aaf82aef943e79ff",
+      "size": 4741,
+      "mtime": 1787322649.595
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\commands\\cmd_roof_quick_example.py": {
+      "sha256": "e8d9784054bdf2be7bf1b6f0b75fac6edec9539a0cafc77506a2fecf9bd39ce0",
+      "size": 1871,
+      "mtime": 1787363031.99761
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Macros-de-Freecad\\GameEngineExportWB\\ui\\workbench.py": {
+      "sha256": "37b1bdb01596fe461b8456836df191b53b638ac81d3de63864767f09b7903a7a",
+      "size": 6758,
+      "mtime": 1787366055.8847888
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Programación\\RecuperarPanelTareas.FCMacro": {
+      "sha256": "9d43a64ea983f073b76e371951b5a1fad92995fd866267bcb827e3901f203760",
+      "bytes": 10909,
+      "mtime": 1789084456.807
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Programación\\programacion_toolbar.py": {
+      "sha256": "d95ae5f98c7a23a076801db741d437ffa25895898e8c04af81d6b09a820b3a21",
+      "bytes": 6664,
+      "mtime": 1789084399.783
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Programación\\programacion_common.py": {
+      "sha256": "29556b9b73f9bc9b664d5a21d77349914fcad957e4a1eacc8e8c85a7be97941d",
+      "bytes": 3811,
+      "mtime": 1786543952.630758
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Programación\\UI_Audit_FreeCAD.FCMacro": {
+      "sha256": "693f75a324e56db060d9f36b07a7189f3b40f7040b4cc637c13f00f84d84098e",
+      "bytes": 7984,
+      "mtime": 1786407823.1179266
+    },
+    "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Programación\\RecuperarPanelTareas.svg": {
+      "sha256": "331678f2de93d73e306eb73d5d5ec1d38abd7b315702b37ac79efd1981c267c9",
+      "bytes": 787,
+      "mtime": 1789084412.388
+    }
+  },
+  "onedrive_detected": true,
+  "task_recovery_validation": {
+    "status": "COMPROBADA-PARCIAL",
+    "runs": 28,
+    "source_unchanged": true,
+    "black_panel_reproduced": false,
+    "evidence": "ElectricCR/tests/evidence/2026-09-13_tasks_recovery_gui",
+    "runtime_folder": "C:\\Users\\marco\\OneDrive - Caja Costarricense de Seguro Social\\Documentos\\FreeCAD\\Macros\\Programación",
+    "documents_remaining": [],
+    "startup_warning": "FacilArquitecturaWB InitGui.py: attempted relative import with no known parent package (before test)"
+  }
+}

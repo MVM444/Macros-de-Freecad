@@ -3,7 +3,7 @@
 Descripcion: registra el workbench Facil Arquitectura y sus comandos iniciales.
 Objetivo: exponer comandos independientes y el asistente de reconstruccion BIM nativa.
 FreeCAD objetivo: 1.1.3.
-Fecha y hora: 2026-09-02 16:22 America/Costa_Rica.
+Fecha y hora: 2026-09-09 14:45 America/Costa_Rica.
 Version: 0.14.11.
 Instrucciones de mantenimiento: mantener comandos pequenos y cargar modulos del
 workbench de forma explicita. El historial de uso debe observar la interfaz sin
@@ -22,6 +22,7 @@ from . import usage_log
 from . import i18n
 from .commands import cmd_centerlines_from_selection
 from .commands import cmd_change_door_type
+from .commands import cmd_repair_doors
 from .commands import cmd_collect_room_labels
 from .commands import cmd_create_building_grid
 from .commands import cmd_create_bim_structure
@@ -35,6 +36,7 @@ from .commands import cmd_create_project
 from .commands import cmd_rebuild_bim_model
 from .commands import cmd_create_sample_geometry
 from .commands import cmd_create_site_floor_bim
+from .commands import cmd_stair_between_slabs
 from .commands import cmd_create_service_platform_front
 from .commands import cmd_create_walls_bim
 from .commands import cmd_create_windows_bim
@@ -50,6 +52,7 @@ from .commands import cmd_roof_axis_prototype
 from .commands import cmd_edit_truss_axes
 from .commands import cmd_demo_building
 from .commands import cmd_json_inspector
+from .commands import cmd_model_diagnostic
 from .commands import cmd_detect_rooms_2d
 from .commands import cmd_create_bim_spaces
 from .commands import cmd_first_steps
@@ -476,6 +479,7 @@ class FacilArquitecturaWorkbench(FreeCADGui.Workbench):
             "doors_from_sketch": cmd_create_doors_bim.register().CommandName,
             "door_table": cmd_door_table.register().CommandName,
             "change_door_type": cmd_change_door_type.register().CommandName,
+            "repair_doors": cmd_repair_doors.register().CommandName,
             "windows_from_sketch": cmd_create_windows_bim.register().CommandName,
             "window_table": cmd_window_table.register().CommandName,
             "openings_from_sketch": cmd_create_openings_bim.register().CommandName,
@@ -489,6 +493,7 @@ class FacilArquitecturaWorkbench(FreeCADGui.Workbench):
             "building_grid": cmd_create_building_grid.register().CommandName,
             "walls": cmd_create_walls_bim.register().CommandName,
             "site_floor": cmd_create_site_floor_bim.register().CommandName,
+            "stair_between_slabs": cmd_stair_between_slabs.register().CommandName,
             "ceiling": cmd_create_modular_ceiling.register().CommandName,
             "platform_create": cmd_create_service_platform_front.register().CommandName,
             "platform_update": cmd_update_service_platform_front.register().CommandName,
@@ -497,6 +502,7 @@ class FacilArquitecturaWorkbench(FreeCADGui.Workbench):
             "edit_truss_axes": cmd_edit_truss_axes.register().CommandName,
             "demo_building": cmd_demo_building.register().CommandName,
             "json_inspector": cmd_json_inspector.register().CommandName,
+            "model_diagnostic": cmd_model_diagnostic.register().CommandName,
             "help": cmd_help.register().CommandName,
             "first_steps": cmd_first_steps.register().CommandName,
         }
@@ -514,7 +520,7 @@ class FacilArquitecturaWorkbench(FreeCADGui.Workbench):
         toolbar_specs = (
             (
                 _toolbar_title("project"),
-                [registered["demo_building"], registered["json_inspector"], registered["help"]],
+                [registered["demo_building"], registered["json_inspector"], registered["model_diagnostic"], registered["help"]],
             ),
             (
                 _toolbar_title("cad"),
@@ -534,6 +540,7 @@ class FacilArquitecturaWorkbench(FreeCADGui.Workbench):
                     registered["walls"],
                     registered["axes_columns"],
                     registered["site_floor"],
+                    registered["stair_between_slabs"],
                 ],
             ),
             (
@@ -541,6 +548,7 @@ class FacilArquitecturaWorkbench(FreeCADGui.Workbench):
                 [
                     registered["door_centerlines"],
                     registered["doors_from_sketch"],
+                    registered["repair_doors"],
                     registered["change_door_type"],
                     registered["door_table"],
                     registered["double_door"],

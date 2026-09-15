@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 
-from core.demo_building_core import CANONICAL_SEED, build_demo_spec
+from core.demo_building_core import (
+    CANONICAL_SEED, build_demo_spec, build_two_storey_demo_spec,
+    build_minimal_stair_demo_spec, spec_summary,
+)
 
 
 def test_canonical_demo_contract():
@@ -15,6 +18,37 @@ def test_canonical_demo_contract():
     assert len(spec["openings"]["windows"]) == 6
     assert spec["roof"]["pitch_deg"] == 22.0
     json.dumps(spec, sort_keys=True)
+
+
+def test_minimal_stair_inherits_canonical_geometry_and_excludes_house_components():
+    house = build_two_storey_demo_spec()
+    minimal = build_minimal_stair_demo_spec()
+    assert minimal["building_mode"] == "minimal_stair"
+    assert len(minimal["storeys"]) == 2
+    for original, reduced in zip(house["storeys"], minimal["storeys"]):
+        assert reduced["level_name"] == original["level_name"]
+        assert reduced["elevation_mm"] == original["elevation_mm"]
+        assert reduced["spec"]["floor"] == original["spec"]["floor"]
+        assert reduced["spec"]["footprint"] == original["spec"]["footprint"]
+        assert not reduced["spec"]["site"]["garden_enabled"]
+        for key in ("rooms", "openings", "roof", "ceiling"):
+            assert key not in reduced["spec"]
+        assert "interior_segments" not in reduced["spec"]["walls"]
+        for a, b in zip(original["spec"]["walls"]["exterior_segments"], reduced["spec"]["walls"]["exterior_segments"]):
+            assert (a["start_mm"], a["end_mm"]) == (b["start_mm"], b["end_mm"])
+            assert b["role"] == "slab_footprint"
+        assert spec_summary(reduced["spec"])
+    unrelated_to_stair_geometry = {"reserved_zone", "note", "apply_ceiling_exclusion", "create_opening_liner"}
+    for key, value in house["stair"].items():
+        if key not in unrelated_to_stair_geometry:
+            assert minimal["stair"][key] == value, key
+    assert not minimal["stair"]["apply_ceiling_exclusion"]
+    assert not minimal["stair"]["create_opening_liner"]
+    assert "niveles=2" in spec_summary(minimal)
+    assert json.loads(json.dumps(minimal)) == minimal
+    minimal["stair"]["path_points_mm"][0][0] = -1
+    assert build_two_storey_demo_spec() == house
+    assert build_minimal_stair_demo_spec()["stair"]["path_points_mm"] == house["stair"]["path_points_mm"]
 
 
 def test_random_demo_is_reproducible_and_varies_by_seed():
@@ -60,3 +94,47 @@ def test_demo_site_garden_spec_is_stable_and_flat():
     assert spec["site"]["terrain_margin_mm"] == 2500.0
     assert spec["site"]["terrain_variation_mm"] == 0.0
     assert spec["site"]["landscape_role"] == "garden"
+
+
+def test_two_storey_demo_contract_is_json_compatible_and_has_two_native_level_specs():
+    spec = build_two_storey_demo_spec()
+    assert spec["building_mode"] == "two_storey"
+    assert spec["storey_height_mm"] == 3000.0
+    assert [item["level_name"] for item in spec["storeys"]] == ["Nivel 00", "Nivel 01"]
+    assert [item["elevation_mm"] for item in spec["storeys"]] == [0.0, 3000.0]
+    assert all(item["spec"]["footprint"] == {"width_mm": 6000.0, "depth_mm": 8000.0} for item in spec["storeys"])
+    ground = spec["storeys"][0]["spec"]
+    upper = spec["storeys"][1]["spec"]
+    assert ground["site"]["garden_enabled"] is True
+    assert upper["site"]["garden_enabled"] is False
+    assert ground["walls"]["interior_segments"] != upper["walls"]["interior_segments"]
+    assert len(upper["walls"]["interior_segments"]) == 2
+    assert len(upper["rooms"]["items"]) == 3
+    assert [room["name"] for room in upper["rooms"]["items"]] == [
+        "Distribuidor y futura escalera",
+        "Dormitorio principal",
+        "Dormitorio secundario",
+    ]
+    assert len(upper["openings"]["doors"]) == 2
+    assert all(door["start_mm"][1] == 3500.0 and door["end_mm"][1] == 3500.0 for door in upper["openings"]["doors"])
+    assert all(not (door["start_mm"][1] == 0.0 and door["end_mm"][1] == 0.0) for door in upper["openings"]["doors"])
+    assert len(upper["openings"]["windows"]) == 5
+    assert upper["openings"]["windows"] != ground["openings"]["windows"]
+    assert spec["stair"]["native_required"] is True
+    assert spec["stair"]["reserved_zone"]["room_id"] == "R01"
+    assert spec["stair"]["status"] == "canonical_demo"
+    assert spec["stair"]["path_points_mm"] == [[5200.0, 4200.0], [5200.0, 1900.0], [2700.0, 1900.0]]
+    assert spec["stair"]["width_mm"] == 1000.0
+    assert spec["stair"]["railings_mode"] == "hidden_native_freecad_1_1_3_multisegment"
+    assert spec["stair"]["cut_upper_slab"] is True
+    assert spec["stair"]["layout_revision"] == "rearward_front_distributor_v2"
+    assert spec["stair"]["headroom_mm"] == 2100.0
+    assert spec["stair"]["clearance_preview"] is True
+    assert spec["stair"]["apply_ceiling_exclusion"] is True
+    assert spec["stair"]["clearance_geometry_revision"] == "l_union_v2"
+    assert spec["stair"]["create_opening_liner"] is True
+    assert spec["stair"]["opening_liner_mode"] == "side_walls_open_ends"
+    assert spec["stair"]["opening_liner_thickness_mm"] == 100.0
+    assert spec["stair"]["create_opening_liner"] is True
+    assert spec["stair"]["opening_liner_thickness_mm"] == 100.0
+    json.dumps(spec, sort_keys=True)

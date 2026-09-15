@@ -1,0 +1,38 @@
+[
+  {
+    "path": "electriccr/demo/electric_demo_freecad.py",
+    "length": 14864,
+    "mtime": "2026-09-09T23:15:36.0000000-06:00",
+    "sha256": "3F199C02A666417E05312F3845E7F31420BDC0D34D0AA3FE0DC75297D106681D"
+  },
+  {
+    "path": "electriccr/features/plan_lifecycle.py",
+    "length": 11254,
+    "mtime": "2026-09-05T16:10:01.0000000-06:00",
+    "sha256": "2A6DAA243FDCA5576929A183B2C830F9F93AB7BCDB05AB214C380854370D2A01"
+  },
+  {
+    "path": "electriccr/features/plan_live_sync.py",
+    "length": 7810,
+    "mtime": "2026-09-08T14:04:23.0000000-06:00",
+    "sha256": "BC7F38D987ABB76E36F97CB3E24732D43F6FC4A1070E5DA40EC85FD73B9FF9C4"
+  },
+  {
+    "path": "ui/plan_selection.py",
+    "length": 7593,
+    "mtime": "2026-09-08T14:04:23.0000000-06:00",
+    "sha256": "448B8818431B270F963C23B2BF023A40AF2738D9407958FD19EDE479C2C56EA4"
+  },
+  {
+    "path": "InitGui.py",
+    "length": 35304,
+    "mtime": "2026-09-09T22:27:23.0000000-06:00",
+    "sha256": "7B703CD874D5C0AED697C04649C8CD8D35DB63096A69804D57A255288BCD9825"
+  },
+  {
+    "path": "Demo_ElectricCR_A1_Prueba_Arquitectura.FCMacro",
+    "length": 1055,
+    "mtime": "2026-09-09T23:15:27.0000000-06:00",
+    "sha256": "35634CC159CEEF539F1EF7BB5B4EE036AC26E467950B73B4D674308AEF27C284"
+  }
+]

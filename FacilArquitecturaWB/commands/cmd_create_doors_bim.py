@@ -3,8 +3,8 @@
 Descripcion: crea puertas Arch nativas desde Sketches y las aloja en muros.
 Objetivo: admitir seleccion explicita y contener los objetos en un Level BIM nativo.
 FreeCAD objetivo: 1.1.3.
-Fecha y hora: 2026-09-01 09:05 America/Costa_Rica.
-Version: 0.3.0.
+Fecha y hora: 2026-09-08 13:20 America/Costa_Rica.
+Version: 0.3.1.
 Instrucciones de mantenimiento: conservar FA_CreateDoorsBIM como alias heredado.
 """
 
@@ -147,12 +147,20 @@ class CommandClass:
                     FreeCADGui.Selection.addSelection(obj)
             except Exception:
                 pass
+            warning_count = int(summary.get("possible_existing_opening_count") or 0)
+            warning_suffix = ""
+            if warning_count:
+                warning_suffix = " | advertencias buque: %d (%s)" % (
+                    warning_count,
+                    ", ".join("Puerta %02d" % value for value in summary.get("possible_existing_opening_indices", [])),
+                )
             msg(
-                "Puertas BIM creadas: %d | existentes: %d | rechazadas: %d | Level: %s"
+                "Puertas BIM creadas: %d | existentes: %d | rechazadas: %d%s | Level: %s"
                 % (
                     summary["created_count"],
                     summary["skipped_existing_count"],
                     summary["rejected_count"],
+                    warning_suffix,
                     target_level.Label,
                 )
             )

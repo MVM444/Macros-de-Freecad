@@ -1,0 +1,15 @@
+09:53:03  [FACILARQ] ⏳ Demo Escalera mínima: El siguiente proceso puede tardar varios segundos o algunos minutos. FreeCAD puede permanecer ocupado mientras se realiza el calculo.
+09:53:03  [FACILARQ] ⏳ Demo Escalera mínima | Preparando dos niveles y sus losas
+09:53:03  [FACILARQ] ⏳ Demo Escalera mínima | Creando Nivel 00 y su losa
+09:53:03  [FA DEMO] Creando Demo Escalera mínima - Nivel 00 | losa 6.0x8.0 m
+09:53:03  [FACILARQ] Building creado: Casa demo
+09:53:03  [FACILARQ] Level creado: Nivel 00
+09:53:03  [FACILARQ] Piso BIM creado desde 1 sketches | espesor 150.0 mm | terreno de prueba: no
+09:53:03  [FACILARQ] ⏳ Demo Escalera mínima | Creando Nivel 01 y su losa
+09:53:03  [FA DEMO] Creando Demo Escalera mínima - Nivel 01 | losa 6.0x8.0 m
+09:53:03  [FACILARQ] Level creado: Nivel 01
+09:53:03  [FACILARQ] Piso BIM creado desde 1 sketches | espesor 150.0 mm | sitio: no
+09:53:03  [FACILARQ] ⏳ Demo Escalera mínima | Creando la escalera canónica y el hueco real de losa
+09:53:04  [FACILARQ] Grupo auxiliar de Level creado: Auxiliares FA
+09:53:04  [FA DEMO] Escalera Demo nativa creada | 17 contrahuellas | 176.5 mm | Levels=Nivel 00 -> Nivel 01 | barandillas=native_hidden_freecad_1_1_3_multisegment | hueco losa=native_subtraction_applied (l_union_v2/2 zonas) | exclusion cielo=?/0 zonas
+09:53:04  [FACILARQ] Demo Escalera mínima | Finalizado en 1.4 s

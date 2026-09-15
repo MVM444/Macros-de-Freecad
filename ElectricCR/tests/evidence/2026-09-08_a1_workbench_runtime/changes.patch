@@ -1,0 +1,116 @@
+--- before/InitGui.py
++++ after/InitGui.py
+@@ -3,10 +3,10 @@
+ Purpose: Register the ElectricCR workbench, menus, toolbars, and mode panel.
+ Important: Keep ElectricCR as one workbench. Manual modes must not switch from
+ object selection. Keep all macros reachable through menus and launchers.
+-A1 PLAN selection/lifecycle adapters stay isolated from spatial synchronization.
++A1 PLAN selection, lifecycle and live sync remain installed across workbench changes.
+ Draft compacto exposes native Move and Snap Special for PLAN insertion-point UX.
+ Primary ElectricCR toolbar reuses Draft Move, Snap Special, and the existing visibility manager when registered.
+-Modified: 2026-09-05 16:55 America/Costa_Rica.
++Modified: 2026-09-08 14:05 America/Costa_Rica; A1 runtime persistence revision.
+ Target: FreeCAD 1.1.3.
+ """
+ 
+@@ -540,6 +540,14 @@
+     Icon = icon_path("Rayo")
+ 
+     def Initialize(self):
++        # PLAN selection is part of the A1 object contract in every workbench.
++        # Install once; Deactivated only tears down ElectricCR-specific UI.
++        try:
++            from .ui import plan_selection as _plan_selection
++            _plan_selection.install()
++        except Exception as e:
++            App.Console.PrintWarning(f"[ElectricCR][PLAN Select] initialize_warning={e}\n")
++
+         # El ciclo de vida PLAN pertenece al contrato de datos A1 y debe seguir
+         # activo aunque el usuario cambie luego a otro Workbench.
+         try:
+@@ -922,11 +930,8 @@
+     def Deactivated(self):
+         global _LOG_ENABLED
+         _LOG_ENABLED = False
+-        try:
+-            from .ui import plan_selection as _plan_selection
+-            _plan_selection.uninstall()
+-        except Exception as e:
+-            App.Console.PrintWarning(f"[ElectricCR][PLAN Select] deactivate_warning={e}\n")
++        # A1 selection/lifecycle/live sync belong to document objects and must
++        # survive switching to BIM, Draft, Part or any other workbench.
+         cfg = load_config()
+         enable_statusbar = _cfg_bool(cfg, "draft_statusbar", True)
+         try:
+--- before/ui/plan_selection.py
++++ after/ui/plan_selection.py
+@@ -16,10 +16,12 @@
+ - Draft ghostTracker was tested as persistent feedback and rejected after real tests produced stale graphics
+   and Access violation errors during move/delete/reopen workflows.
+ - Keep this module GUI-only and independent from PLAN geometry generation.
++- Once initialized, keep the redirector installed across workbench changes.
++- Repeated install() calls preserve the singleton; uninstall() is explicit maintenance only.
+ - Verify multi-document behavior and Workbench switching in real FreeCAD 1.1.3.
+ 
+-Version: 0.4.0
+-Date: 2026-09-05 21:50 America/Costa_Rica
++Version: 0.4.1
++Date: 2026-09-08 14:05 America/Costa_Rica
+ Target: FreeCAD 1.1.3
+ """
+ 
+@@ -181,19 +183,10 @@
+         return False
+     existing = getattr(Gui, _OBSERVER_ATTR, None)
+     if existing is not None:
+-        # Replace stale observers from development reloads. A full FreeCAD restart is still
+-        # required after the rejected ghostTracker build because old Coin nodes may survive.
+-        try:
+-            Gui.Selection.removeObserver(existing)
+-        except Exception:
+-            pass
+-        try:
+-            delattr(Gui, _OBSERVER_ATTR)
+-        except Exception:
+-            try:
+-                setattr(Gui, _OBSERVER_ATTR, None)
+-            except Exception:
+-                pass
++        # Activation can repeat many times. Do not detach/recreate the runtime
++        # observer; development reloads must explicitly uninstall it first.
++        normalize_plan_tree_visibility()
++        return True
+ 
+     observer = PlanSelectionRedirector()
+     try:
+@@ -208,7 +201,7 @@
+ 
+ 
+ def uninstall():
+-    """Remove the ElectricCR PLAN redirector."""
++    """Explicit development/maintenance teardown, never workbench deactivation."""
+     if Gui is None:
+         return False
+     observer = getattr(Gui, _OBSERVER_ATTR, None)
+--- before/electriccr/features/plan_live_sync.py
++++ after/electriccr/features/plan_live_sync.py
+@@ -18,8 +18,8 @@
+ - It must remain cheap enough for interactive Transform/Draft Move; do not add geometry regeneration here.
+ - Validate behavior in real FreeCAD 1.1.3 before declaring stable.
+ 
+-Version: 0.4.0
+-Date: 2026-09-05 21:50 America/Costa_Rica
++Version: 0.4.1
++Date: 2026-09-08 14:05 America/Costa_Rica
+ Target: FreeCAD 1.1.3
+ """
+ 
+@@ -106,7 +106,7 @@
+ 
+ def _normalize_plan_tree(doc):
+     try:
+-        from electriccr.ui import plan_selection
++        from ElectricCR.ui import plan_selection
+         plan_selection.normalize_plan_tree_visibility(doc)
+     except Exception:
+         pass

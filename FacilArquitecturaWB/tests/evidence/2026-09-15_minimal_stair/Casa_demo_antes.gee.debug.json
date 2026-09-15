@@ -1,0 +1,477 @@
+{
+  "debug_version": "2026-08-22-castle-config-v1",
+  "document": {
+    "file": "Casa_demo_antes.FCStd",
+    "label": "Casa_demo_antes",
+    "name": "FA_Demo_Casa_6x8"
+  },
+  "environment": {
+    "skybox_dir": "skies",
+    "skybox_source": "castle_executable",
+    "use_skybox": true
+  },
+  "export_object_count": 41,
+  "export_objects": [
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "Casa demo",
+      "name": "BuildingPart",
+      "type_id": "App::GeometryPython"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "Nivel 00",
+      "name": "BuildingPart001",
+      "type_id": "App::GeometryPython"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "Losa BIM desde sketches",
+      "name": "Structure",
+      "type_id": "Part::FeaturePython"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "Sitio BIM",
+      "name": "Site",
+      "type_id": "Part::FeaturePython"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "Muro BIM - Sketch muros exteriores - Demo",
+      "name": "Wall",
+      "type_id": "Part::FeaturePython"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "Muro BIM - Sketch muro interior - Demo",
+      "name": "Wall001",
+      "type_id": "Part::FeaturePython"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "Puerta BIM - Sketch centros puertas - Demo - 01",
+      "name": "Window",
+      "type_id": "Part::FeaturePython"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "Puerta BIM - Sketch centros puertas - Demo - 02",
+      "name": "Window001",
+      "type_id": "Part::FeaturePython"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "Ventana BIM - Sketch centros ventanas - Demo - 01",
+      "name": "Window002",
+      "type_id": "Part::FeaturePython"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "Ventana BIM - Sketch centros ventanas - Demo - 02",
+      "name": "Window003",
+      "type_id": "Part::FeaturePython"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "Ventana BIM - Sketch centros ventanas - Demo - 03",
+      "name": "Window004",
+      "type_id": "Part::FeaturePython"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "Ventana BIM - Sketch centros ventanas - Demo - 04",
+      "name": "Window005",
+      "type_id": "Part::FeaturePython"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "Ventana BIM - Sketch centros ventanas - Demo - 05",
+      "name": "Window006",
+      "type_id": "Part::FeaturePython"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "Ventana BIM - Sketch centros ventanas - Demo - 06",
+      "name": "Window007",
+      "type_id": "Part::FeaturePython"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        3000.0
+      ],
+      "label": "Nivel 01",
+      "name": "BuildingPart002",
+      "type_id": "App::GeometryPython"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "Losa BIM desde sketches001",
+      "name": "Structure001",
+      "type_id": "Part::FeaturePython"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "Muro BIM - Sketch muros exteriores - Demo001",
+      "name": "Wall002",
+      "type_id": "Part::FeaturePython"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "Muro BIM - Sketch muro interior - Demo001",
+      "name": "Wall003",
+      "type_id": "Part::FeaturePython"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "FA Escalera entre losas",
+      "name": "Stairs",
+      "type_id": "Part::FeaturePython"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "FA Escalera entre losas001",
+      "name": "Stairs001",
+      "type_id": "Part::FeaturePython"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "FA Escalera entre losas002",
+      "name": "Stairs002",
+      "type_id": "Part::FeaturePython"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "FA Escalera entre losas003",
+      "name": "Stairs003",
+      "type_id": "Part::FeaturePython"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "Barandilla",
+      "name": "Pipe",
+      "type_id": "Part::FeaturePython"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "Barandilla001",
+      "name": "Pipe001",
+      "type_id": "Part::FeaturePython"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "Cielo 600x600 - Estar-comedor",
+      "name": "FA_CeilingPanels",
+      "type_id": "Part::Feature"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "Cielo 600x600 - Dormitorio",
+      "name": "FA_CeilingPanels001",
+      "type_id": "Part::Feature"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "Tapichel lateral - buque escalera",
+      "name": "FA_StairOpeningLiner",
+      "type_id": "Part::Feature"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "Puerta BIM - Sketch centros puertas - Demo001 - 01",
+      "name": "Window008",
+      "type_id": "Part::FeaturePython"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "Puerta BIM - Sketch centros puertas - Demo001 - 02",
+      "name": "Window009",
+      "type_id": "Part::FeaturePython"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "Ventana BIM - Sketch centros ventanas - Demo001 - 01",
+      "name": "Window010",
+      "type_id": "Part::FeaturePython"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "Ventana BIM - Sketch centros ventanas - Demo001 - 02",
+      "name": "Window011",
+      "type_id": "Part::FeaturePython"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "Ventana BIM - Sketch centros ventanas - Demo001 - 03",
+      "name": "Window012",
+      "type_id": "Part::FeaturePython"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "Ventana BIM - Sketch centros ventanas - Demo001 - 04",
+      "name": "Window013",
+      "type_id": "Part::FeaturePython"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "Ventana BIM - Sketch centros ventanas - Demo001 - 05",
+      "name": "Window014",
+      "type_id": "Part::FeaturePython"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "Cielo 600x600 - Distribuidor y futura escalera",
+      "name": "FA_CeilingPanels002",
+      "type_id": "Part::Feature"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "Cielo 600x600 - Dormitorio principal",
+      "name": "FA_CeilingPanels003",
+      "type_id": "Part::Feature"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "Cielo 600x600 - Dormitorio secundario",
+      "name": "FA_CeilingPanels004",
+      "type_id": "Part::Feature"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "Cerchas BIM",
+      "name": "Truss",
+      "type_id": "Part::FeaturePython"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "Clavadores BIM - faldon izquierdo",
+      "name": "Structure002",
+      "type_id": "Part::FeaturePython"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "Clavadores BIM - faldon derecho",
+      "name": "Structure003",
+      "type_id": "Part::FeaturePython"
+    },
+    {
+      "global_base_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "label": "Cubierta BIM",
+      "name": "Roof",
+      "type_id": "Part::FeaturePython"
+    }
+  ],
+  "geometry_export": {
+    "minimum_payload_chars": 2048,
+    "mode": "Optimized"
+  },
+  "ground_texture": {
+    "enabled": true,
+    "generate_planar_uv": true,
+    "object_label": "",
+    "object_name": "",
+    "repeat_s": 20.0,
+    "repeat_t": 20.0,
+    "texture_path": "Zacate.png"
+  },
+  "light_source_names": [],
+  "materials": {
+    "improve_interior_lighting": true,
+    "interior_lighting_mode": "Architectural",
+    "light_source_names": [],
+    "object_assignments": []
+  },
+  "output_x3d": "Casa_demo_antes.x3d",
+  "point_light_count": 0,
+  "point_lights": [],
+  "records": [
+    {
+      "document_object_count": 107,
+      "event": "cge_scan_started",
+      "expanded_source_count": 107,
+      "raw_source_count": 41
+    },
+    {
+      "event": "cge_scan_finished",
+      "generated_entries": 0
+    },
+    {
+      "event": "cge_fallback_full_document_scan"
+    },
+    {
+      "document_object_count": 107,
+      "event": "cge_scan_started",
+      "expanded_source_count": 107,
+      "raw_source_count": 107
+    },
+    {
+      "event": "cge_scan_finished",
+      "generated_entries": 0
+    },
+    {
+      "event": "no_point_lights_prepared"
+    }
+  ]
+}

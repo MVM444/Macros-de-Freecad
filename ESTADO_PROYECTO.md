@@ -1,3 +1,196 @@
+## 2026-09-15 15:20 America/Costa_Rica - Facil Arquitectura / Demo Escalera minima 0.10.6
+
+Estado: **CORREGIDO EN DRIVE / build 0.14.12 / 2026.09.15.6 / smoke real pendiente**.
+
+- Smoke `.5`: el buque estructural ya sigue a la escalera, pero la abertura del cielorraso queda fija.
+- Causa: la exclusion del cielo se horneaba dentro de la Shape de paneles en coordenadas mundo y no tenia dependencia posterior con el Placement del master.
+- `ceiling_utils.py` 0.7.3 agrega un modo opt-in `follow_placement`: cielo completo fijo + `Part::Cut` + cutter local oculto ligado a `Stairs.Placement`.
+- Demo minima activa `ceiling_exclusion_follows_master=True`; Casa demo 2 pisos y el comando normal no cambian.
+- Para evitar DAG circular, la Demo guarda los cielos afectados por Name JSON en el master; diagnostico 0.2.2 acepta ese contrato.
+- `py_compile` y comprobaciones de contrato fuera de FreeCAD: OK. Pendiente mover/girar en FreeCAD 1.1.3 y confirmar ambos buques.
+
+---
+
+## 2026-09-15 15:05 America/Costa_Rica - Facil Arquitectura / Demo Escalera minima 0.10.5
+
+Estado: **CORREGIDO EN DRIVE / build 0.14.12 / 2026.09.15.5 / smoke de movimiento pendiente**.
+
+- Smoke `.4`: al mover `FA Escalera entre losas`, el recompute la devolvia al sitio original.
+- Causa: expresion `Stairs.Placement = Wire.Placement`; la autoridad estaba invertida.
+- Solo Demo Escalera minima usa ahora `placement_authority=master`; el Wire queda como referencia inicial y las bases permanecen Draft Line/Wire locales.
+- El buque Arch nativo sigue `Stairs.Placement` mediante un cutter local. Para evitar ciclos DAG, este modo guarda por nombre estable el contexto de losa/Level y el enlace del master al cutter; el diagnostico 0.2.1 reconoce ese contrato.
+- PLAN 2D principal sigue el Placement del master.
+- Casa demo 2 pisos y el comando normal de escalera conservan el comportamiento anterior.
+- `py_compile` y spec puro JSON: OK. Pendiente smoke FreeCAD 1.1.3 moviendo y girando la escalera.
+
+---
+
+## 2026-09-15 14:12 America/Costa_Rica - Facil Arquitectura / Demo Escalera minima 0.10.3
+
+Estado: **CORREGIDO EN DRIVE / build 0.14.12 / 2026.09.15.3 / smoke FreeCAD pendiente**.
+
+- El smoke `.2` confirmo que el Space auxiliar ya se crea correctamente.
+- El siguiente error fue `KeyError: 'ceiling'`: el spec minimo no declaraba el componente que `_step_ceiling()` intentaba materializar.
+- `demo_building_core.py` 0.9.1 conserva el contrato canonico de cielorraso solo en Nivel 00 y activa la exclusion de escalera `l_union_v2`.
+- Se mantiene sin tapichel (`create_opening_liner=False`) y sin modificar Casa demo 2 pisos.
+- `cmd_demo_building.py` 0.10.3; build general `.3`.
+- `py_compile` y contrato puro JSON: OK. Nuevo smoke FreeCAD 1.1.3 pendiente.
+
+---
+
+## 2026-09-15 13:35 America/Costa_Rica - Facil Arquitectura / Demo Escalera minima 0.10.2
+
+Estado: **CORREGIDO EN DRIVE / build 0.14.12 / 2026.09.15.2 / smoke FreeCAD pendiente**.
+
+- El smoke real de Demo Escalera minima llego correctamente hasta dos Levels, losas, escalera nativa y hueco de losa `l_union_v2`.
+- Fallo al crear el Space auxiliar del cielorraso porque el registro manual no incluia `polygon_mm`.
+- `cmd_demo_building.py` 0.10.2 elimina ese registro paralelo y deja que `create_bim_spaces()` derive su registro completo desde el Sketch cerrado canonico.
+- Se conserva el objetivo: cielorraso Nivel 00 con exclusion de escalera y barandas nativas visibles; sin tapichel y sin modificar aun Casa demo 2 pisos.
+- `py_compile`: OK. Nuevo smoke FreeCAD 1.1.3 pendiente.
+
+---
+
+## 2026-09-14 20:00 America/Costa_Rica - FA Escalera / buque L y tapichel libre
+
+Estado: **IMPLEMENTADO EN DRIVE / build 0.14.11 / 2026.09.14.6 / smoke FreeCAD pendiente**.
+
+- `fa_stair_core` 0.3.0: `FA_StairClearancePlan_v2`, forma `l_union_v2`, dos brazos solapados y metadatos de extremos abiertos.
+- `stair_freecad_adapter` 0.6.0: PLAN 2D de contorno fusionado; tapichel solo lateral, omite entrada/salida y se recorta contra el paso libre.
+- Demo 0.9.3 / demo core 0.8.1: contrato explicito `clearance_geometry_revision=l_union_v2` y `opening_liner_mode=side_walls_open_ends`.
+- Build general `.6`.
+- Verificacion local: `py_compile` OK; pruebas puras focales 11/11 OK.
+- Pendiente: hot restart y prueba visual/diagnostica en FreeCAD 1.1.3.
+
+---
+
+## 2026-09-14 17:11 America/Costa_Rica - FA Escalera / correccion smoke build .5
+
+Estado: **CORREGIDO EN DRIVE / build 0.14.11 / 2026.09.14.5 / smoke FreeCAD pendiente**.
+
+- Demo 0.9.2 corrige la llamada al tapichel: API canonica `plane_id` + `level`.
+- Adaptador escalera 0.5.1 conserva aliases de compatibilidad para sincronizacion parcial.
+- Master de escalera inter-nivel se contiene en el Building comun, no en `Nivel 00`, evitando el ciclo `Level -> Stair -> FA_LowerLevel -> Level`.
+- Cielorraso 0.7.1 deja de cortar cuando el panel ya es `Null shape`.
+- Smoke .4 confirmado hasta escalera + buque + exclusion de cielo; se interrumpio exclusivamente al llamar el tapichel con keywords incorrectos.
+- `ReferenceError` de ArchWindow observado solo despues de la interrupcion; reevaluar en smoke limpio.
+- Compilacion sintactica OK; 5/5 pruebas focales nuevas/afectadas OK.
+- Pendiente: repetir Demo, confirmar sin DAG/Null shape, ver tapichel, diagnostico automatico, guardar/reabrir.
+
+---
+
+## 2026-09-14 16:41 America/Costa_Rica - FA Escalera / tapichel del buque
+
+Estado: **IMPLEMENTADO EN DRIVE / build 0.14.11 / 2026.09.14.4 / smoke FreeCAD pendiente**.
+
+- Demo 0.9.1; adaptador escalera 0.5.0.
+- Buque de losa sigue usando `Subtractions` nativas de Arch.
+- Cielorraso sigue recortandose antes de crear paneles.
+- Nuevo `FA_StairOpeningLiner`: tapichel vertical de 100 mm alrededor de la abertura del cielo, desde cielorraso inferior hasta cara inferior de losa, creciendo hacia afuera para no reducir altura libre.
+- Enlace maestro `FA_OpeningLiner` y trazabilidad JSON/cotas/espesor.
+- Pruebas fuera de FreeCAD: 7 demo core + 2 contratos Demo + 5 comprobaciones de contrato, `py_compile` OK.
+- Pendiente: smoke visual real; luego corregir orientacion/posicion de escalera y simplificar el buque (candidato: giro 90 grados).
+
+---
+
+## 2026-09-14 15:40 America/Costa_Rica - FA Escalera entre losas / buque real
+
+Estado: **IMPLEMENTADO / build preparado 0.14.11 / 2026.09.14.3 / smoke FreeCAD pendiente**.
+
+- Demo 0.9.0 aplica hueco real a la losa superior mediante `Subtractions` nativas de Arch.
+- Cielorraso 0.7.0 soporta zonas de exclusion XY y genera paneles ya recortados.
+- Los PLAN 2D de hueco y cielo se conservan como documentacion.
+- Diagnostico 0.2.0 comprueba sustraccion de losa y exclusion de cielo.
+- 22/22 pruebas focales y `py_compile` aprobados fuera de FreeCAD.
+- Pendiente: smoke visual real, Undo/Redo, guardar/reabrir. No habilitar aun el corte automatico para documentos arbitrarios hasta cerrar ese smoke.
+
+---
+
+## 2026-09-09 20:20 America/Costa_Rica - FA Demo 0.8.2 / preview de hueco de escalera
+
+Estado: **IMPLEMENTADO EN DRIVE / build 0.14.11 / 2026.09.09.7 / smoke FreeCAD pendiente**.
+
+- Escalera Demo reubicada a `[(5200,4200),(5200,1900),(2700,1900)]`.
+- `fa_stair_core` 0.2.0 calcula altura libre por planos horizontales, JSON-compatible.
+- `stair_freecad_adapter` 0.3.0 crea previews PLAN 2D de hueco de losa y exclusion de cielorraso.
+- Parametros Demo: headroom 2100 mm, margen lateral 50 mm, margen aproximacion 100 mm.
+- La losa y el cielorraso siguen intactos: preview-only hasta validar en FreeCAD real.
+- Diagnostico automatico y copia de ruta MD se mantienen.
+
+---
+
+## 2026-09-09 16:25 America/Costa_Rica - FA Demo 0.8.1 / FA Informe diagnostico 0.2.0
+
+Estado: **IMPLEMENTADO EN DRIVE / build 0.14.11 / 2026.09.09.6 / smoke FreeCAD pendiente**.
+
+- Demo inmediata y guiada generan diagnostico automatico al finalizar.
+- El diagnostico automatico fuerza documento completo (`selection=[]`).
+- El comando manual pregunta el alcance si existe seleccion.
+- Dialogo de resultado comun: copiar ruta MD, abrir carpeta, cerrar.
+- No hay copia automatica al portapapeles en el flujo normal; la macro historica conserva copia del prompt por compatibilidad.
+- La escalera canonica de Demo continua como una sola escalera Arch nativa, con contexto Nivel 00 -> Nivel 01 validado en el informe real anterior; el hueco de la losa superior sigue pendiente.
+
+---
+
+# ESTADO - 2026-09-09 15:25 - Facil Arquitectura
+
+- Version WB: `0.14.11`
+- Build: `2026.09.09.5`
+- FA Demo edificio: `0.8.0`
+- FA Escalera entre losas: adaptador `0.2.0`
+- Estado: escalera canonica integrada en Demo con la misma ruta de produccion; smoke real FreeCAD 1.1.3 pendiente.
+- Corregida causa estructural de `FA_UpperLevel` ambiguo: padre Level directo tiene prioridad sobre dependencias recursivas.
+- Proteccion de duplicados incorporada.
+- Recorrido fuente deja de quedar raiz cuando puede adoptarse de forma segura.
+- Railings nativos multisegmento de 1.1.3 se ocultan temporalmente; no se sustituyen por geometria FA.
+- PLAN 2D permanece.
+- Hueco de losa superior: pendiente para fase posterior.
+- Pruebas fuera de FreeCAD: 22/22 focales + py_compile OK.
+
+---
+
+## 2026-09-09 - Facil Arquitectura / FA Informe diagnostico 0.1.1
+
+Estado: fuente actualizada en Google Drive, build `0.14.11 / 2026.09.09.4`; prueba real de destino pendiente. Los reportes de diagnostico se escriben ahora bajo el MacroDir configurado por FreeCAD (`App.getUserMacroDir(True)`) en `_reportes_diagnostico`, con fallback al paquete del Workbench. Esto permite aprovechar una carpeta de macros sincronizada sin fijar una ruta de usuario en el codigo.
+
+---
+
+## 2026-09-09 - Facil Arquitectura / FA Escalera entre losas 0.1.0
+
+Estado: fuente integrada en Google Drive, build `0.14.11 / 2026.09.09.2`, pruebas puras aprobadas, smoke FreeCAD pendiente.
+
+La herramienta reutiliza `Arch.makeStairs()` y conserva arquitectura nucleo independiente -> adaptador FreeCAD -> comando. Acepta dos losas y un Wire/Sketch abierto de dos segmentos, calcula tramos/descanso, crea PLAN 2D documental y enlaza losas/Levels. No corta todavia la losa superior.
+
+El usuario reporto que la ultima demo de dos pisos termino y genero la casa. Esa corrida no genero automaticamente un informe MD/JSON; el diagnostico estructural final requiere ejecutar `CapturarArbolYPrompt.FCMacro` sobre el nuevo modelo.
+
+---
+
+## 2026-09-09 - Facil Arquitectura / Demo edificio 0.7.0
+
+Estado: fuente actualizada en Google Drive, build `0.14.11 / 2026.09.09.1`, pruebas puras aprobadas, smoke FreeCAD pendiente.
+
+La version corrige el Level unico reutilizado por error, separa cielorrasos por nivel y reemplaza la planta superior copiada por una distribucion distinta sin puerta exterior. La siguiente prueba debe verificar dos Building Storeys reales y ausencia de avisos DAG/PropertyLinkList.
+
+Se identifico ademas que `CapturarArbolYPrompt.FCMacro` ya genera MD/JSON/TXT de diagnostico; se considera base preferida para una futura integracion de feedback GPT/Codex, evitando duplicar funcionalidad.
+
+---
+
+# ESTADO VIGENTE - Facil Arquitectura / Demo edificio 2 pisos
+
+Ultima actualizacion: 2026-09-08 America/Costa_Rica
+FreeCAD objetivo: `1.1.3`
+Estado: **IMPLEMENTADO EN DRIVE / PRUEBAS PURAS APROBADAS / SMOKE REAL PENDIENTE**.
+
+- Nuevo modo `Casa fija 2 pisos 6 x 8 m` dentro de `FA Demo edificio`.
+- Reutiliza Building/Level BIM nativos y los servicios existentes de losa, muros, aberturas, Spaces, cielorraso y techo.
+- Dos Levels: 0 mm y 3000 mm; un unico Site; techo solo en el superior.
+- Nucleo JSON: 7/7 pruebas focales aprobadas; contrato multinivel nuevo aprobado.
+- Demo canonica de una planta y demo aleatoria se preservan.
+- Demo guiada de 14 pasos no se modifica.
+- Escalera nativa: pendiente de verificacion runtime; no existe implementacion FA paralela.
+- No incrementar build general hasta smoke en FreeCAD real, save/reopen y regresion de la demo de una planta.
+
+---
+
 # ESTADO VIGENTE - CRBIMCore / Barra comun Espacios y Recintos v0.1
 
 Ultima actualizacion: 2026-09-02 America/Costa_Rica
@@ -630,3 +823,38 @@ La tabla no sobrescribe silenciosamente valores explicitos contradictorios. El
 documento 1416 y el modelo controlado pasaron la validacion MCP completa; el Wall
 multisegmento se resuelve sin crear objetos auxiliares. Ver el resultado vigente al
 inicio de este archivo y `FacilArquitecturaWB/RESULTADO_CODEX.md`.
+
+
+---
+
+## 2026-09-09 - Facil Arquitectura / FA Informe diagnostico 0.1.0
+
+Estado: fuente integrada en Google Drive, build `0.14.11 / 2026.09.09.3`, pruebas puras 4/4 aprobadas, smoke FreeCAD pendiente.
+
+Se formalizo `CapturarArbolYPrompt.FCMacro` como wrapper del nuevo motor compartido. La captura permanece read-only y usa `claimChildren()` para jerarquia visual con `Group` de respaldo; relaciones internas se capturan separadamente.
+
+El nucleo independiente produce hallazgos y reportes TXT/MD/JSON. Las primeras reglas ya cubren Levels BIM, ciclos/padres multiples y problemas observados en `FA Escalera entre losas`, incluyendo duplicados entre las mismas losas y fuentes Wire como raices.
+
+Siguiente verificacion: ejecutar `FA Informe diagnostico` sobre la casa demo con las dos escaleras visibles y revisar el MD real. No automatizar todavia la captura al finalizar la Demo hasta validar precision y ausencia de falsos positivos.
+
+---
+
+## 2026-09-15 - Demo Escalera minima / marco local editable
+
+Build preparado: `0.14.12 / 2026.09.15.4`.
+
+Se implemento un contrato opt-in exclusivo de `Demo Escalera minima`: el recorrido pasa a ser Draft Wire con origen local en el arranque de la escalera; las bases nativas se materializan como dos Draft Line y un Draft Wire; y el buque de la losa superior se crea en ese mismo marco local con Placement dependiente del recorrido. El PLAN 2D y las barandillas nativas usan la misma fuente de Placement cuando el modo esta activo.
+
+La ruta historica de `Casa demo 2 pisos` y del comando interactivo conserva los valores predeterminados (`Part::Feature`/coordenadas globales). `py_compile` aprobado; falta smoke en FreeCAD 1.1.3 para comprobar transformacion conjunta y ausencia de ciclos DAG.
+
+---
+
+## 2026-09-15 - Demo Escalera minima / tapichel dinamico - build 2026.09.15.7
+
+Se completo el siguiente paso del caso controlado `Demo Escalera minima`. El master nativo `FA Escalera entre losas` sigue siendo la autoridad de Placement; el buque estructural y la exclusion dinamica del cielorraso ya acompanaban ese Placement en las builds `.5/.6`.
+
+La build `.7` reutiliza el tapichel lateral existente de Casa demo 2 pisos, pero agrega un modo opt-in local/dinamico a `create_stair_opening_liner()`. En este modo el tapichel convierte sus zonas y extremos abiertos al marco local, enlaza su Placement al master y evita el enlace inverso master -> liner para conservar un DAG valido. El master guarda el Name estable del tapichel.
+
+`Demo Escalera minima` activa ahora `create_opening_liner=True` y `opening_liner_follows_master=True`. Como la exclusion de cielorraso se calcula con el espesor exterior del tapichel, el acabado 600x600 debe terminar contra la cara exterior del cierre mas la junta definida, igual que en Casa demo 2 pisos.
+
+`py_compile` y contrato puro aprobados. Pendiente smoke en FreeCAD 1.1.3: comprobar cierre visual del plenum y transformacion conjunta de escalera, buque de losa, buque de cielorraso y tapichel.

@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 import types
 import unittest
+from pathlib import Path
 
 
 if "FreeCAD" not in sys.modules:
@@ -30,6 +31,13 @@ from FacilArquitecturaWB.core import ceiling_utils as ceilings  # noqa: E402
 
 
 class CeilingUtilsTests(unittest.TestCase):
+    def test_multilevel_ceiling_namespace_options_are_additive(self):
+        source = Path(ceilings.__file__).read_text(encoding="utf-8")
+        self.assertIn('options.get("group_name") or CEILING_GROUP_NAME', source)
+        self.assertIn('options.get("sheet_name") or CEILING_SHEET_NAME', source)
+        self.assertIn('def _write_ceiling_schedule(doc, plans, parent_group, options, sheet_name=CEILING_SHEET_NAME):', source)
+
+
     def test_balanced_grid_has_equal_perimeter_cuts(self):
         phase = ceilings.balanced_phase(3250.0, 600.0)
         segments = ceilings.axis_segments(3250.0, 600.0, phase)
@@ -130,6 +138,35 @@ class CeilingUtilsTests(unittest.TestCase):
         doc = types.SimpleNamespace(Objects=[rectangle, polygon])
 
         self.assertEqual([polygon, rectangle], ceilings.collect_rooms(doc, [polygon, rectangle]))
+
+    def test_exclusion_cut_stops_after_panel_becomes_null(self):
+        class DummyShape:
+            def __init__(self, null=False, calls=None):
+                self.null = bool(null)
+                self.calls = calls if calls is not None else []
+
+            def isNull(self):
+                return self.null
+
+            def cut(self, _other):
+                self.calls.append("cut")
+                return DummyShape(True, self.calls)
+
+        calls = []
+        result = ceilings._cut_face_by_exclusions(
+            DummyShape(False, calls),
+            [DummyShape(False), DummyShape(False)],
+        )
+        self.assertTrue(result.isNull())
+        self.assertEqual(["cut"], calls)
+
+    def test_stair_exclusion_zones_are_supported_by_generator(self):
+        source = Path(ceilings.__file__).read_text(encoding="utf-8")
+        self.assertIn('options.get("exclusion_zones_world_mm", [])', source)
+        self.assertIn('def _world_exclusion_faces(', source)
+        self.assertIn('def _cut_face_by_exclusions(', source)
+        self.assertIn('FA_ExclusionZoneCount', source)
+        self.assertIn('FA_ExclusionOwnerName', source)
 
 
 if __name__ == "__main__":

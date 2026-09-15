@@ -12,8 +12,8 @@ Instrucciones relevantes:
   aberturas del mismo muro.
 - El caso fijo es el ejemplo canonico de demostracion; el modo aleatorio solo
   varia dentro de limites deliberadamente conservadores.
-Version: 0.2.1
-Fecha y hora: 2026-09-01 09:50 America/Costa_Rica
+Version: 0.9.4
+Fecha: 2026-09-15 15:20 America/Costa_Rica
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import math
 import random
+from copy import deepcopy
 from typing import Dict, Iterable, List, Sequence, Tuple
 
 SCHEMA_VERSION = 1
@@ -378,8 +379,213 @@ def build_demo_spec(seed: int = CANONICAL_SEED, randomized: bool = False) -> Dic
     return validate_demo_spec(spec)
 
 
+
+def build_two_storey_demo_spec() -> Dict:
+    """Build a deterministic two-storey demo with a genuinely different upper plan.
+
+    The two storeys keep the same 6x8 footprint so the multi-level BIM structure
+    remains easy to inspect, but Nivel 01 is not a lifted copy of Nivel 00: it has
+    three rooms, two internal doors, a different window set, and no exterior door.
+    The stair is defined here as a deterministic source path and is materialized by
+    the same native Arch-Stairs adapter used by the interactive command.
+    """
+    level_height = 3000.0
+    ground = build_demo_spec(CANONICAL_SEED, False)
+    upper = build_demo_spec(CANONICAL_SEED, False)
+
+    ground["name"] = "Casa demo 2 pisos - Nivel 00"
+    ground["site"]["garden_enabled"] = True
+    ground["floor"]["top_z_mm"] = 0.0
+
+    upper["name"] = "Casa demo 2 pisos - Nivel 01"
+    upper["site"]["garden_enabled"] = False
+    upper["floor"]["top_z_mm"] = 0.0
+
+    # Upper-floor layout: a front landing/future stair zone and two bedrooms at
+    # the rear. Two wall segments form a T so the room detector exercises a real
+    # multi-room Level instead of simply repeating the ground-floor partition.
+    width = float(upper["footprint"]["width_mm"])
+    depth = float(upper["footprint"]["depth_mm"])
+    partition_y = 3500.0
+    partition_x = 3000.0
+    upper["walls"]["interior_segments"] = [
+        _segment(0.0, partition_y, width, partition_y, "wall", "Muro dormitorios nivel 01"),
+        _segment(partition_x, partition_y, partition_x, depth, "wall", "Muro divisor dormitorios nivel 01"),
+    ]
+
+    # There is deliberately no exterior door on Nivel 01. Both doors are hosted
+    # on the horizontal interior partition and open from the landing to bedrooms.
+    upper["openings"]["doors"] = [
+        _centered_segment_on_horizontal(1500.0, 900.0, partition_y, "door", "Puerta dormitorio principal"),
+        _centered_segment_on_horizontal(4500.0, 900.0, partition_y, "door", "Puerta dormitorio secundario"),
+    ]
+
+    # A deliberately different facade pattern makes the second floor visually
+    # distinguishable while keeping every opening comfortably away from corners.
+    upper["openings"]["windows"] = [
+        _centered_segment_on_horizontal(3000.0, 1200.0, 0.0, "window", "Ventana distribuidor"),
+        _centered_segment_on_horizontal(1500.0, 1200.0, depth, "window", "Ventana posterior dormitorio principal"),
+        _centered_segment_on_horizontal(4500.0, 1200.0, depth, "window", "Ventana posterior dormitorio secundario"),
+        _centered_segment_on_vertical(0.0, 5600.0, 1000.0, "window", "Ventana lateral dormitorio principal"),
+        _centered_segment_on_vertical(width, 5600.0, 1000.0, "window", "Ventana lateral dormitorio secundario"),
+    ]
+
+    # Room records mirror the three faces expected from the T-shaped partition.
+    # Polygons use clear internal limits (half wall thickness) so Spaces and
+    # ceiling plans better reflect the actual wall arrangement.
+    ext_half = float(upper["walls"]["exterior_thickness_mm"]) * 0.5
+    int_half = float(upper["walls"]["interior_thickness_mm"]) * 0.5
+    front_y1 = partition_y - int_half
+    rear_y0 = partition_y + int_half
+    left_x1 = partition_x - int_half
+    right_x0 = partition_x + int_half
+    rear_y1 = depth - ext_half
+    right_x1 = width - ext_half
+
+    def upper_room(room_id, name, xa, ya, xb, yb):
+        return {
+            "id": room_id,
+            "name": name,
+            "polygon_mm": [[xa, ya], [xb, ya], [xb, yb], [xa, yb]],
+            "area_m2": ((xb - xa) * (yb - ya)) / 1000000.0,
+            "space_height_mm": 2700.0,
+        }
+
+    upper["rooms"]["items"] = [
+        upper_room("R01", "Distribuidor y futura escalera", ext_half, ext_half, right_x1, front_y1),
+        upper_room("R02", "Dormitorio principal", ext_half, rear_y0, left_x1, rear_y1),
+        upper_room("R03", "Dormitorio secundario", right_x0, rear_y0, right_x1, rear_y1),
+    ]
+    upper["ceiling"]["elevation_mm"] = 2700.0
+
+    spec = {
+        "schema_version": 4,
+        "generator": "FA_DemoBuilding",
+        "building_mode": "two_storey",
+        "seed": CANONICAL_SEED,
+        "randomized": False,
+        "name": "Casa demo canonica 2 pisos 6x8",
+        "storey_height_mm": level_height,
+        "storeys": [
+            {"level_name": "Nivel 00", "elevation_mm": 0.0, "spec": ground},
+            {"level_name": "Nivel 01", "elevation_mm": level_height, "spec": upper},
+        ],
+        "stair": {
+            "requested": True,
+            "native_required": True,
+            "status": "canonical_demo",
+            "source_level_name": "Nivel 00",
+            "reserved_zone": {"level_name": "Nivel 01", "room_id": "R01"},
+            # Layout revision 2: move the stair away from the front facade while
+            # keeping its calculated upper-slab opening completely inside the
+            # front distributor (clear of the Nivel 01 partition at Y=3500).
+            "path_points_mm": [[5200.0, 4200.0], [5200.0, 1900.0], [2700.0, 1900.0]],
+            "layout_revision": "rearward_front_distributor_v2",
+            "width_mm": 1000.0,
+            "target_riser_mm": 175.0,
+            "structure_thickness_mm": 150.0,
+            "create_plan": True,
+            "railings_mode": "hidden_native_freecad_1_1_3_multisegment",
+            "headroom_mm": 2100.0,
+            "clearance_side_margin_mm": 50.0,
+            "clearance_approach_margin_mm": 100.0,
+            "clearance_preview": True,
+            "cut_upper_slab": True,
+            "apply_ceiling_exclusion": True,
+            "clearance_geometry_revision": "l_union_v2",
+            "create_opening_liner": True,
+            "opening_liner_mode": "side_walls_open_ends",
+            "opening_liner_thickness_mm": 100.0,
+            "ceiling_exclusion_edge_gap_mm": 3.0,
+            "note": "La Demo usa el mismo adaptador Arch.makeStairs que el comando FA. El buque estructural se aplica mediante Subtractions nativas de Arch como una L continua formada por dos brazos solapados; el cielorraso se recorta hasta la cara exterior del tapichel mas una junta pequena, y el tapichel cierra solo los laterales del plenum dejando libres entrada y salida de la escalera. Los PLAN 2D se conservan como documentacion.",
+        },
+    }
+    json.dumps(spec, sort_keys=True)
+    return spec
+
+def build_minimal_stair_demo_spec() -> Dict:
+    """Keep the canonical house's slabs and stair, without its other components.
+
+    Geometry comes from build_two_storey_demo_spec on every call.  The minimal
+    example deliberately omits walls/openings/rooms/roof, but retains the Nivel 00
+    ceiling contract because that ceiling is part of the stair-clearance test.
+    Stair, slab-opening and ceiling-exclusion parameters are inherited rather than
+    maintained as a second staircase specification.
+    """
+    house = build_two_storey_demo_spec()
+    spec = {key: deepcopy(house[key]) for key in (
+        "schema_version", "generator", "seed", "randomized", "storey_height_mm", "stair"
+    )}
+    spec.update(building_mode="minimal_stair", name="Demo Escalera mínima", storeys=[])
+    # The minimal demo is the controlled regression case for the real ceiling
+    # opening. Reuse the same side tapichel as Casa 2 pisos, but make it follow
+    # the movable stair Placement and avoid reverse links that would close a DAG.
+    spec["stair"].update(
+        apply_ceiling_exclusion=True,
+        create_opening_liner=True,
+        opening_liner_follows_master=True,
+        # Minimal-demo-only editing contract. The two-storey house keeps the
+        # historical world-coordinate source/bases until this regression case
+        # is validated in real FreeCAD 1.1.3.
+        editable_local_frame=True,
+        base_geometry_mode="draft_line_wire",
+        # Only this controlled demo makes the visible Arch Stairs Placement the
+        # editing authority. The source Wire becomes an initial local-frame reference.
+        placement_authority="master",
+        context_links_mode="names",
+        opening_follows_source=False,
+        opening_follows_master=True,
+        ceiling_exclusion_follows_master=True,
+    )
+    for key in ("reserved_zone", "note"):
+        spec["stair"].pop(key, None)
+    for storey in house["storeys"]:
+        source = storey["spec"]
+        level_spec = {key: deepcopy(source[key]) for key in (
+            "seed", "randomized", "footprint", "floor"
+        )}
+        if storey["level_name"] == "Nivel 00":
+            # _step_ceiling() consumes this canonical section. The pure spec must
+            # describe every component the demo intends to materialize.
+            level_spec["ceiling"] = deepcopy(source["ceiling"])
+        footprint = deepcopy(source["walls"]["exterior_segments"])
+        for segment in footprint:
+            segment.update(role="slab_footprint", name="Huella de losa")
+        level_spec.update(
+            name="Demo Escalera mínima - " + storey["level_name"],
+            building_mode="minimal_stair_level",
+            site={"garden_enabled": False},
+            walls={"exterior_segments": footprint},
+        )
+        spec["storeys"].append({
+            "level_name": storey["level_name"],
+            "elevation_mm": storey["elevation_mm"],
+            "spec": level_spec,
+        })
+    return spec
+
+
 def spec_summary(spec: Dict) -> str:
     """Compact summary suitable for logs and tests."""
+    if str(spec.get("building_mode", "")) == "minimal_stair_level":
+        return "%s | losa %.1fx%.1f m" % (
+            spec["name"], spec["footprint"]["width_mm"] / 1000.0,
+            spec["footprint"]["depth_mm"] / 1000.0,
+        )
+    if str(spec.get("building_mode", "")) in ("two_storey", "minimal_stair"):
+        storeys = list(spec.get("storeys", []) or [])
+        first = storeys[0]["spec"] if storeys else {}
+        footprint = first.get("footprint", {})
+        return (
+            "%s | niveles=%d | %.1fx%.1f m | altura entre niveles=%.1f m"
+            % (
+                spec.get("name", "Casa demo 2 pisos"),
+                len(storeys),
+                float(footprint.get("width_mm", 0.0)) / 1000.0,
+                float(footprint.get("depth_mm", 0.0)) / 1000.0,
+                float(spec.get("storey_height_mm", 0.0)) / 1000.0,
+            )
+        )
     footprint = spec["footprint"]
     return (
         "%s | seed=%d | %.1fx%.1f m | recintos=%d | puertas=%d | ventanas=%d | techo=%.1f deg | jardin=%s"

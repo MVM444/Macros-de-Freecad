@@ -267,3 +267,12 @@ Current status:
 Noise classification:
 1. `Cannot find icon: SpreadsheetAlignLeft` se trata como warning cosmetico salvo que se observe perdida funcional real.
 2. Los `ModuleNotFoundError` de `ElectricCR`, `MEPWorkbenchCR` y runtimes legacy de tablero si son fallos reales de restauracion.
+
+## Iconos propios para comandos y macros visibles
+
+Regla recurrente de interfaz:
+1. Toda macro, comando o boton nuevo que se integre visualmente en un Workbench debe recibir desde el inicio un icono propio e identificable.
+2. No reutilizar `Rayo.svg`, el logo del Workbench ni un icono generico como icono definitivo de herramientas distintas; solo se admiten como fallback tecnico de emergencia.
+3. Si una herramienta tiene comandos distintos, por ejemplo crear y auditar, cada comando debe tener un icono diferente cuando sus acciones puedan confundirse.
+4. Mantener los SVG en el directorio `icons` del Workbench, con nombres internos ASCII-safe y estables.
+5. La verificacion visual del icono forma parte de la integracion de una herramienta nueva en el Workbench.

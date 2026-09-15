@@ -1,7 +1,7 @@
 # Catalogo de macros ElectricCR
 
 Esquema JSON: 1
-Actualizado: 2026-09-02T08:07:42
+Actualizado: 2026-09-10T10:22:45
 
 Fuente de verdad: `ElectricCR/data/macros_catalog.json`.
 Este archivo se genera automaticamente; los comentarios manuales se editan en el JSON desde el Panel.
@@ -154,6 +154,13 @@ Este archivo se genera automaticamente; los comentarios manuales se editan en el
 |---|---|---|---|---|---|---|---|---|
 | Sensores de humo en poligonos (NFPA) | `Deteccion/ColocarDetectores_Poligonos_NFPA.FCMacro` | Distribuye sensores de humo sobre caras poligonales de referencia. | macro_metadata/alta |  | SIN_REVISAR | SIN_DECISION |  | Descripcion local concreta conservada; alternativa GPT pendiente de revision. |
 | Sensores de humo en rectangulos (NFPA) | `Deteccion/ColocarDetectores_NFPA.FCMacro` | Distribuye detectores de humo sobre areas rectangulares aplicando criterios de separacion y cobertura definidos para el flujo NFPA de ElectricCR. | contexto_revisado_gpt/alta |  | SIN_REVISAR | SIN_DECISION |  |  |
+
+## ElectricCR
+
+| Herramienta | Ruta | Descripcion | Fuente/confianza | Comentario | Estado | Decision | Rol / madurez | Observacion |
+|---|---|---|---|---|---|---|---|---|
+| Demo_ElectricCR_A1 | `ElectricCR/Demo_ElectricCR_A1.FCMacro` | Demo_ElectricCR_A1.FCMacro | macro_metadata |  | SIN_REVISAR | SIN_DECISION |  |  |
+| Demo_ElectricCR_A1_Prueba_Arquitectura | `ElectricCR/Demo_ElectricCR_A1_Prueba_Arquitectura.FCMacro` | Name: Demo_ElectricCR_A1_Prueba_Arquitectura.FCMacro Purpose: Ejecutar el tramo de la Demo ElectricCR A1 validado manualmente en FreeCAD 1.1.3. Main behavior: crea un documento NUEVO con metadata, edificio, Nivel 00, losa y cinco muros BIM; se detiene antes de Spaces y dispositivos A1. Future modifications: ampliar esta misma prueba solo despues de validar manualmente el siguiente tramo; no duplicar la logica del adaptador. Version: 0.1.0 Date/time: 2026-09-09 23:14 America/Costa_Rica Target: FreeCAD 1.1.3 | macro_metadata |  | SIN_REVISAR | SIN_DECISION |  |  |
 
 ## FacilArquitecturaWB
 

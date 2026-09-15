@@ -1,0 +1,27 @@
+{
+  "before_audit": [],
+  "after_audit": [
+    "Link_Apagador_Rectangle006",
+    "Link_Apagador_Rectangle007",
+    "Link_Apagador_Rectangle008",
+    "Link_Apagador_Rectangle009",
+    "Link_Apagador_Rectangle011",
+    "Link_Apagador_Rectangle012",
+    "Link_Apagador_Recinto_poligonal_01",
+    "Link_Apagador_Rectangle013",
+    "Link_Apagador_Rectangle014",
+    "ECR_DocPlan_6e9ca8b1_5361_4e59_aac7_0fe1f1adfc6f",
+    "ECR_DocPlan_bbe195cb_999e_4557_9e07_b18e29ccb8d0",
+    "ECR_DocPlan_3a4555d3_b61c_4660_903e_71adb0051ed2",
+    "ECR_DocPlan_f9b2c5b2_354a_4ecb_899a_c07d9f519302",
+    "ECR_DocPlan_aee7a987_8ecc_4ce9_9061_e9467c478734",
+    "ECR_DocPlan_0e08896f_8bb5_4435_bbc0_c161cba6c618",
+    "ECR_DocPlan_dce48ebf_82c1_42aa_a0ae_90f834d192d1",
+    "ECR_DocPlan_3f9bfe49_e56b_4ea7_b86a_85bd05e1c354",
+    "ECR_DocPlan_e0535e2a_af46_4b61_9c87_af2023043663",
+    "ECR_DocPlan_da924136_d34d_4008_9583_9252db3ca4f3",
+    "Link_Apagador_Rectangle010"
+  ],
+  "native_recomputed_features": 22,
+  "after_recompute": []
+}

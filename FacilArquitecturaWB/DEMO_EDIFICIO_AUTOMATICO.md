@@ -1,6 +1,190 @@
+## Demo Escalera minima 0.10.6 - abertura paramétrica del cielo suspendido
+
+Fecha: 2026-09-15 15:20 America/Costa_Rica  
+Build: `0.14.12 / 2026.09.15.6`  
+Demo core: `0.9.4`  
+Cielorrasos: `0.7.3`
+
+La prueba de la build `.5` confirmo que el master ya es editable y que el buque Arch de la losa superior sigue `Stairs.Placement`. El defecto restante estaba en el cielo: `create_modular_ceilings()` recortaba las zonas de exclusion directamente dentro de la Shape de paneles durante la creacion, por lo que la abertura quedaba congelada en coordenadas mundo.
+
+Exclusivamente para `Demo Escalera minima`, el generador de cielorraso conserva ahora una Base completa y fija y materializa la abertura mediante un `Part::Cut`. Su herramienta oculta `FA_CeilingDynamicOpening` se construye en el marco local inicial de la escalera y su Placement sigue por expresion a `FA Escalera entre losas`. De esta forma la escalera mueve el buque del cielo sin trasladar el resto del cielorraso. El modo normal de cielorrasos continua usando el recorte estatico durante generacion.
+
+El master no mantiene un PropertyLink inverso al cielo dinamico, porque eso produciria el ciclo `Stairs -> CeilingCut -> Cutter -> Stairs`; en esta Demo conserva los Names JSON y el diagnostico los reconoce.
+
+Validacion fuera de FreeCAD: `py_compile` y contrato puro aprobados. El smoke requerido es mover y girar la escalera y confirmar que buque de losa + buque de cielorraso siguen juntos, manteniendo fijo el cielo general.
+
+---
+
+## Demo Escalera minima 0.10.5 - la escalera es la autoridad de Placement
+
+Fecha: 2026-09-15 15:05 America/Costa_Rica  
+Build: `0.14.12 / 2026.09.15.5`  
+Demo core: `0.9.3`  
+Adaptador escalera: `0.6.4`
+
+La prueba real de la build `.4` confirmo que las bases ya son objetos Draft Line/Wire y que existe un buque Arch nativo, pero revelo que mover la escalera no era posible: el siguiente recompute restauraba el `Placement` del Wire fuente. El problema era contractual, no geometrico: la expresion del master convertia el Wire oculto en autoridad.
+
+En 0.10.5, exclusivamente para `Demo Escalera minima`, el master `FA Escalera entre losas` recibe el Placement inicial del Wire y despues queda libre para edicion directa. El Wire conserva la geometria local de dos segmentos como referencia inicial; no gobierna la posicion. El cutter de `Subtractions` se construye en el mismo marco local y sigue el `Placement` del master. El PLAN 2D principal tambien sigue al master.
+
+Como un cutter que depende del master formaria un ciclo si el master mantuviera PropertyLinks de vuelta hacia Level/losa/cutter, este modo de prueba conserva esos identificadores mediante nombres estables. El flujo normal de `FA Escalera entre losas` y Casa demo 2 pisos no cambia. El diagnostico puro se amplio para reconocer estos nombres y seguir validando Levels y Subtractions.
+
+Validacion fuera de FreeCAD: `py_compile` aprobado y spec minimo JSON-compatible. La siguiente prueba debe mover y girar el master, recomputar y comprobar que escalera + buque + PLAN 2D permanecen juntos. Las barandas nativas se verifican aparte en runtime por su comportamiento particular en FreeCAD 1.1.3.
+
+---
+
+## Demo Escalera minima 0.10.3 - contrato explicito de cielorraso
+
+Fecha: 2026-09-15 14:12 America/Costa_Rica  
+Build: `0.14.12 / 2026.09.15.3`  
+Demo core: `0.9.1`
+
+El smoke de 0.10.2 confirmo que la ruta canonica de `create_bim_spaces()` ya crea correctamente el Space auxiliar. La ejecucion fallo despues en `_ceiling_options()` porque el spec de Demo Escalera minima no incluia `ceiling`.
+
+La correccion se hace en el nucleo declarativo, no mediante un fallback del comando: `build_minimal_stair_demo_spec()` conserva para Nivel 00 la misma seccion de cielorraso de la Casa 2 pisos (600 mm, cota 2700 mm, panel 15 mm, junta 5 mm, tolerancia 50 mm) y activa `apply_ceiling_exclusion=True`. El cielorraso inferior pasa asi a formar parte explicita del contrato reproducible de la demo minima.
+
+Se conserva `create_opening_liner=False`: este ejemplo todavia no crea tapichel. Nivel 01 mantiene solo su losa; no se agregan los demas componentes de la casa. Las barandas siguen siendo las nativas de FreeCAD y el comando las hace visibles al final.
+
+Validacion fuera de FreeCAD: `py_compile` aprobado y spec minimo JSON-compatible con cielorraso solo en Nivel 00 y exclusion de escalera activa. Smoke real build `.3` pendiente.
+
+---
+
+## Demo Escalera minima 0.10.2 - correccion del Space auxiliar de cielorraso
+
+Fecha: 2026-09-15 13:35 America/Costa_Rica  
+Build: `0.14.12 / 2026.09.15.2`
+
+El primer smoke del cielorraso en la Demo Escalera minima confirmo la escalera, el hueco nativo de losa y el calculo `l_union_v2`, pero se detuvo al crear el Space auxiliar: el registro construido por la Demo no llevaba `polygon_mm`, requerido por `space_utils._face_from_record()`.
+
+La version 0.10.2 elimina ese registro manual. `create_bim_spaces()` reconstruye ahora su propio registro JSON-compatible desde el Sketch cerrado auxiliar, usando la misma ruta de produccion empleada por FA Espacios BIM. El Space y su Base permanecen ocultos y solo sirven de soporte para reutilizar `create_modular_ceilings()`.
+
+La Demo mantiene `include_ceiling=True`, aplica la exclusion de la escalera al cielorraso de Nivel 00 y, al finalizar, muestra las barandas nativas ya creadas por FreeCAD. No crea tapichel y no cambia la Casa demo 2 pisos. `py_compile` aprobado; smoke real build `.2` pendiente.
+
+---
+
+## Demo 0.9.2 - correccion runtime del tapichel y DAG
+
+Fecha: 2026-09-14 17:11 America/Costa_Rica  
+Build: `0.14.11 / 2026.09.14.5`
+
+El primer smoke de Demo 0.9.1 llego correctamente a la escalera, el buque nativo de losa y la exclusion del cielorraso, pero fallo al crear el tapichel porque el orquestador usaba dos nombres de argumento distintos a la firma canonica. Demo 0.9.2 corrige la llamada a `create_stair_opening_liner()` usando `plane_id="lower_ceiling"` y `level=ground.level`.
+
+Ademas, la escalera que conecta dos pisos se aloja ahora directamente en el Building comun. Esto permite conservar los enlaces `FA_LowerLevel` y `FA_UpperLevel` sin crear el ciclo de dependencia que aparecia cuando el master estaba contenido dentro del mismo Level inferior. Las bases y representaciones PLAN permanecen en el Level correspondiente.
+
+El generador de cielorraso 0.7.1 tambien interrumpe el bucle de exclusiones cuando un panel queda completamente eliminado; ya no intenta aplicar un segundo boolean sobre una `Null shape`.
+
+La proxima ejecucion debe completar la Demo, crear el tapichel, no emitir warnings DAG ni Null shape y terminar mostrando el diagnostico automatico.
+
+---
+
+## Demo 0.9.1 - tapichel perimetral del buque
+
+Fecha: 2026-09-14 16:41 America/Costa_Rica  
+Build: `0.14.11 / 2026.09.14.4`
+
+La Demo de dos pisos agrega un remate vertical alrededor del buque de escalera para ocultar el plenum del cielorraso. `create_stair_opening_liner()` usa la misma exclusion `lower_ceiling` calculada por altura libre, construye el tapichel desde la cara inferior del cielorraso hasta la cara inferior de la losa superior y lo hace crecer hacia afuera del paso. Espesor nominal Demo: **100 mm**.
+
+El tapichel se crea despues del cielorraso, dentro de la transaccion multinivel, se aloja en Nivel 00 y queda enlazado a la escalera. No sustituye el hueco Arch de la losa ni la exclusion de paneles. La ubicacion/giro de la escalera y la simplificacion final del contorno del buque siguen pendientes de una iteracion visual posterior.
+
+---
+
+# Actualizacion 2026-09-14 15:40 America/Costa_Rica - Demo 0.9.0 / buque real de escalera
+
+La casa fija de dos pisos deja de usar solamente previews de holgura. El flujo nuevo conserva la escalera `Arch.makeStairs()` y aplica dos salidas derivadas de la misma envolvente de altura libre:
+
+- **Losa Nivel 01:** volumen auxiliar oculto registrado en `Structure001.Subtractions` mediante la API Arch Remove; la losa original permanece parametrica y el corte es reversible.
+- **Cielorraso Nivel 00:** el generador 600x600 recibe las zonas XY antes de crear paneles y recorta los paneles que intersectan el paso.
+- **Documentacion:** permanecen `PLAN - Hueco losa escalera` y `PLAN - Exclusion cielorraso escalera`.
+
+Orden especial de la Demo de dos pisos: Nivel 00 hasta Spaces -> Nivel 01 hasta muros/losa -> escalera + buque -> cielorraso Nivel 00 con exclusion -> resto de Nivel 01 -> diagnostico automatico.
+
+La build preparada es `2026.09.14.3`. Requiere smoke en FreeCAD 1.1.3 antes de considerarse validada.
+
+---
+
+## Demo 0.8.2 - escalera reubicada y preview de altura libre
+
+Fecha: 2026-09-09 20:20 America/Costa_Rica  
+Build: `0.14.11 / 2026.09.09.7`
+
+La casa de dos pisos mueve la escalera canonica lejos de la fachada frontal y calcula dos zonas de holgura: una para la cara inferior de la losa superior y otra para la cara inferior del cielorraso de Nivel 00. Se muestran como PLAN 2D de **PREVIEW**. No se aplican aun cortes reales; el objetivo de esta build es validar visualmente la ubicacion y la geometria derivada antes de modificar losa/cielo.
+
+Recorrido: `P0=(5200,4200)`, `P1=(5200,1900)`, `P2=(2700,1900) mm`. Altura libre de calculo: 2100 mm, configurable. El preview de cielorraso comienza antes que el de losa porque su plano esta mas bajo.
+
+---
+
+## Demo 0.8.1 - diagnostico automatico y entrega de reporte
+
+Fecha: 2026-09-09 16:25 America/Costa_Rica
+Build: `0.14.11 / 2026.09.09.6`
+
+Al finalizar una generacion satisfactoria, `FA Demo edificio` ejecuta el mismo motor de `FA Informe diagnostico` sobre **todo el documento**, pasando una seleccion vacia explicita para que la seleccion residual de FreeCAD no cambie el alcance. El informe MD/JSON/TXT se escribe en `_reportes_diagnostico` bajo el MacroDir configurado.
+
+El cuadro final de la Demo es ahora el dialogo reutilizable del diagnostico. Muestra conteos y alcance, y ofrece `Copiar ruta del MD`, `Abrir carpeta` y `Cerrar`. La ruta no se copia automaticamente. La Demo guiada usa el mismo mecanismo al completar su ultimo paso. Si el informe falla, la Demo ya creada se conserva y se informa el fallo por separado.
+
+El comando manual `FA Informe diagnostico` tambien protege contra selecciones residuales: cuando existe una seleccion pregunta si el usuario desea `Documento completo` o `Solo seleccion`; ya no interpreta silenciosamente un objeto seleccionado como alcance intencional.
+
+---
+
+# Actualizacion 2026-09-09 15:25 - Demo 0.8.0 / escalera canonica
+
+La casa fija de dos pisos incorpora ahora **una unica escalera canonica** mediante la misma herramienta reutilizable de produccion: `fa_stair_core.plan_angled_stair()` -> `stair_freecad_adapter.build_stair_context()` -> `stair_freecad_adapter.create_native_stair()` -> `Arch.makeStairs()`. La Demo solo aporta el recorrido fuente reproducible; no genera una geometria de escalera paralela.
+
+Recorrido fijo: `(5200,500) -> (5200,2800) -> (2700,2800)` mm, ancho 1000 mm, objetivo de contrahuella 175 mm. El plan puro produce 17 contrahuellas (8+9), 176.47 mm y giro 90 deg.
+
+Para FreeCAD 1.1.3 las barandillas que `Arch.makeStairs()` crea para la escalera multisegmento se mantienen como objetos nativos pero se dejan ocultas en esta fase, debido al comportamiento defectuoso observado en la prueba real anterior. No se implementan barandillas FA sustitutas. La losa superior todavia no se corta; esa abertura queda como fase siguiente tras validar la escalera base.
+
+La prueba esperada de la Demo 0.8.0 es: una sola escalera, recorrido fuente no raiz, `FA_LowerLevel=Nivel 00`, `FA_UpperLevel=Nivel 01`, PLAN 2D presente y sin railings largos visibles.
+
+---
+
+## Demo de dos pisos v0.7.0 - Levels reales, planta superior distinta y cielos por nivel
+
+Fecha: 2026-09-09 12:20 America/Costa_Rica
+Workbench: Facil Arquitectura 0.14.11
+Build: 2026.09.09.1
+Comando: `FA_DemoBuilding` 0.7.0
+
+La prueba real de la version 0.6.0 confirmo que la geometria de Nivel 01 alcanzaba Z=3000 mm, pero revelo tres defectos de contrato: el adaptador podia reutilizar el unico Level existente al solicitar `Nivel 01`; el segundo cielorraso reutilizaba nombres globales y podia eliminar objetos del Nivel 00; y la planta superior seguia pareciendose demasiado a la planta baja, incluyendo una puerta exterior.
+
+Correcciones 0.7.0:
+
+- `ensure_bim_structure()` agrega `create_level_if_label_missing=False`; el valor predeterminado conserva el flujo historico, mientras la demo multinivel exige un Level nuevo si no existe una coincidencia exacta.
+- La demo verifica antes de aberturas que `Nivel 00` y `Nivel 01` sean dos objetos `Building Storey` distintos dentro del mismo Building.
+- `ceiling_utils.create_modular_ceilings()` acepta nombres opcionales de grupo y Spreadsheet. La demo usa namespaces `Nivel00` y `Nivel01` y no elimina cielos del otro piso.
+- Nivel 01 deja de ser una copia: dos tabiques en T producen tres recintos (`Distribuidor y futura escalera`, `Dormitorio principal`, `Dormitorio secundario`), dos puertas exclusivamente interiores y cinco ventanas diferentes.
+- Se conserva una zona declarada para futura escalera BIM nativa; no se crea una escalera FA paralela.
+- `GeneratedObjects` filtra adicionalmente referencias que ya no pertenezcan al documento.
+- Se incrementa el build general a `2026.09.09.1`, reutilizando el aviso de cambio de build que ya existe en `InitGui.py`.
+
+Validacion previa fuera de FreeCAD: `py_compile` aprobado; 7/7 pruebas del nucleo demo, 8/8 de estructura BIM, 8/8 de cielorrasos y 2/2 contratos focales multinivel aprobados. Pendiente smoke real en FreeCAD 1.1.3.
+
+---
+
 # FA Demo edificio automatico
 
 Fecha: 2026-09-02 America/Costa_Rica
+
+## Ampliacion: casa fija de dos pisos - 2026-09-08
+
+Se agrega una tercera opcion al comando `FA Demo edificio`: `Casa fija 2 pisos 6 x 8 m`. El ejemplo de una planta y el modo aleatorio se conservan sin cambios.
+
+Contrato de la nueva demo:
+
+- un unico Building BIM nativo;
+- `Nivel 00` a 0 mm y `Nivel 01` a 3000 mm;
+- huella 6000 x 8000 mm en ambos niveles;
+- losa inferior y losa de entrepiso; la segunda losa reutiliza `create_site_floor_from_sketches(..., create_site=False)` para no crear un segundo Site;
+- muros, puertas, ventanas, recintos, Spaces BIM y cielorraso se materializan en cada Level reutilizando los servicios vigentes;
+- el segundo nivel usa una posicion distinta del tabique interior para que no sea una simple copia geometrica;
+- el techo se crea unicamente en `Nivel 01`;
+- la especificacion completa se guarda en el controlador `FA_DemoBuilding` y enlaza ambos Levels;
+- la demo guiada de 14 pasos permanece limitada por ahora a los modos de una planta; la opcion de dos pisos usa generacion completa inmediata.
+
+La escalera se declara como requisito de integracion nativa, pero no se crea una geometria FA paralela. Debe incorporarse solo despues de verificar en FreeCAD 1.1.3 la API/comando BIM nativo apropiado y su relacion correcta con ambos Levels.
+
+Validacion previa: `py_compile` aprobado para los modulos modificados, 7/7 pruebas focales del nucleo de demo aprobadas y prueba contractual nueva del orquestador multinivel aprobada. Queda pendiente smoke real en FreeCAD 1.1.3 para confirmar cotas globales, arbol BIM, hosts de aberturas, losa de entrepiso, techo, guardar/reabrir y no regresion del demo de una planta. No se incrementa `BUILD_ID` general hasta esa validacion.
+
+---
 Workbench: Facil Arquitectura
 FreeCAD objetivo: 1.1.3
 Version: 0.14.11
@@ -277,3 +461,56 @@ La prueba pendiente en FreeCAD 1.1.3 debe comparar este resultado con una casa c
 La Demo guiada usa el dock estable `FA_DemoGuidedDock`. Un Hot restart puede conservar un `QDockWidget` de la carga anterior aunque el modulo Python pierda su referencia global. Para evitar que dos paneles compriman la vista 3D, el comando ahora busca todas las instancias por `objectName`, retira del layout los docks obsoletos durante `register()` y antes de abrir una nueva Demo, detiene sus timers y difiere solo la destruccion Qt. No modifica `Tasks`, otros docks nativos ni el `centralWidget` de FreeCAD.
 
 La regresion debe verificarse con 10 ciclos Demo -> cerrar/Hot restart -> Demo manteniendo 0/1 `FA_DemoGuidedDock` y sin reduccion anomala de la vista 3D.
+
+
+## Correccion smoke real 2026-09-08 - puerta interior Nivel 01
+
+La primera ejecucion real del modo `Casa fija 2 pisos 6 x 8 m` en FreeCAD 1.1.3 completo el Nivel 00 y avanzo el Nivel 01 hasta la creacion de puertas. `Door 02` fue rechazada con `no hay muro compatible dentro de 300.0 mm`.
+
+Causa confirmada: el tabique del Nivel 01 se habia desplazado de Y=5200 mm a Y=4000 mm para diferenciar la distribucion superior, pero la `Puerta interior` conservaba la coordenada heredada Y=5200 mm de la casa canonica de una planta. El resolver de hosts funciono correctamente al rechazarla.
+
+Correccion: `build_two_storey_demo_spec()` conserva ancho y centro X de la puerta interior y mueve sus dos extremos a la misma coordenada Y del tabique superior. Se agrega prueba de regresion que exige coincidencia exacta entre la coordenada Y de la puerta interior y la del muro anfitrion del Nivel 01.
+
+Validacion local del nucleo: 7/7 pruebas aprobadas y `py_compile` aprobado. Queda pendiente repetir el smoke completo en FreeCAD 1.1.3. Los `ReferenceError` de `ArchWindow.py` observados despues del rechazo aparecieron durante el aborto/limpieza del documento parcial y se consideran consecuencia del fallo, no su causa primaria.
+
+
+## Correccion smoke multinivel - Nivel 01 y aviso previo - 2026-09-08
+
+La segunda prueba real detecto que el arbol podia contener `Nivel 00` y `Nivel 01` pero la geometria del nivel superior quedaba superpuesta en Z=0. La causa no era la especificacion de planta sino el momento en que se asignaba la elevacion al `Arch BuildingPart`.
+
+`ArchBuildingPart` desplaza los hijos que ya existen cuando cambia su `Placement`. La primera implementacion creaba `Nivel 01` directamente con `Placement.Z = 3000 mm` y luego agregaba los objetos, por lo que esos hijos nuevos permanecian en coordenadas globales de planta baja.
+
+Correccion:
+- `Nivel 01` se crea temporalmente en Z=0.
+- se materializan losa, muros, puertas, ventanas, recintos, Espacios BIM, cielorraso y techo usando las mismas herramientas FA;
+- al finalizar el nivel, se actualiza el `Placement` del Level a +3000 mm mediante `ensure_bim_structure(...)`;
+- se fuerza `LevelOffset = 0` porque la autoridad geometrica es `Placement.Z`;
+- se valida que los muros del nivel queden aproximadamente en Z=3000 mm.
+
+Ademas, antes de cualquier generacion completa se muestra un `QMessageBox` modal indicando que el proceso puede tardar varios segundos o algunos minutos y que FreeCAD puede permanecer ocupado durante los recomputes. La Vista de reportes conserva el feedback detallado existente.
+
+Estado: sintaxis y contrato estatico aprobados. Falta repetir el smoke real en FreeCAD 1.1.3.
+
+---
+
+## Demo Escalera minima - origen local, bases Draft y buque solidario - 2026-09-15
+
+A partir del build `2026.09.15.4`, solo el modo `Demo Escalera minima` activa un marco local editable para la escalera. El primer punto del recorrido es `(0,0,0)` local y el Draft Wire fuente lleva en su `Placement` la posicion real del arranque. Ese Wire es la autoridad de posicion del ejemplo.
+
+Las tres bases que consume `Arch.makeStairs()` dejan de ser `Part::Feature` genericos en este modo: los tramos son Draft Line y el descanso es Draft Wire. El adaptador mantiene la implementacion anterior como predeterminada para no alterar ni la Casa demo 2 pisos ni el comando normal de escalera.
+
+El volumen `FA_StairSlabOpeningVolume` se calcula en el mismo marco local y su Placement referencia el recorrido. De esta forma la sustraccion Arch de la losa puede seguir traslaciones/rotaciones del recorrido aun cuando FreeCAD 1.1.3 no propaga de forma general el movimiento entre objetos BIM y sus adiciones/sustracciones.
+
+Pendiente de prueba real: generar la demo, revisar el origen visual, confirmar tipos Draft de las bases y transformar el recorrido verificando escalera + buque + PLAN 2D. El cielorraso conserva por ahora su exclusion calculada al generar; esta tarea no extiende aun la actualizacion dinamica de paneles despues de mover la escalera.
+
+---
+
+## Demo Escalera minima - tapichel dinamico - build 2026.09.15.7
+
+Nota de continuidad: el texto historico de build `.4` describia el Draft Wire como autoridad de posicion. Ese contrato fue refinado posteriormente: desde build `.5` la autoridad editable es `FA Escalera entre losas.Placement`; el Wire conserva solo el marco local inicial. Desde build `.6`, los buques de losa y cielorraso siguen al master.
+
+La build `.7` incorpora tambien el tapichel lateral usado por Casa demo 2 pisos. Se mantiene la misma geometria `side_walls_open_ends`: el cierre ocupa solo los bordes laterales del hueco entre cielorraso y cara inferior de la losa, deja libres la entrada y la salida de la escalera y no invade la envolvente de altura libre.
+
+Para el ejemplo minimo, `create_stair_opening_liner()` trabaja opcionalmente en coordenadas locales y su Placement sigue al master. El enlace inverso se sustituye por `FA_OpeningLinerName` para evitar ciclos DAG. La exclusion dinamica del cielorraso incluye la banda exterior correspondiente al espesor del tapichel y su junta, de forma que los paneles terminan contra la cara exterior del cierre.
+
+La Casa demo 2 pisos conserva la llamada historica y no cambia su comportamiento. Pendiente verificar en FreeCAD 1.1.3 que, al trasladar o girar la escalera, se muevan conjuntamente el buque de losa, el buque de cielorraso y el tapichel.

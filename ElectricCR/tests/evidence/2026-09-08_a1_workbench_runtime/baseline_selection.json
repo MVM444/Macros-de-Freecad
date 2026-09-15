@@ -1,0 +1,38 @@
+[
+  {
+    "workbench": "ElectricCRWorkbench",
+    "selection": [
+      "Link_Apagador_Rectangle014"
+    ],
+    "selection_observer": true,
+    "lifecycle": true,
+    "live_sync": true
+  },
+  {
+    "workbench": "BIMWorkbench",
+    "selection": [
+      "ECR_DocPlan_e0535e2a_af46_4b61_9c87_af2023043663"
+    ],
+    "selection_observer": false,
+    "lifecycle": true,
+    "live_sync": true
+  },
+  {
+    "workbench": "DraftWorkbench",
+    "selection": [
+      "ECR_DocPlan_e0535e2a_af46_4b61_9c87_af2023043663"
+    ],
+    "selection_observer": false,
+    "lifecycle": true,
+    "live_sync": true
+  },
+  {
+    "workbench": "PartWorkbench",
+    "selection": [
+      "ECR_DocPlan_e0535e2a_af46_4b61_9c87_af2023043663"
+    ],
+    "selection_observer": false,
+    "lifecycle": true,
+    "live_sync": true
+  }
+]

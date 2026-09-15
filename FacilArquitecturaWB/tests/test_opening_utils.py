@@ -147,6 +147,40 @@ class OpeningGeometryTests(unittest.TestCase):
             match["projected_first"] + match["projected_second"]
         ))
 
+    def test_preexisting_host_gap_is_reported_as_possible_existing_opening(self):
+        result = openings.analyze_collinear_host_gap(
+            (1800, 0, 0, 2600, 0, 0),
+            [
+                (0, 0, 0, 1800, 0, 0),
+                (2600, 0, 0, 5000, 0, 0),
+            ],
+        )
+
+        self.assertTrue(result["detected"])
+        self.assertEqual("POSSIBLE_EXISTING_OPENING", result["diagnostic_status"])
+        self.assertAlmostEqual(800.0, result["gap_width_mm"])
+        self.assertAlmostEqual(800.0, result["overlap_mm"])
+        self.assertAlmostEqual(1.0, result["overlap_ratio"])
+
+    def test_wall_end_is_not_misclassified_as_preexisting_opening(self):
+        result = openings.analyze_collinear_host_gap(
+            (1800, 0, 0, 2600, 0, 0),
+            [(0, 0, 0, 1800, 0, 0)],
+        )
+
+        self.assertFalse(result["detected"])
+
+    def test_continuous_host_axis_is_not_misclassified_as_preexisting_opening(self):
+        result = openings.analyze_collinear_host_gap(
+            (1800, 0, 0, 2600, 0, 0),
+            [
+                (0, 0, 0, 2200, 0, 0),
+                (2200, 0, 0, 5000, 0, 0),
+            ],
+        )
+
+        self.assertFalse(result["detected"])
+
     def test_perpendicular_wall_is_rejected(self):
         match = openings.evaluate_wall_candidate(
             (0, 0, 0, 1000, 0, 0),

@@ -1,0 +1,2072 @@
+{
+  "started": "2026-09-09T09:21:49.645609-06:00",
+  "FreeCAD": [
+    "1",
+    "1",
+    "3",
+    "20260725 (Git shallow)",
+    "Unknown",
+    "2026/07/25 04:52:02",
+    "grafted,grafted",
+    "145529fe741292ff0b3977a01195bf0247425794"
+  ],
+  "IfcOpenShell": "0.8.4",
+  "output": "C:\\Users\\marco\\AppData\\Local\\Temp\\ecr_nativeifc_four_20260909",
+  "stages": [
+    {
+      "stage": "created",
+      "timestamp": "2026-09-09T09:21:52.360521-06:00",
+      "ifc_elements": 4,
+      "freecad_objects": 5,
+      "objects": [
+        {
+          "name": "IfcObject001",
+          "label": "Probe Outlet",
+          "schema": "IFC4",
+          "TypeId": "Part::FeaturePython",
+          "Class": "IfcOutlet",
+          "IfcClass": "IfcOutlet",
+          "GlobalId": "1rFbdunpr2VQ5E1baavUGb",
+          "StepId": 23,
+          "PredefinedType": "POWEROUTLET",
+          "PredefinedType_choices": [
+            "AUDIOVISUALOUTLET",
+            "COMMUNICATIONSOUTLET",
+            "POWEROUTLET",
+            "DATAOUTLET",
+            "TELEPHONEOUTLET",
+            "USERDEFINED",
+            "NOTDEFINED"
+          ],
+          "Type": null,
+          "Type_property": "App::PropertyLink",
+          "IFC_Type": null,
+          "Placement": {
+            "base_mm": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation_q": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          },
+          "IFC_Placement_matrix": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "Description": "",
+          "attached_psets": {},
+          "applicable_pset_templates": [
+            "Pset_EnvironmentalImpactIndicators",
+            "Pset_EnvironmentalImpactValues",
+            "Pset_SoundGeneration",
+            "Pset_Condition",
+            "Pset_ManufacturerOccurrence",
+            "Pset_ManufacturerTypeInformation",
+            "Pset_ServiceLife",
+            "Pset_Warranty",
+            "Pset_ElectricalDeviceCommon",
+            "Pset_OutletTypeCommon"
+          ],
+          "property_groups": {
+            "Class": "IFC",
+            "Description": "IFC",
+            "ExpressionEngine": "Base",
+            "GlobalId": "IFC",
+            "Group": "Base",
+            "IfcClass": "IFC",
+            "Label": "Base",
+            "Label2": "Base",
+            "ObjectType": "IFC",
+            "OwnerHistory": "IFC",
+            "Placement": "",
+            "PredefinedType": "IFC",
+            "Proxy": "",
+            "Shape": "",
+            "ShapeMaterial": "",
+            "ShapeMode": "Base",
+            "StepId": "IFC",
+            "Tag": "IFC",
+            "Type": "IFC",
+            "Visibility": "",
+            "_ElementMapVersion": "Base"
+          },
+          "editor_modes": {
+            "Class": [],
+            "IfcClass": [
+              "Hidden"
+            ],
+            "GlobalId": [],
+            "StepId": [
+              "ReadOnly"
+            ],
+            "PredefinedType": [],
+            "Placement": [],
+            "Type": []
+          },
+          "ShapeMode": "Shape",
+          "shape_null": false,
+          "shape_volume_mm3": 384000.0,
+          "solids": 0,
+          "State": [
+            "Up-to-date"
+          ],
+          "status": "Valid"
+        },
+        {
+          "name": "IfcObject002",
+          "label": "Probe SwitchingDevice",
+          "schema": "IFC4",
+          "TypeId": "Part::FeaturePython",
+          "Class": "IfcSwitchingDevice",
+          "IfcClass": "IfcSwitchingDevice",
+          "GlobalId": "0j4zgp8g509O$ZZR__7kAz",
+          "StepId": 39,
+          "PredefinedType": "TOGGLESWITCH",
+          "PredefinedType_choices": [
+            "CONTACTOR",
+            "DIMMERSWITCH",
+            "EMERGENCYSTOP",
+            "KEYPAD",
+            "MOMENTARYSWITCH",
+            "SELECTORSWITCH",
+            "STARTER",
+            "SWITCHDISCONNECTOR",
+            "TOGGLESWITCH",
+            "USERDEFINED",
+            "NOTDEFINED"
+          ],
+          "Type": null,
+          "Type_property": "App::PropertyLink",
+          "IFC_Type": null,
+          "Placement": {
+            "base_mm": [
+              800.0,
+              0.0,
+              0.0
+            ],
+            "rotation_q": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          },
+          "IFC_Placement_matrix": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.8
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "Description": "",
+          "attached_psets": {},
+          "applicable_pset_templates": [
+            "Pset_EnvironmentalImpactIndicators",
+            "Pset_EnvironmentalImpactValues",
+            "Pset_SoundGeneration",
+            "Pset_Condition",
+            "Pset_ManufacturerOccurrence",
+            "Pset_ManufacturerTypeInformation",
+            "Pset_ServiceLife",
+            "Pset_Warranty",
+            "Pset_ElectricalDeviceCommon",
+            "Pset_SwitchingDeviceTypeCommon",
+            "Pset_SwitchingDeviceTypePHistory",
+            "Pset_SwitchingDeviceTypeToggleSwitch"
+          ],
+          "property_groups": {
+            "Class": "IFC",
+            "Description": "IFC",
+            "ExpressionEngine": "Base",
+            "GlobalId": "IFC",
+            "Group": "Base",
+            "IfcClass": "IFC",
+            "Label": "Base",
+            "Label2": "Base",
+            "ObjectType": "IFC",
+            "OwnerHistory": "IFC",
+            "Placement": "",
+            "PredefinedType": "IFC",
+            "Proxy": "",
+            "Shape": "",
+            "ShapeMaterial": "",
+            "ShapeMode": "Base",
+            "StepId": "IFC",
+            "Tag": "IFC",
+            "Type": "IFC",
+            "Visibility": "",
+            "_ElementMapVersion": "Base"
+          },
+          "editor_modes": {
+            "Class": [],
+            "IfcClass": [
+              "Hidden"
+            ],
+            "GlobalId": [],
+            "StepId": [
+              "ReadOnly"
+            ],
+            "PredefinedType": [],
+            "Placement": [],
+            "Type": []
+          },
+          "ShapeMode": "Shape",
+          "shape_null": false,
+          "shape_volume_mm3": 384000.0,
+          "solids": 0,
+          "State": [
+            "Up-to-date"
+          ],
+          "status": "Valid"
+        },
+        {
+          "name": "IfcObject003",
+          "label": "Probe LightFixture",
+          "schema": "IFC4",
+          "TypeId": "Part::FeaturePython",
+          "Class": "IfcLightFixture",
+          "IfcClass": "IfcLightFixture",
+          "GlobalId": "0IEGv02gvDkRo_Jgc4dWmR",
+          "StepId": 55,
+          "PredefinedType": "POINTSOURCE",
+          "PredefinedType_choices": [
+            "POINTSOURCE",
+            "DIRECTIONSOURCE",
+            "SECURITYLIGHTING",
+            "USERDEFINED",
+            "NOTDEFINED"
+          ],
+          "Type": null,
+          "Type_property": "App::PropertyLink",
+          "IFC_Type": null,
+          "Placement": {
+            "base_mm": [
+              1600.0,
+              0.0,
+              0.0
+            ],
+            "rotation_q": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          },
+          "IFC_Placement_matrix": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              1.6
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "Description": "",
+          "attached_psets": {},
+          "applicable_pset_templates": [
+            "Pset_EnvironmentalImpactIndicators",
+            "Pset_EnvironmentalImpactValues",
+            "Pset_SoundGeneration",
+            "Pset_Condition",
+            "Pset_ManufacturerOccurrence",
+            "Pset_ManufacturerTypeInformation",
+            "Pset_ServiceLife",
+            "Pset_Warranty",
+            "Pset_ElectricalDeviceCommon",
+            "Pset_LightFixtureTypeCommon"
+          ],
+          "property_groups": {
+            "Class": "IFC",
+            "Description": "IFC",
+            "ExpressionEngine": "Base",
+            "GlobalId": "IFC",
+            "Group": "Base",
+            "IfcClass": "IFC",
+            "Label": "Base",
+            "Label2": "Base",
+            "ObjectType": "IFC",
+            "OwnerHistory": "IFC",
+            "Placement": "",
+            "PredefinedType": "IFC",
+            "Proxy": "",
+            "Shape": "",
+            "ShapeMaterial": "",
+            "ShapeMode": "Base",
+            "StepId": "IFC",
+            "Tag": "IFC",
+            "Type": "IFC",
+            "Visibility": "",
+            "_ElementMapVersion": "Base"
+          },
+          "editor_modes": {
+            "Class": [],
+            "IfcClass": [
+              "Hidden"
+            ],
+            "GlobalId": [],
+            "StepId": [
+              "ReadOnly"
+            ],
+            "PredefinedType": [],
+            "Placement": [],
+            "Type": []
+          },
+          "ShapeMode": "Shape",
+          "shape_null": false,
+          "shape_volume_mm3": 7200000.0,
+          "solids": 0,
+          "State": [
+            "Up-to-date"
+          ],
+          "status": "Valid"
+        },
+        {
+          "name": "IfcObject004",
+          "label": "Probe ElectricDistributionBoard",
+          "schema": "IFC4",
+          "TypeId": "Part::FeaturePython",
+          "Class": "IfcElectricDistributionBoard",
+          "IfcClass": "IfcElectricDistributionBoard",
+          "GlobalId": "2LirlfVS114ejmyYpSdFi6",
+          "StepId": 71,
+          "PredefinedType": "DISTRIBUTIONBOARD",
+          "PredefinedType_choices": [
+            "CONSUMERUNIT",
+            "DISTRIBUTIONBOARD",
+            "MOTORCONTROLCENTRE",
+            "SWITCHBOARD",
+            "USERDEFINED",
+            "NOTDEFINED"
+          ],
+          "Type": null,
+          "Type_property": "App::PropertyLink",
+          "IFC_Type": null,
+          "Placement": {
+            "base_mm": [
+              2400.0000000000005,
+              0.0,
+              0.0
+            ],
+            "rotation_q": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          },
+          "IFC_Placement_matrix": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              2.4000000000000004
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "Description": "",
+          "attached_psets": {},
+          "applicable_pset_templates": [
+            "Pset_EnvironmentalImpactIndicators",
+            "Pset_EnvironmentalImpactValues",
+            "Pset_SoundGeneration",
+            "Pset_Condition",
+            "Pset_ManufacturerOccurrence",
+            "Pset_ManufacturerTypeInformation",
+            "Pset_ServiceLife",
+            "Pset_Warranty",
+            "Pset_ElectricalDeviceCommon",
+            "Pset_ElectricDistributionBoardOccurrence",
+            "Pset_ElectricDistributionBoardTypeCommon"
+          ],
+          "property_groups": {
+            "Class": "IFC",
+            "Description": "IFC",
+            "ExpressionEngine": "Base",
+            "GlobalId": "IFC",
+            "Group": "Base",
+            "IfcClass": "IFC",
+            "Label": "Base",
+            "Label2": "Base",
+            "ObjectType": "IFC",
+            "OwnerHistory": "IFC",
+            "Placement": "",
+            "PredefinedType": "IFC",
+            "Proxy": "",
+            "Shape": "",
+            "ShapeMaterial": "",
+            "ShapeMode": "Base",
+            "StepId": "IFC",
+            "Tag": "IFC",
+            "Type": "IFC",
+            "Visibility": "",
+            "_ElementMapVersion": "Base"
+          },
+          "editor_modes": {
+            "Class": [],
+            "IfcClass": [
+              "Hidden"
+            ],
+            "GlobalId": [],
+            "StepId": [
+              "ReadOnly"
+            ],
+            "PredefinedType": [],
+            "Placement": [],
+            "Type": []
+          },
+          "ShapeMode": "Shape",
+          "shape_null": false,
+          "shape_volume_mm3": 43200000.0,
+          "solids": 0,
+          "State": [
+            "Up-to-date"
+          ],
+          "status": "Valid"
+        }
+      ]
+    },
+    {
+      "stage": "edited",
+      "timestamp": "2026-09-09T09:22:02.260424-06:00",
+      "ifc_elements": 4,
+      "freecad_objects": 5,
+      "objects": [
+        {
+          "name": "IfcObject001",
+          "label": "Probe Outlet edited",
+          "schema": "IFC4",
+          "TypeId": "Part::FeaturePython",
+          "Class": "IfcOutlet",
+          "IfcClass": "IfcOutlet",
+          "GlobalId": "1rFbdunpr2VQ5E1baavUGb",
+          "StepId": 23,
+          "PredefinedType": "USERDEFINED",
+          "PredefinedType_choices": [
+            "AUDIOVISUALOUTLET",
+            "COMMUNICATIONSOUTLET",
+            "POWEROUTLET",
+            "DATAOUTLET",
+            "TELEPHONEOUTLET",
+            "USERDEFINED",
+            "NOTDEFINED"
+          ],
+          "Type": null,
+          "Type_property": "App::PropertyLink",
+          "IFC_Type": null,
+          "Placement": {
+            "base_mm": [
+              100.0,
+              200.0,
+              300.0
+            ],
+            "rotation_q": [
+              0.0,
+              0.0,
+              0.13052619408899546,
+              0.9914448611277593
+            ]
+          },
+          "IFC_Placement_matrix": [
+            [
+              0.9659258253132839,
+              -0.2588190487441982,
+              0.0,
+              0.1
+            ],
+            [
+              0.2588190487441982,
+              0.9659258253132839,
+              0.0,
+              0.2
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.3
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "Description": "Disposable NativeIFC property edit",
+          "attached_psets": {
+            "Pset_ProbeExperiment": {
+              "ProbeReference": "after",
+              "id": 113
+            }
+          },
+          "applicable_pset_templates": [
+            "Pset_EnvironmentalImpactIndicators",
+            "Pset_EnvironmentalImpactValues",
+            "Pset_SoundGeneration",
+            "Pset_Condition",
+            "Pset_ManufacturerOccurrence",
+            "Pset_ManufacturerTypeInformation",
+            "Pset_ServiceLife",
+            "Pset_Warranty",
+            "Pset_ElectricalDeviceCommon",
+            "Pset_OutletTypeCommon"
+          ],
+          "property_groups": {
+            "Class": "IFC",
+            "Description": "IFC",
+            "ExpressionEngine": "Base",
+            "GlobalId": "IFC",
+            "Group": "Base",
+            "IfcClass": "IFC",
+            "Label": "Base",
+            "Label2": "Base",
+            "ObjectType": "IFC",
+            "OwnerHistory": "IFC",
+            "Placement": "",
+            "PredefinedType": "IFC",
+            "ProbeReference": "Pset_ProbeExperiment",
+            "Proxy": "",
+            "Shape": "",
+            "ShapeMaterial": "",
+            "ShapeMode": "Base",
+            "StepId": "IFC",
+            "Tag": "IFC",
+            "Type": "IFC",
+            "Visibility": "",
+            "_ElementMapVersion": "Base"
+          },
+          "editor_modes": {
+            "Class": [],
+            "IfcClass": [
+              "Hidden"
+            ],
+            "GlobalId": [],
+            "StepId": [
+              "ReadOnly"
+            ],
+            "PredefinedType": [],
+            "Placement": [],
+            "Type": []
+          },
+          "ShapeMode": "Shape",
+          "shape_null": false,
+          "shape_volume_mm3": 384000.0,
+          "solids": 0,
+          "State": [
+            "Up-to-date"
+          ],
+          "status": "Valid"
+        },
+        {
+          "name": "IfcObject002",
+          "label": "Probe SwitchingDevice edited",
+          "schema": "IFC4",
+          "TypeId": "Part::FeaturePython",
+          "Class": "IfcSwitchingDevice",
+          "IfcClass": "IfcSwitchingDevice",
+          "GlobalId": "0j4zgp8g509O$ZZR__7kAz",
+          "StepId": 39,
+          "PredefinedType": "USERDEFINED",
+          "PredefinedType_choices": [
+            "CONTACTOR",
+            "DIMMERSWITCH",
+            "EMERGENCYSTOP",
+            "KEYPAD",
+            "MOMENTARYSWITCH",
+            "SELECTORSWITCH",
+            "STARTER",
+            "SWITCHDISCONNECTOR",
+            "TOGGLESWITCH",
+            "USERDEFINED",
+            "NOTDEFINED"
+          ],
+          "Type": null,
+          "Type_property": "App::PropertyLink",
+          "IFC_Type": null,
+          "Placement": {
+            "base_mm": [
+              900.0,
+              200.0,
+              300.0
+            ],
+            "rotation_q": [
+              0.0,
+              0.0,
+              0.13052619408899546,
+              0.9914448611277593
+            ]
+          },
+          "IFC_Placement_matrix": [
+            [
+              0.9659258253132839,
+              -0.2588190487441982,
+              0.0,
+              0.9
+            ],
+            [
+              0.2588190487441982,
+              0.9659258253132839,
+              0.0,
+              0.2
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.3
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "Description": "Disposable NativeIFC property edit",
+          "attached_psets": {
+            "Pset_ProbeExperiment": {
+              "ProbeReference": "after",
+              "id": 121
+            }
+          },
+          "applicable_pset_templates": [
+            "Pset_EnvironmentalImpactIndicators",
+            "Pset_EnvironmentalImpactValues",
+            "Pset_SoundGeneration",
+            "Pset_Condition",
+            "Pset_ManufacturerOccurrence",
+            "Pset_ManufacturerTypeInformation",
+            "Pset_ServiceLife",
+            "Pset_Warranty",
+            "Pset_ElectricalDeviceCommon",
+            "Pset_SwitchingDeviceTypeCommon",
+            "Pset_SwitchingDeviceTypePHistory"
+          ],
+          "property_groups": {
+            "Class": "IFC",
+            "Description": "IFC",
+            "ExpressionEngine": "Base",
+            "GlobalId": "IFC",
+            "Group": "Base",
+            "IfcClass": "IFC",
+            "Label": "Base",
+            "Label2": "Base",
+            "ObjectType": "IFC",
+            "OwnerHistory": "IFC",
+            "Placement": "",
+            "PredefinedType": "IFC",
+            "ProbeReference": "Pset_ProbeExperiment",
+            "Proxy": "",
+            "Shape": "",
+            "ShapeMaterial": "",
+            "ShapeMode": "Base",
+            "StepId": "IFC",
+            "Tag": "IFC",
+            "Type": "IFC",
+            "Visibility": "",
+            "_ElementMapVersion": "Base"
+          },
+          "editor_modes": {
+            "Class": [],
+            "IfcClass": [
+              "Hidden"
+            ],
+            "GlobalId": [],
+            "StepId": [
+              "ReadOnly"
+            ],
+            "PredefinedType": [],
+            "Placement": [],
+            "Type": []
+          },
+          "ShapeMode": "Shape",
+          "shape_null": false,
+          "shape_volume_mm3": 384000.0,
+          "solids": 0,
+          "State": [
+            "Up-to-date"
+          ],
+          "status": "Valid"
+        },
+        {
+          "name": "IfcObject003",
+          "label": "Probe LightFixture edited",
+          "schema": "IFC4",
+          "TypeId": "Part::FeaturePython",
+          "Class": "IfcLightFixture",
+          "IfcClass": "IfcLightFixture",
+          "GlobalId": "0IEGv02gvDkRo_Jgc4dWmR",
+          "StepId": 55,
+          "PredefinedType": "USERDEFINED",
+          "PredefinedType_choices": [
+            "POINTSOURCE",
+            "DIRECTIONSOURCE",
+            "SECURITYLIGHTING",
+            "USERDEFINED",
+            "NOTDEFINED"
+          ],
+          "Type": null,
+          "Type_property": "App::PropertyLink",
+          "IFC_Type": null,
+          "Placement": {
+            "base_mm": [
+              1700.0,
+              200.0,
+              300.0
+            ],
+            "rotation_q": [
+              0.0,
+              0.0,
+              0.13052619408899546,
+              0.9914448611277593
+            ]
+          },
+          "IFC_Placement_matrix": [
+            [
+              0.9659258253132839,
+              -0.2588190487441982,
+              0.0,
+              1.7
+            ],
+            [
+              0.2588190487441982,
+              0.9659258253132839,
+              0.0,
+              0.2
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.3
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "Description": "Disposable NativeIFC property edit",
+          "attached_psets": {
+            "Pset_ProbeExperiment": {
+              "ProbeReference": "after",
+              "id": 129
+            }
+          },
+          "applicable_pset_templates": [
+            "Pset_EnvironmentalImpactIndicators",
+            "Pset_EnvironmentalImpactValues",
+            "Pset_SoundGeneration",
+            "Pset_Condition",
+            "Pset_ManufacturerOccurrence",
+            "Pset_ManufacturerTypeInformation",
+            "Pset_ServiceLife",
+            "Pset_Warranty",
+            "Pset_ElectricalDeviceCommon",
+            "Pset_LightFixtureTypeCommon"
+          ],
+          "property_groups": {
+            "Class": "IFC",
+            "Description": "IFC",
+            "ExpressionEngine": "Base",
+            "GlobalId": "IFC",
+            "Group": "Base",
+            "IfcClass": "IFC",
+            "Label": "Base",
+            "Label2": "Base",
+            "ObjectType": "IFC",
+            "OwnerHistory": "IFC",
+            "Placement": "",
+            "PredefinedType": "IFC",
+            "ProbeReference": "Pset_ProbeExperiment",
+            "Proxy": "",
+            "Shape": "",
+            "ShapeMaterial": "",
+            "ShapeMode": "Base",
+            "StepId": "IFC",
+            "Tag": "IFC",
+            "Type": "IFC",
+            "Visibility": "",
+            "_ElementMapVersion": "Base"
+          },
+          "editor_modes": {
+            "Class": [],
+            "IfcClass": [
+              "Hidden"
+            ],
+            "GlobalId": [],
+            "StepId": [
+              "ReadOnly"
+            ],
+            "PredefinedType": [],
+            "Placement": [],
+            "Type": []
+          },
+          "ShapeMode": "Shape",
+          "shape_null": false,
+          "shape_volume_mm3": 7200000.000000001,
+          "solids": 0,
+          "State": [
+            "Up-to-date"
+          ],
+          "status": "Valid"
+        },
+        {
+          "name": "IfcObject004",
+          "label": "Probe ElectricDistributionBoard edited",
+          "schema": "IFC4",
+          "TypeId": "Part::FeaturePython",
+          "Class": "IfcElectricDistributionBoard",
+          "IfcClass": "IfcElectricDistributionBoard",
+          "GlobalId": "2LirlfVS114ejmyYpSdFi6",
+          "StepId": 71,
+          "PredefinedType": "USERDEFINED",
+          "PredefinedType_choices": [
+            "CONSUMERUNIT",
+            "DISTRIBUTIONBOARD",
+            "MOTORCONTROLCENTRE",
+            "SWITCHBOARD",
+            "USERDEFINED",
+            "NOTDEFINED"
+          ],
+          "Type": null,
+          "Type_property": "App::PropertyLink",
+          "IFC_Type": null,
+          "Placement": {
+            "base_mm": [
+              2500.0,
+              200.0,
+              300.0
+            ],
+            "rotation_q": [
+              0.0,
+              0.0,
+              0.13052619408899546,
+              0.9914448611277593
+            ]
+          },
+          "IFC_Placement_matrix": [
+            [
+              0.9659258253132839,
+              -0.2588190487441982,
+              0.0,
+              2.5
+            ],
+            [
+              0.2588190487441982,
+              0.9659258253132839,
+              0.0,
+              0.2
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.3
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "Description": "Disposable NativeIFC property edit",
+          "attached_psets": {
+            "Pset_ProbeExperiment": {
+              "ProbeReference": "after",
+              "id": 137
+            }
+          },
+          "applicable_pset_templates": [
+            "Pset_EnvironmentalImpactIndicators",
+            "Pset_EnvironmentalImpactValues",
+            "Pset_SoundGeneration",
+            "Pset_Condition",
+            "Pset_ManufacturerOccurrence",
+            "Pset_ManufacturerTypeInformation",
+            "Pset_ServiceLife",
+            "Pset_Warranty",
+            "Pset_ElectricalDeviceCommon",
+            "Pset_ElectricDistributionBoardOccurrence",
+            "Pset_ElectricDistributionBoardTypeCommon"
+          ],
+          "property_groups": {
+            "Class": "IFC",
+            "Description": "IFC",
+            "ExpressionEngine": "Base",
+            "GlobalId": "IFC",
+            "Group": "Base",
+            "IfcClass": "IFC",
+            "Label": "Base",
+            "Label2": "Base",
+            "ObjectType": "IFC",
+            "OwnerHistory": "IFC",
+            "Placement": "",
+            "PredefinedType": "IFC",
+            "ProbeReference": "Pset_ProbeExperiment",
+            "Proxy": "",
+            "Shape": "",
+            "ShapeMaterial": "",
+            "ShapeMode": "Base",
+            "StepId": "IFC",
+            "Tag": "IFC",
+            "Type": "IFC",
+            "Visibility": "",
+            "_ElementMapVersion": "Base"
+          },
+          "editor_modes": {
+            "Class": [],
+            "IfcClass": [
+              "Hidden"
+            ],
+            "GlobalId": [],
+            "StepId": [
+              "ReadOnly"
+            ],
+            "PredefinedType": [],
+            "Placement": [],
+            "Type": []
+          },
+          "ShapeMode": "Shape",
+          "shape_null": false,
+          "shape_volume_mm3": 43200000.00000001,
+          "solids": 0,
+          "State": [
+            "Up-to-date"
+          ],
+          "status": "Valid"
+        }
+      ]
+    },
+    {
+      "stage": "fcstd_reopened",
+      "timestamp": "2026-09-09T09:22:31.916823-06:00",
+      "ifc_elements": 4,
+      "freecad_objects": 5,
+      "objects": [
+        {
+          "name": "IfcObject001",
+          "label": "Probe Outlet edited",
+          "schema": "IFC4",
+          "TypeId": "Part::FeaturePython",
+          "Class": "IfcOutlet",
+          "IfcClass": "IfcOutlet",
+          "GlobalId": "1rFbdunpr2VQ5E1baavUGb",
+          "StepId": 23,
+          "PredefinedType": "USERDEFINED",
+          "PredefinedType_choices": [
+            "AUDIOVISUALOUTLET",
+            "COMMUNICATIONSOUTLET",
+            "POWEROUTLET",
+            "DATAOUTLET",
+            "TELEPHONEOUTLET",
+            "USERDEFINED",
+            "NOTDEFINED"
+          ],
+          "Type": null,
+          "Type_property": "App::PropertyLink",
+          "IFC_Type": null,
+          "Placement": {
+            "base_mm": [
+              100.0,
+              200.0,
+              300.0
+            ],
+            "rotation_q": [
+              0.0,
+              0.0,
+              0.1305261940889952,
+              0.9914448611277593
+            ]
+          },
+          "IFC_Placement_matrix": [
+            [
+              0.965925825313284,
+              -0.258819048744198,
+              0.0,
+              0.1
+            ],
+            [
+              0.258819048744198,
+              0.965925825313284,
+              0.0,
+              0.2
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.3
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "Description": "Disposable NativeIFC property edit",
+          "ObjectType": "ProbeDevice",
+          "attached_psets": {
+            "Pset_ProbeExperiment": {
+              "ProbeReference": "after",
+              "id": 113
+            }
+          },
+          "applicable_pset_templates": [
+            "Pset_EnvironmentalImpactIndicators",
+            "Pset_EnvironmentalImpactValues",
+            "Pset_SoundGeneration",
+            "Pset_Condition",
+            "Pset_ManufacturerOccurrence",
+            "Pset_ManufacturerTypeInformation",
+            "Pset_ServiceLife",
+            "Pset_Warranty",
+            "Pset_ElectricalDeviceCommon",
+            "Pset_OutletTypeCommon"
+          ],
+          "property_groups": {
+            "Class": "IFC",
+            "Description": "IFC",
+            "ExpressionEngine": "Base",
+            "GlobalId": "IFC",
+            "Group": "Base",
+            "IfcClass": "IFC",
+            "Label": "Base",
+            "Label2": "Base",
+            "ObjectType": "IFC",
+            "OwnerHistory": "IFC",
+            "Placement": "",
+            "PredefinedType": "IFC",
+            "ProbeReference": "Pset_ProbeExperiment",
+            "Proxy": "",
+            "Shape": "",
+            "ShapeMaterial": "",
+            "ShapeMode": "Base",
+            "StepId": "IFC",
+            "Tag": "IFC",
+            "Type": "IFC",
+            "Visibility": "",
+            "_ElementMapVersion": "Base"
+          },
+          "editor_modes": {
+            "Class": [],
+            "IfcClass": [
+              "Hidden"
+            ],
+            "GlobalId": [],
+            "StepId": [
+              "ReadOnly"
+            ],
+            "PredefinedType": [],
+            "Placement": [],
+            "Type": []
+          },
+          "ShapeMode": "Shape",
+          "shape_null": false,
+          "shape_volume_mm3": 384000.0000000001,
+          "solids": 0,
+          "State": [
+            "Up-to-date"
+          ],
+          "status": "Valid"
+        },
+        {
+          "name": "IfcObject002",
+          "label": "Probe SwitchingDevice edited",
+          "schema": "IFC4",
+          "TypeId": "Part::FeaturePython",
+          "Class": "IfcSwitchingDevice",
+          "IfcClass": "IfcSwitchingDevice",
+          "GlobalId": "0j4zgp8g509O$ZZR__7kAz",
+          "StepId": 39,
+          "PredefinedType": "USERDEFINED",
+          "PredefinedType_choices": [
+            "CONTACTOR",
+            "DIMMERSWITCH",
+            "EMERGENCYSTOP",
+            "KEYPAD",
+            "MOMENTARYSWITCH",
+            "SELECTORSWITCH",
+            "STARTER",
+            "SWITCHDISCONNECTOR",
+            "TOGGLESWITCH",
+            "USERDEFINED",
+            "NOTDEFINED"
+          ],
+          "Type": null,
+          "Type_property": "App::PropertyLink",
+          "IFC_Type": null,
+          "Placement": {
+            "base_mm": [
+              900.0,
+              200.0,
+              300.0
+            ],
+            "rotation_q": [
+              0.0,
+              0.0,
+              0.1305261940889952,
+              0.9914448611277593
+            ]
+          },
+          "IFC_Placement_matrix": [
+            [
+              0.965925825313284,
+              -0.258819048744198,
+              0.0,
+              0.9
+            ],
+            [
+              0.258819048744198,
+              0.965925825313284,
+              0.0,
+              0.2
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.3
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "Description": "Disposable NativeIFC property edit",
+          "ObjectType": "ProbeDevice",
+          "attached_psets": {
+            "Pset_ProbeExperiment": {
+              "ProbeReference": "after",
+              "id": 121
+            }
+          },
+          "applicable_pset_templates": [
+            "Pset_EnvironmentalImpactIndicators",
+            "Pset_EnvironmentalImpactValues",
+            "Pset_SoundGeneration",
+            "Pset_Condition",
+            "Pset_ManufacturerOccurrence",
+            "Pset_ManufacturerTypeInformation",
+            "Pset_ServiceLife",
+            "Pset_Warranty",
+            "Pset_ElectricalDeviceCommon",
+            "Pset_SwitchingDeviceTypeCommon",
+            "Pset_SwitchingDeviceTypePHistory"
+          ],
+          "property_groups": {
+            "Class": "IFC",
+            "Description": "IFC",
+            "ExpressionEngine": "Base",
+            "GlobalId": "IFC",
+            "Group": "Base",
+            "IfcClass": "IFC",
+            "Label": "Base",
+            "Label2": "Base",
+            "ObjectType": "IFC",
+            "OwnerHistory": "IFC",
+            "Placement": "",
+            "PredefinedType": "IFC",
+            "ProbeReference": "Pset_ProbeExperiment",
+            "Proxy": "",
+            "Shape": "",
+            "ShapeMaterial": "",
+            "ShapeMode": "Base",
+            "StepId": "IFC",
+            "Tag": "IFC",
+            "Type": "IFC",
+            "Visibility": "",
+            "_ElementMapVersion": "Base"
+          },
+          "editor_modes": {
+            "Class": [],
+            "IfcClass": [
+              "Hidden"
+            ],
+            "GlobalId": [],
+            "StepId": [
+              "ReadOnly"
+            ],
+            "PredefinedType": [],
+            "Placement": [],
+            "Type": []
+          },
+          "ShapeMode": "Shape",
+          "shape_null": false,
+          "shape_volume_mm3": 384000.0000000001,
+          "solids": 0,
+          "State": [
+            "Up-to-date"
+          ],
+          "status": "Valid"
+        },
+        {
+          "name": "IfcObject003",
+          "label": "Probe LightFixture edited",
+          "schema": "IFC4",
+          "TypeId": "Part::FeaturePython",
+          "Class": "IfcLightFixture",
+          "IfcClass": "IfcLightFixture",
+          "GlobalId": "0IEGv02gvDkRo_Jgc4dWmR",
+          "StepId": 55,
+          "PredefinedType": "USERDEFINED",
+          "PredefinedType_choices": [
+            "POINTSOURCE",
+            "DIRECTIONSOURCE",
+            "SECURITYLIGHTING",
+            "USERDEFINED",
+            "NOTDEFINED"
+          ],
+          "Type": null,
+          "Type_property": "App::PropertyLink",
+          "IFC_Type": null,
+          "Placement": {
+            "base_mm": [
+              1700.0,
+              200.0,
+              300.0
+            ],
+            "rotation_q": [
+              0.0,
+              0.0,
+              0.1305261940889952,
+              0.9914448611277593
+            ]
+          },
+          "IFC_Placement_matrix": [
+            [
+              0.965925825313284,
+              -0.258819048744198,
+              0.0,
+              1.7
+            ],
+            [
+              0.258819048744198,
+              0.965925825313284,
+              0.0,
+              0.2
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.3
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "Description": "Disposable NativeIFC property edit",
+          "ObjectType": "ProbeDevice",
+          "attached_psets": {
+            "Pset_ProbeExperiment": {
+              "ProbeReference": "after",
+              "id": 129
+            }
+          },
+          "applicable_pset_templates": [
+            "Pset_EnvironmentalImpactIndicators",
+            "Pset_EnvironmentalImpactValues",
+            "Pset_SoundGeneration",
+            "Pset_Condition",
+            "Pset_ManufacturerOccurrence",
+            "Pset_ManufacturerTypeInformation",
+            "Pset_ServiceLife",
+            "Pset_Warranty",
+            "Pset_ElectricalDeviceCommon",
+            "Pset_LightFixtureTypeCommon"
+          ],
+          "property_groups": {
+            "Class": "IFC",
+            "Description": "IFC",
+            "ExpressionEngine": "Base",
+            "GlobalId": "IFC",
+            "Group": "Base",
+            "IfcClass": "IFC",
+            "Label": "Base",
+            "Label2": "Base",
+            "ObjectType": "IFC",
+            "OwnerHistory": "IFC",
+            "Placement": "",
+            "PredefinedType": "IFC",
+            "ProbeReference": "Pset_ProbeExperiment",
+            "Proxy": "",
+            "Shape": "",
+            "ShapeMaterial": "",
+            "ShapeMode": "Base",
+            "StepId": "IFC",
+            "Tag": "IFC",
+            "Type": "IFC",
+            "Visibility": "",
+            "_ElementMapVersion": "Base"
+          },
+          "editor_modes": {
+            "Class": [],
+            "IfcClass": [
+              "Hidden"
+            ],
+            "GlobalId": [],
+            "StepId": [
+              "ReadOnly"
+            ],
+            "PredefinedType": [],
+            "Placement": [],
+            "Type": []
+          },
+          "ShapeMode": "Shape",
+          "shape_null": false,
+          "shape_volume_mm3": 7200000.000000002,
+          "solids": 0,
+          "State": [
+            "Up-to-date"
+          ],
+          "status": "Valid"
+        },
+        {
+          "name": "IfcObject004",
+          "label": "Probe ElectricDistributionBoard edited",
+          "schema": "IFC4",
+          "TypeId": "Part::FeaturePython",
+          "Class": "IfcElectricDistributionBoard",
+          "IfcClass": "IfcElectricDistributionBoard",
+          "GlobalId": "2LirlfVS114ejmyYpSdFi6",
+          "StepId": 71,
+          "PredefinedType": "USERDEFINED",
+          "PredefinedType_choices": [
+            "CONSUMERUNIT",
+            "DISTRIBUTIONBOARD",
+            "MOTORCONTROLCENTRE",
+            "SWITCHBOARD",
+            "USERDEFINED",
+            "NOTDEFINED"
+          ],
+          "Type": null,
+          "Type_property": "App::PropertyLink",
+          "IFC_Type": null,
+          "Placement": {
+            "base_mm": [
+              2500.0,
+              200.0,
+              300.0
+            ],
+            "rotation_q": [
+              0.0,
+              0.0,
+              0.1305261940889952,
+              0.9914448611277593
+            ]
+          },
+          "IFC_Placement_matrix": [
+            [
+              0.965925825313284,
+              -0.258819048744198,
+              0.0,
+              2.5
+            ],
+            [
+              0.258819048744198,
+              0.965925825313284,
+              0.0,
+              0.2
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.3
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "Description": "Disposable NativeIFC property edit",
+          "ObjectType": "ProbeDevice",
+          "attached_psets": {
+            "Pset_ProbeExperiment": {
+              "ProbeReference": "after",
+              "id": 137
+            }
+          },
+          "applicable_pset_templates": [
+            "Pset_EnvironmentalImpactIndicators",
+            "Pset_EnvironmentalImpactValues",
+            "Pset_SoundGeneration",
+            "Pset_Condition",
+            "Pset_ManufacturerOccurrence",
+            "Pset_ManufacturerTypeInformation",
+            "Pset_ServiceLife",
+            "Pset_Warranty",
+            "Pset_ElectricalDeviceCommon",
+            "Pset_ElectricDistributionBoardOccurrence",
+            "Pset_ElectricDistributionBoardTypeCommon"
+          ],
+          "property_groups": {
+            "Class": "IFC",
+            "Description": "IFC",
+            "ExpressionEngine": "Base",
+            "GlobalId": "IFC",
+            "Group": "Base",
+            "IfcClass": "IFC",
+            "Label": "Base",
+            "Label2": "Base",
+            "ObjectType": "IFC",
+            "OwnerHistory": "IFC",
+            "Placement": "",
+            "PredefinedType": "IFC",
+            "ProbeReference": "Pset_ProbeExperiment",
+            "Proxy": "",
+            "Shape": "",
+            "ShapeMaterial": "",
+            "ShapeMode": "Base",
+            "StepId": "IFC",
+            "Tag": "IFC",
+            "Type": "IFC",
+            "Visibility": "",
+            "_ElementMapVersion": "Base"
+          },
+          "editor_modes": {
+            "Class": [],
+            "IfcClass": [
+              "Hidden"
+            ],
+            "GlobalId": [],
+            "StepId": [
+              "ReadOnly"
+            ],
+            "PredefinedType": [],
+            "Placement": [],
+            "Type": []
+          },
+          "ShapeMode": "Shape",
+          "shape_null": false,
+          "shape_volume_mm3": 43200000.000000015,
+          "solids": 0,
+          "State": [
+            "Up-to-date"
+          ],
+          "status": "Valid"
+        }
+      ]
+    },
+    {
+      "stage": "ifc_reopened",
+      "timestamp": "2026-09-09T09:22:32.297679-06:00",
+      "ifc_elements": 4,
+      "freecad_objects": 5,
+      "objects": [
+        {
+          "name": "IfcObject001",
+          "label": "Probe Outlet edited",
+          "schema": "IFC4",
+          "TypeId": "Part::FeaturePython",
+          "Class": "IfcOutlet",
+          "IfcClass": "IfcOutlet",
+          "GlobalId": "1rFbdunpr2VQ5E1baavUGb",
+          "StepId": 23,
+          "PredefinedType": "USERDEFINED",
+          "PredefinedType_choices": [
+            "AUDIOVISUALOUTLET",
+            "COMMUNICATIONSOUTLET",
+            "POWEROUTLET",
+            "DATAOUTLET",
+            "TELEPHONEOUTLET",
+            "USERDEFINED",
+            "NOTDEFINED"
+          ],
+          "Type": null,
+          "Type_property": "App::PropertyLink",
+          "IFC_Type": null,
+          "Placement": {
+            "base_mm": [
+              100.0,
+              200.0,
+              300.0
+            ],
+            "rotation_q": [
+              0.0,
+              0.0,
+              0.13052619408899538,
+              0.9914448611277593
+            ]
+          },
+          "IFC_Placement_matrix": [
+            [
+              0.965925825313284,
+              -0.258819048744198,
+              0.0,
+              0.1
+            ],
+            [
+              0.258819048744198,
+              0.965925825313284,
+              0.0,
+              0.2
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.3
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "Description": "Disposable NativeIFC property edit",
+          "ObjectType": "ProbeDevice",
+          "attached_psets": {
+            "Pset_ProbeExperiment": {
+              "ProbeReference": "after",
+              "id": 113
+            }
+          },
+          "applicable_pset_templates": [
+            "Pset_EnvironmentalImpactIndicators",
+            "Pset_EnvironmentalImpactValues",
+            "Pset_SoundGeneration",
+            "Pset_Condition",
+            "Pset_ManufacturerOccurrence",
+            "Pset_ManufacturerTypeInformation",
+            "Pset_ServiceLife",
+            "Pset_Warranty",
+            "Pset_ElectricalDeviceCommon",
+            "Pset_OutletTypeCommon"
+          ],
+          "property_groups": {
+            "Class": "IFC",
+            "Description": "IFC",
+            "ExpressionEngine": "Base",
+            "GlobalId": "IFC",
+            "Group": "Base",
+            "IfcClass": "IFC",
+            "Label": "Base",
+            "Label2": "Base",
+            "ObjectType": "IFC",
+            "OwnerHistory": "IFC",
+            "Placement": "",
+            "PredefinedType": "IFC",
+            "ProbeReference": "Pset_ProbeExperiment",
+            "Proxy": "",
+            "Shape": "",
+            "ShapeMaterial": "",
+            "ShapeMode": "Base",
+            "StepId": "IFC",
+            "Tag": "IFC",
+            "Type": "IFC",
+            "Visibility": "",
+            "_ElementMapVersion": "Base"
+          },
+          "editor_modes": {
+            "Class": [],
+            "IfcClass": [
+              "Hidden"
+            ],
+            "GlobalId": [],
+            "StepId": [
+              "ReadOnly"
+            ],
+            "PredefinedType": [],
+            "Placement": [],
+            "Type": []
+          },
+          "ShapeMode": "Shape",
+          "shape_null": false,
+          "shape_volume_mm3": 384000.0,
+          "solids": 0,
+          "State": [
+            "Up-to-date"
+          ],
+          "status": "Valid"
+        },
+        {
+          "name": "IfcObject004",
+          "label": "Probe SwitchingDevice edited",
+          "schema": "IFC4",
+          "TypeId": "Part::FeaturePython",
+          "Class": "IfcSwitchingDevice",
+          "IfcClass": "IfcSwitchingDevice",
+          "GlobalId": "0j4zgp8g509O$ZZR__7kAz",
+          "StepId": 39,
+          "PredefinedType": "USERDEFINED",
+          "PredefinedType_choices": [
+            "CONTACTOR",
+            "DIMMERSWITCH",
+            "EMERGENCYSTOP",
+            "KEYPAD",
+            "MOMENTARYSWITCH",
+            "SELECTORSWITCH",
+            "STARTER",
+            "SWITCHDISCONNECTOR",
+            "TOGGLESWITCH",
+            "USERDEFINED",
+            "NOTDEFINED"
+          ],
+          "Type": null,
+          "Type_property": "App::PropertyLink",
+          "IFC_Type": null,
+          "Placement": {
+            "base_mm": [
+              900.0,
+              200.0,
+              300.0
+            ],
+            "rotation_q": [
+              0.0,
+              0.0,
+              0.13052619408899538,
+              0.9914448611277593
+            ]
+          },
+          "IFC_Placement_matrix": [
+            [
+              0.965925825313284,
+              -0.258819048744198,
+              0.0,
+              0.9
+            ],
+            [
+              0.258819048744198,
+              0.965925825313284,
+              0.0,
+              0.2
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.3
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "Description": "Disposable NativeIFC property edit",
+          "ObjectType": "ProbeDevice",
+          "attached_psets": {
+            "Pset_ProbeExperiment": {
+              "ProbeReference": "after",
+              "id": 121
+            }
+          },
+          "applicable_pset_templates": [
+            "Pset_EnvironmentalImpactIndicators",
+            "Pset_EnvironmentalImpactValues",
+            "Pset_SoundGeneration",
+            "Pset_Condition",
+            "Pset_ManufacturerOccurrence",
+            "Pset_ManufacturerTypeInformation",
+            "Pset_ServiceLife",
+            "Pset_Warranty",
+            "Pset_ElectricalDeviceCommon",
+            "Pset_SwitchingDeviceTypeCommon",
+            "Pset_SwitchingDeviceTypePHistory"
+          ],
+          "property_groups": {
+            "Class": "IFC",
+            "Description": "IFC",
+            "ExpressionEngine": "Base",
+            "GlobalId": "IFC",
+            "Group": "Base",
+            "IfcClass": "IFC",
+            "Label": "Base",
+            "Label2": "Base",
+            "ObjectType": "IFC",
+            "OwnerHistory": "IFC",
+            "Placement": "",
+            "PredefinedType": "IFC",
+            "ProbeReference": "Pset_ProbeExperiment",
+            "Proxy": "",
+            "Shape": "",
+            "ShapeMaterial": "",
+            "ShapeMode": "Base",
+            "StepId": "IFC",
+            "Tag": "IFC",
+            "Type": "IFC",
+            "Visibility": "",
+            "_ElementMapVersion": "Base"
+          },
+          "editor_modes": {
+            "Class": [],
+            "IfcClass": [
+              "Hidden"
+            ],
+            "GlobalId": [],
+            "StepId": [
+              "ReadOnly"
+            ],
+            "PredefinedType": [],
+            "Placement": [],
+            "Type": []
+          },
+          "ShapeMode": "Shape",
+          "shape_null": false,
+          "shape_volume_mm3": 384000.0,
+          "solids": 0,
+          "State": [
+            "Up-to-date"
+          ],
+          "status": "Valid"
+        },
+        {
+          "name": "IfcObject003",
+          "label": "Probe LightFixture edited",
+          "schema": "IFC4",
+          "TypeId": "Part::FeaturePython",
+          "Class": "IfcLightFixture",
+          "IfcClass": "IfcLightFixture",
+          "GlobalId": "0IEGv02gvDkRo_Jgc4dWmR",
+          "StepId": 55,
+          "PredefinedType": "USERDEFINED",
+          "PredefinedType_choices": [
+            "POINTSOURCE",
+            "DIRECTIONSOURCE",
+            "SECURITYLIGHTING",
+            "USERDEFINED",
+            "NOTDEFINED"
+          ],
+          "Type": null,
+          "Type_property": "App::PropertyLink",
+          "IFC_Type": null,
+          "Placement": {
+            "base_mm": [
+              1700.0,
+              200.0,
+              300.0
+            ],
+            "rotation_q": [
+              0.0,
+              0.0,
+              0.13052619408899538,
+              0.9914448611277593
+            ]
+          },
+          "IFC_Placement_matrix": [
+            [
+              0.965925825313284,
+              -0.258819048744198,
+              0.0,
+              1.7
+            ],
+            [
+              0.258819048744198,
+              0.965925825313284,
+              0.0,
+              0.2
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.3
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "Description": "Disposable NativeIFC property edit",
+          "ObjectType": "ProbeDevice",
+          "attached_psets": {
+            "Pset_ProbeExperiment": {
+              "ProbeReference": "after",
+              "id": 129
+            }
+          },
+          "applicable_pset_templates": [
+            "Pset_EnvironmentalImpactIndicators",
+            "Pset_EnvironmentalImpactValues",
+            "Pset_SoundGeneration",
+            "Pset_Condition",
+            "Pset_ManufacturerOccurrence",
+            "Pset_ManufacturerTypeInformation",
+            "Pset_ServiceLife",
+            "Pset_Warranty",
+            "Pset_ElectricalDeviceCommon",
+            "Pset_LightFixtureTypeCommon"
+          ],
+          "property_groups": {
+            "Class": "IFC",
+            "Description": "IFC",
+            "ExpressionEngine": "Base",
+            "GlobalId": "IFC",
+            "Group": "Base",
+            "IfcClass": "IFC",
+            "Label": "Base",
+            "Label2": "Base",
+            "ObjectType": "IFC",
+            "OwnerHistory": "IFC",
+            "Placement": "",
+            "PredefinedType": "IFC",
+            "ProbeReference": "Pset_ProbeExperiment",
+            "Proxy": "",
+            "Shape": "",
+            "ShapeMaterial": "",
+            "ShapeMode": "Base",
+            "StepId": "IFC",
+            "Tag": "IFC",
+            "Type": "IFC",
+            "Visibility": "",
+            "_ElementMapVersion": "Base"
+          },
+          "editor_modes": {
+            "Class": [],
+            "IfcClass": [
+              "Hidden"
+            ],
+            "GlobalId": [],
+            "StepId": [
+              "ReadOnly"
+            ],
+            "PredefinedType": [],
+            "Placement": [],
+            "Type": []
+          },
+          "ShapeMode": "Shape",
+          "shape_null": false,
+          "shape_volume_mm3": 7200000.000000002,
+          "solids": 0,
+          "State": [
+            "Up-to-date"
+          ],
+          "status": "Valid"
+        },
+        {
+          "name": "IfcObject002",
+          "label": "Probe ElectricDistributionBoard edited",
+          "schema": "IFC4",
+          "TypeId": "Part::FeaturePython",
+          "Class": "IfcElectricDistributionBoard",
+          "IfcClass": "IfcElectricDistributionBoard",
+          "GlobalId": "2LirlfVS114ejmyYpSdFi6",
+          "StepId": 71,
+          "PredefinedType": "USERDEFINED",
+          "PredefinedType_choices": [
+            "CONSUMERUNIT",
+            "DISTRIBUTIONBOARD",
+            "MOTORCONTROLCENTRE",
+            "SWITCHBOARD",
+            "USERDEFINED",
+            "NOTDEFINED"
+          ],
+          "Type": null,
+          "Type_property": "App::PropertyLink",
+          "IFC_Type": null,
+          "Placement": {
+            "base_mm": [
+              2500.0,
+              200.0,
+              300.0
+            ],
+            "rotation_q": [
+              0.0,
+              0.0,
+              0.13052619408899538,
+              0.9914448611277593
+            ]
+          },
+          "IFC_Placement_matrix": [
+            [
+              0.965925825313284,
+              -0.258819048744198,
+              0.0,
+              2.5
+            ],
+            [
+              0.258819048744198,
+              0.965925825313284,
+              0.0,
+              0.2
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.3
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "Description": "Disposable NativeIFC property edit",
+          "ObjectType": "ProbeDevice",
+          "attached_psets": {
+            "Pset_ProbeExperiment": {
+              "ProbeReference": "after",
+              "id": 137
+            }
+          },
+          "applicable_pset_templates": [
+            "Pset_EnvironmentalImpactIndicators",
+            "Pset_EnvironmentalImpactValues",
+            "Pset_SoundGeneration",
+            "Pset_Condition",
+            "Pset_ManufacturerOccurrence",
+            "Pset_ManufacturerTypeInformation",
+            "Pset_ServiceLife",
+            "Pset_Warranty",
+            "Pset_ElectricalDeviceCommon",
+            "Pset_ElectricDistributionBoardOccurrence",
+            "Pset_ElectricDistributionBoardTypeCommon"
+          ],
+          "property_groups": {
+            "Class": "IFC",
+            "Description": "IFC",
+            "ExpressionEngine": "Base",
+            "GlobalId": "IFC",
+            "Group": "Base",
+            "IfcClass": "IFC",
+            "Label": "Base",
+            "Label2": "Base",
+            "ObjectType": "IFC",
+            "OwnerHistory": "IFC",
+            "Placement": "",
+            "PredefinedType": "IFC",
+            "ProbeReference": "Pset_ProbeExperiment",
+            "Proxy": "",
+            "Shape": "",
+            "ShapeMaterial": "",
+            "ShapeMode": "Base",
+            "StepId": "IFC",
+            "Tag": "IFC",
+            "Type": "IFC",
+            "Visibility": "",
+            "_ElementMapVersion": "Base"
+          },
+          "editor_modes": {
+            "Class": [],
+            "IfcClass": [
+              "Hidden"
+            ],
+            "GlobalId": [],
+            "StepId": [
+              "ReadOnly"
+            ],
+            "PredefinedType": [],
+            "Placement": [],
+            "Type": []
+          },
+          "ShapeMode": "Shape",
+          "shape_null": false,
+          "shape_volume_mm3": 43200000.0,
+          "solids": 0,
+          "State": [
+            "Up-to-date"
+          ],
+          "status": "Valid"
+        }
+      ]
+    }
+  ],
+  "exactly_four_occurrences": true,
+  "Type_experiment": "No Type entities or extra occurrences created; sharing investigated in native source/documentation.",
+  "schema": "IFC4",
+  "board_class": "IfcElectricDistributionBoard",
+  "files": {
+    "NativeIFC_four_elements.FCStd": "8a8cfc89c2a46a346463b49f055ecdd41970f076f05e3a1228e5ba5ef6bc34b3",
+    "NativeIFC_four_elements.ifc": "ebc5c64bc6aad462a0936c3a7002fca8a7b25a1298a350681473cf6232ffaf77"
+  },
+  "passed": true,
+  "completed": "2026-09-09T09:22:33.267892-06:00"
+}

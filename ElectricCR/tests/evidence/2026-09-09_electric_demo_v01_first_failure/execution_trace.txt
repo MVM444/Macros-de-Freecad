@@ -1,0 +1,18 @@
+REQUESTED SMOKE EXCEPTION (captured by execution wrapper)
+Traceback (most recent call last):
+  File "<string>", line 16, in <module>
+  File "C:\Users\marco\OneDrive - Caja Costarricense de Seguro Social\Documentos\FreeCAD\Macros\Macros-de-Freecad\ElectricCR\tests\freecad_electric_demo_smoke.py", line 63, in run
+    result = create_fixed_demo(spec)
+             ^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\marco\OneDrive - Caja Costarricense de Seguro Social\Documentos\FreeCAD\Macros\Macros-de-Freecad\ElectricCR\electriccr\demo\electric_demo_freecad.py", line 294, in create_fixed_demo
+    created["metadata"] = _create_metadata(doc, data)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\marco\OneDrive - Caja Costarricense de Seguro Social\Documentos\FreeCAD\Macros\Macros-de-Freecad\ElectricCR\electriccr\demo\electric_demo_freecad.py", line 100, in _create_metadata
+    obj = doc.addObject("App::Feature", "ECR_Demo_Metadata")
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: Document::addObject: 'App::Feature' is not a document object type
+
+MINIMAL REPRODUCTION
+Traceback (most recent call last):
+  File "<string>", line 4, in <module>
+TypeError: Document::addObject: 'App::Feature' is not a document object type

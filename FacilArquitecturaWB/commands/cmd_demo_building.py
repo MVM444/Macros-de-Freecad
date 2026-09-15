@@ -12,15 +12,15 @@ Instrucciones relevantes para futuras modificaciones:
   crear implementaciones BIM paralelas.
 - Abrir siempre un documento nuevo para no tocar trabajo real del usuario.
 - La misma semilla debe producir la misma especificacion.
-- Mantener el modo completo en una sola transaccion para conservar el comportamiento
-  atomico existente; el modo guiado usa una transaccion por paso.
+- Mantener el modo completo de una planta en una sola transaccion; la demo de dos
+  pisos usa fases confirmadas para proteger hosts BIM y el modo guiado una transaccion por paso.
 - El modo guiado debe reutilizar exactamente las mismas operaciones de materializacion
   y la misma especificacion JSON que el modo completo.
 - Conservar salida 2D mediante los Sketches fuente y el Draft Rectangle de techo.
 - Los paneles de Demo guiada usan un objectName estable y deben limpiarse por MainWindow en cada registro/hot restart; nunca confiar solo en globals Python para su ciclo de vida.
 FreeCAD objetivo: 1.1.3.
-Version: 0.4.1
-Fecha y hora: 2026-09-02 15:22 America/Costa_Rica
+Version: 0.10.7
+Fecha: 2026-09-15 16:17 America/Costa_Rica
 """
 
 from __future__ import annotations
@@ -42,8 +42,24 @@ from ..core.bim_utils import (
     prepare_sketches_as_wall_centerlines,
 )
 from ..core.command_errors import handle_command_exception
-from ..core.demo_building_core import CANONICAL_SEED, build_demo_spec, spec_summary
+from ..core.demo_building_core import (
+    CANONICAL_SEED,
+    build_demo_spec,
+    build_minimal_stair_demo_spec,
+    build_two_storey_demo_spec,
+    spec_summary,
+)
 from ..core.demo_guided_core import guided_progress_text, guided_step, guided_steps, guided_total_steps
+from ..core.fa_stair_core import plan_angled_stair, plan_stair_clearance
+from ..core.stair_freecad_adapter import (
+    build_stair_context,
+    build_ceiling_finish_exclusion_zones,
+    create_clearance_previews,
+    create_native_slab_opening,
+    create_native_stair,
+    create_stair_opening_liner,
+    mark_clearance_plans_applied,
+)
 from ..core.opening_utils import create_openings_from_centerlines
 from ..core.room_utils import create_closed_room_sketch
 from ..core.space_utils import create_bim_spaces
@@ -55,6 +71,7 @@ from ..core.project_structure import ensure_group, msg, set_prop
 from ..core.reloadable_command import ReloadableCommandProxy
 from ..core.site_floor_utils import create_site_floor_from_sketches
 from .cmd_roof_axis_prototype import create_roof_from_rectangle_programmatic
+from .cmd_model_diagnostic import generate_report, show_report_dialog
 
 ICON_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "resources", "icons")
@@ -80,6 +97,7 @@ def _guided_meta_text(meta, key, default=""):
 PREFERENCES_PATH = "User parameter:BaseApp/Preferences/Mod/FacilArquitecturaWB/DemoBuilding"
 GENERATOR = "FA_DemoBuilding"
 LOG = "[FA DEMO] "
+DEMO_COMMAND_VERSION = "0.10.7"
 
 
 def _log(text):
@@ -111,8 +129,8 @@ class DemoBuildingDialog(QtWidgets.QDialog):
         layout = QtWidgets.QVBoxLayout(self)
         note = QtWidgets.QLabel(
             i18n.bi(
-                "Crea un documento nuevo con Sketches, piso, muros, puertas, ventanas, Espacios BIM, cielo modular 600x600 y techo BIM. No modifica el documento actual.",
-                "Creates a new document with Sketches, floor, walls, doors, windows, BIM Spaces, 600x600 modular ceiling, and BIM roof. It does not modify the current document.",
+                "Crea un documento nuevo con una casa BIM completa o una escalera mínima entre dos losas y niveles BIM, con hueco real y PLAN 2D.",
+                "Creates a new document with a complete BIM house or a minimal stair between two slabs and BIM storeys, with a real opening and a 2D PLAN.",
             )
         )
         note.setWordWrap(True)
@@ -128,8 +146,10 @@ class DemoBuildingDialog(QtWidgets.QDialog):
         self.mode = QtWidgets.QComboBox()
         self.mode.addItem(i18n.bi("Casa fija 6 x 8 m", "Fixed 6 x 8 m house"), "fixed")
         self.mode.addItem(i18n.bi("Casa aleatoria reproducible", "Reproducible random house"), "random")
+        self.mode.addItem(i18n.bi("Casa fija 2 pisos 6 x 8 m", "Fixed two-storey 6 x 8 m house"), "two_storey")
+        self.mode.addItem(i18n.bi("Demo Escalera mínima", "Minimal Stair Demo"), "minimal_stair")
         previous_mode = self.params.GetString("mode", "fixed")
-        self.mode.setCurrentIndex(1 if previous_mode == "random" else 0)
+        self.mode.setCurrentIndex({"fixed": 0, "random": 1, "two_storey": 2, "minimal_stair": 3}.get(previous_mode, 0))
         form.addRow(i18n.bi("Modo", "Mode"), self.mode)
 
         self.seed = QtWidgets.QSpinBox()
@@ -170,26 +190,40 @@ class DemoBuildingDialog(QtWidgets.QDialog):
         self._refresh()
 
     def _values(self):
-        randomized = self.mode.currentData() == "random"
+        mode = str(self.mode.currentData() or "fixed")
+        randomized = mode == "random"
         seed = int(self.seed.value()) if randomized else CANONICAL_SEED
-        return randomized, seed
+        return mode, randomized, seed
 
     def _refresh(self):
-        randomized, seed = self._values()
+        mode, randomized, seed = self._values()
         self.seed.setEnabled(randomized)
+        # The existing guided 14-step player is intentionally preserved for
+        # single-storey demos. Multi-level guided playback will be a separate
+        # extension after the immediate two-storey case is validated in FreeCAD.
+        if mode in ("two_storey", "minimal_stair"):
+            self.execution.setCurrentIndex(0)
+            self.execution.setEnabled(False)
+        else:
+            self.execution.setEnabled(True)
         try:
-            self.preview.setText(spec_summary(build_demo_spec(seed, randomized)))
+            if mode == "minimal_stair":
+                spec = build_minimal_stair_demo_spec()
+            else:
+                spec = build_two_storey_demo_spec() if mode == "two_storey" else build_demo_spec(seed, randomized)
+            self.preview.setText(spec_summary(spec))
         except Exception as exc:
             self.preview.setText(i18n.bi("Configuracion invalida: %s" % exc, "Invalid configuration: %s" % exc))
 
     def values(self):
-        randomized, seed = self._values()
-        execution = str(self.execution.currentData() or "guided")
-        self.params.SetString("mode", "random" if randomized else "fixed")
+        mode, randomized, seed = self._values()
+        execution = "immediate" if mode in ("two_storey", "minimal_stair") else str(self.execution.currentData() or "guided")
+        self.params.SetString("mode", mode)
         self.params.SetString("execution", execution)
         if randomized:
             self.params.SetInt("seed", int(seed))
         return {
+            "mode": mode,
             "randomized": bool(randomized),
             "seed": int(seed),
             "execution": execution,
@@ -216,7 +250,7 @@ def _new_demo_document(spec):
     return doc
 
 
-def _make_sketch(doc, name, label, segments):
+def _make_sketch(doc, name, label, segments, z_mm=0.0):
     sketch = doc.addObject("Sketcher::SketchObject", name)
     sketch.Label = label
     for segment in segments:
@@ -226,6 +260,11 @@ def _make_sketch(doc, name, label, segments):
             Part.LineSegment(App.Vector(x1, y1, 0.0), App.Vector(x2, y2, 0.0)),
             False,
         )
+    # Multinivel: la geometria fuente nace directamente en su cota global.
+    # No depende de que un BuildingPart traslade hijos agregados posteriormente.
+    placement = sketch.Placement
+    placement.Base.z = float(z_mm)
+    sketch.Placement = placement
     set_prop(
         sketch,
         "App::PropertyString",
@@ -340,10 +379,10 @@ def _validate_recomputed_footprint(sketch, spec):
 
 
 
-def _make_roof_rectangle(doc, group, spec):
+def _make_roof_rectangle(doc, group, spec, base_z_mm=0.0):
     width = float(spec["footprint"]["width_mm"])
     depth = float(spec["footprint"]["depth_mm"])
-    z = float(spec["walls"]["height_mm"])
+    z = float(base_z_mm) + float(spec["walls"]["height_mm"])
     placement = App.Placement(App.Vector(0.0, 0.0, z), App.Rotation())
     maker = getattr(Draft, "make_rectangle", None) or getattr(Draft, "makeRectangle", None)
     if maker is None:
@@ -404,13 +443,35 @@ def _ceiling_options(spec):
 class DemoBuildingSession:
     """Stateful FreeCAD adapter shared by immediate and guided execution."""
 
-    def __init__(self, spec, execution_mode="immediate"):
+    def __init__(
+        self,
+        spec,
+        execution_mode="immediate",
+        doc=None,
+        building=None,
+        level_name="Nivel 00",
+        level_elevation_mm=0.0,
+        geometry_z_offset_mm=0.0,
+        create_site=True,
+        create_controller=True,
+        name_suffix="",
+        create_level_if_label_missing=False,
+        ceiling_namespace="",
+    ):
         self.spec = spec
         self.execution_mode = str(execution_mode or "immediate")
-        self.doc = _new_demo_document(spec)
+        self.doc = doc if doc is not None else _new_demo_document(spec)
+        self.level_name = str(level_name or "Nivel 00")
+        self.level_elevation_mm = float(level_elevation_mm)
+        self.geometry_z_offset_mm = float(geometry_z_offset_mm)
+        self.create_site = bool(create_site)
+        self.create_controller = bool(create_controller)
+        self.name_suffix = str(name_suffix or "")
+        self.create_level_if_label_missing = bool(create_level_if_label_missing)
+        self.ceiling_namespace = str(ceiling_namespace or "").strip()
         self.current_step = 0
         self.parameter_sheet = None
-        self.building = None
+        self.building = building
         self.level = None
         self.sources_group = None
         self.controller = None
@@ -427,6 +488,11 @@ class DemoBuildingSession:
         self.space_result = None
         self.spaces = []
         self.ceiling_result = None
+        self.ceiling_exclusion_zones = []
+        self.ceiling_exclusion_owner = None
+        self.ceiling_exclusion_reason = ""
+        self.ceiling_exclusion_placement_source = None
+        self.ceiling_exclusion_dynamic = False
         self.roof_rectangle = None
         self.roof_result = None
         # Guided-mode presentation is view-only. Geometry and document properties
@@ -622,25 +688,30 @@ class DemoBuildingSession:
         structure = ensure_bim_structure(
             self.doc,
             building_name="Casa demo",
-            level_name="Nivel 00",
-            elevation_mm=0.0,
+            level_name=self.level_name,
+            elevation_mm=self.level_elevation_mm,
+            building=self.building,
             update_existing=True,
+            create_level_if_label_missing=self.create_level_if_label_missing,
         )
         self.building = structure["building"]
         self.level = structure["level"]
         self.sources_group = _make_aux_group(self.doc, self.level)
-        self.parameter_sheet = ensure_parameter_sheet(self.doc, self.sources_group)
-        # Spreadsheet cells and aliases created by ensure_parameter_sheet are not
-        # reliably readable until a recompute in FreeCAD 1.1.3.
-        self.doc.recompute()
-        _sync_demo_parameter_sheet(self.parameter_sheet, self.spec)
-        self.doc.recompute()
-        self.controller = _make_controller(
-            self.doc,
-            self.sources_group,
-            self.spec,
-            execution_mode=self.execution_mode,
-        )
+        if self.name_suffix:
+            self.sources_group.Label = "Demo - Fuentes 2D y control%s" % self.name_suffix
+        if self.create_controller:
+            self.parameter_sheet = ensure_parameter_sheet(self.doc, self.sources_group)
+            # Spreadsheet cells and aliases created by ensure_parameter_sheet are not
+            # reliably readable until a recompute in FreeCAD 1.1.3.
+            self.doc.recompute()
+            _sync_demo_parameter_sheet(self.parameter_sheet, self.spec)
+            self.doc.recompute()
+            self.controller = _make_controller(
+                self.doc,
+                self.sources_group,
+                self.spec,
+                execution_mode=self.execution_mode,
+            )
 
     def _step_wall_sources(self):
         self.exterior_sketch = _make_sketch(
@@ -648,12 +719,14 @@ class DemoBuildingSession:
             "Sketch_Muros_Exteriores_Demo",
             "Sketch muros exteriores - Demo",
             self.spec["walls"]["exterior_segments"],
+            z_mm=self.geometry_z_offset_mm,
         )
         self.interior_sketch = _make_sketch(
             self.doc,
             "Sketch_Muro_Interior_Demo",
             "Sketch muro interior - Demo",
             self.spec["walls"]["interior_segments"],
+            z_mm=self.geometry_z_offset_mm,
         )
         prepare_sketches_as_wall_centerlines(
             [self.exterior_sketch],
@@ -675,14 +748,15 @@ class DemoBuildingSession:
         floor_options = {
             "floor_thickness_mm": float(self.spec["floor"]["thickness_mm"]),
             "floor_overhang_mm": float(self.spec["floor"]["overhang_mm"]),
-            "floor_top_z_mm": float(self.spec["floor"]["top_z_mm"]),
-            "create_test_terrain": bool(site_spec.get("garden_enabled", True)),
+            "floor_top_z_mm": float(self.spec["floor"]["top_z_mm"]) + self.geometry_z_offset_mm,
+            "create_test_terrain": bool(site_spec.get("garden_enabled", True)) and self.create_site,
+            "create_site": self.create_site,
             "cut_terrain_under_building": True,
             "terrain_margin_mm": float(site_spec.get("terrain_margin_mm", 2500.0)),
             "pad_margin_mm": float(site_spec.get("pad_margin_mm", 750.0)),
             "terrain_variation_mm": float(site_spec.get("terrain_variation_mm", 0.0)),
             "terrain_seed": int(self.spec["seed"]),
-            "replace_previous": True,
+            "replace_previous": bool(self.create_site),
         }
         self.floor_result = create_site_floor_from_sketches(
             self.doc,
@@ -758,6 +832,7 @@ class DemoBuildingSession:
                 "Sketch_Centros_Puertas_Demo",
                 "Sketch centros puertas - Demo",
                 self.spec["openings"]["doors"],
+                z_mm=self.geometry_z_offset_mm,
             ),
             "door",
         )
@@ -792,6 +867,7 @@ class DemoBuildingSession:
                 "Sketch_Centros_Ventanas_Demo",
                 "Sketch centros ventanas - Demo",
                 self.spec["openings"]["windows"],
+                z_mm=self.geometry_z_offset_mm,
             ),
             "window",
         )
@@ -829,6 +905,10 @@ class DemoBuildingSession:
             minimum_room_area_m2=float(self.spec["rooms"]["minimum_area_m2"]),
             replace_previous=False,
         )
+        # El Sketch documental del recinto tambien pertenece a la cota global del piso.
+        room_placement = self.room_sketch.Placement
+        room_placement.Base.z = self.geometry_z_offset_mm
+        self.room_sketch.Placement = room_placement
         if len(self.room_topology["faces"]) != len(self.spec["rooms"]["items"]):
             raise RuntimeError(
                 "La deteccion documental encontro %d recintos y la especificacion esperaba %d."
@@ -848,6 +928,17 @@ class DemoBuildingSession:
             label_suffix=" - Demo",
         )
         self.spaces = list(self.space_result["spaces"])
+        # space_utils construye sus bases desde poligonos JSON en Z=0. Para un
+        # nivel superior desplazamos la Base geometrica de cada Arch Space a la
+        # cota absoluta del piso; el Space conserva esa Base como autoridad.
+        for base in list(self.space_result.get("bases", []) or []):
+            try:
+                placement = base.Placement
+                placement.Base.z = self.geometry_z_offset_mm
+                base.Placement = placement
+            except Exception:
+                pass
+        self.doc.recompute()
 
     def _step_ceiling(self):
         self.ceiling_result = create_modular_ceilings(
@@ -855,7 +946,20 @@ class DemoBuildingSession:
             self.level,
             self.spaces,
             [],
-            dict(_ceiling_options(self.spec), create_documentary_grid=False),
+            dict(
+                _ceiling_options(self.spec),
+                ceiling_elevation_mm=float(self.spec["ceiling"]["elevation_mm"]) + self.geometry_z_offset_mm,
+                create_documentary_grid=False,
+                replace_previous=False if self.ceiling_namespace else True,
+                group_name=("FA_Ceilings_%s" % self.ceiling_namespace) if self.ceiling_namespace else "FA_Ceilings",
+                group_label=("Cielos suspendidos - %s" % self.level_name) if self.ceiling_namespace else "Cielos suspendidos",
+                sheet_name=("Spreadsheet_CielosSuspendidos_%s" % self.ceiling_namespace) if self.ceiling_namespace else "Spreadsheet_CielosSuspendidos",
+                exclusion_zones_world_mm=list(self.ceiling_exclusion_zones or []),
+                exclusion_owner=self.ceiling_exclusion_owner,
+                exclusion_reason=self.ceiling_exclusion_reason,
+                dynamic_exclusion_source=self.ceiling_exclusion_placement_source,
+                dynamic_exclusion_mode=("follow_placement" if self.ceiling_exclusion_dynamic else ""),
+            ),
             level=self.level,
             schedule_group=self.sources_group,
         )
@@ -865,6 +969,7 @@ class DemoBuildingSession:
             self.doc,
             self.sources_group,
             self.spec,
+            base_z_mm=self.geometry_z_offset_mm,
         )
 
     def _step_roof(self):
@@ -1056,6 +1161,913 @@ def _materialize(spec):
         raise
 
 
+def _run_demo_diagnostic(doc, intro="", parent=None):
+    """Generate a full-document diagnostic after a successful Demo build.
+
+    The Demo must never inherit a residual Tree selection: selection=[] forces
+    document scope. Diagnostic failure does not invalidate the already-created
+    model; it is reported separately and leaves the document untouched.
+    """
+    try:
+        result = generate_report(
+            doc=doc,
+            selection=[],
+            objective="Validacion automatica de FA Demo edificio",
+            copy_prompt=False,
+        )
+        counts = result["diagnostic"]["counts"]
+        _log(
+            "Diagnostico automatico Demo | alcance=%s | objetos=%d | errores=%d | advertencias=%d | MD=%s"
+            % (
+                result["snapshot"].get("meta", {}).get("scope", ""),
+                result["diagnostic"]["object_count"],
+                counts.get("ERROR", 0),
+                counts.get("WARN", 0),
+                result["md_path"],
+            )
+        )
+        show_report_dialog(
+            result,
+            parent=parent or FreeCADGui.getMainWindow(),
+            title=i18n.bi("FA Demo edificio - diagnostico", "FA Building Demo - diagnostic"),
+            intro=str(intro or ""),
+        )
+        return result
+    except Exception as exc:
+        _log("Diagnostico automatico no disponible: %s" % exc)
+        QtWidgets.QMessageBox.warning(
+            parent or FreeCADGui.getMainWindow(),
+            i18n.bi("FA Demo edificio", "FA Building Demo"),
+            i18n.bi(
+                "La demostracion fue creada, pero no se pudo generar el informe diagnostico automatico.\n\n%s" % exc,
+                "The demo was created, but the automatic diagnostic report could not be generated.\n\n%s" % exc,
+            ),
+        )
+        return None
+
+
+def _confirm_long_process_notice(mode="fixed"):
+    """Ask for explicit Generate/Cancel before any immediate demo object exists."""
+    two_storey = str(mode or "") == "two_storey"
+    if two_storey:
+        body_es = (
+            "La generacion de la casa demo de dos pisos puede tardar varios segundos "
+            "o algunos minutos.\n\n"
+            "FreeCAD puede permanecer ocupado mientras crea y recomputa los objetos BIM.\n\n"
+            "Version de prueba: %s" % DEMO_COMMAND_VERSION
+        )
+        body_en = (
+            "Generating the two-storey demo house can take several seconds or a few minutes.\n\n"
+            "FreeCAD may remain busy while BIM objects are created and recomputed.\n\n"
+            "Test version: %s" % DEMO_COMMAND_VERSION
+        )
+    else:
+        body_es = (
+            "La generacion de la demostracion puede tardar varios segundos o algunos minutos.\n\n"
+            "FreeCAD puede permanecer ocupado durante el proceso.\n\n"
+            "Version de prueba: %s" % DEMO_COMMAND_VERSION
+        )
+        body_en = (
+            "Generating the demo can take several seconds or a few minutes.\n\n"
+            "FreeCAD may remain busy during the process.\n\n"
+            "Test version: %s" % DEMO_COMMAND_VERSION
+        )
+
+    box = QtWidgets.QMessageBox(FreeCADGui.getMainWindow())
+    box.setWindowTitle(i18n.bi("FA Demo edificio - proceso largo", "FA Building Demo - long process"))
+    box.setIcon(QtWidgets.QMessageBox.Information)
+    box.setText(i18n.bi(body_es, body_en))
+    generate_button = box.addButton(i18n.bi("Generar", "Generate"), QtWidgets.QMessageBox.AcceptRole)
+    cancel_button = box.addButton(i18n.bi("Cancelar", "Cancel"), QtWidgets.QMessageBox.RejectRole)
+    box.setDefaultButton(generate_button)
+    box.setEscapeButton(cancel_button)
+    if hasattr(box, "exec"):
+        box.exec()
+    else:
+        box.exec_()
+    return box.clickedButton() is generate_button
+
+
+def _validate_storey_wall_z(session, expected_z_mm):
+    """Fail before hosted openings exist if a storey's walls are at the wrong Z."""
+    target = float(expected_z_mm)
+    wall_z = []
+    for wall in list(session.walls or []):
+        try:
+            shape = wall.Shape
+            if shape and not shape.isNull():
+                wall_z.append(float(shape.BoundBox.ZMin))
+        except Exception:
+            continue
+    if not wall_z:
+        raise RuntimeError("No se pudo verificar la cota Z de los muros de %s." % session.level_name)
+    actual = min(wall_z)
+    if abs(actual - target) > 1.0:
+        raise RuntimeError(
+            "Nivel %s creo muros en Z=%.1f mm; se esperaba %.1f mm. "
+            "La generacion se detuvo antes de crear puertas y ventanas."
+            % (session.level_name, actual, target)
+        )
+    _log(
+        "%s verificado en cota absoluta Z=%.1f mm | muros=%d"
+        % (session.level_name, target, len(wall_z))
+    )
+
+def _create_demo_stair_source(session, stair_spec):
+    """Create the deterministic two-segment construction path for the canonical stair.
+
+    Only ``Demo Escalera minima`` opts into the editable local-frame contract:
+    a real Draft Wire stores points relative to the stair start and its Placement
+    becomes the authority for stair + slab-opening transforms.  The two-storey
+    house intentionally retains the historical Part::Feature source for now.
+    """
+    points_xy = list(stair_spec.get("path_points_mm", []) or [])
+    if len(points_xy) != 3:
+        raise RuntimeError("La especificacion de escalera Demo requiere exactamente tres puntos XY.")
+    z = float(session.geometry_z_offset_mm)
+    editable_local = bool(stair_spec.get("editable_local_frame", False))
+
+    if editable_local:
+        x0, y0 = map(float, points_xy[0])
+        local_points = [App.Vector(float(x) - x0, float(y) - y0, 0.0) for x, y in points_xy]
+        maker = getattr(Draft, "make_wire", None) or getattr(Draft, "makeWire", None)
+        if not callable(maker):
+            raise RuntimeError("Draft no expone make_wire para el recorrido de Demo Escalera.")
+        source = maker(local_points, closed=False, face=False)
+        source.Label = "FA Escalera - Recorrido demo"
+        source.Placement = App.Placement(App.Vector(x0, y0, z), App.Rotation())
+        placement_authority = str(stair_spec.get("placement_authority", "source") or "source").strip().lower()
+        set_prop(source, "App::PropertyBool", "FA_LocalFrameAuthority", "Demo", "Placement autoritativo", placement_authority == "source")
+        set_prop(source, "App::PropertyString", "FA_LocalFrameRole", "Demo", "Rol del marco local", "initial_reference" if placement_authority == "master" else "placement_authority")
+    else:
+        points = [App.Vector(float(x), float(y), z) for x, y in points_xy]
+        source = session.doc.addObject("Part::Feature", "FA_DemoStairPath")
+        source.Label = "FA Escalera - Recorrido demo"
+        source.Shape = Part.makePolygon(points)
+
+    set_prop(source, "App::PropertyString", "FA_GeneratedBy", "Demo", "Generador", GENERATOR)
+    set_prop(source, "App::PropertyString", "FA_Role", "Demo", "Rol", "stair_source_path")
+    add_to_container(session.sources_group, source)
+    try:
+        source.ViewObject.Visibility = False
+    except Exception:
+        pass
+    return source
+
+
+def _prepare_minimal_stair_ceiling_context(ground):
+    """Create one hidden BIM Space solely as support for the minimal demo ceiling.
+
+    The minimal stair demo intentionally omits walls and rooms, but the production
+    ceiling generator consumes BIM Spaces.  Reuse the existing room/Space services
+    over the already-created slab footprint instead of introducing a parallel
+    ceiling implementation.  The support geometry remains hidden; only the modular
+    ceiling is part of the visual example.
+    """
+    if ground.exterior_sketch is None:
+        raise RuntimeError("La Demo Escalera no tiene huella 2D para generar el cielorraso.")
+
+    room_sketch, topology = create_closed_room_sketch(
+        ground.doc,
+        ground.sources_group,
+        [ground.exterior_sketch],
+        snap_tolerance=float(ground.spec.get("rooms", {}).get("snap_tolerance_mm", 5.0)),
+        minimum_room_area_m2=1.0,
+        replace_previous=False,
+    )
+    faces = list((topology or {}).get("faces", []) or [])
+    if len(faces) != 1:
+        raise RuntimeError(
+            "La huella de Demo Escalera debe producir exactamente un recinto auxiliar para el cielorraso; se obtuvieron %d."
+            % len(faces)
+        )
+
+    room_sketch.Label = i18n.bi(
+        "Huella auxiliar de cielorraso - Demo Escalera",
+        "Auxiliary ceiling footprint - Stair Demo",
+    )
+    ground.room_sketch = room_sketch
+    ground.room_topology = topology
+
+    ceiling_elevation = float(ground.spec.get("ceiling", {}).get("elevation_mm", 2700.0))
+    # Let the canonical Space service rebuild its own JSON-compatible record from
+    # the documentary room Sketch.  Supplying a hand-written record here is both
+    # redundant and unsafe because ``create_bim_spaces`` requires ``polygon_mm``
+    # (and derives base Z/area/centroid consistently from the Sketch).
+    space_result = create_bim_spaces(
+        ground.doc,
+        ground.level,
+        room_sketch,
+        room_records=None,
+        default_height_mm=ceiling_elevation,
+        replace_existing=False,
+        generator=GENERATOR,
+        label_suffix=" - Demo Escalera",
+    )
+    ground.space_result = space_result
+    ground.spaces = list(space_result.get("spaces", []) or [])
+    if len(ground.spaces) != 1:
+        raise RuntimeError(
+            "La Demo Escalera esperaba un Space auxiliar para el cielorraso; se obtuvieron %d."
+            % len(ground.spaces)
+        )
+
+    # Keep the canonical polygon/metadata generated by space_utils; only improve
+    # the user-facing labels so the auxiliary support is obvious in the tree.
+    support_label = i18n.bi("Area cielorraso demo escalera", "Stair demo ceiling area")
+    for base in list(space_result.get("bases", []) or []):
+        try:
+            base.Label = i18n.bi(
+                "Base espacio - Area cielorraso demo escalera",
+                "Space base - Stair demo ceiling area",
+            )
+        except Exception:
+            pass
+        try:
+            placement = base.Placement
+            placement.Base.z = float(ground.geometry_z_offset_mm)
+            base.Placement = placement
+            base.ViewObject.Visibility = False
+        except Exception:
+            pass
+    for space in ground.spaces:
+        try:
+            space.Label = i18n.bi(
+                "Espacio BIM - Area cielorraso demo escalera",
+                "BIM Space - Stair demo ceiling area",
+            )
+        except Exception:
+            pass
+        try:
+            space.ViewObject.Visibility = False
+        except Exception:
+            pass
+    try:
+        room_sketch.ViewObject.Visibility = False
+    except Exception:
+        pass
+    ground.doc.recompute()
+    return space_result
+
+
+def _show_minimal_stair_native_railings(stair_result):
+    """Show only native FreeCAD railing objects already owned by the stair.
+
+    FreeCAD 1.1.3 creates the multisegment railing as Arch Pipe objects whose
+    Base is a RailingWire.  The shared stair adapter keeps those native objects;
+    this demo merely changes their view visibility so the example documents the
+    complete stair without creating FA replacement railings.
+    """
+    master = (stair_result or {}).get("master")
+    if master is None:
+        return []
+    try:
+        descendants = list(getattr(master, "OutListRecursive", []) or [])
+    except Exception:
+        descendants = []
+    visible = []
+    for obj in descendants:
+        base = getattr(obj, "Base", None)
+        base_name = str(getattr(base, "Name", "") or "")
+        name = str(getattr(obj, "Name", "") or "")
+        label = str(getattr(obj, "Label", "") or "").lower()
+        is_native_railing = (
+            base_name.startswith("RailingWire")
+            or "barandilla" in label
+            or "railing" in label
+        )
+        if not is_native_railing:
+            continue
+        # RailingWire is construction geometry; Pipe is the visible railing.
+        if name.startswith("RailingWire"):
+            try:
+                obj.ViewObject.Visibility = False
+            except Exception:
+                pass
+            continue
+        try:
+            obj.ViewObject.Visibility = True
+            visible.append(obj)
+        except Exception:
+            pass
+        if base is not None:
+            try:
+                base.ViewObject.Visibility = False
+            except Exception:
+                pass
+    stair_result["visible_railings"] = visible
+    _log("Demo Escalera | barandillas nativas visibles=%d" % len(visible))
+    return visible
+
+
+def _materialize_demo_stair(
+    ground, upper, stair_spec, include_ceiling=True, documentation_container=None,
+):
+    """Materialize the canonical demo stair through the shared native adapter."""
+    lower_slab = ground.floor_result.get("slab") if ground.floor_result else None
+    upper_slab = upper.floor_result.get("slab") if upper.floor_result else None
+    if lower_slab is None or upper_slab is None:
+        raise RuntimeError("No se encontraron ambas losas para crear la escalera Demo.")
+
+    source = _create_demo_stair_source(ground, stair_spec)
+    context = build_stair_context(ground.doc, lower_slab, upper_slab, source)
+    plan = plan_angled_stair(
+        context["points"],
+        context["lower_info"]["top_z"],
+        context["upper_info"]["top_z"],
+        width_mm=float(stair_spec.get("width_mm", 1000.0)),
+        target_riser_mm=float(stair_spec.get("target_riser_mm", 175.0)),
+    )
+    adapter_options = {}
+    if documentation_container is not None:
+        adapter_options["documentation_container"] = documentation_container
+    if bool(stair_spec.get("editable_local_frame", False)):
+        adapter_options["base_geometry_mode"] = str(stair_spec.get("base_geometry_mode", "draft_line_wire"))
+        adapter_options["local_frame_source"] = source
+        adapter_options["placement_authority"] = str(stair_spec.get("placement_authority", "source"))
+        adapter_options["context_links_mode"] = str(stair_spec.get("context_links_mode", "links"))
+    result = create_native_stair(
+        ground.doc,
+        context,
+        plan,
+        structure_thickness_mm=float(stair_spec.get("structure_thickness_mm", 150.0)),
+        create_plan=bool(stair_spec.get("create_plan", True)),
+        railings_mode=str(stair_spec.get("railings_mode", "native")),
+        prevent_duplicate=True,
+        **adapter_options,
+    )
+    result["plan"] = plan
+    result["source"] = source
+
+    # Headroom is planned independently from materialization. The upper-slab
+    # plane feeds an Arch-native Subtraction; the lower-ceiling plane is passed
+    # to the modular ceiling generator before its panels are created.
+    obstacle_planes = [
+        {
+            "id": "upper_slab",
+            "role": "upper_slab",
+            "plane_z_mm": float(context["upper_info"]["bottom_z"]),
+        },
+    ]
+    if include_ceiling:
+        ceiling_elevation = (
+            float(ground.spec.get("ceiling", {}).get("elevation_mm", 2700.0))
+            + float(ground.geometry_z_offset_mm)
+        )
+        ceiling_thickness = float(ground.spec.get("ceiling", {}).get("panel_thickness_mm", 15.0))
+        obstacle_planes.append(
+            {
+                "id": "lower_ceiling",
+                "role": "lower_ceiling",
+                "plane_z_mm": ceiling_elevation - ceiling_thickness,
+            }
+        )
+    clearance_plan = plan_stair_clearance(
+        plan,
+        obstacle_planes,
+        headroom_mm=float(stair_spec.get("headroom_mm", 2100.0)),
+        side_margin_mm=float(stair_spec.get("clearance_side_margin_mm", 50.0)),
+        approach_margin_mm=float(stair_spec.get("clearance_approach_margin_mm", 100.0)),
+    )
+    previews = {}
+    if bool(stair_spec.get("clearance_preview", True)):
+        previews = create_clearance_previews(
+            ground.doc,
+            result.get("master"),
+            clearance_plan,
+            plane_containers={
+                "upper_slab": upper.level,
+                "lower_ceiling": ground.level,
+            },
+            visible=True,
+        )
+    result["clearance_plan"] = clearance_plan
+    result["clearance_previews"] = previews
+
+    slab_plane = next((item for item in clearance_plan["planes"] if item["id"] == "upper_slab"), {})
+    ceiling_plane = next((item for item in clearance_plan["planes"] if item["id"] == "lower_ceiling"), {})
+    expected_geometry = str(stair_spec.get("clearance_geometry_revision") or "").strip()
+    if expected_geometry:
+        planes_to_validate = (slab_plane, ceiling_plane) if include_ceiling else (slab_plane,)
+        for plane in planes_to_validate:
+            if str(plane.get("opening_shape") or "") != expected_geometry:
+                raise RuntimeError(
+                    "La geometria del buque no coincide con la revision esperada %s: %s."
+                    % (expected_geometry, plane.get("opening_shape"))
+                )
+
+    slab_opening = None
+    if bool(stair_spec.get("cut_upper_slab", False)):
+        slab_opening = create_native_slab_opening(
+            ground.doc,
+            result.get("master"),
+            upper_slab,
+            clearance_plan,
+            plane_id="upper_slab",
+            vertical_margin_mm=float(stair_spec.get("slab_opening_vertical_margin_mm", 20.0)),
+            dry_run=False,
+            placement_source=(
+                result.get("master") if bool(stair_spec.get("opening_follows_master", False))
+                else source if bool(stair_spec.get("opening_follows_source", False))
+                else None
+            ),
+            link_master_opening=not bool(stair_spec.get("opening_follows_master", False)),
+        )
+    result["slab_opening"] = slab_opening
+    result["ceiling_clearance_zones"] = list(ceiling_plane.get("zones", []) or [])
+    if include_ceiling and bool(stair_spec.get("apply_ceiling_exclusion", False)):
+        finish_exclusion = build_ceiling_finish_exclusion_zones(
+            clearance_plan,
+            plane_id="lower_ceiling",
+            liner_thickness_mm=float(stair_spec.get("opening_liner_thickness_mm", 100.0)) if bool(stair_spec.get("create_opening_liner", False)) else 0.0,
+            edge_gap_mm=float(stair_spec.get("ceiling_exclusion_edge_gap_mm", 3.0)),
+        )
+        result["ceiling_exclusion_zones"] = list(finish_exclusion.get("zones", []) or [])
+        result["ceiling_finish_exclusion"] = finish_exclusion
+    else:
+        result["ceiling_exclusion_zones"] = []
+        result["ceiling_finish_exclusion"] = {}
+    _log(
+        "Escalera Demo nativa creada | %d contrahuellas | %.1f mm | Levels=%s -> %s | barandillas=%s | hueco losa=%s (%s/%d zonas) | exclusion cielo=%s/%d zonas"
+        % (
+            int(plan["steps"]["total_risers"]),
+            float(plan["steps"]["riser_mm"]),
+            getattr(context.get("lower_level"), "Label", "?"),
+            getattr(context.get("upper_level"), "Label", "?"),
+            result.get("railing_status", "?"),
+            str((slab_opening or {}).get("status", "no_aplicado")),
+            str(slab_plane.get("opening_shape", "?")),
+            int(slab_plane.get("zone_count", 0)),
+            str(ceiling_plane.get("opening_shape", "?")),
+            int(ceiling_plane.get("zone_count", 0)),
+        )
+    )
+    if bool(stair_spec.get("editable_local_frame", False)):
+        _log(
+            "Demo Escalera | marco local activo | origen=(%.1f, %.1f, %.1f) | bases=%s | buque sigue=%s"
+            % (
+                float(source.Placement.Base.x),
+                float(source.Placement.Base.y),
+                float(source.Placement.Base.z),
+                str(stair_spec.get("base_geometry_mode", "draft_line_wire")),
+                getattr(result.get("master") if str(stair_spec.get("placement_authority", "source")).strip().lower() == "master" else source, "Name", "?"),
+            )
+        )
+    return result
+
+
+def _materialize_minimal_stair_demo(spec):
+    """Create only the native supports needed by the canonical two-storey stair.
+
+    The two slabs use the same footprint service and dimensions as the house.
+    Stair geometry, native flights, landing, connections and subtraction remain
+    owned by _materialize_demo_stair and its shared Arch adapter.
+    """
+    storeys = list(spec.get("storeys", []) or [])
+    if len(storeys) != 2:
+        raise RuntimeError(i18n.bi(
+            "La demo de escalera requiere exactamente dos niveles.",
+            "The stair demo requires exactly two storeys.",
+        ))
+
+    feedback = LongOperationFeedback(
+        i18n.bi("Demo Escalera mínima", "Minimal Stair Demo"),
+        i18n.bi("Preparando dos niveles y sus losas", "Preparing two storeys and their slabs"),
+    ).start()
+    doc = None
+    transaction_open = False
+    try:
+        doc = App.newDocument(_unique_document_name("FA_Demo_Escalera_Minima"))
+        doc.Label = i18n.bi("Demo Escalera mínima", "Minimal Stair Demo")
+        doc.UndoMode = 1
+        doc.openTransaction(i18n.bi("FA Demo Escalera mínima", "FA Minimal Stair Demo"))
+        transaction_open = True
+        sessions = []
+        for index, storey_info in enumerate(storeys):
+            session = DemoBuildingSession(
+                storey_info["spec"],
+                execution_mode="immediate",
+                doc=doc,
+                building=sessions[0].building if sessions else None,
+                level_name=storey_info["level_name"],
+                level_elevation_mm=storey_info["elevation_mm"],
+                geometry_z_offset_mm=storey_info["elevation_mm"],
+                create_site=index == 0,
+                create_controller=False,
+                name_suffix=" - %s" % storey_info["level_name"],
+                create_level_if_label_missing=True,
+            )
+            feedback.stage(i18n.bi(
+                "Creando %s y su losa" % storey_info["level_name"],
+                "Creating %s and its slab" % storey_info["level_name"],
+            ))
+            session._step_project()
+            # Only the canonical slab footprint is needed. Do not create wall
+            # sketches or tag this construction source as a wall centerline.
+            session.exterior_sketch = _make_sketch(
+                doc,
+                "Sketch_Losa_DemoEscalera_%02d" % index,
+                i18n.bi("Huella de losa - %s", "Slab footprint - %s") % session.level_name,
+                session.spec["walls"]["exterior_segments"],
+                z_mm=session.geometry_z_offset_mm,
+            )
+            set_prop(session.exterior_sketch, "App::PropertyString", "FA_Role", "Demo", "Rol", "slab_footprint_source")
+            add_to_container(session.sources_group, session.exterior_sketch)
+            doc.recompute()
+            session._step_floor()
+            session.floor_result["slab"].Label = i18n.bi(
+                "Losa inferior" if index == 0 else "Losa superior",
+                "Lower slab" if index == 0 else "Upper slab",
+            )
+            session.exterior_sketch.ViewObject.Visibility = False
+            sessions.append(session)
+
+        ground, upper = sessions
+        native_levels = [
+            obj for obj in list(getattr(ground.building, "Group", []) or [])
+            if str(getattr(obj, "IfcType", "") or "") == "Building Storey"
+        ]
+        if ground.level is upper.level or len(native_levels) != 2:
+            raise RuntimeError(i18n.bi(
+                "La demo reutilizó indebidamente el mismo nivel BIM.",
+                "The demo unexpectedly reused the same BIM storey.",
+            ))
+        ground.building.Label = i18n.bi("Edificio demo escalera", "Stair demo building")
+        set_prop(ground.building, "App::PropertyString", "BuildingMode", "Demo", "Tipo de demo", "minimal_stair")
+        set_prop(ground.building, "App::PropertyString", "DemoCommandVersion", "Demo", "Version comando demo", DEMO_COMMAND_VERSION)
+        set_prop(ground.building, "App::PropertyString", "SpecificationJSON", "Demo", "Especificacion JSON reproducible", json.dumps(spec, sort_keys=True, separators=(",", ":")))
+        documentation = doc.addObject("App::DocumentObjectGroup", "FA_DemoDocumentation")
+        documentation.Label = i18n.bi("Documentación", "Documentation")
+        set_prop(documentation, "App::PropertyString", "FA_GeneratedBy", "Demo", "Generador", GENERATOR)
+
+        feedback.stage(i18n.bi(
+            "Creando la escalera canónica y el hueco real de losa",
+            "Creating the canonical stair and the real slab opening",
+        ))
+        stair_spec = dict(spec.get("stair", {}) or {})
+        stair = _materialize_demo_stair(
+            ground, upper, stair_spec,
+            include_ceiling=True, documentation_container=documentation,
+        )
+
+        # The minimal demo has no rooms or walls.  Create one hidden BIM Space from
+        # the slab footprint only so the production 600x600 ceiling generator can
+        # be reused unchanged, then apply the same stair-clearance exclusion used
+        # by the two-storey house.  The same side tapichel is created afterwards
+        # in the stair local frame so it follows the movable master Placement.
+        feedback.stage(i18n.bi(
+            "Creando cielorraso de Nivel 00 con abertura de escalera",
+            "Creating the Level 00 ceiling with stair opening",
+        ))
+        _prepare_minimal_stair_ceiling_context(ground)
+        if bool(stair_spec.get("apply_ceiling_exclusion", False)):
+            ground.ceiling_exclusion_zones = list(stair.get("ceiling_exclusion_zones", []) or [])
+            ground.ceiling_exclusion_owner = stair.get("master")
+            ground.ceiling_exclusion_reason = "stair_clearance_minimal_demo"
+            if bool(stair_spec.get("ceiling_exclusion_follows_master", False)):
+                ground.ceiling_exclusion_placement_source = stair.get("master")
+                ground.ceiling_exclusion_dynamic = True
+        ground._step_ceiling()
+
+        # Reuse Casa 2 pisos' architectural finish, but keep the minimal demo fully
+        # movable: the tapichel geometry is local and follows the stair master.
+        # Since liner -> master.Placement is a dependency, master stores only the
+        # liner Name in this mode to avoid a reverse PropertyLink/DAG cycle.
+        if bool(stair_spec.get("create_opening_liner", False)):
+            feedback.stage(i18n.bi(
+                "Creando tapichel lateral del buque de escalera",
+                "Creating the stair-opening side liner",
+            ))
+            upper_slab = upper.floor_result.get("slab") if upper.floor_result else None
+            follows_master = bool(stair_spec.get("opening_liner_follows_master", False))
+            liner_result = create_stair_opening_liner(
+                ground.doc,
+                stair.get("master"),
+                upper_slab,
+                stair.get("clearance_plan"),
+                plane_id="lower_ceiling",
+                thickness_mm=float(stair_spec.get("opening_liner_thickness_mm", 100.0)),
+                level=ground.level,
+                dry_run=False,
+                placement_source=stair.get("master") if follows_master else None,
+                link_master_liner=not follows_master,
+            )
+            stair["opening_liner"] = liner_result
+            _log(
+                "Demo Escalera | tapichel=%s | espesor=%.1f mm | altura=%.1f mm | segmentos=%d | sigue=%s"
+                % (
+                    str(liner_result.get("status", "?")),
+                    float(liner_result.get("thickness_mm", 0.0)),
+                    float(liner_result.get("height_mm", 0.0)),
+                    int(liner_result.get("solid_count", 0)),
+                    str(liner_result.get("placement_source") or "fijo"),
+                )
+            )
+
+        ceiling_objects = list((ground.ceiling_result or {}).get("exclusion_objects", []) or [])
+        if bool(stair_spec.get("apply_ceiling_exclusion", False)) and not ceiling_objects:
+            raise RuntimeError(
+                "El cielorraso de Demo Escalera no registro la exclusion de la abertura de escalera."
+            )
+        master = stair.get("master")
+        if master is not None:
+            if bool(stair_spec.get("ceiling_exclusion_follows_master", False)):
+                # The dynamic Part::Cut depends on master.Placement. A reverse
+                # PropertyLink master -> ceiling would close a DAG cycle, so this
+                # controlled demo keeps stable object Names instead.
+                set_prop(
+                    master,
+                    "App::PropertyString",
+                    "FA_CeilingObjectNamesJSON",
+                    "FacilArquitectura",
+                    "Cielorrasos recortados por nombre",
+                    json.dumps([str(getattr(obj, "Name", "") or "") for obj in ceiling_objects], separators=(",", ":")),
+                )
+            else:
+                set_prop(
+                    master,
+                    "App::PropertyLinkList",
+                    "FA_CeilingObjects",
+                    "FacilArquitectura",
+                    "Cielorrasos recortados por la escalera",
+                    ceiling_objects,
+                )
+            set_prop(
+                master,
+                "App::PropertyString",
+                "FA_CeilingExclusionStatus",
+                "FacilArquitectura",
+                "Estado exclusion de cielorraso",
+                "generator_exclusion_applied" if ceiling_objects else "not_requested",
+            )
+        _show_minimal_stair_native_railings(stair)
+
+        documentary_objects = [stair.get("plan2d")]
+        documentary_objects.extend(list((stair.get("clearance_previews") or {}).values()))
+        for obj in documentary_objects:
+            if obj is None:
+                continue
+            # Documentation has links to model owners and therefore stays in
+            # a root branch, outside the native spatial dependency hierarchy.
+            for session in sessions:
+                if obj in list(getattr(session.level, "Group", []) or []):
+                    session.level.removeObject(obj)
+            add_to_container(documentation, obj)
+        previews = mark_clearance_plans_applied(stair.get("clearance_previews") or {})
+        if master is not None:
+            if previews.get("upper_slab") is not None:
+                set_prop(master, "App::PropertyLink", "FA_SlabOpeningPlan", "FacilArquitectura", "PLAN del hueco de losa", previews.get("upper_slab"))
+            if previews.get("lower_ceiling") is not None:
+                set_prop(master, "App::PropertyLink", "FA_CeilingExclusionPlan", "FacilArquitectura", "PLAN de exclusion de cielorraso", previews.get("lower_ceiling"))
+        doc.recompute()
+        doc.commitTransaction()
+        transaction_open = False
+        _apply_guided_camera("axon")
+        feedback.finish(success=True)
+        _log(i18n.bi(
+            "Demo Escalera mínima completada | version=%s | niveles=2 | objetos=%d",
+            "Minimal Stair Demo completed | version=%s | storeys=2 | objects=%d",
+        ) % (DEMO_COMMAND_VERSION, len(doc.Objects)))
+        return {
+            "document": doc,
+            "spec": spec,
+            "levels": [ground.level, upper.level],
+            "ground": ground.result(),
+            "upper": upper.result(),
+            "stair": stair,
+            "ceiling": ground.ceiling_result,
+            "documentation": documentation,
+        }
+    except Exception as exc:
+        feedback.finish(success=False, error=str(exc))
+        if doc is not None:
+            if transaction_open:
+                try:
+                    doc.abortTransaction()
+                except Exception:
+                    pass
+            try:
+                App.closeDocument(doc.Name)
+            except Exception:
+                pass
+        raise
+
+
+def _materialize_two_storey(spec):
+    """Materialize two BIM Levels directly at their absolute geometric elevations.
+
+    The upper storey no longer relies on moving a completed BuildingPart. Its
+    Sketches, slab, walls, openings, Spaces, ceiling and roof are created using
+    an explicit Z offset. Transactions are staged so a Z failure is detected
+    before hosted ArchWindow objects exist.
+    """
+    storeys = list(spec.get("storeys", []) or [])
+    if len(storeys) != 2:
+        raise RuntimeError("La demo de dos pisos requiere exactamente dos niveles.")
+
+    ground_info, upper_info = storeys
+    ground = DemoBuildingSession(
+        ground_info["spec"],
+        execution_mode="immediate",
+        level_name=ground_info["level_name"],
+        level_elevation_mm=ground_info["elevation_mm"],
+        geometry_z_offset_mm=ground_info["elevation_mm"],
+        create_site=True,
+        create_controller=True,
+        name_suffix=" - Nivel 00",
+        create_level_if_label_missing=True,
+        ceiling_namespace="Nivel00",
+    )
+    feedback = LongOperationFeedback("FA Demo edificio 2 pisos", "Preparando demostracion multinivel").start()
+    transaction_open = False
+    upper = None
+    try:
+        _log("Version comando demo %s | multinivel Z absoluta" % DEMO_COMMAND_VERSION)
+        ground.doc.Label = "%s | 2 niveles" % spec.get("name", "Casa demo 2 pisos")
+
+        # Fase 1: planta baja hasta Espacios BIM. El cielo se difiere hasta
+        # conocer la envolvente de la escalera y asi nace ya con su exclusion.
+        ground.doc.openTransaction("FA Demo 2 pisos - Nivel 00")
+        transaction_open = True
+        for number in range(1, 11):
+            ground.execute_step(number, manage_transaction=False)
+        ground.doc.commitTransaction()
+        transaction_open = False
+
+        # Fase 2: Nivel 01 hasta muros, directamente en Z=3000. La validacion
+        # ocurre aqui, antes de crear objetos ArchWindow hospedados.
+        upper_z = float(upper_info["elevation_mm"])
+        upper = DemoBuildingSession(
+            upper_info["spec"],
+            execution_mode="immediate",
+            doc=ground.doc,
+            building=ground.building,
+            level_name=upper_info["level_name"],
+            level_elevation_mm=upper_z,
+            geometry_z_offset_mm=upper_z,
+            create_site=False,
+            create_controller=False,
+            name_suffix=" - Nivel 01",
+            create_level_if_label_missing=True,
+            ceiling_namespace="Nivel01",
+        )
+        ground.doc.openTransaction("FA Demo 2 pisos - Nivel 01 estructura")
+        transaction_open = True
+        for number in range(1, 5):
+            upper.execute_step(number, manage_transaction=False)
+        if upper.level is ground.level:
+            raise RuntimeError("Nivel 01 reutilizo indebidamente el objeto de Nivel 00.")
+        levels_in_building = [obj for obj in list(getattr(ground.building, "Group", []) or []) if str(getattr(obj, "IfcType", "") or "") == "Building Storey"]
+        if len(levels_in_building) != 2:
+            raise RuntimeError("El Building demo no contiene dos Levels BIM nativos distintos.")
+        _log("Jerarquia BIM verificada | Levels nativos=2 | Nivel 00=%s | Nivel 01=%s" % (ground.level.Name, upper.level.Name))
+        _validate_storey_wall_z(upper, upper_z)
+        ground.doc.commitTransaction()
+        transaction_open = False
+
+        # Fase 3: aberturas y acabados. Los muros anfitriones ya pertenecen a
+        # una transaccion confirmada, por lo que un rollback no borra primero
+        # los hosts de ArchWindow.
+        ground.doc.openTransaction("FA Demo 2 pisos - Nivel 01 aberturas y techo")
+        transaction_open = True
+
+        stair_spec = dict(spec.get("stair", {}) or {})
+        stair_result = _materialize_demo_stair(ground, upper, stair_spec) if bool(stair_spec.get("requested", False)) else None
+        if stair_result and bool(stair_spec.get("apply_ceiling_exclusion", False)):
+            ground.ceiling_exclusion_zones = list(stair_result.get("ceiling_exclusion_zones", []) or [])
+            ground.ceiling_exclusion_owner = stair_result.get("master")
+            ground.ceiling_exclusion_reason = "stair_clearance_plus_liner_finish"
+        ground.execute_step(11, manage_transaction=False)
+
+        # Architectural finish of the stair opening. The tapichel follows the
+        # ceiling-side exclusion perimeter and rises only through the plenum,
+        # hiding the interior of the suspended ceiling without consuming the
+        # calculated stair clearance.
+        if stair_result and bool(stair_spec.get("create_opening_liner", False)):
+            upper_slab = upper.floor_result.get("slab") if upper.floor_result else None
+            liner_result = create_stair_opening_liner(
+                ground.doc,
+                stair_result.get("master"),
+                upper_slab,
+                stair_result.get("clearance_plan"),
+                plane_id="lower_ceiling",
+                thickness_mm=float(stair_spec.get("opening_liner_thickness_mm", 100.0)),
+                level=ground.level,
+                dry_run=False,
+            )
+            stair_result["opening_liner"] = liner_result
+            _log(
+                "Tapichel buque escalera | status=%s | espesor=%.1f mm | altura=%.1f mm | segmentos=%d | extremos abiertos=%d"
+                % (
+                    str(liner_result.get("status", "?")),
+                    float(liner_result.get("thickness_mm", 0.0)),
+                    float(liner_result.get("height_mm", 0.0)),
+                    int(liner_result.get("solid_count", 0)),
+                    int(liner_result.get("skipped_edge_count", 0)),
+                )
+            )
+
+        for number in range(5, 14):
+            upper.execute_step(number, manage_transaction=False)
+
+        if stair_result:
+            ceiling_objects = list((ground.ceiling_result or {}).get("exclusion_objects", []) or [])
+            master = stair_result.get("master")
+            if bool(stair_spec.get("apply_ceiling_exclusion", False)) and not ceiling_objects:
+                raise RuntimeError("El cielorraso de Nivel 00 no registro ninguna zona de exclusion para la escalera.")
+            if master is not None:
+                set_prop(master, "App::PropertyLinkList", "FA_CeilingObjects", "FacilArquitectura", "Cielorrasos recortados por la escalera", ceiling_objects)
+                set_prop(master, "App::PropertyString", "FA_CeilingExclusionStatus", "FacilArquitectura", "Estado exclusion de cielorraso", "generator_exclusion_applied" if ceiling_objects else "not_requested")
+                previews = dict(stair_result.get("clearance_previews") or {})
+                if previews.get("upper_slab") is not None:
+                    set_prop(master, "App::PropertyLink", "FA_SlabOpeningPlan", "FacilArquitectura", "PLAN del hueco de losa", previews.get("upper_slab"))
+                if previews.get("lower_ceiling") is not None:
+                    set_prop(master, "App::PropertyLink", "FA_CeilingExclusionPlan", "FacilArquitectura", "PLAN de exclusion de cielorraso", previews.get("lower_ceiling"))
+                if (stair_result.get("slab_opening") or {}).get("status") == "native_subtraction_applied" and ceiling_objects:
+                    mark_clearance_plans_applied(previews)
+
+        all_generated = ground._generated_objects() + upper._generated_objects()
+        if stair_result:
+            all_generated.extend([stair_result.get("master"), stair_result.get("plan2d")])
+            all_generated.extend(list((stair_result.get("clearance_previews") or {}).values()))
+            slab_opening = stair_result.get("slab_opening") or {}
+            all_generated.append(slab_opening.get("cutter"))
+            opening_liner = stair_result.get("opening_liner") or {}
+            all_generated.append(opening_liner.get("liner"))
+        all_generated = [
+            obj for obj in all_generated
+            if obj is not None
+            and getattr(obj, "Document", None) is ground.doc
+            and ground.doc.getObject(getattr(obj, "Name", "")) is obj
+        ]
+        if ground.controller is not None:
+            set_prop(ground.controller, "App::PropertyString", "SpecificationJSON", "Demo", "Especificacion JSON reproducible", json.dumps(spec, sort_keys=True, separators=(",", ":")))
+            set_prop(ground.controller, "App::PropertyString", "Description", "Demo", "Descripcion", spec_summary(spec))
+            set_prop(ground.controller, "App::PropertyString", "BuildingMode", "Demo", "Tipo de edificio demo", "two_storey")
+            set_prop(ground.controller, "App::PropertyString", "DemoCommandVersion", "Demo", "Version comando demo", DEMO_COMMAND_VERSION)
+            set_prop(ground.controller, "App::PropertyLinkList", "Levels", "Demo", "Niveles BIM", [ground.level, upper.level])
+            set_prop(ground.controller, "App::PropertyLinkList", "GeneratedObjects", "Demo", "Objetos generados", all_generated)
+            set_prop(ground.controller, "App::PropertyInteger", "GeneratedCount", "Demo", "Cantidad de objetos principales", len(all_generated))
+            if stair_result:
+                set_prop(ground.controller, "App::PropertyLink", "Stair", "Demo", "Escalera nativa", stair_result.get("master"))
+                set_prop(ground.controller, "App::PropertyLink", "StairPlan2D", "Demo", "Representacion PLAN de escalera", stair_result.get("plan2d"))
+                set_prop(ground.controller, "App::PropertyLink", "StairSource", "Demo", "Recorrido fuente de escalera", stair_result.get("source"))
+                sources = list(getattr(ground.controller, "Sources", []) or [])
+                if stair_result.get("source") is not None and stair_result.get("source") not in sources:
+                    sources.append(stair_result.get("source"))
+                    set_prop(ground.controller, "App::PropertyLinkList", "Sources", "Demo", "Fuentes 2D", sources)
+                set_prop(ground.controller, "App::PropertyString", "StairStatus", "Demo", "Estado de escalera nativa", "created_native")
+                set_prop(ground.controller, "App::PropertyString", "StairRailingStatus", "Demo", "Estado de barandillas", str(stair_result.get("railing_status", "")))
+                previews = dict(stair_result.get("clearance_previews") or {})
+                slab_opening = dict(stair_result.get("slab_opening") or {})
+                set_prop(ground.controller, "App::PropertyLink", "StairSlabOpening", "Demo", "Buque nativo de losa", slab_opening.get("cutter"))
+                opening_liner = dict(stair_result.get("opening_liner") or {})
+                set_prop(ground.controller, "App::PropertyLink", "StairOpeningLiner", "Demo", "Tapichel perimetral del buque", opening_liner.get("liner"))
+                set_prop(ground.controller, "App::PropertyString", "StairOpeningLinerStatus", "Demo", "Estado tapichel del buque", str(opening_liner.get("status", "not_requested")))
+                set_prop(ground.controller, "App::PropertyLink", "StairSlabOpeningPreview", "Demo", "PLAN hueco de losa", previews.get("upper_slab"))
+                set_prop(ground.controller, "App::PropertyLink", "StairCeilingExclusionPreview", "Demo", "PLAN exclusion de cielorraso", previews.get("lower_ceiling"))
+                set_prop(ground.controller, "App::PropertyLinkList", "StairCeilingObjects", "Demo", "Cielorrasos recortados", list((ground.ceiling_result or {}).get("exclusion_objects", []) or []))
+                clearance_ok = slab_opening.get("status") == "native_subtraction_applied" and bool((ground.ceiling_result or {}).get("exclusion_objects", []))
+                set_prop(ground.controller, "App::PropertyString", "StairClearanceStatus", "Demo", "Estado de holgura", "applied" if clearance_ok else "incomplete")
+            else:
+                set_prop(ground.controller, "App::PropertyString", "StairStatus", "Demo", "Estado de escalera nativa", "not_requested")
+
+        ground.doc.recompute()
+        ground.doc.commitTransaction()
+        transaction_open = False
+        _apply_guided_camera("axon")
+        feedback.finish(success=True)
+        msg(
+            "FA Demo 2 pisos completado | version=%s | niveles=2 | muros=%d | puertas=%d | ventanas=%d | espacios=%d | escalera=%s"
+            % (
+                DEMO_COMMAND_VERSION,
+                len(ground.walls) + len(upper.walls),
+                len(ground.doors) + len(upper.doors),
+                len(ground.windows) + len(upper.windows),
+                len(ground.spaces) + len(upper.spaces),
+                "si" if stair_result else "no",
+            )
+        )
+        return {
+            "document": ground.doc,
+            "controller": ground.controller,
+            "spec": spec,
+            "levels": [ground.level, upper.level],
+            "ground": ground.result(),
+            "upper": upper.result(),
+            "stair": stair_result,
+        }
+    except Exception as exc:
+        feedback.finish(success=False, error=str(exc))
+        if transaction_open:
+            try:
+                ground.doc.abortTransaction()
+            except Exception:
+                pass
+        ground.close_document()
+        raise
+
+
 GUIDED_DOCK_OBJECT_NAME = "FA_DemoGuidedDock"
 _ACTIVE_GUIDED_DOCK = None
 
@@ -1148,6 +2160,7 @@ class GuidedDemoDock(QtWidgets.QDockWidget):
             pass
         self.session = DemoBuildingSession(spec, execution_mode="guided")
         self.busy = False
+        self._diagnostic_generated = False
         self.timer = QtCore.QTimer(self)
         self.timer.setSingleShot(False)
         self.timer.timeout.connect(self._on_timer)
@@ -1409,6 +2422,17 @@ class GuidedDemoDock(QtWidgets.QDockWidget):
                 pass
             if feedback is not None:
                 feedback.finish(success=True)
+            if number == guided_total_steps() and not self._diagnostic_generated:
+                self.timer.stop()
+                self._diagnostic_generated = True
+                _run_demo_diagnostic(
+                    self.session.doc,
+                    intro=i18n.bi(
+                        "Demostracion guiada completada.",
+                        "Guided demo completed.",
+                    ),
+                    parent=FreeCADGui.getMainWindow(),
+                )
             return True
         except Exception as exc:
             if feedback is not None:
@@ -1453,6 +2477,8 @@ class GuidedDemoDock(QtWidgets.QDockWidget):
         if self.busy:
             return
         self.timer.stop()
+        if int(target) < guided_total_steps():
+            self._diagnostic_generated = False
         self._set_busy(True)
         try:
             self.session.rebuild_to_step(target)
@@ -1540,8 +2566,8 @@ class CommandClass:
         return {
             "MenuText": i18n.bi("FA Demo edificio", "FA Building Demo"),
             "ToolTip": i18n.bi(
-                "Crear desde cero una casa BIM simple. Modo fijo 6x8 m o aleatorio reproducible por semilla; genera Sketches, piso, muros, puertas, ventanas, Espacios BIM, cielo modular 600x600 y techo.",
-                "Create a simple BIM house from scratch. Fixed 6x8 m or seed-reproducible random mode; generates Sketches, floor, walls, doors, windows, BIM Spaces, modular ceiling, and roof.",
+                "Crear una casa BIM fija 6x8 m, de dos pisos o aleatoria reproducible, o una Demo Escalera mínima con dos niveles, losas, hueco real y PLAN 2D.",
+                "Create a fixed 6x8 m, two-storey or reproducible random BIM house, or a Minimal Stair Demo with two storeys, slabs, a real opening and a 2D PLAN.",
             ),
             "Pixmap": ICON_PATH,
         }
@@ -1553,18 +2579,27 @@ class CommandClass:
             if accepted != QtWidgets.QDialog.Accepted:
                 return
             options = dialog.values()
-            spec = build_demo_spec(options["seed"], options["randomized"])
+            if options.get("mode") == "minimal_stair":
+                spec = build_minimal_stair_demo_spec()
+            else:
+                spec = build_two_storey_demo_spec() if options.get("mode") == "two_storey" else build_demo_spec(options["seed"], options["randomized"])
             if options.get("execution") == "guided":
                 start_guided_demo(spec)
                 return
-            result = _materialize(spec)
-            QtWidgets.QMessageBox.information(
-                FreeCADGui.getMainWindow(),
-                i18n.bi("FA Demo edificio", "FA Building Demo"),
-                i18n.bi(
+            if not _confirm_long_process_notice(options.get("mode", "fixed")):
+                _log("Generacion cancelada por el usuario antes de iniciar | version=%s" % DEMO_COMMAND_VERSION)
+                return
+            if options.get("mode") == "minimal_stair":
+                result = _materialize_minimal_stair_demo(spec)
+            else:
+                result = _materialize_two_storey(spec) if options.get("mode") == "two_storey" else _materialize(spec)
+            _run_demo_diagnostic(
+                result["document"],
+                intro=i18n.bi(
                     "Demostracion creada en un documento nuevo.\n\n%s" % spec_summary(result["spec"]),
                     "Demo created in a new document.\n\n%s" % spec_summary(result["spec"]),
                 ),
+                parent=FreeCADGui.getMainWindow(),
             )
         except Exception as exc:
             handle_command_exception(i18n.bi("FA Demo edificio", "FA Building Demo"), exc)

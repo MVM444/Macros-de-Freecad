@@ -3,8 +3,8 @@
 Descripcion: crea y reutiliza Building y Building Storey nativos de FreeCAD.
 Objetivo: organizar reconstrucciones desde Sketches sin crear una jerarquia FA paralela.
 FreeCAD objetivo: 1.1.3.
-Fecha y hora: 2026-09-01 14:35 America/Costa_Rica.
-Version: 0.4.0.
+Fecha y hora: 2026-09-09 15:20 America/Costa_Rica.
+Version: 0.5.1.
 Instrucciones de mantenimiento: conservar Arch.makeBuilding/makeFloor como autoridad
 y no reemplazar objetos BIM manuales del usuario durante una reejecucion.
 """
@@ -73,8 +73,15 @@ def ensure_bim_structure(
     building=None,
     level=None,
     update_existing=False,
+    create_level_if_label_missing=False,
 ):
-    """Create or reuse one native Building and Level idempotently."""
+    """Create or reuse one native Building and Level idempotently.
+
+    ``create_level_if_label_missing`` is deliberately opt-in. The historic
+    single-level workflow may reuse the only existing generated Level, while a
+    multi-storey caller can require a distinct Level when the requested label
+    is not already present.
+    """
     _require_arch_structure()
     building_label = str(building_name or DEFAULT_BUILDING_NAME).strip() or DEFAULT_BUILDING_NAME
     level_label = str(level_name or DEFAULT_LEVEL_NAME).strip() or DEFAULT_LEVEL_NAME
@@ -97,7 +104,12 @@ def ensure_bim_structure(
         msg("Building creado: %s" % building_label)
 
     if level is None:
-        level = _best_existing_level(doc, building, level_label)
+        level = _best_existing_level(
+            doc,
+            building,
+            level_label,
+            allow_single_fallback=not bool(create_level_if_label_missing),
+        )
     if level is None:
         level = Arch.makeFloor(name=level_label)
         if level is None:
@@ -214,18 +226,47 @@ def ensure_level_auxiliary_group(
 def resolve_level_context(doc, objects=None):
     """Resolve the unique native Level associated with objects or the document.
 
-    This is intentionally conservative: an explicit Level wins, then recursive
-    dependency ancestry and FA_TargetLevel metadata are inspected, and finally
-    a document with exactly one Level is accepted.
+    Resolution order is intentionally structural: an explicit Level wins, then
+    a unique *direct* native Level parent. Only after that do FA_TargetLevel and
+    recursive dependency ancestry participate. This prevents controller or
+    cross-level dependency links from making an object ambiguous when its
+    native BuildingPart parent is already clear.
     """
-    candidates = []
-    for obj in list(objects or []):
-        if is_level(obj) and obj not in candidates:
-            candidates.append(obj)
-    if len(candidates) == 1:
-        return candidates[0]
+    objects = [obj for obj in list(objects or []) if obj is not None]
 
-    pending = list(objects or [])
+    explicit = []
+    for obj in objects:
+        if is_level(obj) and obj not in explicit:
+            explicit.append(obj)
+    if len(explicit) == 1:
+        return explicit[0]
+    if len(explicit) > 1:
+        return None
+
+    direct = []
+    for obj in objects:
+        for parent in list(getattr(obj, "InList", []) or []):
+            if is_level(parent) and parent not in direct:
+                direct.append(parent)
+    if len(direct) == 1:
+        return direct[0]
+    if len(direct) > 1:
+        return None
+
+    tagged = []
+    for obj in objects:
+        target_name = str(getattr(obj, "FA_TargetLevel", "") or "").strip()
+        if target_name and hasattr(doc, "getObject"):
+            target = doc.getObject(target_name)
+            if target is not None and is_level(target) and target not in tagged:
+                tagged.append(target)
+    if len(tagged) == 1:
+        return tagged[0]
+    if len(tagged) > 1:
+        return None
+
+    candidates = []
+    pending = list(objects)
     seen = set()
     while pending:
         obj = pending.pop(0)
@@ -239,17 +280,12 @@ def resolve_level_context(doc, objects=None):
             if obj not in candidates:
                 candidates.append(obj)
             continue
-        target_name = str(getattr(obj, "FA_TargetLevel", "") or "").strip()
-        if target_name and hasattr(doc, "getObject"):
-            target = doc.getObject(target_name)
-            if target is not None and is_level(target) and target not in candidates:
-                candidates.append(target)
         pending.extend(list(getattr(obj, "InList", []) or []))
     if len(candidates) == 1:
         return candidates[0]
+
     levels = collect_levels(doc)
     return levels[0] if len(levels) == 1 else None
-
 
 def ensure_auxiliary_parent(doc, objects=None, legacy_key="master_sketches"):
     """Return the preferred support parent and its Level when available.
@@ -455,16 +491,17 @@ def _best_existing_building(doc, requested_label):
     return buildings[0] if len(buildings) == 1 else None
 
 
-def _best_existing_level(doc, building, requested_label):
+def _best_existing_level(doc, building, requested_label, allow_single_fallback=True):
     contained = collect_levels(doc, building)
     exact = [obj for obj in contained if _matches_label(obj, requested_label)]
     if len(exact) == 1:
         return exact[0]
-    generated = [obj for obj in contained if _is_fa_generated(obj)]
-    if len(generated) == 1:
-        return generated[0]
-    if len(contained) == 1:
-        return contained[0]
+    if allow_single_fallback:
+        generated = [obj for obj in contained if _is_fa_generated(obj)]
+        if len(generated) == 1:
+            return generated[0]
+        if len(contained) == 1:
+            return contained[0]
     all_levels = collect_levels(doc)
     exact = [obj for obj in all_levels if _matches_label(obj, requested_label)]
     if len(exact) == 1:
