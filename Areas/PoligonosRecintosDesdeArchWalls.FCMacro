@@ -2,17 +2,18 @@
 # MenuText: Poligonos de recintos desde muros BIM
 # ToolTip: Genera areas poligonales desde los huecos cerrados de muros Arch/BIM.
 # Icon: PoligonosRecintosDesdeArchWalls.svg
-# Version: 1.1.1
-# Revision: 2026-09-19 22:14:00 America/Costa_Rica
+# Version: 1.2.0
+# Revision: 2026-09-19 22:24:00 America/Costa_Rica
 # FreeCAD: 1.1.3
 
 """Create independent polygonal room areas from Arch/BIM wall footprints.
 
-The macro never edits rectangular areas, source walls or selected obstacles.
-It accepts multiple BIM walls plus explicitly selected solid obstacles such as
-columns/pillars. Rooms without obstacles remain editable closed Draft Wires.
-When obstacles intersect a room, the semantic room becomes an exact Part face
-with holes and keeps an editable Draft Wire as its outer-boundary reference.
+The macro never edits rectangular areas, source walls or selected auxiliary solids.
+It accepts multiple BIM walls plus explicitly selected columns/pillars/solids.
+Selected components that touch BIM walls are fused into the wall footprint as
+closure elements before room detection. Components isolated inside a room remain
+interior obstacles and are subtracted from the net room area. Rooms without
+interior obstacles remain editable closed Draft Wires.
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ SHEET_NAME = "Spreadsheet_PolygonalRooms"
 MIN_ROOM_AREA_M2 = 1.0
 DISPLAY_ELEVATION_MM = 20.0
 GEOMETRY_TOLERANCE_MM = 0.1
+CLOSURE_CONTACT_TOLERANCE_MM = 1.0
 
 
 def log(message):
@@ -289,21 +291,139 @@ def fuse_wall_footprints(walls):
     return footprint, len(faces)
 
 
+def projected_top_components(obj):
+    """Project each connected solid/top component independently to XY.
+
+    A single Arch Structure can contain many columns. Keeping one projected
+    component per solid lets the macro classify each column independently as a
+    wall-closing element or as an isolated interior obstacle.
+    """
+    shape = obj.Shape
+    solids = list(shape.Solids)
+    sources = solids if solids else [shape]
+    components = []
+    face_count = 0
+    for source in sources:
+        top_z = float(source.BoundBox.ZMax)
+        top_faces = [face for face in source.Faces if face_is_horizontal_top(face, top_z)]
+        if not top_faces:
+            continue
+        projected = []
+        for face in top_faces:
+            copy = face.copy()
+            copy.translate(App.Vector(0.0, 0.0, -top_z))
+            projected.append(copy)
+        footprint = _fuse_faces(projected)
+        if footprint is None or footprint.isNull() or not list(getattr(footprint, "Faces", []) or []):
+            continue
+        components.append(footprint)
+        face_count += len(top_faces)
+    if not components:
+        raise RuntimeError(
+            "El objeto %s no tiene caras superiores horizontales proyectables."
+            % object_label(obj)
+        )
+    return components, face_count
+
+
 def obstacle_footprints(obstacles):
-    """Return individual projected obstacle footprints; invalid obstacles are warned and skipped."""
+    """Return projected components for selected auxiliary objects."""
     entries = []
     face_count = 0
     for obj in unique_objects(obstacles):
         try:
-            faces = projected_top_faces(obj)
-            footprint = _fuse_faces(faces)
-            if footprint is None or footprint.isNull() or not footprint.Faces:
-                raise RuntimeError("huella vacia")
-            entries.append((obj, footprint))
-            face_count += len(faces)
+            components, count = projected_top_components(obj)
+            for index, footprint in enumerate(components, 1):
+                entries.append(
+                    {
+                        "object": obj,
+                        "shape": footprint,
+                        "component_index": index,
+                    }
+                )
+            face_count += count
         except Exception as exc:
             warn("Obstaculo omitido '%s': %s" % (object_label(obj), exc))
     return entries, face_count
+
+
+def _shape_contact_distance(first, second):
+    try:
+        return float(first.distToShape(second)[0])
+    except Exception:
+        return None
+
+
+def shapes_touch_or_intersect(first, second, tolerance=CLOSURE_CONTACT_TOLERANCE_MM):
+    """True when two planar footprints overlap or touch within tolerance."""
+    try:
+        common = first.common(second)
+        if common is not None and not common.isNull():
+            if (
+                list(getattr(common, "Faces", []) or [])
+                or list(getattr(common, "Edges", []) or [])
+                or list(getattr(common, "Vertexes", []) or [])
+            ):
+                return True
+    except Exception:
+        pass
+    distance = _shape_contact_distance(first, second)
+    return distance is not None and distance <= float(tolerance)
+
+
+def classify_auxiliary_components(wall_footprint, entries):
+    """Split selected components into wall closures and isolated obstacles."""
+    closures = []
+    interiors = []
+    for entry in list(entries or []):
+        footprint = entry["shape"]
+        distance = _shape_contact_distance(wall_footprint, footprint)
+        is_closure = shapes_touch_or_intersect(wall_footprint, footprint)
+        target = closures if is_closure else interiors
+        target.append(entry)
+        distance_text = "n/a" if distance is None else "%.3f mm" % distance
+        log(
+            "Auxiliar %s#%02d: %s | distancia_muro=%s"
+            % (
+                object_label(entry["object"]),
+                int(entry.get("component_index", 0) or 0),
+                "CIERRE" if is_closure else "INTERIOR",
+                distance_text,
+            )
+        )
+    return closures, interiors
+
+
+def fuse_closure_footprints(wall_footprint, closure_entries):
+    result = wall_footprint
+    for entry in list(closure_entries or []):
+        result = result.fuse(entry["shape"])
+    try:
+        result = result.removeSplitter()
+    except Exception:
+        pass
+    if result is None or result.isNull() or not list(getattr(result, "Faces", []) or []):
+        raise RuntimeError("La union de muros y elementos de cierre no produjo una huella valida.")
+    return result
+
+
+def closure_sources_for_room(room_face, closure_entries):
+    """Return unique selected objects whose closure components touch the room boundary."""
+    result = []
+    seen = set()
+    boundary = getattr(room_face, "OuterWire", room_face)
+    for entry in list(closure_entries or []):
+        footprint = entry["shape"]
+        distance = _shape_contact_distance(boundary, footprint)
+        if distance is None or distance > CLOSURE_CONTACT_TOLERANCE_MM:
+            continue
+        obj = entry["object"]
+        name = str(getattr(obj, "Name", "") or id(obj))
+        if name in seen:
+            continue
+        seen.add(name)
+        result.append(obj)
+    return result
 
 
 def shape_area(shape):
@@ -322,11 +442,14 @@ def shape_perimeter(shape):
 
 
 def subtract_obstacles(room_face, obstacle_entries):
-    """Cut selected obstacle footprints from one room face and report actual intersections."""
+    """Cut isolated selected components from one room face."""
     result = room_face.copy()
     used = []
+    seen = set()
     removed_area = 0.0
-    for obj, footprint in obstacle_entries:
+    for entry in list(obstacle_entries or []):
+        obj = entry["object"]
+        footprint = entry["shape"]
         try:
             overlap = result.common(footprint)
             overlap_area = shape_area(overlap)
@@ -347,7 +470,10 @@ def subtract_obstacles(room_face, obstacle_entries):
                 warn("El obstaculo '%s' eliminaria todo el recinto; se omitio." % object_label(obj))
                 continue
             result = cut
-            used.append(obj)
+            name = str(getattr(obj, "Name", "") or id(obj))
+            if name not in seen:
+                seen.add(name)
+                used.append(obj)
             removed_area += max(0.0, before - after)
         except Exception as exc:
             warn("No se pudo restar '%s' del recinto: %s" % (object_label(obj), exc))
@@ -589,9 +715,20 @@ def make_editable_room_wire(doc, room_face):
     return obj, points
 
 
-def create_room_object(doc, group, room_face, walls, name_candidates, index, obstacle_entries=None):
+def create_room_object(
+    doc,
+    group,
+    room_face,
+    walls,
+    name_candidates,
+    index,
+    obstacle_entries=None,
+    closure_entries=None,
+):
     obstacle_entries = list(obstacle_entries or [])
+    closure_entries = list(closure_entries or [])
     net_shape, used_obstacles, removed_area = subtract_obstacles(room_face, obstacle_entries)
+    used_closures = closure_sources_for_room(room_face, closure_entries)
     matches = candidates_inside(room_face, name_candidates)
     room_name = matches[0]["name"] if matches else "Recinto poligonal %02d" % index
     gross_area = float(room_face.Area)
@@ -629,7 +766,7 @@ def create_room_object(doc, group, room_face, walls, name_candidates, index, obs
         display_shape.translate(App.Vector(0.0, 0.0, DISPLAY_ELEVATION_MM))
         obj.Shape = display_shape
         geometry_type = "PartFaceWithHoles"
-        source_method = "Huecos de huella superior Arch Wall menos obstaculos seleccionados"
+        source_method = "Huecos de huella BIM con cierres seleccionados menos obstaculos interiores"
         set_property(
             obj,
             "App::PropertyLink",
@@ -650,7 +787,11 @@ def create_room_object(doc, group, room_face, walls, name_candidates, index, obs
     else:
         obj, points = make_editable_room_wire(doc, room_face)
         geometry_type = "DraftWire"
-        source_method = "Huecos de huella superior Arch Wall"
+        source_method = (
+            "Huecos de huella BIM con elementos de cierre seleccionados"
+            if used_closures
+            else "Huecos de huella superior Arch Wall"
+        )
         vertex_count = len(points)
 
     obj.Label = unique_label(doc, "Poligono - " + room_name)
@@ -672,8 +813,10 @@ def create_room_object(doc, group, room_face, walls, name_candidates, index, obs
     set_property(obj, "App::PropertyInteger", "FA_NameCandidateCount", "FacilArquitectura", "Rotulos dentro del recinto", len(matches))
     set_property(obj, "App::PropertyStringList", "FA_NameCandidates", "FacilArquitectura", "Nombres candidatos", [item["name"] for item in matches])
     set_property(obj, "App::PropertyLinkList", "FA_SourceWalls", "FacilArquitectura", "Muros fuente", list(walls))
-    set_property(obj, "App::PropertyLinkList", "FA_SourceObstacles", "FacilArquitectura", "Obstaculos descontados", list(used_obstacles))
-    set_property(obj, "App::PropertyInteger", "FA_ObstacleCount", "FacilArquitectura", "Cantidad de obstaculos descontados", len(used_obstacles))
+    set_property(obj, "App::PropertyLinkList", "FA_SourceClosures", "FacilArquitectura", "Elementos seleccionados que cierran el recinto", list(used_closures))
+    set_property(obj, "App::PropertyInteger", "FA_ClosureCount", "FacilArquitectura", "Cantidad de objetos de cierre asociados", len(used_closures))
+    set_property(obj, "App::PropertyLinkList", "FA_SourceObstacles", "FacilArquitectura", "Obstaculos interiores descontados", list(used_obstacles))
+    set_property(obj, "App::PropertyInteger", "FA_ObstacleCount", "FacilArquitectura", "Cantidad de obstaculos interiores descontados", len(used_obstacles))
     set_property(obj, "App::PropertyString", "FA_SourceMethod", "FacilArquitectura", "Metodo geometrico", source_method)
     set_property(obj, "App::PropertyString", "FA_UsableFor", "FacilArquitectura", "Flujos consumidores", "HVAC; sensores de humo; cielo suspendido; ElectricCR")
     set_property(obj, "App::PropertyString", "FA_GeometrySource", "FacilArquitectura", "Origen de la geometria", "AUTO_BIM")
@@ -689,12 +832,13 @@ def create_room_object(doc, group, room_face, walls, name_candidates, index, obs
     except Exception:
         pass
     log(
-        "Creado %s: geometria=%s | area_bruta=%.3f m2 | area_neta=%.3f m2 | obstaculos=%d | Z=%.3f"
+        "Creado %s: geometria=%s | area_bruta=%.3f m2 | area_neta=%.3f m2 | cierres=%d | obstaculos=%d | Z=%.3f"
         % (
             obj.Name,
             geometry_type,
             gross_area / 1000000.0,
             net_area / 1000000.0,
+            len(used_closures),
             len(used_obstacles),
             float(getattr(getattr(obj, "Placement", None), "Base", App.Vector()).z)
             if hasattr(obj, "Placement")
@@ -728,7 +872,8 @@ def write_schedule(doc, group, room_objects):
         "Vertices",
         "Rotulos_encontrados",
         "Muros_fuente",
-        "Obstaculos",
+        "Elementos_cierre",
+        "Obstaculos_interiores",
         "Area_bruta_m2",
         "Area_obstaculos_m2",
         "Geometria",
@@ -741,6 +886,7 @@ def write_schedule(doc, group, room_objects):
         except Exception:
             pass
     for row, obj in enumerate(room_objects, 2):
+        closures = list(getattr(obj, "FA_SourceClosures", []) or [])
         obstacles = list(getattr(obj, "FA_SourceObstacles", []) or [])
         gross_area = float(getattr(getattr(obj, "FA_GrossArea", 0.0), "Value", getattr(obj, "FA_GrossArea", 0.0)))
         obstacle_area = float(getattr(getattr(obj, "FA_ObstacleArea", 0.0), "Value", getattr(obj, "FA_ObstacleArea", 0.0)))
@@ -751,6 +897,7 @@ def write_schedule(doc, group, room_objects):
             str(int(obj.FA_VertexCount)),
             str(int(obj.FA_NameCandidateCount)),
             ", ".join(object_label(wall) for wall in list(obj.FA_SourceWalls or [])),
+            ", ".join(object_label(item) for item in closures),
             ", ".join(object_label(item) for item in obstacles),
             "%.3f" % (gross_area / 1000000.0),
             "%.3f" % (obstacle_area / 1000000.0),
@@ -758,7 +905,7 @@ def write_schedule(doc, group, room_objects):
         )
         for column, value in enumerate(values, 1):
             sheet.set(column_name(column) + str(row), str(value))
-    widths = (220, 90, 100, 75, 125, 260, 220, 105, 125, 145)
+    widths = (220, 90, 100, 75, 125, 260, 220, 220, 105, 125, 145)
     for column, width in enumerate(widths, 1):
         try:
             sheet.setColumnWidth(column_name(column), width)
@@ -795,17 +942,29 @@ def generate_polygonal_rooms(doc=None, walls=None, obstacles=None, minimum_area_
     if not walls:
         raise RuntimeError("La seleccion no contiene muros Arch/BIM validos.")
 
-    footprint, source_face_count = fuse_wall_footprints(walls)
+    wall_footprint, source_face_count = fuse_wall_footprints(walls)
+    auxiliary_entries, obstacle_face_count = obstacle_footprints(obstacles)
+    if obstacles and not auxiliary_entries:
+        warn(
+            "Se seleccionaron %d elementos auxiliares, pero ninguno produjo una huella horizontal valida."
+            % len(obstacles)
+        )
+
+    closure_entries, interior_entries = classify_auxiliary_components(
+        wall_footprint, auxiliary_entries
+    )
+    footprint = fuse_closure_footprints(wall_footprint, closure_entries)
     room_faces = room_faces_from_footprint(footprint, minimum_area_m2)
     if not room_faces:
         raise RuntimeError(
-            "Los muros no forman huecos interiores cerrados. Revise uniones, extremos y continuidad del Arch Wall."
+            "Los muros y elementos de cierre seleccionados no forman huecos interiores cerrados. "
+            "Revise uniones, extremos y continuidad del cerramiento."
         )
-    obstacle_entries, obstacle_face_count = obstacle_footprints(obstacles)
-    if obstacles and not obstacle_entries:
-        warn(
-            "Se seleccionaron %d obstaculos, pero ninguno produjo una huella horizontal valida."
-            % len(obstacles)
+
+    if auxiliary_entries:
+        log(
+            "Clasificacion auxiliar: componentes=%d | componentes_cierre=%d | componentes_interiores=%d"
+            % (len(auxiliary_entries), len(closure_entries), len(interior_entries))
         )
 
     name_candidates = collect_name_candidates(doc)
@@ -824,7 +983,8 @@ def generate_polygonal_rooms(doc=None, walls=None, obstacles=None, minimum_area_
                 walls,
                 name_candidates,
                 index,
-                obstacle_entries=obstacle_entries,
+                obstacle_entries=interior_entries,
+                closure_entries=closure_entries,
             )
             created.append(obj)
             if not matches:
@@ -857,6 +1017,13 @@ def generate_polygonal_rooms(doc=None, walls=None, obstacles=None, minimum_area_
             pass
         raise
 
+    used_closures = unique_objects(
+        [
+            closure
+            for obj in created
+            for closure in list(getattr(obj, "FA_SourceClosures", []) or [])
+        ]
+    )
     used_obstacles = unique_objects(
         [
             obstacle
@@ -865,12 +1032,15 @@ def generate_polygonal_rooms(doc=None, walls=None, obstacles=None, minimum_area_
         ]
     )
     log(
-        "Completado: recintos=%d | muros=%d | obstaculos_seleccionados=%d | obstaculos_usados=%d | "
-        "caras_muro=%d | caras_obstaculo=%d | reemplazados=%d | sin_rotulo=%d | ambiguos=%d | origen=%s"
+        "Completado: recintos=%d | muros=%d | auxiliares_seleccionados=%d | "
+        "componentes_cierre=%d | objetos_cierre_usados=%d | obstaculos_interiores_usados=%d | "
+        "caras_muro=%d | caras_auxiliares=%d | reemplazados=%d | sin_rotulo=%d | ambiguos=%d | origen=%s"
         % (
             len(created),
             len(walls),
             len(obstacles),
+            len(closure_entries),
+            len(used_closures),
             len(used_obstacles),
             source_face_count,
             obstacle_face_count,
@@ -888,6 +1058,9 @@ def generate_polygonal_rooms(doc=None, walls=None, obstacles=None, minimum_area_
     return {
         "walls": walls,
         "obstacles": obstacles,
+        "closure_entries": closure_entries,
+        "interior_entries": interior_entries,
+        "used_closures": used_closures,
         "used_obstacles": used_obstacles,
         "footprint": footprint,
         "rooms": created,
