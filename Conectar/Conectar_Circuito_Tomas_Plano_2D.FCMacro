@@ -3,6 +3,10 @@
 # ToolTip: Conecta los tomacorrientes de un grupo desde el centro de su simbolo 2D, a Z=0, y crea flecha y etiqueta
 # Icon: Conectar_Circuito_Tomas_Plano_2D.svg
 # Transaction: self
+# Version: 1.1.0
+# Date: 2026-09-19 21:18:50 America/Costa_Rica
+# Purpose: Documentar circuitos de tomacorrientes en PLAN 2D, compatible con A1 y legacy.
+
 
 """Circuito grafico estable de tomacorrientes para plantas ElectricCR.
 
@@ -56,13 +60,73 @@ def is_group(obj):
         return hasattr(obj, "Group")
 
 
-def is_toma(obj):
-    if obj is None or is_group(obj):
+def _properties(obj):
+    return set(getattr(obj, "PropertiesList", []) or [])
+
+
+def _text(value):
+    try:
+        return str(value or "").strip()
+    except Exception:
+        return ""
+
+
+def _property_text(obj, names, include_linked=True):
+    for candidate in (obj, getattr(obj, "LinkedObject", None) if include_linked else None):
+        if candidate is None:
+            continue
+        props = _properties(candidate)
+        for name in tuple(names or ()):
+            if name not in props and not hasattr(candidate, name):
+                continue
+            value = _text(getattr(candidate, name, ""))
+            if value:
+                return value
+    return ""
+
+
+def _bool_property(obj, name):
+    try:
+        return name in _properties(obj) and bool(getattr(obj, name, False))
+    except Exception:
         return False
+
+
+def _resolve_owner(obj):
+    if obj is None:
+        return None
+    if _bool_property(obj, "DocumentationOnly"):
+        return getattr(obj, "Owner", None) if "Owner" in _properties(obj) else None
+    if _bool_property(obj, "ECR_ProjectionReference"):
+        return getattr(obj, "LinkedObject", None)
+    return obj
+
+
+def _is_auxiliary(obj):
+    if obj is None:
+        return True
+    if _bool_property(obj, "DocumentationOnly"):
+        return True
+    if _bool_property(obj, "ECR_ProjectionReference"):
+        return True
+    if _bool_property(obj, "EsPrototipo"):
+        return True
+    role = _property_text(obj, ("ECR_Role",), include_linked=False)
+    return role.startswith("circuit_plan_")
+
+
+def is_toma(obj):
+    obj = _resolve_owner(obj)
+    if obj is None or is_group(obj) or _is_auxiliary(obj):
+        return False
+
+    tipo = _property_text(obj, ("Tipo", "TipoLogico"))
+    if tipo.casefold() in ("toma", "tomacorriente", "receptacle"):
+        return True
+
     values = [
         getattr(obj, "Name", ""),
         getattr(obj, "Label", ""),
-        getattr(obj, "Tipo", ""),
         getattr(obj, "KeyRegistro", ""),
     ]
     linked = getattr(obj, "LinkedObject", None)
@@ -75,43 +139,107 @@ def is_toma(obj):
                 getattr(linked, "KeyRegistro", ""),
             ]
         )
-    text = " ".join(str(value or "") for value in values).lower()
-    return "toma" in text or "tomacorriente" in text or "receptacle" in text
+    value_text = " ".join(_text(value) for value in values).casefold()
+    return "toma" in value_text or "tomacorriente" in value_text or "receptacle" in value_text
 
 
-def direct_tomas(group):
-    result = []
-    seen = set()
-    for obj in list(getattr(group, "Group", []) or []):
-        if not is_toma(obj) or obj.Name in seen:
-            continue
-        seen.add(obj.Name)
-        result.append(obj)
-    return result
+def _canonical_circuit_id(value):
+    value_text = _text(value)
+    match = re.search(r"\b(TP|TC|T)[-_ ]?(\d+)\b", value_text, re.I)
+    if match:
+        return "{}-{:03d}".format(match.group(1).upper(), int(match.group(2)))
+    return value_text.casefold()
+
+
+def _object_circuit_id(obj):
+    obj = _resolve_owner(obj)
+    if obj is None:
+        return ""
+    return _property_text(
+        obj,
+        ("CircuitoID", "CircuitId", "CircuitID", "Circuito", "ECR_CircuitoIluminacion"),
+    )
 
 
 def circuit_id(group):
-    cid = str(getattr(group, "CircuitoID", "") or "").strip()
+    cid = _property_text(
+        group,
+        ("CircuitoID", "CircuitId", "CircuitID", "Circuito"),
+        include_linked=False,
+    )
     if cid:
         return cid
-    label = str(getattr(group, "Label", "") or "")
+    label = _text(getattr(group, "Label", ""))
     match = re.search(r"\b(TP|TC|T)[-_ ]?(\d+)\b", label, re.I)
     if match:
         return "{}-{:03d}".format(match.group(1).upper(), int(match.group(2)))
     return label.split("|")[0].strip() or group.Name
 
 
+def direct_tomas(group):
+    """Tomas del circuito: semantica primero, pertenencia directa como fallback legacy."""
+    result = []
+    seen = set()
+    target = _canonical_circuit_id(circuit_id(group))
+
+    def add(candidate):
+        owner = _resolve_owner(candidate)
+        if owner is None or not is_toma(owner):
+            return
+        name = _text(getattr(owner, "Name", ""))
+        if not name or name in seen:
+            return
+        seen.add(name)
+        result.append(owner)
+
+    # Conserva primero el orden manual del grupo cuando sigue existiendo.
+    for child in list(getattr(group, "Group", []) or []):
+        owner = _resolve_owner(child)
+        if owner is None or not is_toma(owner):
+            continue
+        assigned = _canonical_circuit_id(_object_circuit_id(owner))
+        if assigned and target and assigned != target:
+            continue
+        add(owner)
+
+    # Contrato actual: CircuitoID es autoridad aunque el dispositivo no sea
+    # hijo directo del grupo visual. PLAN/proyecciones se resuelven al Owner.
+    doc = getattr(group, "Document", None)
+    for obj in list(getattr(doc, "Objects", []) or []):
+        owner = _resolve_owner(obj)
+        if owner is None or not is_toma(owner):
+            continue
+        assigned = _canonical_circuit_id(_object_circuit_id(owner))
+        if target and assigned == target:
+            add(owner)
+
+    return result
+
+
 def circuit_groups(doc):
     result = []
+    seen = set()
     for obj in doc.Objects:
         if not is_group(obj):
             continue
+        if _bool_property(obj, "ECR_ProjectionNode"):
+            continue
+        raw_cid = _property_text(
+            obj,
+            ("CircuitoID", "CircuitId", "CircuitID", "Circuito"),
+            include_linked=False,
+        )
+        label = _text(getattr(obj, "Label", ""))
+        looks_like_circuit = bool(
+            raw_cid or re.match(r"^(TP|TC|T)[-_ ]?\d+\b", label, re.I)
+        )
+        if not looks_like_circuit:
+            continue
         tomas = direct_tomas(obj)
-        raw_cid = str(getattr(obj, "CircuitoID", "") or "").strip()
-        label = str(getattr(obj, "Label", "") or "").strip()
-        looks_like_circuit = bool(raw_cid or re.match(r"^(TP|TC|T)[-_ ]?\d+\b", label, re.I))
-        if len(tomas) >= 1 and looks_like_circuit:
+        key_id = _canonical_circuit_id(circuit_id(obj))
+        if tomas and key_id not in seen:
             result.append(obj)
+            seen.add(key_id)
 
     def key(group):
         cid = circuit_id(group)
@@ -125,12 +253,18 @@ def selected_circuit(doc, candidates):
     selected = list(Gui.Selection.getSelection() or [])
     if not selected:
         return None
-    for obj in selected:
+    for raw in selected:
+        obj = _resolve_owner(raw)
+        selected_cid = _canonical_circuit_id(_object_circuit_id(obj))
+        if selected_cid:
+            for candidate in candidates:
+                if _canonical_circuit_id(circuit_id(candidate)) == selected_cid:
+                    return candidate
         for candidate in candidates:
-            if obj is candidate or obj in list(getattr(candidate, "Group", []) or []):
+            if raw is candidate or raw in list(getattr(candidate, "Group", []) or []):
                 return candidate
             for child in list(getattr(candidate, "Group", []) or []):
-                if is_group(child) and obj in list(getattr(child, "Group", []) or []):
+                if is_group(child) and raw in list(getattr(child, "Group", []) or []):
                     return candidate
     return None
 
@@ -198,16 +332,72 @@ def _local_2d_center(obj, tolerance=0.10):
     return None, "sin aristas planas"
 
 
+def _plan_representation(owner):
+    owner = _resolve_owner(owner)
+    if owner is None or getattr(owner, "Document", None) is None:
+        return None
+
+    props = _properties(owner)
+    if "DocumentationRepresentationName" in props:
+        name = _text(getattr(owner, "DocumentationRepresentationName", ""))
+        candidate = owner.Document.getObject(name) if name else None
+        if (
+            candidate is not None
+            and _bool_property(candidate, "DocumentationOnly")
+            and _property_text(candidate, ("RepresentationRole",), include_linked=False) == "PLAN"
+            and getattr(candidate, "Owner", None) is owner
+        ):
+            return candidate
+
+    matches = []
+    for candidate in owner.Document.Objects:
+        if not _bool_property(candidate, "DocumentationOnly"):
+            continue
+        if _property_text(candidate, ("RepresentationRole",), include_linked=False) != "PLAN":
+            continue
+        if getattr(candidate, "Owner", None) is owner:
+            matches.append(candidate)
+    return matches[0] if len(matches) == 1 else None
+
+
+def _shape_center_world(obj):
+    if obj is None or not hasattr(obj, "Shape") or obj.Shape.isNull():
+        return None
+    bb = obj.Shape.BoundBox
+    local = App.Vector(
+        (bb.XMin + bb.XMax) * 0.5,
+        (bb.YMin + bb.YMax) * 0.5,
+        (bb.ZMin + bb.ZMax) * 0.5,
+    )
+    try:
+        return _global_placement(obj).multVec(local)
+    except Exception:
+        return None
+
+
 def toma_center_2d(obj):
-    local, method = _local_2d_center(obj)
+    owner = _resolve_owner(obj)
+    if owner is None:
+        return None, "sin propietario"
+
+    # A1: PLAN es la representacion documental autoritativa. El master fisico
+    # PhysicalDocumentationA1 conserva solo 3D en Shape.
+    plan = _plan_representation(owner)
+    world = _shape_center_world(plan)
+    if world is not None:
+        return App.Vector(world.x, world.y, PLANE_Z), "PLAN A1"
+
+    # LegacyCompound: conserva el metodo historico de extraer el estrato plano
+    # desde la Shape combinada 2D+3D.
+    local, method = _local_2d_center(owner)
     if local is not None:
         try:
-            world = _global_placement(obj).multVec(local)
+            world = _global_placement(owner).multVec(local)
             return App.Vector(world.x, world.y, PLANE_Z), method
         except Exception as exc:
-            warn("No se pudo transformar el centro 2D de '{}': {}".format(obj.Label, exc))
+            warn("No se pudo transformar el centro 2D de '{}': {}".format(owner.Label, exc))
     try:
-        base = _global_placement(obj).Base
+        base = _global_placement(owner).Base
         return App.Vector(base.x, base.y, PLANE_Z), "punto de insercion (respaldo)"
     except Exception:
         return None, "sin posicion"
@@ -944,7 +1134,7 @@ def create_or_update_circuit(
     doc = group.Document
     tomas = direct_tomas(group)
     if len(tomas) < 1:
-        raise RuntimeError("El grupo debe contener por lo menos un tomacorriente directo.")
+        raise RuntimeError("No se encontraron tomacorrientes asociados al circuito por CircuitoID ni por pertenencia legacy.")
     items = ordered_items(tomas, order_mode, float(row_tolerance))
     if len(items) < 1:
         raise RuntimeError("No se obtuvo ningun centro 2D valido.")
@@ -1199,7 +1389,7 @@ def main():
         QtWidgets.QMessageBox.warning(
             None,
             "ElectricCR",
-            "No se encontro ningun grupo que contenga tomacorrientes directamente.",
+            "No se encontro ningun circuito TP/TC/T con tomacorrientes asociados por CircuitoID ni por pertenencia legacy.",
         )
         return
     preselected = selected_circuit(doc, candidates)
