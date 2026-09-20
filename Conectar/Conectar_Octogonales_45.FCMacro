@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # MenuText: Conectar Octogonales 45 (Diagonal)
 # ToolTip: Conecta 2 cajas octogonales con ruta a 45 grados usando un lado diagonal o ambos
-# Icon: Conectar/Conectar_objetos_en_L.svg
+# Icon: Conectar_Octogonales_45.svg
 
 # Qt compatibility for FreeCAD 1.x (PySide6) and older builds.
 def _ensure_qt_compat():
