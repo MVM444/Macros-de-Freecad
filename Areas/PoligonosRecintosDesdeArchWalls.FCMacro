@@ -2,8 +2,8 @@
 # MenuText: Poligonos de recintos desde muros BIM
 # ToolTip: Genera areas poligonales desde los huecos cerrados de muros Arch/BIM.
 # Icon: PoligonosRecintosDesdeArchWalls.svg
-# Version: 1.1.0
-# Revision: 2026-09-19 21:55:14 America/Costa_Rica
+# Version: 1.1.1
+# Revision: 2026-09-19 22:14:00 America/Costa_Rica
 # FreeCAD: 1.1.3
 
 """Create independent polygonal room areas from Arch/BIM wall footprints.
@@ -60,6 +60,18 @@ def object_label(obj):
     return str(getattr(obj, "Label", getattr(obj, "Name", "")) or "")
 
 
+def is_group(obj):
+    if obj is None:
+        return False
+    try:
+        return bool(
+            obj.isDerivedFrom("App::DocumentObjectGroup")
+            or obj.isDerivedFrom("App::Part")
+        )
+    except Exception:
+        return hasattr(obj, "Group") and not has_shape(obj) if "has_shape" in globals() else hasattr(obj, "Group")
+
+
 def flatten_objects(objects):
     pending = list(objects or [])
     result = []
@@ -113,7 +125,7 @@ def is_column_like(obj):
     text = (str(getattr(obj, "Name", "")) + " " + object_label(obj)).lower()
     tokens = ("column", "columna", "pillar", "pilar")
     return bool(
-        role in ("column", "pillar", "structural_column", "obstacle")
+        role in ("column", "columns", "pillar", "pillars", "structural_column", "obstacle")
         or ifc_type in ("column", "pillar")
         or proxy_type in ("column", "pillar")
         or any(token in text for token in tokens)
@@ -135,9 +147,27 @@ def is_selected_obstacle(obj, explicitly_selected=False):
 
 
 def collect_sources(doc):
-    """Collect wall boundaries and selected obstacles without auto-including furniture."""
+    """Collect wall boundaries plus explicitly selected obstacle objects.
+
+    Selection does not disable the automatic wall mode: when the user selects
+    only columns/pillars/other shaped obstacles, visible BIM walls remain the
+    room boundaries. This is the normal assisted workflow in real projects.
+    """
     raw_selection = list(Gui.Selection.getSelection() or [])
     expanded = flatten_objects(raw_selection)
+
+    def visible_walls():
+        result = []
+        for candidate in list(getattr(doc, "Objects", []) or []):
+            if not is_arch_wall(candidate):
+                continue
+            try:
+                if candidate.ViewObject.Visibility:
+                    result.append(candidate)
+            except Exception:
+                pass
+        return unique_objects(result)
+
     if raw_selection:
         direct_names = {str(getattr(obj, "Name", "") or "") for obj in raw_selection}
         walls = unique_objects([obj for obj in expanded if is_arch_wall(obj)])
@@ -151,28 +181,29 @@ def collect_sources(doc):
                 )
             ]
         )
+        wall_source = "seleccion"
+        if not walls:
+            walls = visible_walls()
+            wall_source = "muros visibles + obstaculos seleccionados"
+        if not walls:
+            all_walls = [obj for obj in list(getattr(doc, "Objects", []) or []) if is_arch_wall(obj)]
+            if len(all_walls) == 1:
+                walls = all_walls
+                wall_source = "muro unico + obstaculos seleccionados"
         if not walls:
             raise RuntimeError(
-                "La seleccion contiene objetos auxiliares pero ningun muro Arch/BIM valido. "
-                "Seleccione al menos un muro delimitador junto con las columnas u obstaculos."
+                "No se encontraron muros Arch/BIM para delimitar los recintos. "
+                "Puede seleccionar muros junto con columnas, o seleccionar solo columnas si los muros estan visibles."
             )
-        return walls, obstacles, True
+        return walls, obstacles, True, wall_source
 
-    visible = []
-    for obj in list(getattr(doc, "Objects", []) or []):
-        if not is_arch_wall(obj):
-            continue
-        try:
-            if obj.ViewObject.Visibility:
-                visible.append(obj)
-        except Exception:
-            pass
+    visible = visible_walls()
     if visible:
-        return unique_objects(visible), [], False
+        return visible, [], False, "muros visibles"
 
     all_walls = [obj for obj in list(getattr(doc, "Objects", []) or []) if is_arch_wall(obj)]
     if len(all_walls) == 1:
-        return all_walls, [], False
+        return all_walls, [], False, "muro unico"
     if len(all_walls) > 1:
         raise RuntimeError(
             "Hay varios muros BIM ocultos. Seleccione el muro o conjunto de muros que delimita los recintos."
@@ -748,8 +779,9 @@ def generate_polygonal_rooms(doc=None, walls=None, obstacles=None, minimum_area_
         raise RuntimeError("No hay documento activo.")
 
     selected_mode = False
+    source_mode = "parametros"
     if walls is None:
-        walls, selected_obstacles, selected_mode = collect_sources(doc)
+        walls, selected_obstacles, selected_mode, source_mode = collect_sources(doc)
         if obstacles is None:
             obstacles = selected_obstacles
     walls = unique_objects([wall for wall in list(walls or []) if is_arch_wall(wall)])
@@ -845,7 +877,7 @@ def generate_polygonal_rooms(doc=None, walls=None, obstacles=None, minimum_area_
             removed,
             len(unnamed),
             len(ambiguous),
-            "seleccion" if selected_mode else "muros visibles",
+            source_mode,
         )
     )
     if ambiguous:
