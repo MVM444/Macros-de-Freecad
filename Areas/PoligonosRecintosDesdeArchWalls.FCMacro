@@ -2,20 +2,23 @@
 # MenuText: Poligonos de recintos desde muros BIM
 # ToolTip: Genera areas poligonales desde los huecos cerrados de muros Arch/BIM.
 # Icon: PoligonosRecintosDesdeArchWalls.svg
-# Version: 1.3.1
-# Revision: 2026-09-22 11:40:00 America/Costa_Rica
+# Version: 1.4.0
+# Revision: 2026-09-22 13:25:00 America/Costa_Rica
 # FreeCAD: 1.1.3
 
 """Create independent polygonal room areas from Arch/BIM wall footprints.
 
 The macro never edits rectangular areas, source walls or selected auxiliary solids.
 It accepts multiple BIM walls plus explicitly selected columns/pillars/solids.
-Room detection uses connected free space: a temporary frame is cut by the 2D
-footprints of BIM walls plus selected columns/pillars/solids. The topological cut
-uses a small fuzzy tolerance so T-junctions and near-coincident wall contacts do
-not leak between adjacent rooms. The diagnostic barrier geometry remains exact.
-Free-space faces that touch the frame are exterior; enclosed faces are rooms.
-Rooms without holes remain editable closed Draft Wires.
+Room detection is level-aware. Native BIM Building Storey containment is the
+authority for walls; a wall's FA_TargetLevel is diagnostic only. Columns and
+other auxiliary solids participate when their vertical extent crosses the
+analysis level. Wall barriers prefer ArchWall.getExtrusionData(), which returns
+the nominal unperforated wall base before door/window subtractions; the current
+wall Shape is only a fallback. Connected free-space detection keeps the validated
+fuzzy topological cut for T-junctions. Outputs, schedules and DEBUG geometry are
+scoped per level, so recalculating one storey never deletes another storey's
+room polygons.
 """
 
 from __future__ import annotations
@@ -37,15 +40,18 @@ MIN_ROOM_AREA_M2 = 1.0
 DISPLAY_ELEVATION_MM = 20.0
 GEOMETRY_TOLERANCE_MM = 0.1
 CLOSURE_CONTACT_TOLERANCE_MM = 1.0
-MACRO_VERSION = "1.3.1"
+MACRO_VERSION = "1.4.0"
 SUSPICIOUS_ROOM_MIN_AREA_M2 = 50.0
 SUSPICIOUS_ROOM_RATIO = 8.0
 FREE_SPACE_FRAME_MARGIN_MM = 2000.0
 FREE_SPACE_FRAME_MARGIN_RATIO = 0.10
 TOPOLOGY_FUZZY_TOLERANCE_MM = 0.5
 DEBUG_GEOMETRY = True
-DEBUG_GROUP_NAME = "FA_PolygonalRooms_DEBUG"
-DEBUG_GROUP_LABEL = "DEBUG - Deteccion de recintos v1.3.1"
+DEBUG_GROUP_NAME_PREFIX = "FA_PolygonalRooms_DEBUG_"
+DEBUG_GROUP_LABEL_PREFIX = "DEBUG - Deteccion de recintos"
+LEVEL_GROUP_NAME_PREFIX = "FA_PolygonalRooms_Level_"
+SHEET_NAME_PREFIX = "Spreadsheet_PolygonalRooms_"
+LEVEL_Z_TOLERANCE_MM = 0.5
 
 
 def log(message):
@@ -159,94 +165,263 @@ def is_selected_obstacle(obj, explicitly_selected=False):
     return is_column_like(obj)
 
 
-def collect_sources(doc):
-    """Collect safe wall boundaries plus explicitly selected auxiliary objects.
+def is_bim_level(obj):
+    """Return True for native BIM storeys used as architectural levels."""
+    if obj is None:
+        return False
+    role = str(getattr(obj, "FA_Role", "") or "").strip().lower()
+    ifc_type = str(getattr(obj, "IfcType", "") or "").strip().lower()
+    return role == "level" or ifc_type in ("building storey", "buildingstorey", "ifcbuildingstorey")
 
-    GUI selection is additive, not restrictive: visible BIM walls are always the
-    normal architectural boundary base. Selecting only some visible walls must
-    never silently discard the other visible walls, because an incomplete wall
-    subset can create false, very large room holes. Explicitly selected hidden
-    walls are added to the visible base. Selected columns/pillars/solids remain
-    auxiliary closure/obstacle candidates.
+
+def level_elevation_mm(level):
+    """Read the storey elevation, preferring the native Elevation property."""
+    if level is None:
+        return 0.0
+    try:
+        return float(getattr(level.Elevation, "Value", level.Elevation))
+    except Exception:
+        pass
+    try:
+        return float(level.Placement.Base.z)
+    except Exception:
+        return 0.0
+
+
+def level_members(level):
+    """Return all descendants of a Building Storey without including the storey itself."""
+    if level is None:
+        return []
+    return flatten_objects(list(getattr(level, "Group", []) or []))
+
+
+def object_native_levels(doc, obj):
+    """Resolve native Building Storey containment from Group membership."""
+    if obj is None:
+        return []
+    result = []
+    for level in [candidate for candidate in doc.Objects if is_bim_level(candidate)]:
+        try:
+            if obj in level_members(level):
+                result.append(level)
+        except Exception:
+            pass
+    return unique_objects(result)
+
+
+def architectural_levels(doc):
+    """Return Building Storeys that actually contain BIM walls.
+
+    Chomes contains several auxiliary/legacy Building Storeys at Z=0. A storey
+    becomes an Areas analysis candidate only when its native Group hierarchy
+    contains at least one wall. This avoids guessing from labels or stale
+    FA_TargetLevel strings.
+    """
+    result = []
+    for level in [candidate for candidate in doc.Objects if is_bim_level(candidate)]:
+        if any(is_arch_wall(obj) for obj in level_members(level)):
+            result.append(level)
+    result.sort(key=lambda item: (level_elevation_mm(item), object_label(item), str(getattr(item, "Name", ""))))
+    return result
+
+
+def _is_visible(obj):
+    try:
+        return bool(obj.ViewObject.Visibility)
+    except Exception:
+        return True
+
+
+def object_crosses_level(obj, elevation_mm, tolerance=LEVEL_Z_TOLERANCE_MM):
+    """True when a shaped object physically crosses the storey analysis plane.
+
+    The upper bound is exclusive so an element ending exactly at the next level
+    does not leak into that level. This is primarily used for columns that are
+    grouped under the first storey but continue through upper storeys.
+    """
+    if not has_shape(obj):
+        return False
+    try:
+        bounds = obj.Shape.BoundBox
+        zmin = float(bounds.ZMin)
+        zmax = float(bounds.ZMax)
+    except Exception:
+        return False
+    z = float(elevation_mm)
+    tol = max(float(tolerance), 0.0)
+    return z >= zmin - tol and z < zmax - tol
+
+
+def resolve_analysis_level(doc, raw_selection=None, walls_hint=None, explicit_level=None):
+    """Resolve one authoritative storey for the Areas calculation."""
+    levels = architectural_levels(doc)
+    if explicit_level is not None:
+        if not is_bim_level(explicit_level):
+            raise RuntimeError("El nivel indicado no es un Building Storey BIM valido.")
+        return explicit_level
+
+    selection = list(raw_selection if raw_selection is not None else (Gui.Selection.getSelection() or []))
+    selected_levels = unique_objects([obj for obj in selection if is_bim_level(obj)])
+    if len(selected_levels) > 1:
+        raise RuntimeError("Seleccione un solo nivel BIM para calcular Areas.")
+
+    selected_walls = [obj for obj in flatten_objects(selection) if is_arch_wall(obj)]
+    hinted_walls = [obj for obj in list(walls_hint or []) if is_arch_wall(obj)]
+    wall_levels = []
+    for wall in unique_objects(selected_walls + hinted_walls):
+        wall_levels.extend(object_native_levels(doc, wall))
+    wall_levels = unique_objects(wall_levels)
+
+    if selected_levels:
+        level = selected_levels[0]
+        conflicting = [item for item in wall_levels if item is not level]
+        if conflicting:
+            raise RuntimeError(
+                "La seleccion mezcla el nivel '%s' con muros contenidos en otro nivel."
+                % object_label(level)
+            )
+        return level
+
+    if len(wall_levels) == 1:
+        return wall_levels[0]
+    if len(wall_levels) > 1:
+        raise RuntimeError("La seleccion contiene muros de varios niveles. Seleccione un solo piso.")
+
+    visible_level_candidates = []
+    for level in levels:
+        level_walls = [obj for obj in level_members(level) if is_arch_wall(obj)]
+        if any(_is_visible(wall) for wall in level_walls):
+            visible_level_candidates.append(level)
+    if len(visible_level_candidates) == 1:
+        return visible_level_candidates[0]
+    if len(levels) == 1:
+        return levels[0]
+    if not levels:
+        raise RuntimeError("No se encontraron Building Storeys BIM que contengan muros.")
+
+    names = ", ".join("%s [%s]" % (object_label(level), level.Name) for level in levels)
+    raise RuntimeError(
+        "Hay varios niveles BIM con muros (%s). Seleccione el nivel o un muro del piso que desea calcular."
+        % names
+    )
+
+
+def tag_level_metadata(obj, level):
+    """Attach stable level identity to generated objects without mutating source BIM."""
+    if obj is None or level is None:
+        return
+    elevation = level_elevation_mm(level)
+    set_property(obj, "App::PropertyLink", "FA_Level", "FacilArquitectura", "Nivel BIM asociado", level)
+    set_property(obj, "App::PropertyString", "FA_LevelName", "FacilArquitectura", "Nombre interno del nivel", str(level.Name))
+    set_property(obj, "App::PropertyString", "FA_LevelLabel", "FacilArquitectura", "Etiqueta del nivel", object_label(level))
+    set_property(obj, "App::PropertyLength", "FA_LevelElevation", "FacilArquitectura", "Elevacion del nivel", elevation)
+
+
+def collect_sources(doc, level=None, walls_hint=None):
+    """Collect one storey's walls plus level-crossing auxiliary barriers.
+
+    Native Building Storey containment is authoritative for walls. GUI selection
+    chooses the storey but does not restrict it to a partial wall subset. Visible
+    walls in that storey are the normal boundary base; selected hidden walls in
+    the same storey are additive. Visible columns/pillars that physically cross
+    the storey elevation are included automatically even if their native Group is
+    under another storey. Explicitly selected shaped auxiliaries are also admitted
+    when they cross the analysis plane.
     """
     raw_selection = list(Gui.Selection.getSelection() or [])
     expanded = flatten_objects(raw_selection)
+    level = resolve_analysis_level(doc, raw_selection, walls_hint=walls_hint, explicit_level=level)
+    elevation = level_elevation_mm(level)
+    members = level_members(level)
+    native_walls = unique_objects([obj for obj in members if is_arch_wall(obj)])
+    if not native_walls:
+        raise RuntimeError("El nivel '%s' no contiene muros BIM." % object_label(level))
 
-    def visible_walls():
-        result = []
-        for candidate in list(getattr(doc, "Objects", []) or []):
-            if not is_arch_wall(candidate):
-                continue
-            try:
-                if candidate.ViewObject.Visibility:
-                    result.append(candidate)
-            except Exception:
-                pass
-        return unique_objects(result)
-
-    visible = visible_walls()
-    if raw_selection:
-        direct_names = {str(getattr(obj, "Name", "") or "") for obj in raw_selection}
-        selected_walls = unique_objects([obj for obj in expanded if is_arch_wall(obj)])
-        obstacles = unique_objects(
-            [
-                obj
-                for obj in expanded
-                if is_selected_obstacle(
-                    obj,
-                    explicitly_selected=str(getattr(obj, "Name", "") or "") in direct_names,
-                )
-            ]
+    visible_walls = [wall for wall in native_walls if _is_visible(wall)]
+    selected_walls = unique_objects([obj for obj in expanded if is_arch_wall(obj)])
+    foreign_selected = [wall for wall in selected_walls if wall not in native_walls]
+    if foreign_selected:
+        raise RuntimeError(
+            "Hay muros seleccionados fuera del nivel '%s': %s"
+            % (object_label(level), ", ".join(object_label(wall) for wall in foreign_selected))
         )
 
-        if visible:
-            walls = unique_objects(list(visible) + list(selected_walls))
-            hidden_selected = [wall for wall in selected_walls if wall not in visible]
-            parts = ["muros visibles"]
-            if hidden_selected:
-                parts.append("muros seleccionados adicionales")
-            if obstacles:
-                parts.append("auxiliares seleccionados")
-            wall_source = " + ".join(parts)
-            if selected_walls and len(selected_walls) < len(visible):
-                log(
-                    "Seleccion parcial de muros detectada: seleccionados=%d | visibles=%d. "
-                    "Se conservaran todos los muros visibles como base segura."
-                    % (len(selected_walls), len(visible))
-                )
-            return walls, obstacles, True, wall_source
+    if visible_walls:
+        walls = unique_objects(visible_walls + selected_walls)
+        wall_source = "muros visibles del nivel"
+    else:
+        walls = native_walls
+        wall_source = "muros del nivel (sin visibles)"
+        warn(
+            "El nivel '%s' no tiene muros visibles; se usaran sus %d muros BIM contenidos."
+            % (object_label(level), len(walls))
+        )
 
-        if selected_walls:
+    # Diagnose stale FA metadata, but never rewrite source objects here.
+    for wall in walls:
+        target = str(getattr(wall, "FA_TargetLevel", "") or "")
+        if target and target != str(level.Name):
             warn(
-                "No hay muros BIM visibles; se usaran %d muros seleccionados explicitamente. "
-                "Verifique que la seleccion represente el cerramiento completo."
-                % len(selected_walls)
+                "Metadato de nivel desactualizado: %s | FA_TargetLevel=%s | nivel_nativo=%s. "
+                "Areas usara la contencion BIM nativa."
+                % (object_label(wall), target, level.Name)
             )
-            return selected_walls, obstacles, True, "muros seleccionados sin base visible"
+        try:
+            bounds = wall.Shape.BoundBox
+            if not (elevation >= float(bounds.ZMin) - LEVEL_Z_TOLERANCE_MM and elevation < float(bounds.ZMax) - LEVEL_Z_TOLERANCE_MM):
+                warn(
+                    "Muro contenido en '%s' no cruza geometricamente su cota %.3f mm: %s | Z=%.3f..%.3f"
+                    % (object_label(level), elevation, object_label(wall), float(bounds.ZMin), float(bounds.ZMax))
+                )
+        except Exception:
+            pass
 
-        all_walls = [obj for obj in list(getattr(doc, "Objects", []) or []) if is_arch_wall(obj)]
-        if len(all_walls) == 1:
-            return all_walls, obstacles, True, "muro unico + auxiliares seleccionados"
-        raise RuntimeError(
-            "No se encontraron muros Arch/BIM visibles ni muros seleccionados para delimitar los recintos."
+    direct_names = {str(getattr(obj, "Name", "") or "") for obj in raw_selection}
+    selected_aux = unique_objects(
+        [
+            obj
+            for obj in expanded
+            if is_selected_obstacle(
+                obj,
+                explicitly_selected=str(getattr(obj, "Name", "") or "") in direct_names,
+            )
+        ]
+    )
+    selected_aux = [obj for obj in selected_aux if object_crosses_level(obj, elevation)]
+
+    automatic_columns = []
+    for obj in doc.Objects:
+        if not is_column_like(obj) or not _is_visible(obj):
+            continue
+        if object_crosses_level(obj, elevation):
+            automatic_columns.append(obj)
+    obstacles = unique_objects(automatic_columns + selected_aux)
+
+    parts = [wall_source]
+    if automatic_columns:
+        parts.append("columnas que cruzan el nivel")
+    extra_selected = [obj for obj in selected_aux if obj not in automatic_columns]
+    if extra_selected:
+        parts.append("auxiliares seleccionados")
+    source_mode = " + ".join(parts)
+
+    log(
+        "Nivel de analisis: %s [%s] | elevacion=%.3f mm | muros=%d | columnas_cruzan=%d | auxiliares=%d"
+        % (
+            object_label(level),
+            level.Name,
+            elevation,
+            len(walls),
+            len(automatic_columns),
+            len(extra_selected),
         )
-
-    if visible:
-        return visible, [], False, "muros visibles"
-
-    all_walls = [obj for obj in list(getattr(doc, "Objects", []) or []) if is_arch_wall(obj)]
-    if len(all_walls) == 1:
-        return all_walls, [], False, "muro unico"
-    if len(all_walls) > 1:
-        raise RuntimeError(
-            "Hay varios muros BIM ocultos. Muestre los muros que forman el cerramiento o seleccione explicitamente el conjunto completo."
-        )
-    raise RuntimeError("No se encontraron objetos Arch Wall o muros con FA_Role='wall'.")
+    )
+    return walls, obstacles, bool(raw_selection), source_mode, level
 
 
 def collect_walls(doc):
-    """Backward-compatible wall-only wrapper."""
-    walls, _obstacles, selected_mode = collect_sources(doc)
+    """Backward-compatible wall-only wrapper for the resolved analysis level."""
+    walls, _obstacles, selected_mode, _source_mode, _level = collect_sources(doc)
     return walls, selected_mode
 
 
@@ -310,15 +485,67 @@ def _fuse_faces(faces):
     return result
 
 
+def nominal_wall_footprint_faces(wall):
+    """Return the unperforated native Arch wall base projected to Z=0.
+
+    ArchWall.getExtrusionData() is the same native path used by FreeCAD to build
+    the wall before Additions/Subtractions (doors, windows, openings). This is a
+    better room-boundary authority than the final perforated Shape. If a wall
+    proxy cannot provide extrusion data, fall back to the validated top-face
+    projection used by v1.3.x.
+    """
+    proxy = getattr(wall, "Proxy", None)
+    if proxy is not None and hasattr(proxy, "getExtrusionData"):
+        try:
+            data = proxy.getExtrusionData(wall)
+            if data:
+                raw_faces = data[0] if isinstance(data[0], (list, tuple)) else [data[0]]
+                placement = data[2]
+                placements = list(placement) if isinstance(placement, (list, tuple)) else [placement] * len(raw_faces)
+                projected = []
+                for index, face in enumerate(raw_faces):
+                    copy = face.copy()
+                    pl = placements[index] if index < len(placements) else placements[-1]
+                    copy.Placement = pl.multiply(copy.Placement)
+                    copy.translate(App.Vector(0.0, 0.0, -float(copy.BoundBox.ZMin)))
+                    if copy.isValid() and float(copy.Area) > 0.0:
+                        projected.append(copy)
+                if projected:
+                    log(
+                        "Huella muro %s: metodo=ArchWall.getExtrusionData | caras=%d"
+                        % (object_label(wall), len(projected))
+                    )
+                    return projected, "ArchWall.getExtrusionData"
+        except Exception as exc:
+            warn(
+                "Huella nominal no disponible para '%s'; se usa Shape final como respaldo: %s"
+                % (object_label(wall), exc)
+            )
+    faces = projected_top_faces(wall)
+    log("Huella muro %s: metodo=ShapeTopFallback | caras=%d" % (object_label(wall), len(faces)))
+    return faces, "ShapeTopFallback"
+
+
 def fuse_wall_footprints(walls):
     faces = []
+    methods = {}
     for wall in walls:
-        faces.extend(projected_top_faces(wall))
+        wall_faces, method = nominal_wall_footprint_faces(wall)
+        faces.extend(wall_faces)
+        methods[method] = methods.get(method, 0) + 1
     if not faces:
-        raise RuntimeError("No fue posible obtener la huella superior de los muros.")
+        raise RuntimeError("No fue posible obtener la huella nominal de los muros.")
     footprint = _fuse_faces(faces)
     if footprint is None or footprint.isNull() or not footprint.Faces:
         raise RuntimeError("La union de huellas de muro no produjo caras planas.")
+    log(
+        "Huellas de muro: caras=%d | nominales=%d | fallback_shape=%d"
+        % (
+            len(faces),
+            methods.get("ArchWall.getExtrusionData", 0),
+            methods.get("ShapeTopFallback", 0),
+        )
+    )
     return footprint, len(faces)
 
 
@@ -804,10 +1031,24 @@ def shape_center(obj):
         return None
 
 
-def collect_name_candidates(doc):
+def collect_name_candidates(doc, level=None):
     candidates = []
     seen = set()
+
+    def allowed(obj):
+        if level is None:
+            return True
+        stored = str(getattr(obj, "FA_LevelName", "") or "")
+        if stored and stored != str(level.Name):
+            return False
+        native = object_native_levels(doc, obj)
+        if native and level not in native:
+            return False
+        return True
+
     for obj in list(getattr(doc, "Objects", []) or []):
+        if not allowed(obj):
+            continue
         lines = text_lines(obj)
         label = object_label(obj)
         type_id = str(getattr(obj, "TypeId", "") or "").lower()
@@ -821,6 +1062,8 @@ def collect_name_candidates(doc):
                     candidates.append({"name": name, "x": point[0], "y": point[1], "priority": 0})
 
     for obj in list(getattr(doc, "Objects", []) or []):
+        if not allowed(obj):
+            continue
         generated = str(getattr(obj, "FA_GeneratedBy", "") or "")
         role = str(getattr(obj, "FA_Role", "") or "").lower()
         electric_type = str(getattr(obj, "ElectricCRTipo", "") or "").lower()
@@ -863,11 +1106,11 @@ def candidates_inside(face, candidates):
     return result
 
 
-def ensure_group(doc):
-    group = doc.getObject(GROUP_NAME)
-    if group is None:
-        group = doc.addObject("App::DocumentObjectGroup", GROUP_NAME)
-    group.Label = GROUP_LABEL
+def ensure_group(doc, level=None):
+    root = doc.getObject(GROUP_NAME)
+    if root is None:
+        root = doc.addObject("App::DocumentObjectGroup", GROUP_NAME)
+    root.Label = GROUP_LABEL
     parent = doc.getObject("FA_Areas")
     if parent is None:
         for obj in doc.Objects:
@@ -876,23 +1119,78 @@ def ensure_group(doc):
                 break
     if parent is not None:
         try:
-            if group not in list(getattr(parent, "Group", []) or []):
-                parent.addObject(group)
+            if root not in list(getattr(parent, "Group", []) or []):
+                parent.addObject(root)
         except Exception:
             pass
+    if level is None:
+        return root
+
+    name = LEVEL_GROUP_NAME_PREFIX + str(level.Name)
+    group = doc.getObject(name)
+    if group is None:
+        group = doc.addObject("App::DocumentObjectGroup", name)
+    group.Label = "Recintos - %s" % object_label(level)
+    set_property(group, "App::PropertyString", "FA_GeneratedBy", "FacilArquitectura", "Macro generadora", MACRO_ID)
+    set_property(group, "App::PropertyString", "FA_Role", "FacilArquitectura", "Rol", "room_polygon_level_group")
+    tag_level_metadata(group, level)
+    try:
+        if group not in list(getattr(root, "Group", []) or []):
+            root.addObject(group)
+    except Exception:
+        pass
     return group
 
 
-def remove_previous_outputs(doc):
+def _generated_object_level(doc, obj):
+    """Resolve level identity for current and legacy generated outputs."""
+    name = str(getattr(obj, "FA_LevelName", "") or "")
+    if name:
+        return doc.getObject(name)
+    source_walls = list(getattr(obj, "FA_SourceWalls", []) or [])
+    levels = []
+    for wall in source_walls:
+        levels.extend(object_native_levels(doc, wall))
+    levels = unique_objects(levels)
+    if len(levels) == 1:
+        return levels[0]
+    owner_name = str(getattr(obj, "FA_OwnerName", "") or "")
+    if owner_name:
+        owner = doc.getObject(owner_name)
+        if owner is not None and owner is not obj:
+            return _generated_object_level(doc, owner)
+    return None
+
+
+def remove_previous_outputs(doc, level):
+    """Replace outputs only for the current storey; preserve every other floor."""
     removed = 0
+    current_name = str(level.Name)
+    candidates = []
     for obj in list(doc.Objects):
         if str(getattr(obj, "FA_GeneratedBy", "") or "") != MACRO_ID:
             continue
         if str(getattr(obj, "Name", "") or "") == GROUP_NAME:
             continue
+        role = str(getattr(obj, "FA_Role", "") or "")
+        if role == "room_polygon_level_group":
+            continue
+        resolved = _generated_object_level(doc, obj)
+        if resolved is level or str(getattr(obj, "FA_LevelName", "") or "") == current_name:
+            candidates.append(obj)
+            continue
+        # Legacy diagnostics and the single pre-v1.4 schedule are not level-safe.
+        # They contain no architectural result that should survive migration.
+        if resolved is None and (role.startswith("debug_") or role == "room_polygon_schedule"):
+            candidates.append(obj)
+
+    # Remove boundaries/diagnostics before owning room objects when possible.
+    candidates.sort(key=lambda obj: 0 if str(getattr(obj, "FA_Role", "") or "") in ("room_polygon_boundary",) else 1)
+    for obj in candidates:
         try:
-            doc.removeObject(obj.Name)
-            removed += 1
+            if doc.getObject(obj.Name) is not None:
+                doc.removeObject(obj.Name)
+                removed += 1
         except Exception as exc:
             warn("No se pudo reemplazar %s: %s" % (object_label(obj), exc))
     return removed
@@ -935,7 +1233,7 @@ def ordered_outer_wire_points(room_face):
     return points, source_z
 
 
-def make_editable_room_wire(doc, room_face):
+def make_editable_room_wire(doc, room_face, display_z_mm=None):
     """Create the native Draft Wire used as editable room geometry."""
     if App.ActiveDocument is not doc:
         raise RuntimeError("El documento destino debe estar activo para crear el Draft Wire.")
@@ -950,10 +1248,8 @@ def make_editable_room_wire(doc, room_face):
         raise RuntimeError("Draft.make_wire creo el objeto en un documento distinto al esperado.")
     obj.Closed = True
     obj.MakeFace = True
-    obj.Placement = App.Placement(
-        App.Vector(0.0, 0.0, source_z + DISPLAY_ELEVATION_MM),
-        App.Rotation(),
-    )
+    target_z = source_z + DISPLAY_ELEVATION_MM if display_z_mm is None else float(display_z_mm)
+    obj.Placement = App.Placement(App.Vector(0.0, 0.0, target_z), App.Rotation())
     return obj, points
 
 
@@ -987,11 +1283,15 @@ def obstacle_sources_for_room(room_face, obstacle_entries):
     return result
 
 
-def ensure_debug_group(doc, parent_group):
-    group = doc.getObject(DEBUG_GROUP_NAME)
+def ensure_debug_group(doc, parent_group, level):
+    name = DEBUG_GROUP_NAME_PREFIX + str(level.Name)
+    group = doc.getObject(name)
     if group is None:
-        group = doc.addObject("App::DocumentObjectGroup", DEBUG_GROUP_NAME)
-    group.Label = DEBUG_GROUP_LABEL
+        group = doc.addObject("App::DocumentObjectGroup", name)
+    group.Label = "%s - %s" % (DEBUG_GROUP_LABEL_PREFIX, object_label(level))
+    set_property(group, "App::PropertyString", "FA_GeneratedBy", "FacilArquitectura", "Macro generadora", MACRO_ID)
+    set_property(group, "App::PropertyString", "FA_Role", "FacilArquitectura", "Rol diagnostico", "debug_group")
+    tag_level_metadata(group, level)
     try:
         if group not in list(getattr(parent_group, "Group", []) or []):
             parent_group.addObject(group)
@@ -1000,7 +1300,7 @@ def ensure_debug_group(doc, parent_group):
     return group
 
 
-def _debug_feature(doc, group, name, label, shape, role):
+def _debug_feature(doc, group, name, label, shape, role, level, display_z_mm):
     existing = doc.getObject(name)
     if existing is not None:
         try:
@@ -1010,9 +1310,11 @@ def _debug_feature(doc, group, name, label, shape, role):
     obj = doc.addObject("Part::Feature", name)
     obj.Label = label
     obj.Shape = shape.copy()
+    obj.Placement = App.Placement(App.Vector(0.0, 0.0, float(display_z_mm)), App.Rotation())
     set_property(obj, "App::PropertyString", "FA_GeneratedBy", "FacilArquitectura", "Macro generadora", MACRO_ID)
     set_property(obj, "App::PropertyString", "FA_Role", "FacilArquitectura", "Rol diagnostico", role)
     set_property(obj, "App::PropertyBool", "DocumentationOnly", "FacilArquitectura", "Solo diagnostico", True)
+    tag_level_metadata(obj, level)
     try:
         group.addObject(obj)
         obj.ViewObject.Visibility = False
@@ -1023,37 +1325,32 @@ def _debug_feature(doc, group, name, label, shape, role):
     return obj
 
 
-def create_debug_geometry(doc, parent_group, topology):
-    """Create hidden read-only geometry for visual validation of v1.3.x."""
+def create_debug_geometry(doc, parent_group, topology, level):
+    """Create hidden read-only diagnostic geometry scoped to one storey."""
     if not DEBUG_GEOMETRY:
         return []
-    group = ensure_debug_group(doc, parent_group)
+    group = ensure_debug_group(doc, parent_group, level)
     created = []
+    suffix = "_" + str(level.Name)
+    display_z = level_elevation_mm(level) + DISPLAY_ELEVATION_MM * 0.25
     barriers = topology.get("barriers")
     if barriers is not None and not barriers.isNull():
         created.append(
-            _debug_feature(doc, group, "DEBUG_Barreras", "DEBUG - Barreras 2D", barriers, "debug_barriers")
+            _debug_feature(doc, group, "DEBUG_Barreras" + suffix, "DEBUG - Barreras 2D - " + object_label(level), barriers, "debug_barriers", level, display_z)
         )
     exterior_faces = list(topology.get("exterior_faces") or [])
     if exterior_faces:
         exterior = Part.makeCompound([face.copy() for face in exterior_faces])
         created.append(
-            _debug_feature(doc, group, "DEBUG_Exterior", "DEBUG - Espacio exterior", exterior, "debug_exterior")
+            _debug_feature(doc, group, "DEBUG_Exterior" + suffix, "DEBUG - Espacio exterior - " + object_label(level), exterior, "debug_exterior", level, display_z)
         )
     room_faces = list(topology.get("room_faces") or [])
     if room_faces:
         candidates = Part.makeCompound([face.copy() for face in room_faces])
         created.append(
-            _debug_feature(
-                doc,
-                group,
-                "DEBUG_RecintosCandidatos",
-                "DEBUG - Recintos candidatos",
-                candidates,
-                "debug_room_candidates",
-            )
+            _debug_feature(doc, group, "DEBUG_RecintosCandidatos" + suffix, "DEBUG - Recintos candidatos - " + object_label(level), candidates, "debug_room_candidates", level, display_z)
         )
-    log("Geometria DEBUG creada: %d objetos (ocultos por defecto)." % len(created))
+    log("Geometria DEBUG creada: %d objetos | nivel=%s (ocultos por defecto)." % (len(created), object_label(level)))
     return created
 
 
@@ -1067,9 +1364,11 @@ def create_room_object(
     obstacle_entries=None,
     closure_entries=None,
     precut=False,
+    level=None,
 ):
     obstacle_entries = list(obstacle_entries or [])
     closure_entries = list(closure_entries or [])
+    display_z = level_elevation_mm(level) + DISPLAY_ELEVATION_MM if level is not None else DISPLAY_ELEVATION_MM
     if precut:
         net_shape = room_face.copy()
         try:
@@ -1091,25 +1390,12 @@ def create_room_object(
     has_holes = len(list(getattr(room_face, "Wires", []) or [])) > 1
 
     if used_obstacles or (precut and has_holes):
-        boundary, points = make_editable_room_wire(doc, room_face)
+        boundary, points = make_editable_room_wire(doc, room_face, display_z_mm=display_z)
         boundary.Label = unique_label(doc, "Contorno editable - " + room_name)
         boundary.MakeFace = False
-        set_property(
-            boundary,
-            "App::PropertyString",
-            "FA_GeneratedBy",
-            "FacilArquitectura",
-            "Macro generadora",
-            MACRO_ID,
-        )
-        set_property(
-            boundary,
-            "App::PropertyString",
-            "FA_Role",
-            "FacilArquitectura",
-            "Rol",
-            "room_polygon_boundary",
-        )
+        set_property(boundary, "App::PropertyString", "FA_GeneratedBy", "FacilArquitectura", "Macro generadora", MACRO_ID)
+        set_property(boundary, "App::PropertyString", "FA_Role", "FacilArquitectura", "Rol", "room_polygon_boundary")
+        tag_level_metadata(boundary, level)
         try:
             boundary.ViewObject.LineColor = (0.95, 0.45, 0.05)
             boundary.ViewObject.LineWidth = 2.0
@@ -1118,40 +1404,22 @@ def create_room_object(
 
         obj = doc.addObject("Part::Feature", "FA_PolygonalRoom")
         display_shape = net_shape.copy()
-        display_shape.translate(App.Vector(0.0, 0.0, DISPLAY_ELEVATION_MM))
+        display_shape.translate(App.Vector(0.0, 0.0, display_z))
         obj.Shape = display_shape
         geometry_type = "PartFaceWithHoles"
         source_method = (
-            "Espacio libre conectado: marco menos barreras BIM (muros + auxiliares)"
+            "Espacio libre conectado multinivel: huella nominal de muros + auxiliares"
             if precut
             else "Huecos de huella BIM con cierres seleccionados menos obstaculos interiores"
         )
-        set_property(
-            obj,
-            "App::PropertyLink",
-            "FA_EditBoundary",
-            "FacilArquitectura",
-            "Contorno exterior Draft editable",
-            boundary,
-        )
-        # Keep a single directional document link (room -> editable boundary).
-        # A reciprocal App::PropertyLink creates a dependency cycle and FreeCAD
-        # rejects it with "The graph must be a DAG". The reverse reference is
-        # informational only, so store the stable object Name as text.
-        set_property(
-            boundary,
-            "App::PropertyString",
-            "FA_OwnerName",
-            "FacilArquitectura",
-            "Nombre interno del recinto neto asociado",
-            str(getattr(obj, "Name", "") or ""),
-        )
+        set_property(obj, "App::PropertyLink", "FA_EditBoundary", "FacilArquitectura", "Contorno exterior Draft editable", boundary)
+        set_property(boundary, "App::PropertyString", "FA_OwnerName", "FacilArquitectura", "Nombre interno del recinto neto asociado", str(getattr(obj, "Name", "") or ""))
         vertex_count = len(list(getattr(net_shape, "Vertexes", []) or []))
     else:
-        obj, points = make_editable_room_wire(doc, room_face)
+        obj, points = make_editable_room_wire(doc, room_face, display_z_mm=display_z)
         geometry_type = "DraftWire"
         source_method = (
-            "Espacio libre conectado: marco menos barreras BIM (muros + auxiliares)"
+            "Espacio libre conectado multinivel: huella nominal de muros + auxiliares"
             if precut
             else (
                 "Huecos de huella BIM con elementos de cierre seleccionados"
@@ -1170,6 +1438,7 @@ def create_room_object(
     set_property(obj, "App::PropertyFloat", "Confidence", "ElectricCR", "Confianza geometrica", 1.0)
     set_property(obj, "App::PropertyString", "FA_GeneratedBy", "FacilArquitectura", "Macro generadora", MACRO_ID)
     set_property(obj, "App::PropertyString", "FA_Role", "FacilArquitectura", "Rol", "room_polygon")
+    tag_level_metadata(obj, level)
     set_property(obj, "App::PropertyString", "FA_RoomName", "FacilArquitectura", "Nombre del recinto", room_name)
     set_property(obj, "App::PropertyArea", "FA_Area", "FacilArquitectura", "Area neta exacta", net_area)
     set_property(obj, "App::PropertyArea", "FA_GrossArea", "FacilArquitectura", "Area bruta antes de obstaculos", gross_area)
@@ -1199,17 +1468,16 @@ def create_room_object(
     except Exception:
         pass
     log(
-        "Creado %s: geometria=%s | area_bruta=%.3f m2 | area_neta=%.3f m2 | cierres=%d | obstaculos=%d | Z=%.3f"
+        "Creado %s: nivel=%s | geometria=%s | area_bruta=%.3f m2 | area_neta=%.3f m2 | cierres=%d | obstaculos=%d | Z=%.3f"
         % (
             obj.Name,
+            object_label(level) if level is not None else "<sin nivel>",
             geometry_type,
             gross_area / 1000000.0,
             net_area / 1000000.0,
             len(used_closures),
             len(used_obstacles),
-            float(getattr(getattr(obj, "Placement", None), "Base", App.Vector()).z)
-            if hasattr(obj, "Placement")
-            else DISPLAY_ELEVATION_MM,
+            display_z,
         )
     )
     return obj, matches
@@ -1223,17 +1491,20 @@ def column_name(index):
     return result
 
 
-def write_schedule(doc, group, room_objects):
-    sheet = doc.getObject(SHEET_NAME)
+def write_schedule(doc, group, room_objects, level):
+    sheet_name = SHEET_NAME_PREFIX + str(level.Name)
+    sheet = doc.getObject(sheet_name)
     if sheet is None:
-        sheet = doc.addObject("Spreadsheet::Sheet", SHEET_NAME)
-    sheet.Label = "Cuadro de recintos poligonales"
+        sheet = doc.addObject("Spreadsheet::Sheet", sheet_name)
+    sheet.Label = "Cuadro de recintos - %s" % object_label(level)
     try:
         sheet.clearAll()
     except Exception:
         pass
     headers = (
         "Recinto",
+        "Nivel",
+        "Elevacion_mm",
         "Area_m2",
         "Perimetro_m",
         "Vertices",
@@ -1252,6 +1523,7 @@ def write_schedule(doc, group, room_objects):
             sheet.setStyle(cell, "bold", "add")
         except Exception:
             pass
+    elevation = level_elevation_mm(level)
     for row, obj in enumerate(room_objects, 2):
         closures = list(getattr(obj, "FA_SourceClosures", []) or [])
         obstacles = list(getattr(obj, "FA_SourceObstacles", []) or [])
@@ -1259,6 +1531,8 @@ def write_schedule(doc, group, room_objects):
         obstacle_area = float(getattr(getattr(obj, "FA_ObstacleArea", 0.0), "Value", getattr(obj, "FA_ObstacleArea", 0.0)))
         values = (
             str(getattr(obj, "FA_RoomName", obj.Label)),
+            object_label(level),
+            "%.3f" % elevation,
             "%.3f" % float(obj.AreaM2),
             "%.3f" % (float(obj.FA_Perimeter.Value) / 1000.0),
             str(int(obj.FA_VertexCount)),
@@ -1272,7 +1546,7 @@ def write_schedule(doc, group, room_objects):
         )
         for column, value in enumerate(values, 1):
             sheet.set(column_name(column) + str(row), str(value))
-    widths = (220, 90, 100, 75, 125, 260, 220, 220, 105, 125, 145)
+    widths = (220, 120, 100, 90, 100, 75, 125, 260, 220, 220, 105, 125, 145)
     for column, width in enumerate(widths, 1):
         try:
             sheet.setColumnWidth(column_name(column), width)
@@ -1280,6 +1554,7 @@ def write_schedule(doc, group, room_objects):
             pass
     set_property(sheet, "App::PropertyString", "FA_GeneratedBy", "FacilArquitectura", "Macro generadora", MACRO_ID)
     set_property(sheet, "App::PropertyString", "FA_Role", "FacilArquitectura", "Rol", "room_polygon_schedule")
+    tag_level_metadata(sheet, level)
     try:
         group.addObject(sheet)
     except Exception:
@@ -1287,7 +1562,7 @@ def write_schedule(doc, group, room_objects):
     return sheet
 
 
-def generate_polygonal_rooms(doc=None, walls=None, obstacles=None, minimum_area_m2=MIN_ROOM_AREA_M2):
+def generate_polygonal_rooms(doc=None, walls=None, obstacles=None, minimum_area_m2=MIN_ROOM_AREA_M2, level=None):
     doc = doc or App.ActiveDocument
     if doc is None:
         raise RuntimeError("No hay documento activo.")
@@ -1295,79 +1570,61 @@ def generate_polygonal_rooms(doc=None, walls=None, obstacles=None, minimum_area_
     selected_mode = False
     source_mode = "parametros"
     if walls is None:
-        walls, selected_obstacles, selected_mode, source_mode = collect_sources(doc)
+        walls, selected_obstacles, selected_mode, source_mode, level = collect_sources(doc, level=level)
         if obstacles is None:
             obstacles = selected_obstacles
-    walls = unique_objects([wall for wall in list(walls or []) if is_arch_wall(wall)])
-    obstacles = unique_objects(
-        [
-            obj
-            for obj in list(obstacles or [])
-            if is_selected_obstacle(obj, explicitly_selected=True)
-        ]
-    )
-    if not walls:
-        raise RuntimeError("La seleccion no contiene muros Arch/BIM validos.")
+    else:
+        level = resolve_analysis_level(doc, walls_hint=walls, explicit_level=level)
+        if obstacles is None:
+            _auto_walls, obstacles, selected_mode, source_mode, _resolved = collect_sources(doc, level=level, walls_hint=walls)
 
+    walls = unique_objects([wall for wall in list(walls or []) if is_arch_wall(wall)])
+    obstacles = unique_objects([obj for obj in list(obstacles or []) if is_selected_obstacle(obj, explicitly_selected=True)])
+    if not walls:
+        raise RuntimeError("El nivel no contiene muros Arch/BIM validos.")
+
+    elevation = level_elevation_mm(level)
     wall_footprint, source_face_count = fuse_wall_footprints(walls)
     auxiliary_entries, obstacle_face_count = obstacle_footprints(obstacles)
     if obstacles and not auxiliary_entries:
-        warn(
-            "Se seleccionaron %d elementos auxiliares, pero ninguno produjo una huella horizontal valida."
-            % len(obstacles)
-        )
+        warn("Se detectaron %d auxiliares, pero ninguno produjo una huella horizontal valida." % len(obstacles))
 
-    closure_entries, interior_entries = classify_auxiliary_components(
-        wall_footprint, auxiliary_entries
-    )
-
-    # Keep the validated closure-fusion diagnostic because it proves whether a
-    # selected column actually fills wall footprint. Room discovery itself no
-    # longer depends on internal wires of that fused footprint.
+    closure_entries, interior_entries = classify_auxiliary_components(wall_footprint, auxiliary_entries)
     closure_diagnostic_footprint = fuse_closure_footprints(wall_footprint, closure_entries)
-    room_faces, topology = room_faces_from_free_space(
-        wall_footprint, auxiliary_entries, minimum_area_m2
-    )
+    room_faces, topology = room_faces_from_free_space(wall_footprint, auxiliary_entries, minimum_area_m2)
     footprint = topology["barriers"]
     if not room_faces:
         raise RuntimeError(
-            "El analisis de espacio libre no encontro recintos encerrados. "
-            "Revise continuidad de muros/columnas y la geometria DEBUG generada."
+            "El analisis de espacio libre no encontro recintos encerrados en '%s'. "
+            "Revise continuidad de muros/columnas y la geometria DEBUG del nivel."
+            % object_label(level)
         )
 
     if auxiliary_entries:
         applied_closures = [entry for entry in closure_entries if entry.get("closure_applied", False)]
         contributing_closures = [
-            entry
-            for entry in applied_closures
+            entry for entry in applied_closures
             if float(entry.get("closure_added_area", 0.0) or 0.0) > 0.01
         ]
         log(
-            "Clasificacion auxiliar: componentes=%d | componentes_cierre=%d | "
-            "cierres_aplicados=%d | cierres_con_aporte=%d | componentes_interiores=%d"
-            % (
-                len(auxiliary_entries),
-                len(closure_entries),
-                len(applied_closures),
-                len(contributing_closures),
-                len(interior_entries),
-            )
+            "Clasificacion auxiliar: componentes=%d | componentes_cierre=%d | cierres_aplicados=%d | cierres_con_aporte=%d | componentes_interiores=%d"
+            % (len(auxiliary_entries), len(closure_entries), len(applied_closures), len(contributing_closures), len(interior_entries))
         )
 
     suspicious = suspicious_room_candidates(room_faces)
     for _face, largest_area, second_area, ratio in suspicious:
         warn(
             "Recinto candidato anormalmente grande: %.3f m2 | segundo mayor=%.3f m2 | relacion=%.1fx. "
-            "Revise continuidad del cerramiento y visibilidad de muros."
+            "No se descarta automaticamente; revise si requiere una division funcional manual."
             % (largest_area / 1000000.0, second_area / 1000000.0, ratio)
         )
 
-    name_candidates = collect_name_candidates(doc)
-    doc.openTransaction("FA crear recintos poligonales desde muros BIM")
+    name_candidates = collect_name_candidates(doc, level=level)
+    doc.openTransaction("FA crear recintos poligonales - %s" % object_label(level))
     try:
-        removed = remove_previous_outputs(doc)
-        group = ensure_group(doc)
-        debug_objects = create_debug_geometry(doc, group, topology)
+        removed = remove_previous_outputs(doc, level)
+        group = ensure_group(doc, level)
+        debug_objects = create_debug_geometry(doc, group, topology, level)
         created = []
         ambiguous = []
         unnamed = []
@@ -1382,13 +1639,14 @@ def generate_polygonal_rooms(doc=None, walls=None, obstacles=None, minimum_area_
                 obstacle_entries=interior_entries,
                 closure_entries=closure_entries,
                 precut=True,
+                level=level,
             )
             created.append(obj)
             if not matches:
                 unnamed.append(obj)
             elif len({item["name"].upper() for item in matches}) > 1:
                 ambiguous.append(obj)
-        sheet = write_schedule(doc, group, created)
+        sheet = write_schedule(doc, group, created, level)
         doc.recompute()
 
         invalid = []
@@ -1416,45 +1674,29 @@ def generate_polygonal_rooms(doc=None, walls=None, obstacles=None, minimum_area_
 
     used_closures = unique_objects(
         [
-            entry["object"]
-            for entry in closure_entries
+            entry["object"] for entry in closure_entries
             if entry.get("closure_applied", False)
             and float(entry.get("closure_added_area", 0.0) or 0.0) > 0.01
         ]
     )
     used_obstacles = unique_objects(
-        [
-            obstacle
-            for obj in created
-            for obstacle in list(getattr(obj, "FA_SourceObstacles", []) or [])
-        ]
+        [obstacle for obj in created for obstacle in list(getattr(obj, "FA_SourceObstacles", []) or [])]
     )
     log(
-        "Completado: recintos=%d | muros=%d | auxiliares_seleccionados=%d | "
+        "Completado: nivel=%s [%s] | elevacion=%.3f mm | recintos=%d | muros=%d | auxiliares=%d | "
         "componentes_cierre=%d | objetos_cierre_usados=%d | obstaculos_interiores_usados=%d | "
-        "caras_muro=%d | caras_auxiliares=%d | reemplazados=%d | sin_rotulo=%d | ambiguos=%d | "
-        "metodo=espacio_libre_conectado | origen=%s"
+        "caras_muro=%d | caras_auxiliares=%d | reemplazados_nivel=%d | sin_rotulo=%d | ambiguos=%d | "
+        "metodo=espacio_libre_multinivel | origen=%s"
         % (
-            len(created),
-            len(walls),
-            len(obstacles),
-            len(closure_entries),
-            len(used_closures),
-            len(used_obstacles),
-            source_face_count,
-            obstacle_face_count,
-            removed,
-            len(unnamed),
-            len(ambiguous),
-            source_mode,
+            object_label(level), level.Name, elevation, len(created), len(walls), len(obstacles),
+            len(closure_entries), len(used_closures), len(used_obstacles), source_face_count,
+            obstacle_face_count, removed, len(unnamed), len(ambiguous), source_mode,
         )
     )
     if ambiguous:
-        warn(
-            "Hay %d poligonos con varios rotulos distintos. Esto suele indicar que falta cerrar una pared."
-            % len(ambiguous)
-        )
+        warn("Hay %d poligonos con varios rotulos distintos en %s." % (len(ambiguous), object_label(level)))
     return {
+        "level": level,
         "walls": walls,
         "obstacles": obstacles,
         "closure_entries": closure_entries,
