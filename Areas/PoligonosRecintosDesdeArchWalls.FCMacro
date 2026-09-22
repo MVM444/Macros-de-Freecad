@@ -2,18 +2,19 @@
 # MenuText: Poligonos de recintos desde muros BIM
 # ToolTip: Genera areas poligonales desde los huecos cerrados de muros Arch/BIM.
 # Icon: PoligonosRecintosDesdeArchWalls.svg
-# Version: 1.2.1
-# Revision: 2026-09-19 22:32:00 America/Costa_Rica
+# Version: 1.3.0
+# Revision: 2026-09-21 21:24:00 America/Costa_Rica
 # FreeCAD: 1.1.3
 
 """Create independent polygonal room areas from Arch/BIM wall footprints.
 
 The macro never edits rectangular areas, source walls or selected auxiliary solids.
 It accepts multiple BIM walls plus explicitly selected columns/pillars/solids.
-Selected components that touch BIM walls are fused into the wall footprint as
-closure elements before room detection. Components isolated inside a room remain
-interior obstacles and are subtracted from the net room area. Rooms without
-interior obstacles remain editable closed Draft Wires.
+Room detection uses connected free space: a temporary frame is cut by the 2D
+footprints of BIM walls plus selected columns/pillars/solids. Free-space faces
+that touch the frame are exterior and are discarded; enclosed free-space faces
+are rooms. This preserves wall-closing columns and naturally represents isolated
+interior columns as holes. Rooms without holes remain editable closed Draft Wires.
 """
 
 from __future__ import annotations
@@ -35,9 +36,14 @@ MIN_ROOM_AREA_M2 = 1.0
 DISPLAY_ELEVATION_MM = 20.0
 GEOMETRY_TOLERANCE_MM = 0.1
 CLOSURE_CONTACT_TOLERANCE_MM = 1.0
-MACRO_VERSION = "1.2.1"
+MACRO_VERSION = "1.3.0"
 SUSPICIOUS_ROOM_MIN_AREA_M2 = 50.0
 SUSPICIOUS_ROOM_RATIO = 8.0
+FREE_SPACE_FRAME_MARGIN_MM = 2000.0
+FREE_SPACE_FRAME_MARGIN_RATIO = 0.10
+DEBUG_GEOMETRY = True
+DEBUG_GROUP_NAME = "FA_PolygonalRooms_DEBUG"
+DEBUG_GROUP_LABEL = "DEBUG - Deteccion de recintos v1.3.0"
 
 
 def log(message):
@@ -548,7 +554,128 @@ def same_wire(first, second):
         return first.hashCode() == second.hashCode()
 
 
+def _analysis_frame(barrier_reference):
+    """Create a temporary planar frame that safely surrounds all barriers."""
+    bounds = barrier_reference.BoundBox
+    span = max(float(bounds.XLength), float(bounds.YLength), 1.0)
+    margin = max(float(FREE_SPACE_FRAME_MARGIN_MM), span * float(FREE_SPACE_FRAME_MARGIN_RATIO))
+    x0 = float(bounds.XMin) - margin
+    y0 = float(bounds.YMin) - margin
+    width = max(1.0, float(bounds.XLength) + 2.0 * margin)
+    height = max(1.0, float(bounds.YLength) + 2.0 * margin)
+    frame = Part.makePlane(width, height, App.Vector(x0, y0, 0.0))
+    return frame, margin
+
+
+def _face_touches_frame_boundary(face, frame, tolerance=GEOMETRY_TOLERANCE_MM):
+    """Return True only for free-space faces connected to the analysis exterior."""
+    bounds = face.BoundBox
+    frame_bounds = frame.BoundBox
+    tolerance = max(float(tolerance), 0.01)
+    return bool(
+        abs(float(bounds.XMin) - float(frame_bounds.XMin)) <= tolerance
+        or abs(float(bounds.XMax) - float(frame_bounds.XMax)) <= tolerance
+        or abs(float(bounds.YMin) - float(frame_bounds.YMin)) <= tolerance
+        or abs(float(bounds.YMax) - float(frame_bounds.YMax)) <= tolerance
+    )
+
+
+def _barrier_debug_shape(wall_footprint, auxiliary_entries):
+    shapes = [wall_footprint.copy()]
+    shapes.extend(entry["shape"].copy() for entry in list(auxiliary_entries or []))
+    if len(shapes) == 1:
+        return shapes[0]
+    try:
+        return Part.makeCompound(shapes)
+    except Exception:
+        return shapes[0]
+
+
+def room_faces_from_free_space(wall_footprint, auxiliary_entries, minimum_area_m2):
+    """Detect rooms as connected free-space regions enclosed by BIM barriers.
+
+    A temporary frame surrounding the model is cut by the wall footprint and by
+    every selected auxiliary footprint. Any remaining face that touches the
+    frame boundary belongs to the exterior. Remaining enclosed faces are rooms.
+    """
+    minimum_area = float(minimum_area_m2) * 1000000.0
+    barrier_reference = _barrier_debug_shape(wall_footprint, auxiliary_entries)
+    frame, margin = _analysis_frame(barrier_reference)
+
+    try:
+        free_space = frame.cut(wall_footprint)
+    except Exception as exc:
+        raise RuntimeError("No se pudo sustraer la huella de muros del marco de analisis: %s" % exc)
+
+    for entry in list(auxiliary_entries or []):
+        try:
+            free_space = free_space.cut(entry["shape"])
+        except Exception as exc:
+            raise RuntimeError(
+                "No se pudo aplicar la barrera auxiliar %s#%02d: %s"
+                % (
+                    object_label(entry["object"]),
+                    int(entry.get("component_index", 0) or 0),
+                    exc,
+                )
+            )
+
+    try:
+        free_space = free_space.removeSplitter()
+    except Exception:
+        pass
+    if free_space is None or free_space.isNull() or not list(getattr(free_space, "Faces", []) or []):
+        raise RuntimeError("El calculo de espacio libre no produjo caras planas validas.")
+
+    rooms = []
+    exterior_faces = []
+    rejected_small = []
+    seen = set()
+    for face in list(free_space.Faces):
+        if not face.isValid():
+            continue
+        if _face_touches_frame_boundary(face, frame):
+            exterior_faces.append(face)
+            continue
+        if float(face.Area) < minimum_area:
+            rejected_small.append(face)
+            continue
+        center = face.CenterOfMass
+        key = (
+            int(round(float(center.x) * 10.0)),
+            int(round(float(center.y) * 10.0)),
+            int(round(float(face.Area))),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        rooms.append(face)
+
+    rooms.sort(key=lambda face: (-float(face.CenterOfMass.y), float(face.CenterOfMass.x)))
+    log(
+        "Espacio libre conectado: caras_libres=%d | exteriores=%d | recintos=%d | "
+        "menores_minimo=%d | margen=%.1f mm"
+        % (
+            len(list(free_space.Faces)),
+            len(exterior_faces),
+            len(rooms),
+            len(rejected_small),
+            margin,
+        )
+    )
+    return rooms, {
+        "frame": frame,
+        "barriers": barrier_reference,
+        "free_space": free_space,
+        "exterior_faces": exterior_faces,
+        "room_faces": rooms,
+        "rejected_small": rejected_small,
+        "margin": margin,
+    }
+
+
 def room_faces_from_footprint(footprint, minimum_area_m2):
+    """Legacy helper retained for compatibility; v1.3.0 no longer uses it."""
     minimum_area = float(minimum_area_m2) * 1000000.0
     rooms = []
     seen = set()
@@ -796,6 +923,106 @@ def make_editable_room_wire(doc, room_face):
     return obj, points
 
 
+def obstacle_sources_for_room(room_face, obstacle_entries):
+    """Associate isolated auxiliary footprints with a free-space room face."""
+    result = []
+    seen = set()
+    try:
+        gross_face = Part.Face(room_face.OuterWire)
+    except Exception:
+        gross_face = None
+    for entry in list(obstacle_entries or []):
+        footprint = entry["shape"]
+        applies = False
+        if gross_face is not None:
+            try:
+                overlap = gross_face.common(footprint)
+                applies = shape_area(overlap) > max(
+                    GEOMETRY_TOLERANCE_MM * GEOMETRY_TOLERANCE_MM, 0.01
+                )
+            except Exception:
+                applies = False
+        if not applies:
+            continue
+        obj = entry["object"]
+        name = str(getattr(obj, "Name", "") or id(obj))
+        if name in seen:
+            continue
+        seen.add(name)
+        result.append(obj)
+    return result
+
+
+def ensure_debug_group(doc, parent_group):
+    group = doc.getObject(DEBUG_GROUP_NAME)
+    if group is None:
+        group = doc.addObject("App::DocumentObjectGroup", DEBUG_GROUP_NAME)
+    group.Label = DEBUG_GROUP_LABEL
+    try:
+        if group not in list(getattr(parent_group, "Group", []) or []):
+            parent_group.addObject(group)
+    except Exception:
+        pass
+    return group
+
+
+def _debug_feature(doc, group, name, label, shape, role):
+    existing = doc.getObject(name)
+    if existing is not None:
+        try:
+            doc.removeObject(existing.Name)
+        except Exception:
+            pass
+    obj = doc.addObject("Part::Feature", name)
+    obj.Label = label
+    obj.Shape = shape.copy()
+    set_property(obj, "App::PropertyString", "FA_GeneratedBy", "FacilArquitectura", "Macro generadora", MACRO_ID)
+    set_property(obj, "App::PropertyString", "FA_Role", "FacilArquitectura", "Rol diagnostico", role)
+    set_property(obj, "App::PropertyBool", "DocumentationOnly", "FacilArquitectura", "Solo diagnostico", True)
+    try:
+        group.addObject(obj)
+        obj.ViewObject.Visibility = False
+        obj.ViewObject.Transparency = 80
+        obj.ViewObject.LineWidth = 2.0
+    except Exception:
+        pass
+    return obj
+
+
+def create_debug_geometry(doc, parent_group, topology):
+    """Create hidden read-only geometry for visual validation of v1.3.0."""
+    if not DEBUG_GEOMETRY:
+        return []
+    group = ensure_debug_group(doc, parent_group)
+    created = []
+    barriers = topology.get("barriers")
+    if barriers is not None and not barriers.isNull():
+        created.append(
+            _debug_feature(doc, group, "DEBUG_Barreras", "DEBUG - Barreras 2D", barriers, "debug_barriers")
+        )
+    exterior_faces = list(topology.get("exterior_faces") or [])
+    if exterior_faces:
+        exterior = Part.makeCompound([face.copy() for face in exterior_faces])
+        created.append(
+            _debug_feature(doc, group, "DEBUG_Exterior", "DEBUG - Espacio exterior", exterior, "debug_exterior")
+        )
+    room_faces = list(topology.get("room_faces") or [])
+    if room_faces:
+        candidates = Part.makeCompound([face.copy() for face in room_faces])
+        created.append(
+            _debug_feature(
+                doc,
+                group,
+                "DEBUG_RecintosCandidatos",
+                "DEBUG - Recintos candidatos",
+                candidates,
+                "debug_room_candidates",
+            )
+        )
+    log("Geometria DEBUG creada: %d objetos (ocultos por defecto)." % len(created))
+    return created
+
+
 def create_room_object(
     doc,
     group,
@@ -805,18 +1032,31 @@ def create_room_object(
     index,
     obstacle_entries=None,
     closure_entries=None,
+    precut=False,
 ):
     obstacle_entries = list(obstacle_entries or [])
     closure_entries = list(closure_entries or [])
-    net_shape, used_obstacles, removed_area = subtract_obstacles(room_face, obstacle_entries)
+    if precut:
+        net_shape = room_face.copy()
+        try:
+            gross_face = Part.Face(room_face.OuterWire)
+            gross_area = float(gross_face.Area)
+        except Exception:
+            gross_area = float(room_face.Area)
+        net_area = shape_area(net_shape)
+        removed_area = max(0.0, gross_area - net_area)
+        used_obstacles = obstacle_sources_for_room(room_face, obstacle_entries)
+    else:
+        net_shape, used_obstacles, removed_area = subtract_obstacles(room_face, obstacle_entries)
+        gross_area = float(room_face.Area)
+        net_area = shape_area(net_shape)
     used_closures = closure_sources_for_room(room_face, closure_entries)
     matches = candidates_inside(room_face, name_candidates)
     room_name = matches[0]["name"] if matches else "Recinto poligonal %02d" % index
-    gross_area = float(room_face.Area)
-    net_area = shape_area(net_shape)
     boundary = None
+    has_holes = len(list(getattr(room_face, "Wires", []) or [])) > 1
 
-    if used_obstacles:
+    if used_obstacles or (precut and has_holes):
         boundary, points = make_editable_room_wire(doc, room_face)
         boundary.Label = unique_label(doc, "Contorno editable - " + room_name)
         boundary.MakeFace = False
@@ -847,7 +1087,11 @@ def create_room_object(
         display_shape.translate(App.Vector(0.0, 0.0, DISPLAY_ELEVATION_MM))
         obj.Shape = display_shape
         geometry_type = "PartFaceWithHoles"
-        source_method = "Huecos de huella BIM con cierres seleccionados menos obstaculos interiores"
+        source_method = (
+            "Espacio libre conectado: marco menos barreras BIM (muros + auxiliares)"
+            if precut
+            else "Huecos de huella BIM con cierres seleccionados menos obstaculos interiores"
+        )
         set_property(
             obj,
             "App::PropertyLink",
@@ -869,14 +1113,18 @@ def create_room_object(
         obj, points = make_editable_room_wire(doc, room_face)
         geometry_type = "DraftWire"
         source_method = (
-            "Huecos de huella BIM con elementos de cierre seleccionados"
-            if used_closures
-            else "Huecos de huella superior Arch Wall"
+            "Espacio libre conectado: marco menos barreras BIM (muros + auxiliares)"
+            if precut
+            else (
+                "Huecos de huella BIM con elementos de cierre seleccionados"
+                if used_closures
+                else "Huecos de huella superior Arch Wall"
+            )
         )
         vertex_count = len(points)
 
     obj.Label = unique_label(doc, "Poligono - " + room_name)
-    perimeter = shape_perimeter(net_shape) if used_obstacles else float(room_face.OuterWire.Length)
+    perimeter = shape_perimeter(net_shape) if (used_obstacles or (precut and has_holes)) else float(room_face.OuterWire.Length)
     set_property(obj, "App::PropertyString", "ElectricCRTipo", "ElectricCR", "Tipo logico", "Area")
     set_property(obj, "App::PropertyString", "GeneratedBy", "ElectricCR", "Macro generadora", MACRO_ID)
     set_property(obj, "App::PropertyFloat", "AreaM2", "ElectricCR", "Area neta del recinto", net_area / 1000000.0)
@@ -1034,12 +1282,19 @@ def generate_polygonal_rooms(doc=None, walls=None, obstacles=None, minimum_area_
     closure_entries, interior_entries = classify_auxiliary_components(
         wall_footprint, auxiliary_entries
     )
-    footprint = fuse_closure_footprints(wall_footprint, closure_entries)
-    room_faces = room_faces_from_footprint(footprint, minimum_area_m2)
+
+    # Keep the validated closure-fusion diagnostic because it proves whether a
+    # selected column actually fills wall footprint. Room discovery itself no
+    # longer depends on internal wires of that fused footprint.
+    closure_diagnostic_footprint = fuse_closure_footprints(wall_footprint, closure_entries)
+    room_faces, topology = room_faces_from_free_space(
+        wall_footprint, auxiliary_entries, minimum_area_m2
+    )
+    footprint = topology["barriers"]
     if not room_faces:
         raise RuntimeError(
-            "Los muros y elementos de cierre seleccionados no forman huecos interiores cerrados. "
-            "Revise uniones, extremos y continuidad del cerramiento."
+            "El analisis de espacio libre no encontro recintos encerrados. "
+            "Revise continuidad de muros/columnas y la geometria DEBUG generada."
         )
 
     if auxiliary_entries:
@@ -1074,6 +1329,7 @@ def generate_polygonal_rooms(doc=None, walls=None, obstacles=None, minimum_area_
     try:
         removed = remove_previous_outputs(doc)
         group = ensure_group(doc)
+        debug_objects = create_debug_geometry(doc, group, topology)
         created = []
         ambiguous = []
         unnamed = []
@@ -1087,6 +1343,7 @@ def generate_polygonal_rooms(doc=None, walls=None, obstacles=None, minimum_area_
                 index,
                 obstacle_entries=interior_entries,
                 closure_entries=closure_entries,
+                precut=True,
             )
             created.append(obj)
             if not matches:
@@ -1137,7 +1394,8 @@ def generate_polygonal_rooms(doc=None, walls=None, obstacles=None, minimum_area_
     log(
         "Completado: recintos=%d | muros=%d | auxiliares_seleccionados=%d | "
         "componentes_cierre=%d | objetos_cierre_usados=%d | obstaculos_interiores_usados=%d | "
-        "caras_muro=%d | caras_auxiliares=%d | reemplazados=%d | sin_rotulo=%d | ambiguos=%d | origen=%s"
+        "caras_muro=%d | caras_auxiliares=%d | reemplazados=%d | sin_rotulo=%d | ambiguos=%d | "
+        "metodo=espacio_libre_conectado | origen=%s"
         % (
             len(created),
             len(walls),
@@ -1166,6 +1424,8 @@ def generate_polygonal_rooms(doc=None, walls=None, obstacles=None, minimum_area_
         "used_closures": used_closures,
         "used_obstacles": used_obstacles,
         "footprint": footprint,
+        "topology": topology,
+        "debug_objects": debug_objects,
         "rooms": created,
         "sheet": sheet,
         "unnamed": unnamed,
